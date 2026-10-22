@@ -1,15 +1,13 @@
 # Connection Management
 
-The MCP server provides REST APIs for managing
-connections to monitored PostgreSQL databases. This
-feature allows users to select which database connection
-they want to work with for their session.
+The MCP server provides REST APIs for managing connections to monitored
+PostgreSQL databases. This feature allows users to select which database
+connection they want to work with for their session.
 
 ## Overview
 
-When the MCP server is configured with a datastore
-connection, the server can access connection information
-stored by the Collector. This enables users to:
+When the MCP server is configured with a datastore connection, the server can
+access connection information stored by the Collector. This enables users to:
 
 - List available database connections.
 - Select a connection for their session.
@@ -18,9 +16,8 @@ stored by the Collector. This enables users to:
 
 ## Configuration
 
-To enable connection management, configure the server's
-database settings to point to the same datastore used
-by the Collector:
+To enable connection management, configure the server's database settings to
+point to the same datastore used by the Collector:
 
 ```yaml
 database:
@@ -34,23 +31,19 @@ database:
 secret_file: /etc/ai-workbench/secret
 ```
 
-The `secret_file` must contain the same secret used by
-the Collector for encrypting connection passwords. For
-full configuration details, see the
-[Server Configuration](../getting-started/configuration/server.md).
+The `secret_file` must contain the same secret used by the Collector for
+encrypting connection passwords. For full configuration details, see the
+[Server Configuration](../configuration/server.md).
 
 ## Monitored Server Privileges
 
-Each connection stores the credentials of a PostgreSQL
-role on the monitored server. Before creating a
-connection, grant that role the privileges the
-Workbench needs, which are the `pg_monitor` predefined
-role and `CONNECT` on every database you want to
-monitor. The
-[Monitored Database Privileges](../getting-started/configuration/monitored-database-privileges.md)
-document covers the least-privilege grants, the
-optional extensions, and the gaps that remain without
-superuser access.
+Each connection stores the credentials of a PostgreSQL role on the monitored
+server. Before creating a connection, grant that role the privileges the
+Workbench needs: the `pg_monitor` predefined role and `CONNECT` on every
+database you want to monitor. The
+[Monitored Database Privileges](../configuration/monitored-database-privileges.md)
+page covers the least-privilege grants, the optional extensions, and the gaps
+that remain without superuser access.
 
 ## REST API Endpoints
 
@@ -58,8 +51,8 @@ All endpoints require authentication via Bearer token.
 
 ### List Connections
 
-The following endpoint lists all available database
-connections from the datastore:
+The following endpoint lists all available database connections from the
+datastore:
 
 ```
 GET /api/v1/connections
@@ -91,8 +84,7 @@ Response:
 
 ### List Databases
 
-The following endpoint lists all databases on a
-specific connection:
+The following endpoint lists all databases on a specific connection:
 
 ```
 GET /api/v1/connections/{id}/databases
@@ -120,8 +112,8 @@ Response:
 
 ### Get Current Connection
 
-The following endpoint returns the currently selected
-connection for the session:
+The following endpoint returns the currently selected connection for the
+session:
 
 ```
 GET /api/v1/connections/current
@@ -150,8 +142,7 @@ Response (404 Not Found):
 
 ### Set Current Connection
 
-The following endpoint selects a connection and
-optionally a specific database:
+The following endpoint selects a connection and optionally a specific database:
 
 ```
 POST /api/v1/connections/current
@@ -164,8 +155,8 @@ Content-Type: application/json
 }
 ```
 
-The `database_name` is optional. If not specified, the
-connection's default database is used.
+The `database_name` is optional. If not specified, the connection's default
+database is used.
 
 Response:
 
@@ -181,8 +172,7 @@ Response:
 
 ### Clear Current Connection
 
-The following endpoint clears the current connection
-selection:
+The following endpoint clears the current connection selection:
 
 ```
 DELETE /api/v1/connections/current
@@ -193,13 +183,11 @@ Response: `204 No Content`
 
 ### Delete a Connection
 
-The following endpoint deletes a connection; the caller
-must own the connection or hold the `manage_connections`
-permission, and must be able to see the connection. A
-connection the caller cannot see answers `404 Not Found`,
-exactly as a missing one does, even to a holder of
-`manage_connections`; updating a connection follows the
-same rule:
+The caller must own the connection or hold the `manage_connections`
+permission, and must be able to see the connection, to delete it. A connection
+the caller cannot see returns `404 Not Found`, exactly as a missing connection
+does, even to a holder of `manage_connections`; updating a connection follows
+the same rule. The following endpoint deletes a connection:
 
 ```
 DELETE /api/v1/connections/{id}
@@ -208,36 +196,31 @@ Authorization: Bearer <token>
 
 Response: `204 No Content`
 
-The server answers as soon as the connection is marked
-deleted. From that moment the connection disappears from
-every listing, the API and the MCP tools, and the
-collector and alerter stop monitoring it. The server then
-removes the connection's collected metrics in the
-background, in small batches, and removes the connection
-itself once the metrics are gone. A connection with a long
-metrics history may take some time to clear from the
-datastore, but the delete request does not wait for it.
+The server responds as soon as it marks the connection deleted. From that
+moment, the connection disappears from every listing, the API, and the MCP
+tools, and the collector and alerter stop monitoring it. The server then
+removes the connection's collected metrics in the background, in small
+batches, and removes the connection itself when the metrics are gone. A
+connection with a long metrics history may take some time to clear from the
+datastore, but the delete request does not wait for the purge.
 
-The background purge runs when the server starts, every
-five minutes, and immediately after each delete; a server
-restart resumes any purge that was interrupted.
+The background purge runs when the server starts, every five minutes, and
+immediately after each delete; a server restart resumes any interrupted purge.
 
 ## Session Persistence
 
-Connection selections are stored in the authentication
-database (`auth.db`) and persist across requests and
-server restarts. Each token has an independent
+Connection selections are stored in the authentication database (`auth.db`) and
+persist across requests and server restarts. Each token has an independent
 connection selection.
 
 ## Tool Behavior
 
-When a connection is selected, all database tools
-(`query_database`, `get_schema_info`,
-`similarity_search`, `execute_explain`, `count_rows`)
+When a connection is selected, all database tools (`query_database`,
+`get_schema_info`, `similarity_search`, `execute_explain`, `count_rows`)
 operate on the selected database.
 
-If no connection is selected, the tools return an error
-message instructing the user to select a connection:
+If no connection is selected, the tools return an error message instructing the
+user to select a connection:
 
 ```
 No database connection selected. Please select a
@@ -257,21 +240,10 @@ The connection APIs return standard error responses.
 | 500 | Internal server error. |
 | 503 | Datastore not configured. |
 
-In the following example, an error response uses the
-standard JSON format:
+In the following example, an error response uses the standard JSON format:
 
 ```json
 {
     "error": "Description of the error"
 }
 ```
-
-## Related Documentation
-
-- [Managing Users and Permissions](managing-users-and-permissions/permission_model.md) covers tokens and
-  access control.
-- [API Reference](api/reference.md) provides
-  interactive API documentation.
-- [Monitored Database Privileges](../getting-started/configuration/monitored-database-privileges.md)
-  describes the PostgreSQL grants a monitored role
-  needs.

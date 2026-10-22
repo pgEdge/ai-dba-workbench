@@ -1280,6 +1280,6 @@ settings that control it.
   document describes the privilege and permission grants that appear in
   the log.
 - The
-  [Server Configuration](../../getting-started/configuration/server.md)
+  [Server Configuration](../../configuration/server.md)
   document describes `http.auth.audit_retention_days` alongside the
   other server settings.

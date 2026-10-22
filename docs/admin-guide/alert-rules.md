@@ -1,10 +1,8 @@
 # Alert Rules
 
-Alert rules define the conditions that trigger
-threshold-based alerts. Each rule specifies a metric to
-monitor, a comparison operator, and a threshold value.
-The alerter includes 30 built-in rules and supports
-custom rules.
+Alert rules define the conditions that trigger threshold-based alerts. Each
+rule specifies a metric to monitor, a comparison operator, and a threshold
+value. The alerter includes 30 built-in rules and supports custom rules.
 
 ## Rule Structure
 
@@ -27,159 +25,122 @@ Each alert rule contains the following fields:
 
 The alerter supports six comparison operators:
 
-- `>` triggers when the metric value is greater than
-  the threshold.
-- `>=` triggers when the metric value is at least the
-  threshold.
-- `<` triggers when the metric value is less than the
-  threshold.
-- `<=` triggers when the metric value is at most the
-  threshold.
-- `==` triggers when the metric value equals the
-  threshold.
-- `!=` triggers when the metric value does not equal
-  the threshold.
+- `>` triggers when the metric value is greater than the threshold.
+- `>=` triggers when the metric value is at least the threshold.
+- `<` triggers when the metric value is less than the threshold.
+- `<=` triggers when the metric value is at most the threshold.
+- `==` triggers when the metric value equals the threshold.
+- `!=` triggers when the metric value does not equal the threshold.
 
 ## Severity Levels
 
 Alert rules use three severity levels:
 
-- `critical` indicates a severe issue requiring
-  immediate attention.
-- `warning` indicates a potential problem that should
-  be investigated.
-- `info` indicates an informational condition for
-  awareness.
+- `critical` indicates a severe issue requiring immediate attention.
+- `warning` indicates a potential problem that should be investigated.
+- `info` indicates an informational condition for awareness.
 
 ## Rule Categories
 
-Built-in rules are organized into the following
-categories:
+Built-in rules are organized into the following categories:
 
-- Connection rules monitor database connections and
-  session state.
-- Replication rules monitor replication lag, slot
-  status, Spock exceptions, and Spock conflict
-  resolutions.
-- Performance rules monitor query performance and
-  locking.
-- Storage rules monitor disk usage and table
-  maintenance.
-- System rules monitor CPU, memory, and system
-  resources.
-- Availability rules monitor the collection itself,
-  reporting probes that fall behind or stop collecting.
+- Connection rules monitor database connections and session state.
+- Replication rules monitor replication lag, slot status, Spock exceptions, and
+  Spock conflict resolutions.
+- Performance rules monitor query performance and locking.
+- Storage rules monitor disk usage and table maintenance.
+- System rules monitor CPU, memory, and system resources.
+- Availability rules monitor the collection itself, reporting probes that fall
+  behind or stop collecting.
 
 ## Replication Rules
 
-The replication category includes built-in rules that
-monitor Spock exception activity, Spock conflict
-auto-resolutions, and replication-slot WAL retention.
-The Spock rules require the `spock` extension on the
-monitored database; the slot retention rules apply to
-every PostgreSQL deployment.
+The replication category includes built-in rules that monitor Spock exception
+activity, Spock conflict auto-resolutions, and replication-slot WAL retention.
+The Spock rules require the `spock` extension on the monitored database; the
+slot retention rules apply to every PostgreSQL deployment.
 
-The Spock recent-count rules read from the
-`spock_exception_log` and `spock_resolutions` probe
-tables, both of which capture a rolling 15-minute
-window. The alerter clears each Spock alert
-automatically as the corresponding rows age out of the
-window and the recent count returns below the
-threshold.
+The Spock recent-count rules read from the `spock_exception_log` and
+`spock_resolutions` probe tables, both of which capture a rolling 15-minute
+window. The alerter clears each Spock alert automatically as the corresponding
+rows age out of the window and the recent count returns below the threshold.
 
-The following bullets describe the built-in
-replication rules added for Spock and slot retention
-monitoring:
+The following bullets describe the built-in replication rules added for Spock
+and slot retention monitoring:
 
-- `spock_recent_exceptions_present` fires at warning
-  severity when `spock_exception_log.recent_count` is
-  greater than or equal to 1; the rule requires the
-  `spock` extension.
-- `spock_recent_exceptions_high` fires at critical
-  severity when `spock_exception_log.recent_count` is
-  greater than or equal to 10; the rule requires the
-  `spock` extension.
-- `spock_recent_resolutions_present` fires at warning
-  severity when `spock_resolutions.recent_count` is
-  greater than or equal to 1; the rule requires the
-  `spock` extension.
-- `spock_recent_resolutions_high` fires at critical
-  severity when `spock_resolutions.recent_count` is
-  greater than or equal to 25; the rule requires the
-  `spock` extension.
-- `replication_slot_retention_warn` fires at warning
-  severity when `pg_replication_slots.max_retained_bytes`
-  is greater than or equal to 1073741824 (1 GiB); the
-  rule has no extension requirement.
-- `replication_slot_retention_high` fires at critical
-  severity when `pg_replication_slots.max_retained_bytes`
-  is greater than or equal to 10737418240 (10 GiB); the
-  rule has no extension requirement.
+- `spock_recent_exceptions_present` fires at warning severity when
+  `spock_exception_log.recent_count` is greater than or equal to 1; the rule
+  requires the `spock` extension.
+- `spock_recent_exceptions_high` fires at critical severity when
+  `spock_exception_log.recent_count` is greater than or equal to 10; the rule
+  requires the `spock` extension.
+- `spock_recent_resolutions_present` fires at warning severity when
+  `spock_resolutions.recent_count` is greater than or equal to 1; the rule
+  requires the `spock` extension.
+- `spock_recent_resolutions_high` fires at critical severity when
+  `spock_resolutions.recent_count` is greater than or equal to 25; the rule
+  requires the `spock` extension.
+- `replication_slot_retention_warn` fires at warning severity when
+  `pg_replication_slots.max_retained_bytes` is greater than or equal to
+  1073741824 (1 GiB); the rule has no extension requirement.
+- `replication_slot_retention_high` fires at critical severity when
+  `pg_replication_slots.max_retained_bytes` is greater than or equal to
+  10737418240 (10 GiB); the rule has no extension requirement.
 
-The slot retention rules evaluate the maximum retained
-WAL across all replication slots on a server; the
-alerter fires a rule when any single slot's retained
-WAL reaches the threshold. Both rules read only samples
-collected in the last 15 minutes, so neither rule fires
-on stale data after a collector stops.
+The slot retention rules evaluate the maximum retained WAL across all
+replication slots on a server; the alerter fires a rule when any single slot's
+retained WAL reaches the threshold. Both rules read only samples collected in
+the last 15 minutes, so neither rule fires on stale data after a collector
+stops.
 
 ## Availability Rules
 
-The availability category includes two built-in rules that
-report on the collection itself rather than on the state of
-a monitored database. Neither rule requires an extension,
-and both are enabled by default at warning severity.
+The availability category includes two built-in rules that report on the
+collection itself rather than on the state of a monitored database. Neither
+rule requires an extension, and both rules are enabled by default at warning
+severity.
 
-The following table shows the built-in availability rules
-and their default conditions:
+The following table shows the built-in availability rules and their default
+conditions:
 
 | Rule | Metric | Condition |
 |------|--------|-----------|
 | `metric_staleness` | `probe_staleness_ratio` | Greater than 3 |
 | `probe_unavailable` | `probe_available` | Less than 1 |
 
-The `metric_staleness` rule reports a probe that is still
-collecting but whose newest sample is more than three
-collection intervals old.
+The `metric_staleness` rule reports a probe that is still collecting but whose
+newest sample is more than three collection intervals old.
 
-The `probe_unavailable` rule reports the transition from
-collecting to unavailable. The collector records a probe as
-unavailable on the first probe run after the extension the
-probe reads, the privilege the probe needs, or the
-connection itself goes away. The metric is the availability
-flag: the alerter reports 0 whilst the probe is unavailable
-and 1 whilst the probe collects, so the default condition of
-less than 1 holds for as long as collection stays stopped.
+The `probe_unavailable` rule reports the transition from collecting to
+unavailable. The collector records a probe as unavailable on the first probe
+run after the extension the probe reads, the privilege the probe needs, or the
+connection itself goes away. The metric is the availability flag; the alerter
+reports 0 while the probe is unavailable and 1 while the probe collects, so the
+default condition of less than 1 holds for as long as collection stays stopped.
 
-The rule fires only for a probe that has collected at least
-once. A probe whose extension was never installed has never
-collected, so the rule never fires for one and no permanent
-alert is pinned to it. A probe whose extension is installed
-but has nothing to report, such as a Spock probe on a cluster
-with no recent apply exceptions or conflict resolutions,
-remains available, so the rule does not fire for a quiet
-cluster.
+The rule fires only for a probe that has collected at least once. A probe whose
+extension was never installed has never collected, so the rule never fires for
+that probe and no permanent alert is pinned to it. A probe whose extension is
+installed but has nothing to report, such as a Spock probe on a cluster with no
+recent apply exceptions or conflict resolutions, remains available, so the rule
+does not fire for a quiet cluster.
 
-The alerter clears a `probe_unavailable` alert when the
-probe collects again. The alerter also clears the alert when
-an operator retires the probe, whether by disabling the
-probe, by no longer monitoring the connection, or by
-removing the availability row, because each of those is a
-deliberate change rather than a fault. A held
-`metric_staleness` alert and a `probe_unavailable` alert can
-be active on the same probe at the same time; the first
-records that the data went stale and the second records why,
-and each clears on its own terms.
+The alerter clears a `probe_unavailable` alert when the probe collects again.
+The alerter also clears the alert when an operator retires the probe, whether
+by disabling the probe, by no longer monitoring the connection, or by removing
+the availability row, because each of those actions is a deliberate change
+rather than a fault. A held `metric_staleness` alert and a `probe_unavailable`
+alert can be active on the same probe at the same time; the first records that
+the data went stale, the second records why, and each alert clears on its own
+terms.
 
-Per-connection threshold overrides, blackout windows, and
-the alert cooldown apply to `probe_unavailable` exactly as
-they apply to `metric_staleness`.
+Per-connection threshold overrides, blackout windows, and the alert cooldown
+apply to `probe_unavailable` exactly as they apply to `metric_staleness`.
 
 ## Hierarchical Overrides
 
-Alert thresholds can be customized at multiple levels
-of the server hierarchy. The alerter resolves the
-effective threshold using the following precedence
+Alert thresholds can be customized at multiple levels of the server hierarchy.
+The alerter resolves the effective threshold using the following precedence
 order:
 
 1. Server overrides apply to a specific connection.
@@ -200,309 +161,256 @@ An override specifies the following fields:
 | `severity` | The severity level for this override. |
 | `enabled` | Whether the rule is enabled at this scope. |
 
-When evaluating a rule for a server, the alerter checks
-for a server-level override first. If none exists, the
-alerter checks the cluster that contains the server,
-then the group that contains the cluster. If no
-override exists at any level, the alerter uses the
-global default values.
+When evaluating a rule for a server, the alerter checks for a server-level
+override first. If none exists, the alerter checks the cluster that contains
+the server, then the group that contains the cluster. If no override exists at
+any level, the alerter uses the global default values.
 
 ### Override Evaluation Order
 
-The alerter evaluates thresholds using a strict
-precedence order for each server and database
-combination:
+The alerter evaluates thresholds using a strict precedence order for each
+server and database combination:
 
-1. The alerter checks for a server-level override
-   first.
-2. The alerter checks the cluster override if no
-   server override exists.
-3. The alerter checks the group override if no cluster
-   override exists.
-4. The alerter applies global defaults when no
-   overrides exist at any level.
+1. The alerter checks for a server-level override first.
+2. The alerter checks the cluster override if no server override exists.
+3. The alerter checks the group override if no cluster override exists.
+4. The alerter applies global defaults when no overrides exist at any level.
 
-A `NULL` database name in an override acts as a
-wildcard. The wildcard override matches any database on
-the server. A database-specific override takes
-precedence over a wildcard override at the same scope
-level.
+A `NULL` database name in an override acts as a wildcard. The wildcard override
+matches any database on the server. A database-specific override takes
+precedence over a wildcard override at the same scope level.
 
 ### Auto-Detected Clusters
 
-The system automatically detects cluster membership by
-analyzing replication topology. The alerter identifies
-clusters through Spock replication, binary replication,
-and logical replication connections between servers.
+The system automatically detects cluster membership by analyzing replication
+topology. The alerter identifies clusters through Spock replication, binary
+replication, and logical replication connections between servers.
 
-When the alerter detects that servers participate in
-the same replication topology, the system groups the
-servers into an auto-detected cluster. The auto-detected
-cluster and the parent group appear in the scope
-dropdown when a user edits overrides for any member
-server.
+When the alerter detects that servers participate in the same replication
+topology, the system groups the servers into an auto-detected cluster. The
+auto-detected cluster and the parent group appear in the scope dropdown when a
+user edits overrides for any member server.
 
 ### Editing Overrides from Alerts
 
-Users can edit an override directly from an alert
-instance. The edit button on an alert instance opens
-the Edit Override dialog for the associated rule and
+Users can edit an override directly from an alert instance. The edit button on
+an alert instance opens the Edit Override dialog for the associated rule and
 scope.
 
-The Edit Override dialog allows the user to adjust the
-threshold, operator, severity, and enabled state. The
-scope dropdown displays the available override levels:
-server, cluster, and group. The dialog pre-selects the
-scope that matches the alert's originating context.
+The Edit Override dialog allows the user to adjust the threshold, operator,
+severity, and enabled state. The scope dropdown displays the available override
+levels: server, cluster, and group. The dialog pre-selects the scope that
+matches the alert's originating context.
 
 ### Scope Disabling Logic
 
-The Edit Override dialog disables scope levels that
-would have no practical effect. Scopes above the
-highest existing override are disabled in the dropdown.
-For example, if a server-level override exists for a
-rule, the cluster and group scope options are disabled.
-Editing the cluster or group override would have no
-effect because the more specific server-level override
+The Edit Override dialog disables scope levels that would have no practical
+effect. Scopes above the highest existing override are disabled in the
+dropdown. For example, if a server-level override exists for a rule, the
+cluster and group scope options are disabled. Editing the cluster or group
+override would have no effect because the more specific server-level override
 takes precedence.
 
-This behavior prevents users from creating overrides
-that the alerter would never apply. The dialog displays
-a tooltip on disabled options to explain why the scope
-is unavailable.
+This behavior prevents users from creating overrides that the alerter would
+never apply. The dialog displays a tooltip on disabled options to explain why
+the scope is unavailable.
 
 ### Managing Overrides
 
-Overrides are managed through the Alert Overrides tab
-in the server, cluster, or group edit dialogs. The
-override panel shows all alert rules with their current
-effective settings. Rules without an override at the
-current level appear dimmed to indicate that the
-setting is inherited from a higher level or the global
-default.
+Overrides are managed through the Alert Overrides tab in the server, cluster,
+or group edit dialogs. The override panel shows all alert rules with their
+current effective settings. Rules without an override at the current level
+appear dimmed to indicate that the setting is inherited from a higher level or
+the global default.
 
 ## Enabling and Disabling Rules
 
-Rules can be enabled or disabled globally or at any
-level of the hierarchy. A disabled rule is not evaluated
-during threshold checks. You can disable built-in rules
-that do not apply to your environment or enable rules
-that require specific PostgreSQL extensions.
+Rules can be enabled or disabled globally or at any level of the hierarchy. A
+disabled rule is not evaluated during threshold checks. You can disable
+built-in rules that do not apply to your environment or enable rules that
+require specific PostgreSQL extensions.
 
-To disable a rule globally, set `default_enabled` to
-`false` in the rule definition. To disable a rule for
-a specific scope, create an override with `enabled` set
-to `false`.
+To disable a rule globally, set `default_enabled` to `false` in the rule
+definition. To disable a rule for a specific scope, create an override with
+`enabled` set to `false`.
 
 ## Creating Custom Rules
 
-Custom rules extend the built-in rule set with
-organization-specific monitoring requirements. Custom
-rules follow the same structure as built-in rules but
-have `is_built_in` set to `false`.
+Custom rules extend the built-in rule set with organization-specific monitoring
+requirements. Custom rules follow the same structure as built-in rules but have
+`is_built_in` set to `false`.
 
-When creating custom rules, consider the following
-guidelines:
+When creating custom rules, consider the following guidelines:
 
 - The metric must be collected by the collector.
-- The metric name must match the collector's metric
-  naming convention.
-- The threshold should reflect your organization's
-  operational requirements.
-- The severity should match the impact of the
-  condition.
+- The metric name must match the collector's metric naming convention.
+- The threshold should reflect your organization's operational requirements.
+- The severity should match the impact of the condition.
 
 ## Alert Lifecycle
 
-When a threshold has been violated on
-`threshold.trigger_count` consecutive metric samples
-(two by default), the alerter creates an alert with
-status `active`. A sample is one collection by the
-collector, so the evaluator reading the same sample again
-does not count. The alert remains active until one of the
-following occurs:
+When a threshold has been violated on `threshold.trigger_count` consecutive
+metric samples (two by default), the alerter creates an alert with status
+`active`. A sample is one collection by the collector, so the evaluator reading
+the same sample again does not count toward the total. The alert remains active
+until one of the following occurs:
 
-- The condition resolves and the alerter clears the
-  alert automatically.
+- The condition resolves and the alerter clears the alert automatically.
 - An operator acknowledges the alert manually.
 - An operator marks the alert as a false positive.
 
-The alerter updates the `metric_value` field of active
-alerts on each evaluation cycle. This update reflects
-the current value even if the threshold remains
-violated.
+The alerter updates the `metric_value` field of active alerts on each
+evaluation cycle. This update reflects the current value even if the threshold
+remains violated.
 
 ## Automatic Alert Clearing
 
-The alerter automatically clears threshold alerts when
-the triggering condition returns to normal. The alert
-cleaner worker runs every 30 seconds and re-evaluates
-active alerts. When a metric value no longer violates
-the threshold on `threshold.clear_count` consecutive
-metric samples (three by default), the alerter marks the
-alert as `cleared` and records the `cleared_at` timestamp.
-A sample that violates the threshold again starts the
-count afresh. The
-[alerter configuration](../getting-started/configuration/alerter.md)
-describes both options.
+The alerter automatically clears threshold alerts when the triggering condition
+returns to normal. The alert cleaner worker runs every 30 seconds and
+re-evaluates active alerts. When a metric value no longer violates the
+threshold on `threshold.clear_count` consecutive metric samples (three by
+default), the alerter marks the alert as `cleared` and records the `cleared_at`
+timestamp. A sample that violates the threshold again restarts the count. The
+[alerter configuration](../configuration/alerter.md) describes both options.
 
-Missing data is not treated as a resolved condition. Where
-a metric reports a value for every monitored connection,
-such as a CPU percentage or a cache hit ratio, a
-connection that stops returning a value has stopped
-reporting rather than recovered, so the alerter leaves the
-alert active and the `metric_staleness` rule reports the
-probe that stopped. Where a metric reports only whilst the
-condition holds, such as an inactive replication slot or a
-blocked session, the absence of a value is the recovery
-signal; each probe collection that returns no value counts
-as one sample towards `threshold.clear_count`, and the
-alerter clears the alert once enough have passed. With the
-default of three and the `pg_replication_slots` probe's
-default interval, an inactive replication slot alert
-clears ten to fifteen minutes after the slot recovers.
+The alerter does not treat missing data as a resolved condition. When a metric
+reports a value for every monitored connection, such as a CPU percentage or a
+cache hit ratio, a connection that stops returning a value has stopped
+reporting rather than recovered; the alerter leaves the alert active, and the
+`metric_staleness` rule reports the probe that stopped. When a metric reports
+only while the condition holds, such as an inactive replication slot or a
+blocked session, the absence of a value is the recovery signal. Each probe
+collection that returns no value counts as one sample toward
+`threshold.clear_count`, and the alerter clears the alert when enough samples
+have passed. With the default of three and the default interval of the
+`pg_replication_slots` probe, an inactive replication slot alert clears ten to
+fifteen minutes after the slot recovers.
 
-The `metric_staleness` rule is cleared on the same basis.
-A probe that has become unavailable, whether because the
-monitored server no longer offers the extension the probe
-reads or because the probe run timed out, keeps a
-staleness alert that has already fired for it; the alerter
-rewrites the alert description to report that collection
-has stopped and to name the reason the collector recorded,
-and leaves the alert title alone so that the alert stays
-recognisable in notification history. The alerter restores
-the evaluator's original wording once the probe collects
-again, so the clear notification and the stored history
-describe the recovery rather than the outage. A probe that
-an operator has disabled clears the alert, because that
-represents a deliberate change rather than a fault; the
-alerter restores the original wording on that path too,
-rebuilding it from the connection and probe configuration,
-so a cleared alert does not report that collection has
-stopped. Where the connection and its probe configuration
-have gone as well, there is nothing left to rebuild the
-wording from and the alert clears as it stands. The
-alerter logs whichever decision it takes at the normal log
-level, once when the decision changes rather than on every
-cleanup cycle.
+The alerter clears `metric_staleness` alerts on the same basis. A probe can
+become unavailable because the monitored server no longer offers the extension
+the probe reads or because the probe run timed out; in either case, a staleness
+alert that has already fired for the probe stays active. The alerter rewrites
+the alert description to report that collection has stopped and to name the
+reason the collector recorded, and leaves the alert title alone so that the
+alert stays recognizable in notification history. The alerter restores the
+evaluator's original wording when the probe collects again, so the clear
+notification and the stored history describe the recovery rather than the
+outage.
 
-This hold preserves an alert that is already active; it
-does not raise a new one. The staleness rule itself never
-fires for an unavailable probe, because an unavailable
-probe is the normal steady state on a server that lacks
-the extension a probe reads, and firing on one would leave
-a permanent alert against every such probe. A probe that
-stops collecting before its staleness ratio reaches the
-rule's threshold is instead reported by the
-`probe_unavailable` rule described above. The seeded
-staleness rule shows why the second rule is needed: the
-staleness rule fires on a ratio above 3, and a probe that
-runs every 60 seconds is still at a ratio of about 1.0 at
-the moment the collector records the probe as unavailable.
+When an operator disables a probe, the alerter clears the staleness alert,
+because disabling a probe represents a deliberate change rather than a fault.
+The alerter restores the original wording on that path too, rebuilding it from
+the connection and probe configuration, so a cleared alert does not report that
+collection has stopped. When the connection and its probe configuration have
+also gone, nothing remains to rebuild the wording from, and the alert clears as
+it stands. The alerter logs whichever decision it takes at the normal log
+level, once when the decision changes rather than on every cleanup cycle.
 
-The alert cleaner checks a `probe_unavailable` alert
-against the same probe availability data the evaluator
-reads, rather than against the staleness ratio, so the two
-probe-scoped rules resolve independently of each other.
+This hold preserves an alert that is already active; it does not raise a new
+one. The staleness rule never fires for an unavailable probe, because an
+unavailable probe is the normal steady state on a server that lacks the
+extension a probe reads, and firing on one would leave a permanent alert
+against every such probe. The `probe_unavailable` rule instead reports a probe
+that stops collecting before its staleness ratio reaches the rule's threshold.
+The seeded staleness rule shows why the second rule is needed; the staleness
+rule fires on a ratio above 3, and a probe that runs every 60 seconds is still
+at a ratio of about 1.0 at the moment the collector records the probe as
+unavailable.
+
+The alert cleaner checks a `probe_unavailable` alert against the same probe
+availability data that the evaluator reads, rather than against the staleness
+ratio, so the two probe-scoped rules resolve independently of each other.
 
 ## Alerts on a Server You Stop Monitoring
 
-Turning off monitoring for a server closes its alerts.
-On its next cleanup cycle the alerter clears every active
-alert on that server, of every type, and rewrites each
-alert description to record that it was closed because
-monitoring of the server was turned off rather than
-because the condition it reports ended. The alerts then
-age out under the normal retention period.
+Turning off monitoring for a server closes its alerts. On its next cleanup
+cycle, the alerter clears every active alert on that server, of every type, and
+rewrites each alert description to record that the alerter closed the alert
+because an operator turned off monitoring of the server, not because the
+reported condition ended. The alerts then age out under the normal retention
+period.
 
-No clear notifications are sent for those alerts, because
-nothing observed the conditions resolve and an operator
-who has just stopped monitoring a server does not need a
-burst of messages announcing them as fixed. The alerter
-logs each alert it closes this way at the normal log
-level.
+The alerter sends no clear notifications for those alerts, because nothing
+observed the conditions resolve, and an operator who has just stopped
+monitoring a server does not need a burst of messages announcing the alerts as
+fixed. The alerter logs each alert it closes this way at the normal log level.
 
-Turning monitoring back on does not reopen the closed
-alerts. Any condition that still holds raises a fresh
-alert on the next evaluation cycle, subject to the usual
-re-raise cooldown.
+Turning monitoring back on does not reopen the closed alerts. Any condition
+that still holds raises a fresh alert on the next evaluation cycle, subject to
+the usual re-raise cooldown.
 
 ## Anomaly Alert Clearing
 
-The alerter also clears anomaly alerts automatically.
-An anomaly alert has no rule threshold, so the anomaly
-detector re-scores the metric behind each active anomaly
-alert on every tier 1 evaluation, using the same baseline
-and sensitivity that raised the alert. The alerter clears
-the alert and sends the usual clear notification once
-`anomaly.tier1.clear_count` consecutive samples of the
-metric have scored inside the sensitivity band. Only a
-newly collected sample counts: tier 1 evaluates every 60
-seconds by default whilst most probes collect every 300
-to 600 seconds, and an evaluation that re-scores a sample
-already counted neither advances nor restarts the count.
-The default of 3 therefore clears an alert on the third
-in-band sample, about ten minutes after the first for a
-probe that collects every 300 seconds.
-A value under the metric's `min_value` floor in
-`anomaly.tier1.metric_floors` counts as inside the band,
-because the detector never treats such a value as
-anomalous.
+The alerter also clears anomaly alerts automatically. An anomaly alert has no
+rule threshold, so the anomaly detector re-scores the metric behind each active
+anomaly alert on every tier 1 evaluation, using the same baseline and
+sensitivity that raised the alert. The alerter clears the alert and sends the
+usual clear notification when `anomaly.tier1.clear_count` consecutive samples
+of the metric have scored inside the sensitivity band.
 
-Whilst the value stays outside the band, the alerter
-updates the alert's metric value, anomaly score and last
-updated time, and raises the severity when the deviation
-grows; the severity never falls, and the description
-keeps the values at which the alert fired. A cached AI
-analysis is discarded when the metric value changes.
+Only a newly collected sample counts toward the total. Tier 1 evaluates every
+60 seconds by default, while most probes collect every 300 to 600 seconds; an
+evaluation that re-scores a sample already counted neither advances nor
+restarts the count. The default of 3 therefore clears an alert on the third
+in-band sample, about ten minutes after the first for a probe that collects
+every 300 seconds. A value under the metric's `min_value` floor in
+`anomaly.tier1.metric_floors` counts as inside the band, because the detector
+never treats such a value as anomalous.
 
-The alerter holds an anomaly alert open on any evaluation
-in which the metric or connection does not report, keeping
-the count, since no sample was missed. Metrics that report
-only whilst their condition holds, such as blocked sessions
-or long-running transactions, are the exception: for these
-a missing value means the condition has passed, so each new
-collection by the metric's probe that reports no value
-counts as an in-band sample, provided the probe is still
-collecting for the connection. The alerter also
-holds the alert open, and restarts its count, on a sample
-outside the band, when the baseline is not usable, or
-whilst a blackout covers the connection or database. The
-count is held in memory, so the count also restarts when the alerter
-restarts or when tier 1 is disabled. The alerter does not
-clear acknowledged anomaly alerts this way, and leaves
-them to the re-evaluation worker. Recovery stops whenever
-anomaly detection is disabled, including when the alerter
-disables it because no enabled tier has a usable LLM
+While the value stays outside the band, the alerter updates the alert's metric
+value, anomaly score, and last updated time, and raises the severity when the
+deviation grows. The severity never falls, and the description keeps the values
+at which the alert fired. The alerter discards a cached AI analysis when the
+metric value changes.
+
+The alerter holds an anomaly alert open, and keeps the count, on any evaluation
+in which the metric or connection does not report, since the alerter missed no
+sample. Metrics that report only while their condition holds, such as blocked
+sessions or long-running transactions, are the exception. For these metrics, a
+missing value means the condition has passed, so each new collection by the
+metric's probe that reports no value counts as an in-band sample, provided the
+probe is still collecting for the connection.
+
+The alerter also holds the alert open and restarts the count in the following
+cases:
+
+- A sample falls outside the band.
+- The baseline is not usable.
+- A blackout covers the connection or database.
+
+The alerter holds the count in memory, so the count also restarts when the
+alerter restarts or when an administrator disables tier 1. The alerter does not
+clear acknowledged anomaly alerts this way and leaves them to the re-evaluation
+worker. Recovery stops whenever anomaly detection is disabled, including when
+the alerter disables anomaly detection because no enabled tier has a usable LLM
 provider; recovery itself makes no embedding or LLM call.
 
-On upgrade, the alerter closes any active anomaly alert it
-can no longer re-score, without a clear notification: an
-alert on a metric that anomaly detection no longer covers,
-and an alert with no database on a metric measured per
-database, as earlier releases raised for the cache hit
-ratio, deadlock and temporary file metrics. The alert's
-description then begins `Closed without re-evaluation:`
-and gives the reason.
+On upgrade, the alerter closes any active anomaly alert that it can no longer
+re-score, without sending a clear notification. The alerter closes the
+following anomaly alerts this way:
 
-After an anomaly alert clears, the alerter raises no new
-anomaly alert for the same metric, connection and
-database for five minutes, so a value at the edge of the
-band does not raise and clear an alert repeatedly.
+- An alert on a metric that anomaly detection no longer covers is closed.
+- An alert with no database on a metric measured per database is closed;
+  earlier releases raised such alerts for the cache hit ratio, deadlock, and
+  temporary file metrics.
+
+The description of each closed alert begins `Closed without re-evaluation:` and
+gives the reason.
+
+After an anomaly alert clears, the alerter raises no new anomaly alert for the
+same metric, connection, and database for five minutes, so a value at the edge
+of the band does not raise and clear an alert repeatedly.
 
 ## Blackout Interaction
 
-During an active blackout period, the alerter
-suppresses new alerts for the affected connection or
-database. Existing active alerts are not cleared during
-a blackout; the blackout only prevents new alerts from
-being created, and holds an anomaly alert open until the
-blackout ends.
+During an active blackout period, the alerter suppresses new alerts for the
+affected connection or database. Existing active alerts are not cleared during
+a blackout; the blackout only prevents new alerts from being created, and holds
+an anomaly alert open until the blackout ends.
 
 ## Example Rule Configuration
 
-In the following example, a rule monitors connection
-utilization:
+In the following example, a rule monitors connection utilization:
 
 ```yaml
 name: High Connection Utilization
@@ -517,9 +425,8 @@ default_severity: warning
 default_enabled: true
 ```
 
-In the following example, a group-level override
-adjusts the threshold for all servers in a development
-group:
+In the following example, a group-level override adjusts the threshold for all
+servers in a development group:
 
 ```yaml
 rule_id: 1
@@ -531,9 +438,8 @@ severity: info
 enabled: true
 ```
 
-In the following example, a server-level override
-further customizes the threshold for one production
-server with higher connection requirements:
+In the following example, a server-level override further customizes the
+threshold for one production server with higher connection requirements:
 
 ```yaml
 rule_id: 1
@@ -544,10 +450,3 @@ threshold: 90.0
 severity: warning
 enabled: true
 ```
-
-## Related Documentation
-
-- [Notification Channels](notification-channels.md)
-  covers alert delivery configuration.
-- [Probes](probes.md) describes the data collection
-  that feeds alert rules.

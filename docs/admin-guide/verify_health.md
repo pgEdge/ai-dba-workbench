@@ -1,7 +1,7 @@
 # Verifying the Health of a Component
 
-After installing the Workbench and starting all components, verify the
-health of each component with the following commands.
+After installing the Workbench and starting all components, verify the health
+of each component with the following commands.
 
 ## Checking the Collector
 
@@ -61,8 +61,8 @@ confirm the alerter is running:
 sudo systemctl status pgedge-ai-dba-alerter
 ```
 
-A healthy alerter shows an active status and regular baseline recalculation
-on its hourly schedule. The following example shows the expected output:
+A healthy alerter shows an active status and regular baseline recalculation on
+its hourly schedule. The following example shows the expected output:
 
 ```text
 pgedge-ai-dba-alerter.service - pgEdge AI DBA Workbench Alerter

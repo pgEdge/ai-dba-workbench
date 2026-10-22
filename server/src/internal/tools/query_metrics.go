@@ -25,8 +25,9 @@ import (
 // QueryMetricsTool creates the query_metrics tool for querying collected metrics.
 // The rbacChecker is consulted before any datastore read so that callers cannot
 // query metrics for connections they are not permitted to see. A nil checker
-// denies every connection (issue #561).
-func QueryMetricsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker) Tool {
+// denies every connection (issue #561). A denied connection is audited
+// through record as metrics.read (issue #706).
+func QueryMetricsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, record DenialRecorder) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "query_metrics",
@@ -170,8 +171,8 @@ To manage response sizes:
 				return mcp.NewToolError("Invalid probe name. Probe names must contain only letters, numbers, and underscores.")
 			}
 
-			connectionID, err := parseIntArg(args, "connection_id")
-			if err != nil {
+			connectionID, valid := connectionIDValue(args["connection_id"])
+			if !valid {
 				return mcp.NewToolError("Missing or invalid 'connection_id' parameter. If you haven't selected a database connection, use list_connections to find available connection IDs, then specify connection_id explicitly.")
 			}
 
@@ -181,6 +182,8 @@ To manage response sizes:
 			// or names the caller cannot see.
 			canAccess, _ := rbacChecker.CanAccessConnection(ctx, connectionID)
 			if !canAccess {
+				record.deny(ctx, deniedActionMetricsRead,
+					connectionDenialTarget(connectionID), connectionAccessDenied)
 				return mcp.NewToolError("connection not found or not accessible")
 			}
 
@@ -188,7 +191,7 @@ To manage response sizes:
 			// On missing or error return a generic message; never echo the
 			// list of valid IDs/names, which would leak visibility.
 			var connName string
-			err = pool.QueryRow(ctx, "SELECT name FROM connections WHERE id = $1 AND deleted_at IS NULL", connectionID).Scan(&connName)
+			err := pool.QueryRow(ctx, "SELECT name FROM connections WHERE id = $1 AND deleted_at IS NULL", connectionID).Scan(&connName)
 			if err != nil {
 				return mcp.NewToolError("connection not found or not accessible")
 			}

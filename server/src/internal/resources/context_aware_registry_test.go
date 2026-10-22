@@ -735,3 +735,42 @@ func TestGetClient_SuperuserBypassesRBAC(t *testing.T) {
 		t.Error("Expected session to still exist for superuser")
 	}
 }
+
+// TestContextAwareRegistry_SetConnectionDenied checks that the hook
+// reaches a client resolver that resolves sessions, and that a registry
+// with no resolver, or one with no sessions, is left unchanged rather
+// than panicking (issue #706).
+func TestContextAwareRegistry_SetConnectionDenied(t *testing.T) {
+	cfg := &conf.Config{}
+	var called []int
+	denied := func(_ context.Context, id int) { called = append(called, id) }
+
+	// No client manager means no resolver at all.
+	NewContextAwareRegistry(nil, cfg, nil, nil).SetConnectionDenied(denied)
+
+	cm := database.NewClientManager(nil)
+	defer cm.CloseAll()
+
+	// A resolver without sessions keeps no hook.
+	plain := NewContextAwareRegistry(cm, cfg, nil, nil)
+	plain.SetConnectionDenied(denied)
+	if plain.clientResolver.Denied != nil {
+		t.Error("Expected no hook on a resolver without sessions")
+	}
+
+	authStore, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("NewAuthStore: %v", err)
+	}
+	defer authStore.Close()
+	wired := NewContextAwareRegistry(cm, cfg, authStore,
+		database.NewTestDatastore(nil))
+	wired.SetConnectionDenied(denied)
+	if wired.clientResolver.Denied == nil {
+		t.Fatal("Expected the hook on a resolver with sessions")
+	}
+	wired.clientResolver.Denied(context.Background(), 7)
+	if len(called) != 1 || called[0] != 7 {
+		t.Errorf("Expected the hook called with 7, got %v", called)
+	}
+}

@@ -134,11 +134,11 @@ type timelineRequest struct {
 // for connections they have access to. The visibilityLister argument may
 // be nil in unit tests; auth.RBACChecker.VisibleConnectionIDs tolerates a
 // nil lister by falling back to group/token-granted IDs only.
-func GetTimelineEventsTool(datastore *database.Datastore, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister) Tool {
+func GetTimelineEventsTool(datastore *database.Datastore, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister, record DenialRecorder) Tool {
 	return Tool{
 		Definition: timelineToolDefinition(),
 		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
-			return runTimelineHandler(args, datastore, rbacChecker, visibilityLister)
+			return runTimelineHandler(args, datastore, rbacChecker, visibilityLister, record)
 		},
 	}
 }
@@ -201,6 +201,7 @@ func runTimelineHandler(
 	datastore *database.Datastore,
 	rbacChecker *auth.RBACChecker,
 	visibilityLister auth.ConnectionVisibilityLister,
+	record DenialRecorder,
 ) (mcp.ToolResponse, error) {
 	if datastore == nil {
 		return mcp.NewToolError("Datastore not configured. The get_timeline_events tool requires a datastore connection.")
@@ -211,7 +212,7 @@ func runTimelineHandler(
 		ctx = context.Background()
 	}
 
-	req, earlyResp, err := buildTimelineRequest(ctx, args, datastore, rbacChecker, visibilityLister)
+	req, earlyResp, err := buildTimelineRequest(ctx, args, datastore, rbacChecker, visibilityLister, record)
 	if earlyResp != nil {
 		return *earlyResp, err
 	}
@@ -237,10 +238,11 @@ func buildTimelineRequest(
 	datastore *database.Datastore,
 	rbacChecker *auth.RBACChecker,
 	visibilityLister auth.ConnectionVisibilityLister,
+	record DenialRecorder,
 ) (timelineRequest, *mcp.ToolResponse, error) {
 	var req timelineRequest
 
-	single, connID, connName, resp, err := resolveTimelineConnection(ctx, args, datastore.GetPool(), rbacChecker, visibilityLister)
+	single, connID, connName, resp, err := resolveTimelineConnection(ctx, args, datastore.GetPool(), rbacChecker, visibilityLister, record)
 	if resp != nil {
 		return req, resp, err
 	}
@@ -311,20 +313,21 @@ func resolveTimelineConnection(
 	pool *pgxpool.Pool,
 	rbacChecker *auth.RBACChecker,
 	visibilityLister auth.ConnectionVisibilityLister,
+	record DenialRecorder,
 ) (bool, int, string, *mcp.ToolResponse, error) {
-	if _, hasConnID := args["connection_id"]; !hasConnID {
+	if !hasConnectionID(args) {
 		return false, 0, "", nil, nil
 	}
 
-	cid, err := parseIntArg(args, "connection_id")
-	if err != nil {
-		resp, rerr := mcp.NewToolError("Invalid 'connection_id' parameter: must be an integer. Use list_connections to find available connection IDs.")
+	cid, valid := connectionIDValue(args["connection_id"])
+	if !valid {
+		resp, rerr := mcp.NewToolError("Invalid 'connection_id' parameter: must be a positive integer. Use list_connections to find available connection IDs.")
 		return false, 0, "", &resp, rerr
 	}
 
 	// RBAC: check access before looking the connection up, so missing
 	// and forbidden IDs give the same response.
-	connName, resp := resolveAccessibleConnection(ctx, pool, rbacChecker, visibilityLister, cid)
+	connName, resp := resolveAccessibleConnection(ctx, pool, rbacChecker, visibilityLister, record, deniedActionConnectionRead, cid)
 	if resp != nil {
 		return false, 0, "", resp, nil
 	}

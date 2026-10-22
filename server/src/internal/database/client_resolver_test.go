@@ -199,6 +199,38 @@ func TestClientResolver_ResolveClient_SessionAccessDenied_ClearsSession(t *testi
 	}
 }
 
+// TestClientResolver_ResolveClient_SessionAccessDenied_CallsDenied checks
+// that the Denied hook is told which selected connection was refused,
+// and is not called when access is granted.
+func TestClientResolver_ResolveClient_SessionAccessDenied_CallsDenied(t *testing.T) {
+	var denied []int
+	resolver := &ClientResolver{
+		TokenExtractor: func(ctx context.Context) string { return "test-token-hash" },
+		Sessions: &mockSessionProvider{
+			session: &ConnectionSession{ConnectionID: 42},
+		},
+		Access:   &mockAccessChecker{canAccess: false},
+		ConnInfo: &mockConnInfoProvider{},
+		Denied: func(_ context.Context, connectionID int) {
+			denied = append(denied, connectionID)
+		},
+	}
+
+	if _, err := resolver.ResolveClient(context.Background()); err == nil {
+		t.Fatal("expected error when access denied")
+	}
+	if len(denied) != 1 || denied[0] != 42 {
+		t.Errorf("expected Denied called once with 42, got %v", denied)
+	}
+
+	denied = nil
+	resolver.Access = &mockAccessChecker{canAccess: true}
+	resolver.ResolveClient(context.Background()) //nolint:errcheck // only the hook matters here
+	if len(denied) != 0 {
+		t.Errorf("expected Denied not called when access is granted, got %v", denied)
+	}
+}
+
 func TestClientResolver_ResolveClient_GetConnectionError(t *testing.T) {
 	connID := 42
 	sessions := &mockSessionProvider{

@@ -926,3 +926,21 @@ func TestDatastoreBuilderDoesNotMutateRequest(t *testing.T) {
 		t.Errorf("request mutated: %+v", req)
 	}
 }
+
+// TestParseDatastoreRequestNullConnections checks that a null
+// connection_ids, or a null connection_id, which several LLM providers
+// send for an omitted parameter, is treated as absent rather than
+// refused, whilst a connection_id with a value is still refused as
+// unknown (issue #706).
+func TestParseDatastoreRequestNullConnections(t *testing.T) {
+	req := mustParse(t, map[string]any{"source": "alerts",
+		"connection_ids": nil, "connection_id": nil})
+	if req.ConnectionIDs != nil {
+		t.Errorf("Expected no connection_ids, got %v", req.ConnectionIDs)
+	}
+	if _, err := parseDatastoreRequest(map[string]any{"source": "alerts",
+		"connection_id": float64(3)}); err == nil ||
+		!strings.Contains(err.Error(), "connection_ids") {
+		t.Errorf("Expected a valued connection_id refused, got %v", err)
+	}
+}

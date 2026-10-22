@@ -48,15 +48,24 @@ const maxConnectionSuggestions = 20
 // A nil pool skips the name lookup and the suggestions, returning an
 // empty name once access is granted. A non-nil response means the caller
 // should return it immediately.
+//
+// A denied check is audited through record as action on the connection
+// (issue #706); a connection that is accessible but missing is not a
+// refusal and is not recorded. The response is the same either way.
 func resolveAccessibleConnection(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	rbacChecker *auth.RBACChecker,
 	visibilityLister auth.ConnectionVisibilityLister,
+	record DenialRecorder,
+	action string,
 	connectionID int,
 ) (string, *mcp.ToolResponse) {
 	canAccess, _ := rbacChecker.CanAccessConnection(ctx, connectionID)
-	if canAccess {
+	if !canAccess {
+		record.deny(ctx, action, connectionDenialTarget(connectionID),
+			connectionAccessDenied)
+	} else {
 		if pool == nil {
 			return "", nil
 		}

@@ -109,7 +109,7 @@ issue', true)`, clearedID)
 
 	conn := float64(connID)
 	empty := float64(emptyID)
-	tool := GetAlertHistoryTool(pool, testRBACChecker(t), sharedLister(connID))
+	tool := GetAlertHistoryTool(pool, testRBACChecker(t), sharedLister(connID), nil)
 	runToolCases(t, tool, []toolCase{
 		{name: "single connection rows", args: map[string]any{"connection_id": conn},
 			want: "(2 rows)"},

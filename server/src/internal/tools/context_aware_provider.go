@@ -41,6 +41,7 @@ type ContextAwareProvider struct {
 	memoryStore    *memory.Store            // Memory store for chat memory persistence
 	resolver       *ConnectionResolver      // Resolver for explicit connection_id in tool args
 	clientResolver *database.ClientResolver // Resolver for per-token database clients
+	record         DenialRecorder           // Audits refused tool calls; nil without an auth store
 
 	// Cache of registries per client to avoid re-creating tools on every Execute()
 	mu               sync.RWMutex
@@ -112,32 +113,32 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("describe_datastore", DescribeDatastoreTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_metrics") {
-			registry.Register("query_metrics", QueryMetricsTool(datastorePool, p.rbacChecker))
+			registry.Register("query_metrics", QueryMetricsTool(datastorePool, p.rbacChecker, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_connections") {
 			registry.Register("list_connections", ListConnectionsTool(datastorePool, p.rbacChecker, visibilityLister))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
-			registry.Register("get_alert_history", GetAlertHistoryTool(datastorePool, p.rbacChecker, visibilityLister))
+			registry.Register("get_alert_history", GetAlertHistoryTool(datastorePool, p.rbacChecker, visibilityLister, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
-			registry.Register("get_alert_rules", GetAlertRulesTool(datastorePool, p.rbacChecker))
+			registry.Register("get_alert_rules", GetAlertRulesTool(datastorePool, p.rbacChecker, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
-			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool, p.rbacChecker, visibilityLister))
+			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool, p.rbacChecker, visibilityLister, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
-			registry.Register("query_datastore", QueryDatastoreTool(datastorePool, p.rbacChecker, visibilityLister))
+			registry.Register("query_datastore", QueryDatastoreTool(datastorePool, p.rbacChecker, visibilityLister, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
-			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool, p.rbacChecker, visibilityLister))
+			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool, p.rbacChecker, visibilityLister, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_timeline_events") {
-			registry.Register("get_timeline_events", GetTimelineEventsTool(p.datastore, p.rbacChecker, visibilityLister))
+			registry.Register("get_timeline_events", GetTimelineEventsTool(p.datastore, p.rbacChecker, visibilityLister, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("store_memory") && p.memoryStore != nil {
 			registry.Register("store_memory", StoreMemoryTool(p.memoryStore, p.cfg, p.rbacChecker,
-				NewDenialRecorder(p.authStore)))
+				p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("recall_memories") && p.memoryStore != nil {
 			registry.Register("recall_memories", RecallMemoriesTool(p.memoryStore, p.cfg))
@@ -159,28 +160,28 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("describe_datastore", DescribeDatastoreTool(nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_metrics") {
-			registry.Register("query_metrics", QueryMetricsTool(nil, p.rbacChecker))
+			registry.Register("query_metrics", QueryMetricsTool(nil, p.rbacChecker, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_connections") {
 			registry.Register("list_connections", ListConnectionsTool(nil, p.rbacChecker, nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
-			registry.Register("get_alert_history", GetAlertHistoryTool(nil, p.rbacChecker, nil))
+			registry.Register("get_alert_history", GetAlertHistoryTool(nil, p.rbacChecker, nil, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
-			registry.Register("get_alert_rules", GetAlertRulesTool(nil, p.rbacChecker))
+			registry.Register("get_alert_rules", GetAlertRulesTool(nil, p.rbacChecker, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
-			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil, p.rbacChecker, nil))
+			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil, p.rbacChecker, nil, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
-			registry.Register("query_datastore", QueryDatastoreTool(nil, p.rbacChecker, nil))
+			registry.Register("query_datastore", QueryDatastoreTool(nil, p.rbacChecker, nil, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
-			registry.Register("get_blackouts", GetBlackoutsTool(nil, p.rbacChecker, nil))
+			registry.Register("get_blackouts", GetBlackoutsTool(nil, p.rbacChecker, nil, p.record))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_timeline_events") {
-			registry.Register("get_timeline_events", GetTimelineEventsTool(nil, p.rbacChecker, nil))
+			registry.Register("get_timeline_events", GetTimelineEventsTool(nil, p.rbacChecker, nil, p.record))
 		}
 	}
 }
@@ -211,9 +212,11 @@ func (p *ContextAwareProvider) registerDatabaseTools(registry *Registry, client 
 // NewContextAwareProvider creates a new context-aware tool provider
 func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg *resources.ContextAwareRegistry, fallbackClient *database.Client, cfg *config.Config, authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, datastore *database.Datastore) *ContextAwareProvider {
 	rbacChecker := auth.NewRBACCheckerForDatastore(authStore, datastore)
+	record := NewDenialRecorder(authStore)
 	var resolver *ConnectionResolver
 	if clientManager != nil && datastore != nil {
-		resolver = NewConnectionResolver(clientManager, datastore, rbacChecker)
+		resolver = NewConnectionResolver(clientManager, datastore, rbacChecker,
+			record)
 	}
 
 	// Build the ClientResolver for per-token database client resolution
@@ -228,7 +231,11 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 			clientResolver.Sessions = &authSessionAdapter{store: authStore}
 			clientResolver.Access = rbacChecker
 			clientResolver.ConnInfo = datastore
+			clientResolver.Denied = sessionConnectionDenied(record)
 		}
+	}
+	if resourceReg != nil {
+		resourceReg.SetConnectionDenied(sessionConnectionDenied(record))
 	}
 
 	provider := &ContextAwareProvider{
@@ -243,6 +250,7 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 		rbacChecker:      rbacChecker,
 		resolver:         resolver,
 		clientResolver:   clientResolver,
+		record:           record,
 		clientRegistries: make(map[*database.Client]*Registry),
 		hiddenRegistry:   NewRegistry(),
 	}
@@ -333,6 +341,32 @@ func (p *ContextAwareProvider) canAccessTool(ctx context.Context, name string) b
 	}
 	companion, ok := rbacCompanionTools[name]
 	return ok && p.rbacChecker.CanAccessMCPItem(ctx, companion)
+}
+
+// toolDenialTarget names a refused tool as a denial target: tools/ and
+// the name the registry holds for a registered tool, or
+// unmatchedToolTarget for any other name, so that only the server's
+// own tool names, never the caller's text, reach the audit log.
+func (p *ContextAwareProvider) toolDenialTarget(name string) string {
+	if tool, ok := p.baseRegistry.Get(name); ok {
+		return "tools/" + tool.Definition.Name
+	}
+	return unmatchedToolTarget
+}
+
+// sessionConnectionDenied returns the hook the client resolver calls
+// when a token's selected connection is no longer accessible, which
+// audits the refusal as a read of that connection, as REST audits a
+// read of a current connection whose grant has gone (issue #675). It
+// returns nil for a nil recorder.
+func sessionConnectionDenied(record DenialRecorder) func(context.Context, int) {
+	if record == nil {
+		return nil
+	}
+	return func(ctx context.Context, connectionID int) {
+		record(ctx, deniedActionConnectionRead,
+			connectionDenialTarget(connectionID), connectionAccessDenied)
+	}
 }
 
 // ListForContext returns tool definitions filtered by the user's RBAC privileges
@@ -469,6 +503,8 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 	// This check applies even for tools that are enabled in config
 	// RBAC-exempt tools bypass this check (connection RBAC still applies inside the handler)
 	if !p.canAccessTool(ctx, name) {
+		p.record.deny(ctx, deniedActionToolCall, p.toolDenialTarget(name),
+			toolAccessDenied)
 		return logAndReturn(mcp.ToolResponse{
 			Content: []mcp.ContentItem{
 				{
@@ -510,7 +546,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 			"query_metrics": true,
 		}
 		if connectionIDTools[name] {
-			if _, hasConnID := args["connection_id"]; !hasConnID && p.authStore != nil {
+			if !hasConnectionID(args) && p.authStore != nil {
 				if tokenHash != "" {
 					session, err := p.authStore.GetConnectionSession(tokenHash)
 					if err == nil && session != nil {
@@ -529,44 +565,43 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		return logAndReturn(response, err)
 	}
 
+	// When a non-null connection_id is in args, the ConnectionResolver inside
+	// each tool handler resolves the connection independently and does
+	// not need the per-session client, so the base registry, whose
+	// database tools have a nil fallback client, runs the call. Resolving
+	// the session client first would audit a refusal of the selected
+	// connection, which the caller did not name.
+	if parseConnectionArgs(args).HasConnID {
+		response, err := p.baseRegistry.Execute(ctx, name, args)
+		return logAndReturn(response, err)
+	}
+
 	// Get the appropriate database client for this request
 	dbClient, err := p.getClient(ctx)
 	if err != nil {
-		// When connection_id is present in args, the ConnectionResolver inside
-		// each tool handler resolves the connection independently - it does not
-		// need the per-session fallback client. Fall through to baseRegistry so
-		// the resolver gets a chance to run.
-		ca := parseConnectionArgs(args)
-		if !ca.HasConnID {
-			// Extract the root cause error for cleaner display
-			rootErr := err
-			for {
-				if unwrapped := errors.Unwrap(rootErr); unwrapped != nil {
-					rootErr = unwrapped
-				} else {
-					break
-				}
+		// Extract the root cause error for cleaner display
+		rootErr := err
+		for {
+			if unwrapped := errors.Unwrap(rootErr); unwrapped != nil {
+				rootErr = unwrapped
+			} else {
+				break
 			}
-
-			// Log the full error chain for debugging
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get database client for tool '%s': %v\n", name, err)
-
-			// Show the root cause to the client for actionable feedback
-			return logAndReturn(mcp.ToolResponse{
-				Content: []mcp.ContentItem{
-					{
-						Type: "text",
-						Text: fmt.Sprintf("Database connection error: %v", rootErr),
-					},
-				},
-				IsError: true,
-			}, nil) // Don't return error, just error response
 		}
 
-		// connection_id is present - use baseRegistry which has database tools
-		// registered with nil fallback client; the resolver handles everything
-		response, err := p.baseRegistry.Execute(ctx, name, args)
-		return logAndReturn(response, err)
+		// Log the full error chain for debugging
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to get database client for tool '%s': %v\n", name, err)
+
+		// Show the root cause to the client for actionable feedback
+		return logAndReturn(mcp.ToolResponse{
+			Content: []mcp.ContentItem{
+				{
+					Type: "text",
+					Text: fmt.Sprintf("Database connection error: %v", rootErr),
+				},
+			},
+			IsError: true,
+		}, nil) // Don't return error, just error response
 	}
 
 	// Get the cached registry for this client (or create if first use)

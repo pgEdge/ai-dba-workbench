@@ -27,7 +27,7 @@ import (
 // the caller may see. It may be nil in unit tests or when no datastore is
 // configured; auth.RBACChecker.VisibleConnectionIDs tolerates a nil lister
 // by falling back to group/token-granted IDs only.
-func GetAlertHistoryTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister) Tool {
+func GetAlertHistoryTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister, record DenialRecorder) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "get_alert_history",
@@ -167,17 +167,17 @@ Returns TSV data with:
 			singleConnection := false
 			var connectionID int
 			var connName string
-			if _, hasConnID := args["connection_id"]; hasConnID {
-				var err error
-				connectionID, err = parseIntArg(args, "connection_id")
-				if err != nil {
-					return mcp.NewToolError("Invalid 'connection_id' parameter: must be an integer. Use list_connections to find available connection IDs.")
+			if hasConnectionID(args) {
+				var valid bool
+				connectionID, valid = connectionIDValue(args["connection_id"])
+				if !valid {
+					return mcp.NewToolError("Invalid 'connection_id' parameter: must be a positive integer. Use list_connections to find available connection IDs.")
 				}
 				singleConnection = true
 
 				// RBAC: check access before looking the connection up, so
 				// missing and forbidden IDs give the same response.
-				name, resp := resolveAccessibleConnection(ctx, pool, rbacChecker, visibilityLister, connectionID)
+				name, resp := resolveAccessibleConnection(ctx, pool, rbacChecker, visibilityLister, record, deniedActionConnectionRead, connectionID)
 				if resp != nil {
 					return *resp, nil
 				}

@@ -124,7 +124,7 @@ func TestGetAlertHistoryTool_RBAC_NoAccessDeniesEmptyResult(t *testing.T) {
 	defer pool.Close()
 
 	rbac := auth.NewRBACChecker(store)
-	tool := GetAlertHistoryTool(pool, rbac, lister)
+	tool := GetAlertHistoryTool(pool, rbac, lister, nil)
 
 	ctx := nonSuperuserContext(userID, "bob")
 	resp, err := tool.Handler(map[string]any{"__context": ctx})
@@ -169,7 +169,7 @@ func TestGetMetricBaselinesTool_RBAC_NoAccessDeniesEmptyResult(t *testing.T) {
 	defer pool.Close()
 
 	rbac := auth.NewRBACChecker(store)
-	tool := GetMetricBaselinesTool(pool, rbac, lister)
+	tool := GetMetricBaselinesTool(pool, rbac, lister, nil)
 
 	ctx := nonSuperuserContext(userID, "bob")
 	resp, err := tool.Handler(map[string]any{"__context": ctx})
@@ -225,7 +225,7 @@ func TestQueryMetricsTool_RBAC_DeniesUnsharedConnection(t *testing.T) {
 		}
 		return false, "", nil
 	})
-	tool := QueryMetricsTool(pool, rbac)
+	tool := QueryMetricsTool(pool, rbac, nil)
 
 	ctx := nonSuperuserContext(userID, "bob")
 	resp, err := tool.Handler(map[string]any{
@@ -279,7 +279,7 @@ func TestGetAlertRulesTool_RBAC_DeniesUnsharedConnection(t *testing.T) {
 		}
 		return false, "", nil
 	})
-	tool := GetAlertRulesTool(pool, rbac)
+	tool := GetAlertRulesTool(pool, rbac, nil)
 
 	ctx := nonSuperuserContext(userID, "bob")
 	resp, err := tool.Handler(map[string]any{
@@ -340,7 +340,7 @@ func TestGetBlackoutsTool_RBAC_NoAccessDeniesEmptyResult(t *testing.T) {
 	defer pool.Close()
 
 	rbac := auth.NewRBACChecker(store)
-	tool := GetBlackoutsTool(pool, rbac, lister)
+	tool := GetBlackoutsTool(pool, rbac, lister, nil)
 
 	ctx := nonSuperuserContext(userID, "bob")
 	resp, err := tool.Handler(map[string]any{"__context": ctx})

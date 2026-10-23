@@ -1534,9 +1534,16 @@ an anomaly alert's `anomaly_details` after raising it (only system
 alerts have theirs rewritten), so that key is the server's alone:
 alerter code must not overwrite an anomaly alert's `anomaly_details`
 wholesale, and `buildReevaluationPrompt` does not read the key.
-`GetAlertTier3Info` joins the newest `anomaly_candidates` row by
-`alert_id`; reasoning verdicts are served from that row's `tier3_result`
-with no LLM call.
+`GetAlertTier3Info` joins the candidate that raised the alert, ordering
+the linked rows by `(tier3_pass IS NOT NULL) DESC, id ASC`: the alerter
+links later duplicates to the open alert with every Tier 3 column NULL,
+so "newest" would pick a duplicate. Every Tier 3 path, the fail-safe
+included, sets `tier3_pass`. The prompt takes `metric_value` and
+`z_score` from that candidate, since `refreshAnomalyAlertSQL` rewrites
+the alert row's values, and omits the database name. Reasoning verdicts
+are served from the candidate's `tier3_result` with no LLM call.
+Provider error redaction lives in `pkg/redact` (`ProviderLogError`,
+`BaseURLSecrets`), shared by the alerter and the server.
 
 ### Anomaly alert recovery (#611)
 

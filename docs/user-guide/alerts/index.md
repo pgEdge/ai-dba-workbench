@@ -190,10 +190,12 @@ once. The popover notes that such an explanation was
 generated after the decision model's verdict.
 
 If the server has no LLM configured or the LLM call fails,
-the popover reports that the reasoning is not available and
-offers a Retry button. Alerts with no recorded reasoning,
-such as an alert raised because the classification step
-failed, show a message saying so instead.
+the popover reports that the reasoning is not available,
+suggests trying again in a minute or asking an administrator
+to configure an LLM, and offers a Retry button. Alerts with
+no recorded reasoning, such as an alert raised because the
+classification step failed, show a message saying so
+instead.
 
 ## Editing Alert Thresholds
 

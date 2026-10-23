@@ -26,6 +26,8 @@ DROP TABLE IF EXISTS anomaly_candidates CASCADE;
 CREATE TABLE anomaly_candidates (
     id BIGSERIAL PRIMARY KEY,
     alert_id BIGINT REFERENCES alerts(id) ON DELETE SET NULL,
+    metric_value REAL NOT NULL DEFAULT 0,
+    z_score REAL NOT NULL DEFAULT 0,
     tier3_pass BOOLEAN,
     tier3_result TEXT,
     tier3_error TEXT,
@@ -69,17 +71,24 @@ func insertReasoningTestAlert(t *testing.T, pool *pgxpool.Pool, alertType string
 	return id
 }
 
-func TestAlertTier3Info_LatestCandidateAndConditionalSave(t *testing.T) {
+// TestAlertTier3Info_RaisingCandidateAndConditionalSave links three
+// candidates to one alert, as the alerter does: the one that raised it,
+// a later duplicate it skipped because the alert was open (every Tier 3
+// column NULL, final_decision 'alert'), and a still later one that
+// passed Tier 3 before finding the alert open. The raising candidate,
+// the oldest with a Tier 3 outcome, must be the one returned.
+func TestAlertTier3Info_RaisingCandidateAndConditionalSave(t *testing.T) {
 	ds, pool := newReasoningTestDatastore(t)
 	ctx := context.Background()
 
 	details := `{"z_score": 5.2, "tier3_result": "Decision model m: alert"}`
 	alertID := insertReasoningTestAlert(t, pool, "anomaly", &details)
 	_, err := pool.Exec(ctx, `
-		INSERT INTO anomaly_candidates (alert_id, tier3_pass, tier3_result, tier3_source,
-		                                tier3_model, final_decision)
-		VALUES ($1, false, 'older', 'reasoning', 'old-model', 'suppress'),
-		       ($1, true, 'Decision model m: alert', 'decision', 'm', 'alert')`, alertID)
+		INSERT INTO anomaly_candidates (alert_id, metric_value, z_score, tier3_pass,
+		                                tier3_result, tier3_source, tier3_model, final_decision)
+		VALUES ($1, 300, 4.5, true, 'Decision model m: alert', 'decision', 'm', 'alert'),
+		       ($1, 350, 4.8, NULL, NULL, NULL, NULL, 'alert'),
+		       ($1, 380, 5.0, true, 'later', 'reasoning', 'r', 'alert')`, alertID)
 	if err != nil {
 		t.Fatalf("insert candidates: %v", err)
 	}
@@ -93,7 +102,13 @@ func TestAlertTier3Info_LatestCandidateAndConditionalSave(t *testing.T) {
 	}
 	if info.Tier3Source == nil || *info.Tier3Source != "decision" ||
 		info.Tier3Pass == nil || !*info.Tier3Pass || *info.FinalDecision != "alert" {
-		t.Errorf("expected the newest candidate, got source=%v pass=%v", info.Tier3Source, info.Tier3Pass)
+		t.Errorf("expected the raising candidate, got source=%v pass=%v", info.Tier3Source, info.Tier3Pass)
+	}
+	// The alert row holds refreshed values (412, 5.2); the prompt must
+	// get the values Tier 3 judged.
+	if info.CandidateMetricValue == nil || *info.CandidateMetricValue != 300 ||
+		info.CandidateZScore == nil || *info.CandidateZScore != 4.5 {
+		t.Errorf("candidate values = %v, %v, want 300, 4.5", info.CandidateMetricValue, info.CandidateZScore)
 	}
 	if info.StoredReasoning != nil {
 		t.Errorf("no reasoning should be stored yet, got %q", *info.StoredReasoning)
@@ -121,6 +136,44 @@ func TestAlertTier3Info_LatestCandidateAndConditionalSave(t *testing.T) {
 		"SELECT (anomaly_details ->> 'z_score')::float8 FROM alerts WHERE id = $1",
 		alertID).Scan(&zScore); err != nil || zScore != 5.2 {
 		t.Errorf("z_score after save = %v, %v", zScore, err)
+	}
+}
+
+// TestAlertTier3Info_DuplicateOnlyCandidates verifies that an alert
+// whose newest linked candidate is a skipped duplicate still reports
+// the older raising candidate, and that with no Tier 3 outcome at all
+// the oldest candidate is returned.
+func TestAlertTier3Info_DuplicateOnlyCandidates(t *testing.T) {
+	ds, pool := newReasoningTestDatastore(t)
+	ctx := context.Background()
+
+	raised := insertReasoningTestAlert(t, pool, "anomaly", nil)
+	noTier3 := insertReasoningTestAlert(t, pool, "anomaly", nil)
+	_, err := pool.Exec(ctx, `
+		INSERT INTO anomaly_candidates (alert_id, metric_value, z_score, tier3_pass,
+		                                tier3_source, final_decision)
+		VALUES ($1, 10, 3.1, true, 'decision', 'alert'),
+		       ($1, 11, 3.2, NULL, NULL, 'alert'),
+		       ($2, 20, 4.1, NULL, NULL, 'alert'),
+		       ($2, 21, 4.2, NULL, NULL, 'alert')`, raised, noTier3)
+	if err != nil {
+		t.Fatalf("insert candidates: %v", err)
+	}
+
+	info, err := ds.GetAlertTier3Info(ctx, raised)
+	if err != nil {
+		t.Fatalf("GetAlertTier3Info: %v", err)
+	}
+	if info.Tier3Source == nil || *info.Tier3Source != "decision" || info.Tier3Pass == nil || !*info.Tier3Pass {
+		t.Errorf("a skipped duplicate hid the raising candidate: source=%v pass=%v", info.Tier3Source, info.Tier3Pass)
+	}
+
+	info, err = ds.GetAlertTier3Info(ctx, noTier3)
+	if err != nil {
+		t.Fatalf("GetAlertTier3Info: %v", err)
+	}
+	if info.Tier3Pass != nil || info.CandidateMetricValue == nil || *info.CandidateMetricValue != 20 {
+		t.Errorf("expected the oldest candidate, got pass=%v value=%v", info.Tier3Pass, info.CandidateMetricValue)
 	}
 }
 

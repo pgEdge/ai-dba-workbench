@@ -28,23 +28,26 @@ const Tier3ReasoningKey = "tier3_reasoning"
 
 // AlertTier3Info is what the server needs to explain an alert's Tier 3
 // decision: the alert's own fields, the reasoning already stored on it,
-// and the Tier 3 outcome of the anomaly candidate that raised it. The
-// candidate fields are nil when no candidate links to the alert, as for
-// a threshold or system alert, or once retention has deleted the
+// and the values and Tier 3 outcome of the anomaly candidate that raised
+// it. The candidate fields are nil when no candidate links to the alert,
+// as for a threshold or system alert, or once retention has deleted the
 // candidate.
 type AlertTier3Info struct {
 	AlertID        int64
 	AlertType      string
 	ConnectionID   *int
-	DatabaseName   *string
 	MetricName     *string
-	MetricValue    *float64
-	AnomalyScore   *float64
 	TriggeredAt    time.Time
 	AnomalyDetails *string
 	// StoredReasoning is the reasoning a previous request generated,
 	// read from anomaly_details under Tier3ReasoningKey.
 	StoredReasoning *string
+
+	// CandidateMetricValue and CandidateZScore are the values Tier 3
+	// judged. The alert's own metric_value and anomaly_score are
+	// refreshed while the alert stays open, so they can differ.
+	CandidateMetricValue *float64
+	CandidateZScore      *float64
 
 	Tier3Source   *string
 	Tier3Model    *string
@@ -55,33 +58,43 @@ type AlertTier3Info struct {
 }
 
 // GetAlertTier3Info returns the Tier 3 information for an alert, with
-// the newest anomaly candidate linked to it. It returns ErrAlertNotFound
-// when no alert has the ID.
+// the anomaly candidate that raised it. It returns ErrAlertNotFound when
+// no alert has the ID.
+//
+// More than one candidate can link to an alert: the alerter links a
+// candidate it skips because the alert is still open to that alert,
+// with every Tier 3 column NULL. Every candidate that reached Tier 3,
+// including one the fail-safe passed, has tier3_pass set, so the query
+// takes the oldest of those, which is the one that raised the alert,
+// and falls back to the oldest candidate when none reached Tier 3.
 func (d *Datastore) GetAlertTier3Info(ctx context.Context, alertID int64) (*AlertTier3Info, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
 	var info AlertTier3Info
 	err := d.pool.QueryRow(ctx, `
-		SELECT a.id, a.alert_type, a.connection_id, a.database_name,
-		       a.metric_name, a.metric_value, a.anomaly_score, a.triggered_at,
+		SELECT a.id, a.alert_type, a.connection_id,
+		       a.metric_name, a.triggered_at,
 		       a.anomaly_details::text, a.anomaly_details ->> $2,
+		       c.metric_value::float8, c.z_score::float8,
 		       c.tier3_source, c.tier3_model, c.tier3_result, c.tier3_pass,
 		       c.tier3_error, c.final_decision
 		FROM alerts a
 		LEFT JOIN LATERAL (
-			SELECT tier3_source, tier3_model, tier3_result, tier3_pass,
+			SELECT metric_value, z_score,
+			       tier3_source, tier3_model, tier3_result, tier3_pass,
 			       tier3_error, final_decision
 			FROM anomaly_candidates
 			WHERE alert_id = a.id
-			ORDER BY id DESC
+			ORDER BY (tier3_pass IS NOT NULL) DESC, id ASC
 			LIMIT 1
 		) c ON true
 		WHERE a.id = $1
 	`, alertID, Tier3ReasoningKey).Scan(
-		&info.AlertID, &info.AlertType, &info.ConnectionID, &info.DatabaseName,
-		&info.MetricName, &info.MetricValue, &info.AnomalyScore, &info.TriggeredAt,
+		&info.AlertID, &info.AlertType, &info.ConnectionID,
+		&info.MetricName, &info.TriggeredAt,
 		&info.AnomalyDetails, &info.StoredReasoning,
+		&info.CandidateMetricValue, &info.CandidateZScore,
 		&info.Tier3Source, &info.Tier3Model, &info.Tier3Result, &info.Tier3Pass,
 		&info.Tier3Error, &info.FinalDecision,
 	)

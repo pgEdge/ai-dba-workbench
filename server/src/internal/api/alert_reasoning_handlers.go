@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 
+	"github.com/pgedge/ai-workbench/pkg/redact"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 )
@@ -164,11 +166,38 @@ type AlertReasoningResponse struct {
 func (h *AlertHandler) SetReasoningLLM(cfg *llmproxy.Config) {
 	if cfg == nil || cfg.Provider == "" {
 		h.generateReasoning = nil
+		h.reasoningSecrets = nil
 		return
 	}
 	h.generateReasoning = func(ctx context.Context, prompt string) (string, error) {
 		return generateAlertReasoning(ctx, cfg, prompt)
 	}
+	h.reasoningSecrets = reasoningLogSecrets(cfg)
+}
+
+// minLogSecretBytes is the shortest custom header value removed from a
+// logged provider error; removing a shorter one verbatim would mangle
+// ordinary words. redact.BaseURLSecrets applies the same floor.
+const minLogSecretBytes = 4
+
+// reasoningLogSecrets returns the credentials a provider error logged
+// for cfg must not repeat: every configured API key, the userinfo and
+// query values of every configured base URL, and the values of the
+// active provider's custom headers.
+func reasoningLogSecrets(cfg *llmproxy.Config) []string {
+	secrets := []string{cfg.AnthropicAPIKey, cfg.OpenAIAPIKey, cfg.GeminiAPIKey}
+	for _, base := range []string{cfg.AnthropicBaseURL, cfg.OpenAIBaseURL, cfg.GeminiBaseURL, cfg.OllamaURL} {
+		secrets = append(secrets, redact.BaseURLSecrets(base)...)
+	}
+	for _, v := range cfg.BuildClientOptions(llmAnalysisTemperature).CustomHeaders {
+		if len(v) >= minLogSecretBytes {
+			secrets = append(secrets, v)
+		}
+	}
+	// Longest first, so that a value is removed before any shorter
+	// value inside it.
+	sort.SliceStable(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+	return secrets
 }
 
 // setReasoningStore overrides the reasoning datastore, for tests.
@@ -327,7 +356,7 @@ func (h *AlertHandler) generateAndStoreReasoning(ctx context.Context, info *data
 			return "", false
 		}
 		if res.Err != nil {
-			log.Printf("[ERROR] Tier 3 reasoning unavailable for alert %d: %s", info.AlertID, sanitizeConfigEcho(res.Err.Error())) //nolint:gosec // G706: the alert ID is an integer and the error text has its control characters removed
+			log.Printf("[ERROR] Tier 3 reasoning unavailable for alert %d: %s", info.AlertID, h.redactProviderLogError(res.Err.Error())) //nolint:gosec // G706: the alert ID is an integer and the error text has its control characters and credentials removed
 			return "", false
 		}
 		text, ok := res.Val.(string)
@@ -409,6 +438,15 @@ func generateAlertReasoning(ctx context.Context, cfg *llmproxy.Config, prompt st
 	return chatResponseText(resp), nil
 }
 
+// redactProviderLogError prepares a provider error for the server log:
+// it removes control and format characters, the configured credentials
+// and anything else that looks like one, and caps the length.
+func (h *AlertHandler) redactProviderLogError(msg string) string {
+	return sanitizeEcho(msg, func(s string) string {
+		return redact.ProviderLogError(s, h.reasoningSecrets)
+	})
+}
+
 // chatResponseText joins the text blocks of a chat response.
 func chatResponseText(resp *pgllm.ChatResponse) string {
 	if resp == nil {
@@ -424,23 +462,26 @@ func chatResponseText(resp *pgllm.ChatResponse) string {
 }
 
 // buildAlertReasoningPrompt builds the user message for an alert's
-// reasoning. Every value comes from the database and can hold text that
-// a monitored server controls, such as a database name, so the values
-// are JSON-encoded inside <anomaly_data> tags; encoding/json escapes <
-// and >, so no value can close the tags early.
+// reasoning. Every value comes from the database, so the values are
+// treated as untrusted and JSON-encoded inside <anomaly_data> tags;
+// encoding/json escapes < and >, so no value can close the tags early.
+// The alert's database name is left out: anyone who can rename a
+// database on a monitored server chooses it, and the text generated
+// from the prompt is stored and shown to every viewer of the alert.
+// The metric value and z-score are the candidate's, the values Tier 3
+// judged, rather than the alert's, which are refreshed while it is open.
 func buildAlertReasoningPrompt(info *database.AlertTier3Info) string {
 	data := map[string]any{
 		"metric_name":      derefString(info.MetricName),
-		"database_name":    derefString(info.DatabaseName),
 		"triggered_at":     info.TriggeredAt.UTC().Format(time.RFC3339),
 		"decision_model":   derefString(info.Tier3Model),
 		"decision_summary": derefString(info.Tier3Result),
 	}
-	if info.MetricValue != nil {
-		data["metric_value"] = *info.MetricValue
+	if info.CandidateMetricValue != nil {
+		data["metric_value"] = *info.CandidateMetricValue
 	}
-	if info.AnomalyScore != nil {
-		data["z_score"] = *info.AnomalyScore
+	if info.CandidateZScore != nil {
+		data["z_score"] = *info.CandidateZScore
 	}
 	if details := anomalyDetailsForPrompt(derefString(info.AnomalyDetails)); details != nil {
 		for k, v := range details {

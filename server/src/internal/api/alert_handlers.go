@@ -63,6 +63,9 @@ type AlertHandler struct {
 	// generateReasoning generates reasoning for a decision model's
 	// verdict; nil when the server has no LLM (see SetReasoningLLM).
 	generateReasoning alertReasoningGenerator
+	// reasoningSecrets are the configured credentials removed from a
+	// logged provider error (see reasoningLogSecrets).
+	reasoningSecrets []string
 	// reasoningFlight shares one generation between concurrent requests
 	// for the same alert.
 	reasoningFlight singleflight.Group

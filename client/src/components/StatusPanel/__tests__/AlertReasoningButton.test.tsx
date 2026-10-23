@@ -122,6 +122,7 @@ describe('AlertReasoningButton', () => {
         renderWithTheme(<AlertItem alert={anomalyAlert} />);
         const dialog = openPopover();
         await within(dialog).findByText(/not available right now/);
+        expect(within(dialog).getByText(/Try again in a minute, or ask an administrator to configure an LLM/)).toBeInTheDocument();
 
         fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }));
         expect(await within(dialog).findByText('Second time lucky.')).toBeInTheDocument();

@@ -18,6 +18,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 )
 
 // Values of anomaly_candidates.tier3_source.
@@ -70,7 +71,7 @@ func (e *Engine) classifyWithDecision(ctx context.Context, candidate *database.A
 
 	verdict, err := e.decisionProvider.ClassifyDecision(decisionCtx, classificationContext, threshold)
 	if err != nil {
-		msg := redactProviderLogError(err.Error(), configuredSecrets(cfg))
+		msg := redact.ProviderLogError(err.Error(), configuredSecrets(cfg))
 		e.log("ERROR: Tier 3 decision model classification failed for candidate %d: %s", candidate.ID, msg)
 		return fmt.Sprintf("decision model %s/%s failed: %s", provider, model, msg), false
 	}

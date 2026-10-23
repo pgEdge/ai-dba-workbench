@@ -56,7 +56,10 @@ project adheres to
   `anomaly_details` under `tier3_reasoning` for later requests.
   Without a server LLM, a decision model verdict has no
   explanation. Any user who can see an alert can view, and so
-  trigger generation of, its reasoning.
+  trigger generation of, its reasoning. Logging out now also
+  clears the client's cached query analyses and SQL validation
+  results, as well as the cached reasoning, so the next user to
+  log in on the same browser cannot see them.
 
 - Add the `describe_datastore` MCP tool, which lists the sources
   that `query_datastore` can read, with each source's kind, time

@@ -89,7 +89,7 @@ const ReasoningContent: React.FC<ReasoningContentProps> = ({ state, onRetry }) =
         case 'unavailable':
         case 'error': {
             const message = state.status === 'unavailable'
-                ? 'The detection reasoning is not available right now.'
+                ? 'The detection reasoning is not available right now. Try again in a minute, or ask an administrator to configure an LLM.'
                 : state.message;
             const retryable = state.status === 'unavailable' || state.retryable;
             return (

@@ -139,45 +139,6 @@ func TestRedactProviderError_CredentialsAndMarkup(t *testing.T) {
 	}
 }
 
-func TestRedactProviderLogError_KeepsEndpoint(t *testing.T) {
-	got := redactProviderLogError("dial tcp 192.0.2.10:11434: connection refused; key=abc123\n", []string{"s3cret"})
-	if !strings.Contains(got, "192.0.2.10:11434") || strings.Contains(got, "abc123") || strings.Contains(got, "\n") {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestBaseURLSecrets(t *testing.T) {
-	got := baseURLSecrets("https://svc-user:p%40ss-word@llm.example/v1?api=tok-9999&x=1")
-	for _, want := range []string{"svc-user:p%40ss-word", "svc-user", "p@ss-word", "p%40ss-word", "tok-9999"} {
-		found := false
-		for _, s := range got {
-			if s == want {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("secrets %q lack %q", got, want)
-		}
-	}
-	for i, s := range got {
-		if len(s) < minDerivedSecretLen {
-			t.Errorf("secret %q is shorter than the minimum", s)
-		}
-		if i > 0 && len(got[i-1]) < len(s) {
-			t.Errorf("secrets not longest first: %q", got)
-		}
-	}
-	if baseURLSecrets("http://[::1") != nil {
-		t.Error("unparsable URL yielded secrets")
-	}
-	if len(baseURLSecrets("http://localhost:11434")) != 0 {
-		t.Error("plain URL yielded secrets")
-	}
-	if s := baseURLSecrets("http://onlyuser@h.example"); len(s) != 1 || s[0] != "onlyuser" {
-		t.Errorf("user without password: %q", s)
-	}
-}
-
 func TestConfiguredSecrets_IncludesBaseURLSecrets(t *testing.T) {
 	cfg := config.NewConfig()
 	cfg.LLM.Ollama.BaseURL = "http://olly:hunter22@h.example:11434"

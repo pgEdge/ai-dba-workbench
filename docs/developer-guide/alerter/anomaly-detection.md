@@ -590,8 +590,13 @@ holds `alert_id`, a `status`, a `source` of `decision` or
 and so can cause the server to generate it; an alert the caller
 cannot see returns 404, as a missing alert does.
 
-The endpoint reads the alert together with the newest
-`anomaly_candidates` row linked to it, and answers as follows:
+The endpoint reads the alert together with the candidate that
+raised it. Several `anomaly_candidates` rows can link to one alert,
+because the alerter links each later duplicate to the open alert,
+usually with every Tier 3 column NULL; the query therefore takes the
+oldest linked candidate with a Tier 3 outcome (`tier3_pass` set),
+and the oldest linked candidate when none has one. It answers as
+follows:
 
 - a reasoning model verdict returns the `reasoning` field of the
   stored Tier 3 response, or the whole response when it holds no
@@ -613,13 +618,21 @@ The endpoint reads the alert together with the newest
   unless the server stored `tier3_reasoning` on the alert first.
 
 The prompt for a decision model verdict holds only the alert's stored
-data: the metric name, value and z-score, the database name, the
-trigger time, the decision model and its summary, the baseline
-context, and the Tier 2 similarity score. The values arrive as JSON
-inside `<anomaly_data>` tags, which the system prompt tells the model
-to treat strictly as data. The server caps the stored text at 4,000
+data: the metric name, the trigger time, the metric value and z-score
+that the candidate recorded (the alerter refreshes the alert row's
+values whilst the alert is open, so they may no longer be the ones
+Tier 3 judged), the decision model and its summary, the baseline
+context, and the Tier 2 similarity score. The database name is left
+out, because a monitored server chooses it and it could carry
+instructions to the model. The values arrive as JSON inside
+`<anomaly_data>` tags, which the system prompt tells the model to
+treat strictly as data. The server caps the stored text at 4,000
 characters, removes control and format characters other than
 newlines and tabs, and bounds the LLM call with a 60 second timeout.
+When the call fails, the logged error has its control characters, the
+configured API keys, base URL credentials and custom header values,
+and anything shaped like a credential removed, using the same
+`pkg/redact` functions that the alerter uses for provider errors.
 
 Concurrent first requests for one alert share a single LLM call
 through a `singleflight` group, and the call runs detached from the

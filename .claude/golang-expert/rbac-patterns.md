@@ -1807,22 +1807,31 @@ byte-identical to the missing-permission one and audited once.
 
 The rule also covers writes that change hidden members' effective
 overrides by cascade, each as the last check after permission, token
-scope and the 404 visibility check, refusing with
-`adminPermissionRefusal(auth.PermManageConnections)`:
+scope and the 404 visibility check. Each refuses with that route's own
+missing-permission body and audit reason, never a generic one:
 `DELETE /cluster-groups/{id}` (reuses the members
-`loadClusterGroupVisibility` already loaded), `DELETE /clusters/{id}`
-(`checkScopeMembersVisible` on the cluster, which also covers the
-auto-cluster dismiss inside `DeleteCluster`), `PUT /clusters/{id}` only
-when `group_id` differs from the cluster's current group
-(`requireClusterMoveMembersVisible`; the client resends the current
-group on a rename, and the old and new groups are not checked), and the
-auto-detected `server-{id}`/`cluster-spock-{prefix}` PUT (when
-`group_id` is set) and DELETE (`requireAutoClusterMembersVisible` over
-`autoDetectedClusterKeys`; there is no key-to-group lookup, so any
-supplied `group_id` is checked). In `handleRemoveServerFromCluster` a
-connection hidden from a restricted caller answers 404 "Connection not
-found in this cluster", the non-member answer, mirroring
-`addServerToCluster`. Tests: `cluster_members_visibility_test.go`.
+`loadClusterGroupVisibility` already loaded; `clusterGroupDeleteRefusal`),
+`DELETE /clusters/{id}` (`checkScopeMembersVisible` on the cluster,
+which also covers the auto-cluster dismiss inside `DeleteCluster`;
+`adminPermissionRefusal(auth.PermManageConnections)`), `PUT
+/clusters/{id}` only when `group_id` differs from the cluster's current
+group (`requireClusterMoveMembersVisible`; the client resends the
+current group on a rename, and the old and new groups are not checked),
+and the auto-detected `server-{id}`/`cluster-spock-{prefix}` PUT and
+DELETE (`requireAutoClusterMembersVisible` over
+`autoDetectedClusterKeys`, which takes the refusal as `reason`:
+`autoClusterModifyRefusal` or `autoClusterDeleteRefusal`). The
+auto-detected PUT goes through `requireAutoClusterMoveMembersVisible`,
+which passes a `group_id` equal to the cluster's current group
+(`GetClusterGroupIDForAutoClusterKey`), as the numeric route does. The
+refusal constants live in `cluster_write_visibility.go`; a new member
+check must reuse its route's gate message.
+
+In `handleRemoveServerFromCluster` a connection hidden from a
+restricted caller answers 404 "Connection not found in this cluster",
+the non-member answer, mirroring `addServerToCluster`. Tests:
+`cluster_members_visibility_test.go` and
+`estate_auto_cluster_key_integration_test.go`.
 
 The check reads members then writes, unlocked. The race is accepted: a
 connection that joins in between inherits the override anyway, and only

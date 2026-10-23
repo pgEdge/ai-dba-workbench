@@ -791,18 +791,17 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 	}
 
 	if !hasManageConns && !isOwner {
-		h.denialRecorder.refuse(w, r,
-			"You do not have permission to delete this cluster group")
+		h.denialRecorder.refuse(w, r, clusterGroupDeleteRefusal)
 		return
 	}
 
 	// Deleting the group drops the group overrides, and through the
 	// cascade the clusters and cluster overrides, that reach each of its
 	// members, so a restricted caller must see every member (issue
-	// #716). The refusal says nothing about which members are hidden.
+	// #716). The refusal is the one above for a caller without the
+	// permission, so it says nothing about which members are hidden.
 	if !v.all && !allMembersVisible(v.members, v.visible) {
-		h.denialRecorder.refuse(w, r,
-			adminPermissionRefusal(auth.PermManageConnections))
+		h.denialRecorder.refuse(w, r, clusterGroupDeleteRefusal)
 		return
 	}
 
@@ -1137,8 +1136,7 @@ type AutoDetectedClusterRequest struct {
 func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *http.Request, clusterID string) {
 	// Check user permissions - requires manage_connections permission
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		h.denialRecorder.refuse(w, r,
-			"Permission denied: you do not have permission to modify auto-detected clusters")
+		h.denialRecorder.refuse(w, r, autoClusterModifyRefusal)
 		return
 	}
 
@@ -1194,7 +1192,7 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 	}
 	// Moving the cluster changes which group overrides reach each of its
 	// members, so a restricted caller must see every member (issue #716).
-	if req.GroupID != nil && !h.requireAutoClusterMembersVisible(ctx, w, r, []string{autoKey}, "Failed to update auto-detected cluster") {
+	if req.GroupID != nil && !h.requireAutoClusterMoveMembersVisible(ctx, w, r, autoKey, *req.GroupID) {
 		return
 	}
 
@@ -1214,8 +1212,7 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 // soft-deletes the cluster.
 func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *http.Request, clusterID string) {
 	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		h.denialRecorder.refuse(w, r,
-			"Permission denied: you do not have permission to delete auto-detected clusters")
+		h.denialRecorder.refuse(w, r, autoClusterDeleteRefusal)
 		return
 	}
 
@@ -1238,7 +1235,8 @@ func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *htt
 	// overrides that reach it, so a restricted caller must see every
 	// member (issue #716).
 	keys := autoDetectedClusterKeys(clusterID)
-	if !h.requireAutoClusterMembersVisible(ctx, w, r, keys, "Failed to delete auto-detected cluster") {
+	if !h.requireAutoClusterMembersVisible(ctx, w, r, keys,
+		autoClusterDeleteRefusal, "Failed to delete auto-detected cluster") {
 		return
 	}
 

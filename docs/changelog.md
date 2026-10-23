@@ -2704,7 +2704,7 @@ project adheres to
   `PUT /api/v1/probe-configs/{id}` on a cluster or group
   configuration, now answers 403 with the same message and audit
   record as a caller without the permission, so the refusal does
-  not reveal that hidden members exist. The same rule now
+  not reveal which members are hidden or how many. The same rule now
   applies to deleting a cluster or cluster group and to moving a
   cluster to another group, including the auto-detected
   `server-{id}` and `cluster-spock-{prefix}` clusters, since each

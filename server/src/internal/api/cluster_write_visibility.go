@@ -156,15 +156,47 @@ func (h *ClusterHandler) requireClusterMoveMembersVisible(ctx context.Context,
 		auth.PermManageConnections, "cluster", clusterID, visible)
 }
 
+// The refusals the auto-detected cluster and cluster group routes give a
+// caller without permission. The member checks give the same answer, so
+// that they disclose nothing a missing permission would not (issue
+// #716).
+const (
+	clusterGroupDeleteRefusal = "You do not have permission to delete this cluster group"
+	autoClusterModifyRefusal  = "Permission denied: you do not have permission to modify auto-detected clusters"
+	autoClusterDeleteRefusal  = "Permission denied: you do not have permission to delete auto-detected clusters"
+)
+
+// requireAutoClusterMoveMembersVisible is requireAutoClusterMembersVisible
+// for a PUT that sets the auto-detected cluster's group. A group_id
+// naming the group the cluster is already in changes nothing, so it
+// passes, as on the numeric route.
+func (h *ClusterHandler) requireAutoClusterMoveMembersVisible(ctx context.Context,
+	w http.ResponseWriter, r *http.Request, autoKey string, groupID int) bool {
+
+	const failMsg = "Failed to update auto-detected cluster"
+	current, found, err := h.datastore.GetClusterGroupIDForAutoClusterKey(ctx, autoKey)
+	if err != nil {
+		log.Printf("[ERROR] Failed to load the group of an auto-detected cluster: %v", err)
+		RespondError(w, http.StatusInternalServerError, failMsg)
+		return false
+	}
+	if found && current == groupID {
+		return true
+	}
+	return h.requireAutoClusterMembersVisible(ctx, w, r, []string{autoKey},
+		autoClusterModifyRefusal, failMsg)
+}
+
 // requireAutoClusterMembersVisible refuses a write to the auto-detected
 // clusters with the given keys unless the caller can see every
 // connection assigned to them (issue #716). It runs after
 // requireVisibleAutoDetectedCluster, so the caller already sees the
-// cluster; the refusal is the manage_connections refusal, audited, and
-// says nothing about which members are hidden. A caller with
-// unrestricted visibility always passes.
+// cluster; the refusal is the route's own missing-permission refusal,
+// passed as reason and audited, and says nothing about which members
+// are hidden. A caller with unrestricted visibility always passes.
 func (h *ClusterHandler) requireAutoClusterMembersVisible(ctx context.Context,
-	w http.ResponseWriter, r *http.Request, keys []string, failMsg string) bool {
+	w http.ResponseWriter, r *http.Request, keys []string,
+	reason, failMsg string) bool {
 
 	visible, allConnections, err := h.resolveVisibleConnections(ctx)
 	if err != nil {
@@ -183,8 +215,7 @@ func (h *ClusterHandler) requireAutoClusterMembersVisible(ctx context.Context,
 			return false
 		}
 		if !allMembersVisible(members, visible) {
-			h.denialRecorder.refuse(w, r,
-				adminPermissionRefusal(auth.PermManageConnections))
+			h.denialRecorder.refuse(w, r, reason)
 			return false
 		}
 	}

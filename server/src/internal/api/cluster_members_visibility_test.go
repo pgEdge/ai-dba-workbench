@@ -12,6 +12,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 )
@@ -58,8 +59,9 @@ INSERT INTO cluster_node_relationships (id, cluster_id, source_connection_id,
                                         relationship_type) VALUES
     (2, 1, 5, 7, 'streams_from');`
 
-// memberRefusal is the answer a caller gets when a member is hidden.
-const memberRefusal = "Permission denied: requires manage_connections permission"
+// memberRefusal is the answer the numeric cluster routes give when a
+// member is hidden: their own manage_connections refusal.
+var memberRefusal = adminPermissionRefusal("manage_connections")
 
 // newClusterMembersFixture returns the cluster fixture with
 // clusterMembersSetup applied and its handler's refusals recorded in the
@@ -89,6 +91,29 @@ func expectAudited(t *testing.T, audited *[]string, want ...string) {
 		t.Errorf("audited %q, want %q", got, want)
 	}
 	*audited = nil
+}
+
+// assertNoPermissionRefusal checks that hidden, a 403 for a hidden
+// member, is byte for byte the answer that f.plain, who holds no admin
+// permission, gets from the same request, and that the two are audited
+// with the same single reason. It clears audited.
+func assertNoPermissionRefusal(t *testing.T, f *clusterCovFixture,
+	audited *[]string, hidden *httptest.ResponseRecorder, method, path,
+	body string) {
+
+	t.Helper()
+	if hidden.Code != http.StatusForbidden {
+		t.Fatalf("%s %s: status %d, want 403: %s", method, path,
+			hidden.Code, hidden.Body.String())
+	}
+	got := *audited
+	*audited = nil
+	if len(got) != 1 {
+		t.Fatalf("%s %s: audited %q, want one reason", method, path, got)
+	}
+	plain := clusterCovServe(f.handler, f.plain, method, path, body)
+	assertSameResponse(t, hidden, plain)
+	expectAudited(t, audited, got...)
 }
 
 // TestRemoveServerHidesHiddenMembers checks that a restricted caller
@@ -126,12 +151,12 @@ func TestRemoveServerHidesHiddenMembers(t *testing.T) {
 func TestDeleteClusterGroupNeedsEveryMember(t *testing.T) {
 	f, audited := newClusterMembersFixture(t)
 
-	f.run(t, []clusterCovCase{
-		{name: "group with a hidden member", caller: f.admin,
-			method: http.MethodDelete, path: "/api/v1/cluster-groups/70",
-			status: http.StatusForbidden, msg: memberRefusal},
-	})
-	expectAudited(t, audited, memberRefusal)
+	// The refusal is the route's own one for a caller who neither holds
+	// manage_connections nor owns the group.
+	const path = "/api/v1/cluster-groups/70"
+	rec := clusterCovServe(f.handler, f.admin, http.MethodDelete, path, "")
+	assertError(t, rec, http.StatusForbidden, clusterGroupDeleteRefusal)
+	assertNoPermissionRefusal(t, f, audited, rec, http.MethodDelete, path, "")
 	f.expectValue(t, "cluster exists", 71, "true")
 
 	// Group 80 holds the private connection 77 too, so detach it first
@@ -249,12 +274,17 @@ func TestAutoDetectedClusterWritesNeedEveryMember(t *testing.T) {
 
 	f.run(t, []clusterCovCase{
 		// The cluster's own visibility check takes two acquisitions and
-		// the target group's four; the member check's visibility lookup
-		// and member list come next.
+		// the target group's four; a move then looks up the cluster's
+		// current group, and the member check's visibility lookup and
+		// member list come next.
 		{name: "delete visibility lookup fails", h: f.failing(t, 2),
 			caller: f.admin, method: http.MethodDelete, path: spock,
 			status: http.StatusInternalServerError,
 			msg:    "Failed to delete auto-detected cluster"},
+		{name: "move group lookup fails", h: f.failing(t, 6),
+			caller: f.admin, method: http.MethodPut, path: spock,
+			body: `{"group_id":80}`, status: http.StatusInternalServerError,
+			msg: "Failed to update auto-detected cluster"},
 		{name: "move member lookup fails", h: f.failing(t, 7),
 			caller: f.admin, method: http.MethodPut, path: spock,
 			body: `{"group_id":70}`, status: http.StatusInternalServerError,
@@ -263,18 +293,25 @@ func TestAutoDetectedClusterWritesNeedEveryMember(t *testing.T) {
 			caller: f.admin, method: http.MethodDelete, path: spock,
 			status: http.StatusInternalServerError,
 			msg:    "Failed to delete auto-detected cluster"},
-		{name: "move a spock cluster with a hidden member", caller: f.admin,
-			method: http.MethodPut, path: spock, body: `{"group_id":80}`,
-			status: http.StatusForbidden, msg: memberRefusal},
-		{name: "delete a spock cluster with a hidden member", caller: f.admin,
-			method: http.MethodDelete, path: spock,
-			status: http.StatusForbidden, msg: memberRefusal},
-		{name: "delete a server cluster with a hidden member", caller: f.admin,
-			method: http.MethodDelete, path: server,
-			status: http.StatusForbidden, msg: memberRefusal},
 	})
-	expectAudited(t, audited, memberRefusal, memberRefusal, memberRefusal)
+	expectAudited(t, audited)
+
+	// Each refusal is the route's own one for a caller without
+	// manage_connections.
+	for _, tc := range []struct {
+		method, path, body, refusal string
+	}{
+		{http.MethodPut, spock, `{"group_id":80}`, autoClusterModifyRefusal},
+		{http.MethodPut, server, `{"group_id":70,"auto_cluster_key":"binary:76"}`, autoClusterModifyRefusal},
+		{http.MethodDelete, spock, "", autoClusterDeleteRefusal},
+		{http.MethodDelete, server, "", autoClusterDeleteRefusal},
+	} {
+		rec := clusterCovServe(f.handler, f.admin, tc.method, tc.path, tc.body)
+		assertError(t, rec, http.StatusForbidden, tc.refusal)
+		assertNoPermissionRefusal(t, f, audited, rec, tc.method, tc.path, tc.body)
+	}
 	f.expectValue(t, "cluster group", 71, "70")
+	f.expectValue(t, "cluster group", 82, "80")
 	f.expectValue(t, "cluster dismissed", 71, "false")
 	f.expectValue(t, "cluster dismissed", 82, "false")
 
@@ -282,6 +319,16 @@ func TestAutoDetectedClusterWritesNeedEveryMember(t *testing.T) {
 		{name: "rename a spock cluster with a hidden member", caller: f.admin,
 			method: http.MethodPut, path: spock, body: `{"name":"Renamed"}`,
 			status: http.StatusOK, msg: "Renamed"},
+		// Naming the group the cluster is already in moves nothing, as
+		// on the numeric route.
+		{name: "keep a spock cluster with a hidden member in its group",
+			caller: f.admin, method: http.MethodPut, path: spock,
+			body:   `{"name":"Kept","group_id":70}`,
+			status: http.StatusOK, msg: "Kept"},
+		{name: "keep a server cluster with a hidden member in its group",
+			caller: f.admin, method: http.MethodPut, path: server,
+			body:   `{"group_id":80,"auto_cluster_key":"binary:76"}`,
+			status: http.StatusOK},
 		{name: "move a fully visible spock cluster", caller: f.admin,
 			method: http.MethodPut, path: "/api/v1/clusters/cluster-spock-auto1",
 			body: `{"group_id":1}`, status: http.StatusOK},
@@ -294,7 +341,8 @@ func TestAutoDetectedClusterWritesNeedEveryMember(t *testing.T) {
 			status: http.StatusNoContent},
 	})
 	expectAudited(t, audited)
-	f.expectValue(t, "cluster by key", "spock:mixed", "Renamed")
+	f.expectValue(t, "cluster by key", "spock:mixed", "Kept")
+	f.expectValue(t, "cluster group", 71, "70")
 	f.expectValue(t, "cluster dismissed", 2, "true")
 	f.expectValue(t, "cluster dismissed", 82, "true")
 }

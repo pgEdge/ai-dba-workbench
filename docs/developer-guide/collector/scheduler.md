@@ -1,15 +1,12 @@
 # Scheduler Implementation
 
-This document explains the implementation details
-of the probe scheduler.
+This document explains the implementation details of the probe scheduler.
 
 ## Overview
 
-The `ProbeScheduler` is responsible for the following
-tasks:
+The `ProbeScheduler` is responsible for the following tasks:
 
-- The scheduler loads probe configurations from the
-  database.
+- The scheduler loads probe configurations from the database.
 - The scheduler manages probe execution timers.
 - The scheduler coordinates parallel probe execution.
 - The scheduler handles timeouts and errors.
@@ -35,8 +32,7 @@ type ProbeScheduler struct {
 
 ## Initialization
 
-The scheduler starts by loading configurations
-and launching goroutines.
+The scheduler starts by loading configurations and launching goroutines.
 
 ### Start Sequence
 
@@ -78,21 +74,16 @@ func (ps *ProbeScheduler) Start(
 
 ## Probe Scheduling
 
-Each probe runs in its own goroutine with an
-independent timer. The scheduler first asks
-`calculateInitialDelay` how long remains of the
-probe's interval since the last recorded collection.
-A positive delay means the probe ran recently, so
-the goroutine waits out the remainder. A delay that
-is zero or negative means the probe is past due, has
-never run, or its last collection time could not be
-determined, and the goroutine instead waits out a
-random startup jitter so that a restart does not
-fire every probe at once. The jitter is drawn with
-`crypto/rand` from zero up to the smaller of the
-probe's interval and `scheduler.startup_jitter_seconds`,
-falling back to half that window if the draw fails.
-The following code shows the scheduling loop:
+Each probe runs in its own goroutine with an independent timer. The scheduler
+first asks `calculateInitialDelay` how long remains of the probe's interval
+since the last recorded collection. A positive delay means the probe ran
+recently, so the goroutine waits out the remainder. A delay that is zero or
+negative means the probe is past due, has never run, or its last collection
+time could not be determined, and the goroutine instead waits out a random
+startup jitter so that a restart does not fire every probe at once. The jitter
+is drawn with `crypto/rand` from zero up to the smaller of the probe's interval
+and `scheduler.startup_jitter_seconds`, falling back to half that window if the
+draw fails. The following code shows the scheduling loop:
 
 ```go
 func (ps *ProbeScheduler) scheduleProbe(
@@ -146,13 +137,12 @@ func (ps *ProbeScheduler) scheduleProbe(
 
 ## Probe Execution
 
-The scheduler executes each probe against all
-monitored connections in parallel.
+The scheduler executes each probe against all monitored connections in
+parallel.
 
 ### Execution Overview
 
-The following code shows how the scheduler executes
-a probe:
+The following code shows how the scheduler executes a probe:
 
 ```go
 func (ps *ProbeScheduler) executeProbe(
@@ -185,8 +175,8 @@ func (ps *ProbeScheduler) executeProbe(
 
 ### Per-Connection Execution
 
-The following code shows how the scheduler executes
-a probe for a single connection:
+The following code shows how the scheduler executes a probe for a single
+connection:
 
 ```go
 func (ps *ProbeScheduler) executeProbeForConnection(
@@ -229,9 +219,8 @@ func (ps *ProbeScheduler) executeProbeForConnection(
 
 ## Server-Scoped Execution
 
-Server-scoped probes execute once per monitored
-connection. The following code shows the execution
-flow for server-wide probes:
+Server-scoped probes execute once per monitored connection. The following code
+shows the execution flow for server-wide probes:
 
 ```go
 func (ps *ProbeScheduler) executeProbeForServerWide(
@@ -265,13 +254,11 @@ func (ps *ProbeScheduler) executeProbeForServerWide(
 
 ## Database-Scoped Execution
 
-Database-scoped probes execute once for each database
-on a monitored server. The scheduler queries
-`pg_database` for the database list and then executes
-the probe against each database.
+Database-scoped probes execute once for each database on a monitored server.
+The scheduler queries `pg_database` for the database list and then executes the
+probe against each database.
 
-The following code shows the execution flow for
-database-scoped probes:
+The following code shows the execution flow for database-scoped probes:
 
 ```go
 func (ps *ProbeScheduler)
@@ -346,8 +333,7 @@ func (ps *ProbeScheduler)
 
 ## Metrics Storage
 
-The following code shows how the scheduler stores
-collected metrics:
+The following code shows how the scheduler stores collected metrics:
 
 ```go
 func (ps *ProbeScheduler) storeMetrics(
@@ -410,69 +396,52 @@ The scheduler manages concurrency at several levels.
 
 ### Per-Probe Goroutines
 
-Each probe has one goroutine managing its schedule,
-giving a total of 34 goroutines for the standard
-probe set.
+Each probe has one goroutine managing its schedule, giving a total of 34
+goroutines for the standard probe set.
 
 ### Per-Connection Goroutines
 
-When a probe executes, the scheduler spawns one
-goroutine per connection. These goroutines are
-short-lived and last only for the duration of probe
-execution. With 10 monitored servers, the system
-can produce up to 340 concurrent goroutines during
-probe execution, although only
-`scheduler.max_concurrent_probes` of those goroutines
-execute a probe at a time, and no more than
-`scheduler.max_concurrent_probes_per_connection` of
-them for any one connection; the rest wait for a slot.
+When a probe executes, the scheduler spawns one goroutine per connection. These
+goroutines are short-lived and last only for the duration of probe execution.
+With 10 monitored servers, the system can produce up to 340 concurrent
+goroutines during probe execution, although only
+`scheduler.max_concurrent_probes` of those goroutines execute a probe at a
+time, and no more than `scheduler.max_concurrent_probes_per_connection` of them
+for any one connection; the rest wait for a slot.
 
 ### Global Probe Concurrency Limit
 
-Every probe execution holds a slot in a counting
-semaphore shared by the whole scheduler, sized from
-`scheduler.max_concurrent_probes` and defaulting to
-8 slots. The limit bounds peak memory and connection
-demand so that neither scales with the number of
-monitored connections. A goroutine waiting for a
-slot abandons the wait when the scheduler shuts
-down, so a backlog of queued probes cannot delay
-`Stop`.
+Every probe execution holds a slot in a counting semaphore shared by the whole
+scheduler, sized from `scheduler.max_concurrent_probes` and defaulting to 8
+slots. The limit bounds peak memory and connection demand so that neither
+scales with the number of monitored connections. A goroutine waiting for a slot
+abandons the wait when the scheduler shuts down, so a backlog of queued probes
+cannot delay `Stop`.
 
-Each monitored connection also holds a permit from
-its own counting semaphore, sized from
-`scheduler.max_concurrent_probes_per_connection` and
-defaulting to 2 permits, which caps how many of the
-global slots that connection may hold at once. The
-ceiling matters because a probe holds its slot until
-the execution finishes or reaches
-`pool.monitored_max_wait_seconds`: a server that
-accepts connections but answers slowly demands the
-sum of `monitored_max_wait_seconds / interval` over
-its enabled probes, roughly 17.7 slots of the default
-8 for the seeded probe set, and would otherwise queue
-the probes of healthy connections behind its own. The
-scheduler clamps a configured ceiling greater than
-`scheduler.max_concurrent_probes` to that cap, since
-a higher ceiling can never bind, and it takes the
-per-connection permit before the global slot, so that
-no goroutine waits for a permit whilst holding a
-slot.
+Each monitored connection also holds a permit from its own counting semaphore,
+sized from `scheduler.max_concurrent_probes_per_connection` and defaulting to 2
+permits, which caps how many of the global slots that connection may hold at
+once. The ceiling matters because a probe holds its slot until the execution
+finishes or reaches `pool.monitored_max_wait_seconds`: a server that accepts
+connections but answers slowly demands the sum of
+`monitored_max_wait_seconds / interval` over its enabled probes, roughly 17.7
+slots of the default 8 for the seeded probe set, and would otherwise queue the
+probes of healthy connections behind its own. The scheduler clamps a configured
+ceiling greater than `scheduler.max_concurrent_probes` to that cap, since a
+higher ceiling can never bind, and it takes the per-connection permit before
+the global slot, so that no goroutine waits for a permit whilst holding a slot.
 
 ### Connection Pool Limits
 
-The datastore uses a global limit of 25 connections
-by default. Monitored servers use a per-server limit
-of 5 connections each by default.
+The datastore uses a global limit of 25 connections by default. Monitored
+servers use a per-server limit of 5 connections each by default.
 
 ### Semaphores
 
-Each monitored server has a semaphore implemented as
-a buffered channel. The semaphore limits concurrent
-probe executions per server.
+Each monitored server has a semaphore implemented as a buffered channel. The
+semaphore limits concurrent probe executions per server.
 
-The following code shows the semaphore
-implementation:
+The following code shows the semaphore implementation:
 
 ```go
 type MonitoredConnectionPoolManager struct {
@@ -505,18 +474,14 @@ The scheduler applies timeouts at two stages.
 
 ### Execution Timeout
 
-Each probe execution has a timeout equal to
-`monitored_pool_max_wait_seconds`. If the timeout
-is exceeded, the probe execution is cancelled and
-the error is logged. The probe retries on the next
-interval.
+Each probe execution has a timeout equal to `monitored_pool_max_wait_seconds`.
+If the timeout is exceeded, the probe execution is cancelled and the error is
+logged. The probe retries on the next interval.
 
 ### Storage Timeout
 
-Metric storage has its own timeout equal to
-`datastore_pool_max_wait_seconds`. The system
-applies this timeout independently from the
-execution timeout.
+Metric storage has its own timeout equal to `datastore_pool_max_wait_seconds`.
+The system applies this timeout independently from the execution timeout.
 
 ## Error Handling
 
@@ -524,53 +489,44 @@ The scheduler handles errors at several levels.
 
 ### Connection Errors
 
-The scheduler logs connection errors with the
-connection name and error message. The probe is
-skipped for that connection and retries on the next
+The scheduler logs connection errors with the connection name and error
+message. The probe is skipped for that connection and retries on the next
 interval.
 
 ### Execution Errors
 
-The scheduler logs execution errors with the probe
-name, connection, and error message. Metrics are
-not collected for that interval.
+The scheduler logs execution errors with the probe name, connection, and error
+message. Metrics are not collected for that interval.
 
 ### Storage Errors
 
-The scheduler logs storage errors with the probe
-name. Metrics are lost for that interval and the
-probe continues on the next interval.
+The scheduler logs storage errors with the probe name. Metrics are lost for
+that interval and the probe continues on the next interval.
 
 ### Timeout Errors
 
-The scheduler logs timeout errors with the timeout
-duration. The execution is cancelled and retries
-on the next interval.
+The scheduler logs timeout errors with the timeout duration. The execution is
+cancelled and retries on the next interval.
 
 ## Performance Characteristics
 
-This section describes the scheduler performance
-profile.
+This section describes the scheduler performance profile.
 
 ### Scheduling Overhead
 
-The scheduling overhead is minimal because each
-probe sleeps on a timer. The 34 goroutines with
-minimal stack sizes consume approximately 2-4 MB
-of memory.
+The scheduling overhead is minimal because each probe sleeps on a timer. The 34
+goroutines with minimal stack sizes consume approximately 2-4 MB of memory.
 
 ### Execution Parallelism
 
-Probes execute independently of each other. The
-scheduler processes connections in parallel, limited
-by connection pool sizes.
+Probes execute independently of each other. The scheduler processes connections
+in parallel, limited by connection pool sizes.
 
 ### Memory Usage
 
-Each probe execution uses 100 KB to 10 MB depending
-on the result set size. Peak memory occurs during
-mass probe execution. The system releases memory
-when metrics are stored.
+Each probe execution uses 100 KB to 10 MB depending on the result set size.
+Peak memory occurs during mass probe execution. The system releases memory when
+metrics are stored.
 
 ## Monitoring the Scheduler
 
@@ -596,8 +552,8 @@ Look for timeout messages in the logs:
 
 ### Check Probe Status
 
-In the following example, the query shows the most
-recent collection time for each connection:
+In the following example, the query shows the most recent collection time for
+each connection:
 
 ```sql
 SELECT
@@ -618,15 +574,12 @@ ORDER BY c.name;
 
 ## Tuning the Scheduler
 
-This section describes how to tune the scheduler
-for optimal performance.
+This section describes how to tune the scheduler for optimal performance.
 
 ### Adjusting Collection Intervals
 
-Balance data freshness against system load by
-adjusting collection intervals. In the following
-example, the commands adjust intervals for specific
-probes:
+Balance data freshness against system load by adjusting collection intervals.
+In the following example, the commands adjust intervals for specific probes:
 
 ```sql
 -- Reduce frequency for low-priority probes
@@ -642,9 +595,8 @@ WHERE name = 'pg_stat_replication';
 
 ### Adjusting Timeouts
 
-Increase timeouts if the logs show timeout errors.
-In the following example, the configuration file
-settings increase both timeouts:
+Increase timeouts if the logs show timeout errors. In the following example,
+the configuration file settings increase both timeouts:
 
 ```ini
 monitored_pool_max_wait_seconds = 120
@@ -653,9 +605,8 @@ datastore_pool_max_wait_seconds = 90
 
 ### Adjusting Concurrency
 
-Increase pool sizes for better parallelism. In the
-following example, the configuration file settings
-increase both pool sizes:
+Increase pool sizes for better parallelism. In the following example, the
+configuration file settings increase both pool sizes:
 
 ```ini
 monitored_pool_max_connections = 10
@@ -666,9 +617,6 @@ datastore_pool_max_connections = 50
 
 The following resources provide additional details.
 
-- [Probes](probes.md) covers the probe system
-  internals.
-- [Architecture](architecture.md) describes the
-  overall system design.
-- [Testing and Development](testing.md) covers
-  the development environment.
+- [Probes](probes.md) covers the probe system internals.
+- [Architecture](architecture.md) describes the overall system design.
+- [Testing and Development](testing.md) covers the development environment.

@@ -172,6 +172,29 @@ server configuration to produce actionable remediation
 guidance. See [AI Alert Analysis](ai-analysis.md) for
 details on this feature.
 
+## Anomaly Detection Reasoning
+
+Each anomaly alert in the status panel displays a question
+mark button labelled "Why was this flagged?". Click the
+button to open a popover that explains why the anomaly
+detector judged the anomaly to be a real issue. The
+Workbench fetches the explanation only when you click the
+button.
+
+When the anomaly detector used a decision model, which
+records a verdict without an explanation, the server asks
+its configured LLM to write one the first time anyone opens
+the popover. The first request can take a few seconds; the
+server stores the explanation, so later views appear at
+once. The popover notes that such an explanation was
+generated after the decision model's verdict.
+
+If the server has no LLM configured or the LLM call fails,
+the popover reports that the reasoning is not available and
+offers a Retry button. Alerts with no recorded reasoning,
+such as an alert raised because the classification step
+failed, show a message saying so instead.
+
 ## Editing Alert Thresholds
 
 Users can edit alert thresholds directly from an alert

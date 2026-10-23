@@ -55,6 +55,7 @@ import {
 } from '../../theme';
 import { isSystemAlert } from '../../utils/systemAlerts';
 import { AlertSourceChip, AlertTypeChip } from './AlertChips';
+import AlertReasoningButton from './AlertReasoningButton';
 import type {
     GroupedAlertInstanceProps,
     GroupedAlertItemProps,
@@ -196,6 +197,11 @@ const GroupedAlertInstance: React.FC<GroupedAlertInstanceProps> = ({
                     <Typography sx={INSTANCE_TIME_SX}>
                         {alert.time}
                     </Typography>
+                )}
+
+                {/* Tier 3 detection reasoning, fetched only on click */}
+                {alert.alertType === 'anomaly' && !system && (
+                    <AlertReasoningButton alertId={alert.id} compact />
                 )}
 
                 {/* Analyze button; system alerts have no connection to analyse */}

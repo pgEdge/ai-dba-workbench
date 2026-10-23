@@ -332,6 +332,11 @@ moved.
   and `alerts.ai_analysis` with `RedactedText` in `GET /api/v1/alerts`,
   and the description in the timeline fired and cleared summaries
   (`get_alert_history` reads the description but does not return it).
+  `alerts.anomaly_details` is returned unmasked on both routes, and
+  since #626 it can hold LLM text under `tier3_reasoning`, written once
+  by `GET /api/v1/alerts/reasoning` from stored alert fields (no
+  statement text) after control and format characters are stripped;
+  this was accepted as the same exposure as `tier3_result`.
   The SQL rules live in `internal/metrics/redaction.go` and apply on every
   route returning credential-bearing metrics: `query_datastore`,
   `GET /api/v1/metrics/latest` (#670) and the latest-rows mode of

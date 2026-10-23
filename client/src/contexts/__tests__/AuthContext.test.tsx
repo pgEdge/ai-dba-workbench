@@ -27,6 +27,47 @@ vi.mock('../../utils/logger', () => ({
     },
 }));
 
+// Wrap each per-user cache's clear function in a spy, keeping the real
+// behaviour, so the tests can assert that logout clears them all.
+const cacheClears = vi.hoisted(() => ({
+    alertAnalysis: vi.fn(),
+    chartAnalysis: vi.fn(),
+    serverAnalysis: vi.fn(),
+    queryAnalysis: vi.fn(),
+    alertReasoning: vi.fn(),
+    sqlValidation: vi.fn(),
+}));
+vi.mock('../../hooks/useAlertAnalysis', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../hooks/useAlertAnalysis')>();
+    return { ...actual, clearAlertAnalysisCache: cacheClears.alertAnalysis.mockImplementation(actual.clearAlertAnalysisCache) };
+});
+vi.mock('../../hooks/useChartAnalysis', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../hooks/useChartAnalysis')>();
+    return { ...actual, clearChartAnalysisCache: cacheClears.chartAnalysis.mockImplementation(actual.clearChartAnalysisCache) };
+});
+vi.mock('../../hooks/useServerAnalysis', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../hooks/useServerAnalysis')>();
+    return { ...actual, clearAnalysisCache: cacheClears.serverAnalysis.mockImplementation(actual.clearAnalysisCache) };
+});
+vi.mock('../../hooks/useQueryAnalysis', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../hooks/useQueryAnalysis')>();
+    return { ...actual, clearQueryAnalysisCache: cacheClears.queryAnalysis.mockImplementation(actual.clearQueryAnalysisCache) };
+});
+vi.mock('../../hooks/useAlertReasoning', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../hooks/useAlertReasoning')>();
+    return { ...actual, clearAlertReasoningCache: cacheClears.alertReasoning.mockImplementation(actual.clearAlertReasoningCache) };
+});
+vi.mock('../../utils/sqlValidation', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../utils/sqlValidation')>();
+    return { ...actual, clearSqlValidationCache: cacheClears.sqlValidation.mockImplementation(actual.clearSqlValidationCache) };
+});
+
+const expectEveryCacheCleared = () => {
+    for (const [name, clear] of Object.entries(cacheClears)) {
+        expect(clear, name).toHaveBeenCalledTimes(1);
+    }
+};
+
 describe('AuthContext', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -564,6 +605,26 @@ describe('AuthContext', () => {
 
             expect(result.current.user).toBeNull();
             expect(result.current.adminPermissions).toEqual([]);
+        });
+    });
+
+    describe('Per-user caches', () => {
+        it.each(['logout', 'forceLogout'] as const)('%s clears every per-user cache', async (method) => {
+            mockCheckAuthAuthenticated({ username: 'testuser' });
+            const { result } = renderHook(() => useAuth(), { wrapper });
+            await waitFor(() => {
+                expect(result.current.user).not.toBeNull();
+            });
+            for (const clear of Object.values(cacheClears)) {
+                clear.mockClear();
+            }
+
+            mockFetch.mockResolvedValueOnce(mockResponse({ success: true }));
+            await act(async () => {
+                await result.current[method]();
+            });
+
+            expectEveryCacheCleared();
         });
     });
 

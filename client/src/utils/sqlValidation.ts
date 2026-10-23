@@ -102,7 +102,7 @@ const cacheKey = (
     sql: string,
 ): string => `${connectionId}\u0000${databaseName ?? ''}\u0000${sql}`;
 
-/** Drop every cached validation result. Exported for tests. */
+/** Drop every cached validation result; called on logout and by tests. */
 export const clearSqlValidationCache = (): void => {
     validationCache.clear();
 };

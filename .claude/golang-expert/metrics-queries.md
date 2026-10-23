@@ -1523,6 +1523,21 @@ needs adding in the same three places. The decision provider is health
 tracked as its own tier, `tier3_decision`, which shares no outcomes with
 the reasoning tiers.
 
+A decision verdict stores only a one-line summary as `tier3_result`, so
+the server's `GET /api/v1/alerts/reasoning`
+(`api/alert_reasoning_handlers.go`) generates an explanation on first
+request with the server's `llm` config and stores it in
+`alerts.anomaly_details` under `tier3_reasoning`
+(`database.Tier3ReasoningKey`, written by `SaveAlertTier3Reasoning` only
+when absent); later requests read it back. The alerter never rewrites
+an anomaly alert's `anomaly_details` after raising it (only system
+alerts have theirs rewritten), so that key is the server's alone:
+alerter code must not overwrite an anomaly alert's `anomaly_details`
+wholesale, and `buildReevaluationPrompt` does not read the key.
+`GetAlertTier3Info` joins the newest `anomaly_candidates` row by
+`alert_id`; reasoning verdicts are served from that row's `tier3_result`
+with no LLM call.
+
 ### Anomaly alert recovery (#611)
 
 `cleanResolvedAlerts` only handles threshold alerts (`clearResolvedAlert`

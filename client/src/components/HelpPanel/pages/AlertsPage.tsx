@@ -16,6 +16,7 @@ import {
     Edit as EditIcon,
     Psychology as AIIcon,
     PlayArrow as RunIcon,
+    HelpOutline as ReasoningIcon,
 } from '@mui/icons-material';
 import { SectionTitle, HelpTip, FeatureItem } from '../components';
 import { styles, getSeverityChipSx } from '../helpPanelStyles';
@@ -145,6 +146,16 @@ const AlertsPage: React.FC<AlertsPageProps> = ({ aiEnabled }) => (
                 description="Saving creates a new override or updates an existing one at the selected scope level."
             />
         </Box>
+
+        <SectionTitle icon={ReasoningIcon}>Anomaly Detection Reasoning</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Anomaly alerts have a &quot;Why was this flagged?&quot; button
+            (question mark icon) that shows why the anomaly detector
+            raised the alert. When the detector recorded only a verdict,
+            the server asks the configured LLM to explain it the first
+            time you click, which can take a few seconds; later views
+            are immediate.
+        </Typography>
 
         {aiEnabled && (
             <>

@@ -101,9 +101,14 @@ func (d *Datastore) GetAlertTier3Info(ctx context.Context, alertID int64) (*Aler
 // the same alert at once the first to commit wins and the second gets
 // the first's text back rather than overwriting it. It returns
 // ErrAlertNotFound when the alert has gone.
+//
+// It takes only the read lock: the mutex guards the Datastore's own
+// fields, which this method does not change, and PostgreSQL's row lock
+// on the conditional UPDATE makes concurrent writers take turns, so an
+// exclusive lock would only stall every other reader for the save.
 func (d *Datastore) SaveAlertTier3Reasoning(ctx context.Context, alertID int64, reasoning string) (string, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 
 	var stored string
 	err := d.pool.QueryRow(ctx, `

@@ -1690,10 +1690,10 @@ const hiddenRelationshipRefusal = "Permission denied: the connection has relatio
 // It writes the response and returns false when the caller may not
 // proceed: 404 for a hidden source, so that the source's existence is
 // not disclosed, and 400 for a source outside the cluster. Membership
-// is checked first because a connection that moved clusters keeps its
-// rows in the old cluster, which may have no visible member, and a 403
-// there would confirm a hidden relationship in a cluster the caller
-// cannot see.
+// is checked first because rows a move left behind before issue #707
+// was fixed may still name the connection in its old cluster, which may
+// have no visible member, and a 403 there would confirm a hidden
+// relationship in a cluster the caller cannot see.
 func (h *ClusterHandler) visibleSourceInCluster(ctx context.Context, w http.ResponseWriter, clusterID, sourceID int, visible map[int]bool) bool {
 	if visible == nil {
 		return true
@@ -1724,6 +1724,36 @@ func (h *ClusterHandler) refuseHiddenRelationship(w http.ResponseWriter, r *http
 		return false
 	}
 	h.denialRecorder.refuse(w, r, hiddenRelationshipRefusal)
+	return true
+}
+
+// refuseDepartedMember answers 400, with the message the membership
+// checks give, and returns true when err reports that a connection the
+// write names left the cluster after those checks; the write
+// transaction rechecks membership under a lock (issue #707). reversed
+// is true for the reverse half of a replicates_with pair, whose source
+// is the request's target; by then the forward rows have committed, so
+// the message says they were saved.
+func refuseDepartedMember(w http.ResponseWriter, err error, reversed bool) bool {
+	source := errors.Is(err, database.ErrSourceNotInCluster)
+	if !source && !errors.Is(err, database.ErrTargetNotInCluster) {
+		return false
+	}
+	if reversed {
+		which := "target"
+		if !source {
+			which = "source"
+		}
+		RespondError(w, http.StatusBadRequest,
+			"Relationships saved, but the reverse replicates_with relationship was not: the "+
+				which+" connection no longer belongs to this cluster")
+		return true
+	}
+	if source {
+		RespondError(w, http.StatusBadRequest, "Source connection does not belong to this cluster")
+	} else {
+		RespondError(w, http.StatusBadRequest, "Target connection does not belong to this cluster")
+	}
 	return true
 }
 
@@ -1847,7 +1877,7 @@ func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *ht
 
 	// Set the relationships for the source connection
 	if err := h.datastore.SetNodeRelationships(ctx, clusterID, connID, req.Relationships, visible); err != nil {
-		if h.refuseHiddenRelationship(w, r, err) {
+		if h.refuseHiddenRelationship(w, r, err) || refuseDepartedMember(w, err, false) {
 			return
 		}
 		log.Printf("[ERROR] Failed to set relationships (cluster=%d, conn=%d): %v", clusterID, connID, err)
@@ -1886,6 +1916,10 @@ func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *ht
 				TargetConnectionID: connID, RelationshipType: "replicates_with",
 			}
 			if err := h.datastore.AddNodeRelationship(ctx, clusterID, rel.TargetConnectionID, reverseRel); err != nil {
+				// The reverse row's source is the request's target.
+				if refuseDepartedMember(w, err, true) {
+					return
+				}
 				log.Printf("[WARN] Failed to create reverse replicates_with relationship: %v", err)
 			}
 		}

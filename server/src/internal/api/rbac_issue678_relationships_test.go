@@ -39,7 +39,8 @@ import (
 
 // seedIssue678Relationships adds the hidden-target relationship 6 -> 7
 // (id 2), and a stale relationship 6 -> 8 (id 3) left in the hidden
-// cluster 3, as happens when a connection moves to another cluster.
+// cluster 3, as a move made before issue #707 was fixed could leave
+// behind.
 func seedIssue678Relationships(t *testing.T, f *clusterCovFixture) {
 	t.Helper()
 	if _, err := f.pool.Exec(context.Background(), `

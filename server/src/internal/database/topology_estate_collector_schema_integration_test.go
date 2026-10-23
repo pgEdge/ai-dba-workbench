@@ -366,7 +366,6 @@ func buildCSFixture(e *csEnv) *csFixture {
 	}
 	for _, rel := range []struct{ cluster, source, target int }{
 		{f.ghostCluster, f.ghostB, f.ghostA},
-		{f.ghostCluster, f.ghostA, f.binPrimary},
 		{f.binCluster, f.ghostC, f.binStandby},
 	} {
 		if err := e.ds.SetNodeRelationships(e.ctx, rel.cluster, rel.source,
@@ -374,6 +373,14 @@ func buildCSFixture(e *csEnv) *csFixture {
 			e.t.Fatalf("SetNodeRelationships %d: %v", rel.source, err)
 		}
 	}
+	// ghost-a streams from bin-primary, outside its own cluster.
+	// SetNodeRelationships refuses a target that is not a member of the
+	// cluster (issue #707), so write the row directly, as one left
+	// behind by an earlier move would be.
+	e.exec(`INSERT INTO cluster_node_relationships
+            (cluster_id, source_connection_id, target_connection_id, relationship_type, is_auto_detected)
+            VALUES ($1, $2, $3, 'streams_from', FALSE)`,
+		f.ghostCluster, f.ghostA, f.binPrimary)
 
 	// Mark gone, then write the rows a late cycle would: fresh metrics,
 	// an alert, and manual relationships in both directions.
@@ -385,14 +392,12 @@ func buildCSFixture(e *csEnv) *csFixture {
 	// streams_from row would hit that key, be skipped by ON CONFLICT and
 	// vanish when the second refresh replaces the auto-detected rows,
 	// leaving the source side of the relationship readers untested.
-	if err := e.ds.SetNodeRelationships(e.ctx, f.binCluster, f.gone,
-		[]RelationshipInput{{TargetConnectionID: f.binPrimary, RelationshipType: "replicates_with"}}, nil); err != nil {
-		e.t.Fatalf("SetNodeRelationships gone: %v", err)
-	}
-	if err := e.ds.SetNodeRelationships(e.ctx, f.binCluster, f.binStandby2,
-		[]RelationshipInput{{TargetConnectionID: f.gone, RelationshipType: "replicates_with"}}, nil); err != nil {
-		e.t.Fatalf("SetNodeRelationships to gone: %v", err)
-	}
+	// SetNodeRelationships refuses gone, which is no longer a member of
+	// the cluster (issue #707), so the rows are written directly.
+	e.exec(`INSERT INTO cluster_node_relationships
+            (cluster_id, source_connection_id, target_connection_id, relationship_type, is_auto_detected)
+            VALUES ($1, $2, $3, 'replicates_with', FALSE), ($1, $4, $2, 'replicates_with', FALSE)`,
+		f.binCluster, f.gone, f.binPrimary, f.binStandby2)
 
 	if err := e.ds.RefreshClusterAssignments(e.ctx); err != nil {
 		e.t.Fatalf("second RefreshClusterAssignments: %v", err)

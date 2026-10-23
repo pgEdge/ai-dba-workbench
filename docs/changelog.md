@@ -2553,6 +2553,20 @@ project adheres to
   `-update-user` prompts had the same split buffer and now share one
   too. (#588)
 
+- Drop a connection's topology relationships from its old cluster
+  when it moves to another one. `PUT /api/v1/connections/{id}/cluster`
+  and `POST /api/v1/clusters/{id}/servers` changed the connection's
+  cluster but left the relationships naming it, so the old cluster
+  kept showing edges to a server that was no longer a member. Both
+  now delete those relationships, whichever end the connection is
+  on, in the same transaction as the move, and keep any it already
+  has in its new cluster. Saving a server's relationships now
+  rechecks, under a row lock, that the server and every target are
+  still members of the cluster, so a move made whilst the save is in
+  progress can no longer leave a relationship behind; the save
+  answers 400 instead. Relationships left behind by earlier moves
+  are not removed retrospectively. (#707)
+
 ### Removed
 
 - Remove the hard-coded allow-list of embedding model names, which

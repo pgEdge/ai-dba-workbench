@@ -2134,7 +2134,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Put: &OpenAPIOperation{
 				Summary:     "Update connection cluster assignment",
-				Description: "Reassigns the connection to a different cluster or resets its membership source. Requires manage_connections permission.",
+				Description: "Reassigns the connection to a different cluster or resets its membership source. The change deletes every topology relationship that names the connection in any cluster other than its new one (all of them when it is unassigned). Requires manage_connections permission.",
 				OperationID: "updateConnectionCluster",
 				Tags:        []string{"Connections"},
 				Security:    bearerAuth,
@@ -2322,7 +2322,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Post: &OpenAPIOperation{
 				Summary:     "Add server to cluster",
-				Description: "Assigns a server connection to a cluster with an optional role. Requires manage_connections permission.",
+				Description: "Assigns a server connection to a cluster with an optional role. A connection moved from another cluster loses every topology relationship that names it outside this cluster. Requires manage_connections permission.",
 				OperationID: "addServerToCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,

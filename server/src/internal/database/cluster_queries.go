@@ -449,7 +449,7 @@ func (d *Datastore) DeleteCluster(ctx context.Context, id int) error {
 		// Detach connections since the FK ON DELETE SET NULL won't
 		// fire for a soft delete
 		_, err = d.pool.Exec(ctx,
-			`UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE cluster_id = $1`,
+			detachClusterMembersSQL,
 			id,
 		)
 		if err != nil {
@@ -468,6 +468,19 @@ func (d *Datastore) DeleteCluster(ctx context.Context, id int) error {
 
 	return nil
 }
+
+// detachClusterMembersSQL detaches every member of the cluster $1. It
+// locks the member rows in id order first, as lockClusterMembers does:
+// a plain UPDATE ... WHERE cluster_id = $1 walks the heap, which stops
+// matching id order once a member row has been updated, and could then
+// deadlock with a relationship write holding some members FOR SHARE.
+const detachClusterMembersSQL = `
+        UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE id IN (
+            SELECT id FROM connections WHERE cluster_id = $1
+            ORDER BY id
+            FOR NO KEY UPDATE
+        )`
 
 // deriveClusterNameFromKey produces a human-readable name from an
 // auto_cluster_key. The result is used when creating a dismissed
@@ -539,7 +552,7 @@ func (d *Datastore) DeleteAutoDetectedCluster(ctx context.Context, autoKey strin
 	}
 
 	_, err = tx.Exec(ctx,
-		`UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE cluster_id = $1`,
+		detachClusterMembersSQL,
 		clusterID,
 	)
 	if err != nil {
@@ -599,7 +612,7 @@ func (d *Datastore) DismissAutoDetectedClusterKeys(ctx context.Context, autoKeys
 		}
 
 		_, err = tx.Exec(ctx,
-			`UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE cluster_id = $1`,
+			detachClusterMembersSQL,
 			clusterID,
 		)
 		if err != nil {
@@ -1174,9 +1187,20 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
 // id that names no cluster fails the connections.cluster_id foreign
 // key and is reported as ErrClusterNotFound, and a connection id that
 // names no connection as ErrConnectionNotFound.
+//
+// The move and the removal of the connection's relationship rows in any
+// other cluster (see dropRelationshipsOutsideCluster) commit together,
+// so the old cluster's topology never keeps edges to a node that has
+// left it (issue #707).
 func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID int, clusterID *int, role *string, membershipSource string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to assign connection to cluster: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	query := `
         UPDATE connections
@@ -1184,7 +1208,7 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
         WHERE id = $1 AND deleted_at IS NULL
     `
 
-	result, err := d.pool.Exec(ctx, query, connectionID, clusterID, role, membershipSource)
+	result, err := tx.Exec(ctx, query, connectionID, clusterID, role, membershipSource)
 	if err != nil {
 		// cluster_id is the only foreign key this statement sets.
 		var pgErr *pgconn.PgError
@@ -1198,5 +1222,34 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
 		return ErrConnectionNotFound
 	}
 
+	if err := dropRelationshipsOutsideCluster(ctx, tx, connectionID, clusterID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to assign connection to cluster: %w", err)
+	}
+
+	return nil
+}
+
+// dropRelationshipsOutsideCluster deletes every cluster_node_relationships
+// row in which connectionID is the source or the target and whose
+// cluster_id is not clusterID; a nil clusterID drops them all. Rows are
+// keyed by cluster, so once a connection changes cluster its rows in
+// the old one describe a node that is no longer a member. Manual and
+// auto-detected rows go alike, as in RemoveServerFromCluster: the
+// caller has already passed the gates for moving the connection, and a row
+// in a cluster the connection has left constrains nothing.
+func dropRelationshipsOutsideCluster(ctx context.Context, tx pgx.Tx, connectionID int, clusterID *int) error {
+	_, err := tx.Exec(ctx,
+		`DELETE FROM cluster_node_relationships
+         WHERE (source_connection_id = $1 OR target_connection_id = $1)
+           AND cluster_id IS DISTINCT FROM $2`,
+		connectionID, clusterID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete relationships in the previous cluster: %w", err)
+	}
 	return nil
 }

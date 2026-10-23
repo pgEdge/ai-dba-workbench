@@ -42,19 +42,17 @@ import (
 	"math"
 	"net"
 	"net/url"
-	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/alerter/internal/llm"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 )
 
 // providerTier names the caller of an LLM provider whose outcomes are
@@ -528,7 +526,7 @@ func (t *providerHealthTracker) refresh(dbCtx context.Context, key string, st *p
 // the endpoint details the alert leaves out, so an operator can see
 // which host refused the call. Credentials are still removed.
 func (t *providerHealthTracker) logCallError(key string, callErr error, secrets []string) {
-	t.log("Provider health %s: call failed: %s", key, redactProviderLogError(callErr.Error(), secrets))
+	t.log("Provider health %s: call failed: %s", key, redact.ProviderLogError(callErr.Error(), secrets))
 }
 
 // load reads whether an alert is already open for key, once per key, and
@@ -674,25 +672,6 @@ func providerHealthDetails(tier providerTier, provider, model string,
 // maxProviderErrorBytes caps the error text an alert repeats.
 const maxProviderErrorBytes = 512
 
-// providerErrorPatterns match credentials a provider error may repeat:
-// a bearer or basic credential, the query string of a URL, a key or
-// token parameter or header, a key-shaped value from a known provider,
-// and the userinfo of a URL.
-var providerErrorPatterns = []struct {
-	re   *regexp.Regexp
-	repl string
-}{
-	{regexp.MustCompile(`(?i)\b((?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+`), "${1}[REDACTED]"},
-	{regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://[^\s?#"'<>]*)\?[^\s"'<>#]*`), "${1}?[REDACTED]"},
-	{regexp.MustCompile(`(?i)((?:api[_-]?key|x-api-key|x-goog-api-key|access[_-]?token|token|key|secret|password|authorization)["']?\s*[:=]\s*["']?)[^\s"'&,;}]+`), "${1}[REDACTED]"},
-	{regexp.MustCompile(`\b(?:sk|pa|pk)-[A-Za-z0-9_\-]{8,}`), "[REDACTED]"},
-	{regexp.MustCompile(`\bAIza[0-9A-Za-z_\-]{20,}`), "[REDACTED]"},
-	{regexp.MustCompile(`(://)[^/@\s]+@`), "${1}[REDACTED]@"},
-}
-
-// redactedMarker replaces each credential removed from provider text.
-const redactedMarker = "[REDACTED]"
-
 // providerMarkup replaces the characters Slack mrkdwn and Mattermost
 // Markdown treat as links or mentions (<url|text>, <!channel>,
 // [text](url), @channel). The Slack and Mattermost notifiers escape
@@ -829,15 +808,15 @@ func flattenedTransportFailure(err error) (string, bool) {
 
 // redactProviderError prepares a provider error for an alert that every
 // user with alert access, and every notification channel, will see. It
-// removes credentials as redactProviderLogError does, replaces markup
+// removes credentials as redact.ProviderLogError does, replaces markup
 // characters, and caps the length.
 func redactProviderError(msg string, secrets []string) string {
 	// Replace markup between the redaction markers, which stay intact.
-	parts := strings.Split(redactProviderLogError(msg, secrets), redactedMarker)
+	parts := strings.Split(redact.ProviderLogError(msg, secrets), redact.ProviderMarker)
 	for i, part := range parts {
 		parts[i] = providerMarkup.Replace(part)
 	}
-	msg = strings.Join(parts, redactedMarker)
+	msg = strings.Join(parts, redact.ProviderMarker)
 	if len(msg) <= maxProviderErrorBytes {
 		return msg
 	}
@@ -846,28 +825,6 @@ func redactProviderError(msg string, secrets []string) string {
 		cut--
 	}
 	return msg[:cut] + "…"
-}
-
-// redactProviderLogError deletes control and formatting characters,
-// removes the configured secrets verbatim and anything that looks like
-// a credential. It keeps endpoint details, for the alerter's own log.
-func redactProviderLogError(msg string, secrets []string) string {
-	msg = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
-			r == ' ' || r == ' ' {
-			return -1
-		}
-		return r
-	}, strings.ToValidUTF8(msg, "�"))
-	for _, secret := range secrets {
-		if secret != "" {
-			msg = strings.ReplaceAll(msg, secret, redactedMarker)
-		}
-	}
-	for _, p := range providerErrorPatterns {
-		msg = p.re.ReplaceAllString(msg, p.repl)
-	}
-	return msg
 }
 
 // healthTrackingEmbedding wraps an embedding provider and records the
@@ -1024,11 +981,6 @@ func providerName(name string) string {
 	return name
 }
 
-// minDerivedSecretLen is the shortest base_url userinfo or query value
-// treated as a secret; removing a shorter one verbatim would mangle
-// ordinary words in the error text.
-const minDerivedSecretLen = 4
-
 // configuredSecrets returns the API keys cfg holds, and the userinfo and
 // query values of each provider's base_url.
 func configuredSecrets(cfg *config.Config) []string {
@@ -1047,41 +999,8 @@ func configuredSecrets(cfg *config.Config) []string {
 		cfg.LLM.Gemini.BaseURL,
 		cfg.LLM.TypeSafe.BaseURL,
 	} {
-		secrets = append(secrets, baseURLSecrets(base)...)
+		secrets = append(secrets, redact.BaseURLSecrets(base)...)
 	}
-	return secrets
-}
-
-// baseURLSecrets returns the userinfo and query values of a configured
-// base URL, in decoded and escaped forms, longest first so that a value
-// is removed before any shorter value inside it.
-func baseURLSecrets(base string) []string {
-	u, err := url.Parse(base)
-	if err != nil {
-		return nil
-	}
-	var values []string
-	if u.User != nil {
-		values = append(values, u.User.String(), u.User.Username())
-		if password, ok := u.User.Password(); ok {
-			values = append(values, password)
-		}
-	}
-	// Query keeps the pairs that parse and drops malformed ones.
-	for _, vs := range u.Query() {
-		values = append(values, vs...)
-	}
-	seen := map[string]bool{}
-	var secrets []string
-	for _, v := range values {
-		for _, form := range []string{v, url.QueryEscape(v), url.PathEscape(v)} {
-			if len(form) >= minDerivedSecretLen && !seen[form] {
-				seen[form] = true
-				secrets = append(secrets, form)
-			}
-		}
-	}
-	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
 	return secrets
 }
 

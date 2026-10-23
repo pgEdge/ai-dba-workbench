@@ -50,6 +50,7 @@ import {
 } from '../../theme';
 import { isSystemAlert } from '../../utils/systemAlerts';
 import { AlertSourceChip, AlertTypeChip } from './AlertChips';
+import AlertReasoningButton from './AlertReasoningButton';
 import type { AlertItemProps } from './types';
 
 /**
@@ -243,6 +244,11 @@ const AlertItem: React.FC<AlertItemProps> = ({
                 )}
                 <Chip label={alert.severity} size="small" sx={severityChipSx} />
             </Box>
+
+            {/* Tier 3 detection reasoning, fetched only on click */}
+            {alert.alertType === 'anomaly' && !system && (
+                <AlertReasoningButton alertId={alert.id} />
+            )}
 
             {/* Analyze button; system alerts have no connection to analyse */}
             {onAnalyze && !system && (

@@ -1083,6 +1083,16 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"default_enabled":   {Type: "boolean", Description: "Default enabled state"},
 			},
 		},
+		"AlertReasoningResponse": {
+			Type:     "object",
+			Required: []string{"alert_id", "status"},
+			Properties: map[string]*OpenAPISchema{
+				"alert_id":  {Type: "integer", Format: "int64", Description: "Alert ID"},
+				"status":    {Type: "string", Enum: []string{"available", "unavailable", "not_applicable"}, Description: "available when reasoning is returned; unavailable when it could not be generated now (no LLM configured, or the call failed) and a later request may succeed; not_applicable when the alert has no Tier 3 alert verdict to explain"},
+				"source":    {Type: "string", Enum: []string{"decision", "reasoning"}, Description: "The kind of model that made the Tier 3 verdict; omitted when not applicable"},
+				"reasoning": {Type: "string", Description: "Why the alert was raised; present only when status is available"},
+			},
+		},
 		"SaveAnalysisRequest": {
 			Type:     "object",
 			Required: []string{"alert_id", "analysis"},
@@ -3087,6 +3097,26 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"403": jsonResponse("ErrorResponse", "Access denied to an alert the caller can see but may not change"),
 					"404": jsonResponse("ErrorResponse", "Alert not found, or not visible to the caller"),
 					"500": jsonResponse("ErrorResponse", "Failed to save analysis"),
+				},
+			},
+		},
+
+		// Alerts - Tier 3 reasoning
+		"/alerts/reasoning": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get Tier 3 reasoning for alert",
+				Description: "Explains why an anomaly alert's Tier 3 classification raised it. For a verdict from a reasoning model, the model's stored reasoning is returned. A decision model returns a probability rather than text, so the first request for such an alert asks the configured LLM for an explanation, stores it on the alert and returns it; later requests return the stored text. Concurrent first requests share one LLM call. Generation failures are reported as status unavailable rather than as an error, so the request may be retried. Any caller who can see the alert may read, and so trigger, its reasoning; an alert the caller cannot see is answered with 404, exactly as a missing one",
+				OperationID: "getAlertReasoning",
+				Tags:        []string{"Alerts"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{queryParamIntRequired("alert_id", "Alert ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("AlertReasoningResponse", "Tier 3 reasoning, or why none is available"),
+					"400": jsonResponse("ErrorResponse", "Missing or invalid alert_id"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Alert not found, or not visible to the caller"),
+					"405": {Description: "Method not allowed; the Allow header names GET"},
+					"500": jsonResponse("ErrorResponse", "Failed to load the alert"),
 				},
 			},
 		},

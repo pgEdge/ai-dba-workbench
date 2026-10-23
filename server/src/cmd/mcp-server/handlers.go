@@ -222,6 +222,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 
 		// Alert endpoints (for StatusPanel component)
 		alertHandler := api.NewAlertHandler(deps.Datastore, deps.AuthStore, rbacChecker)
+		alertHandler.SetReasoningLLM(newLLMProxyConfig(&deps.Config.LLM))
 		registerDatastoreHandler(mux, alertHandler, authWrapper, "Alert management", deps.Datastore)
 
 		// Blackout management endpoints (for alert suppression windows)

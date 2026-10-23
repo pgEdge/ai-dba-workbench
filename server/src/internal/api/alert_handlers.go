@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"slices"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
@@ -55,6 +57,20 @@ type AlertHandler struct {
 	// and the refusal of an alert the caller can see but may not
 	// change.
 	denialAuditor
+	// reasoningStore reads and stores Tier 3 reasoning; tests replace
+	// it so the endpoint can run without a real database.
+	reasoningStore alertReasoningStore
+	// generateReasoning generates reasoning for a decision model's
+	// verdict; nil when the server has no LLM (see SetReasoningLLM).
+	generateReasoning alertReasoningGenerator
+	// reasoningSecrets are the configured credentials removed from a
+	// logged provider error (see reasoningLogSecrets).
+	reasoningSecrets []string
+	// reasoningFlight shares one generation between concurrent requests
+	// for the same alert.
+	reasoningFlight singleflight.Group
+	// reasoningLimiter bounds the LLM calls reasoning generation makes.
+	reasoningLimiter alertReasoningLimiter
 }
 
 // NewAlertHandler creates a new alert handler
@@ -68,6 +84,7 @@ func NewAlertHandler(datastore *database.Datastore, authStore *auth.AuthStore, r
 	if datastore != nil {
 		h.alertResolver = datastore
 		h.unacknowledgeFn = datastore
+		h.reasoningStore = datastore
 	}
 	return h
 }
@@ -103,6 +120,7 @@ func (h *AlertHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.
 		mux.HandleFunc("/api/v1/alerts/counts", authWrapper(notConfigured))
 		mux.HandleFunc("/api/v1/alerts/acknowledge", authWrapper(notConfigured))
 		mux.HandleFunc("/api/v1/alerts/analysis", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/alerts/reasoning", authWrapper(notConfigured))
 		return
 	}
 
@@ -110,6 +128,7 @@ func (h *AlertHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.
 	mux.HandleFunc("/api/v1/alerts/counts", authWrapper(h.handleAlertCounts))
 	mux.HandleFunc("/api/v1/alerts/acknowledge", authWrapper(h.handleAcknowledge))
 	mux.HandleFunc("/api/v1/alerts/analysis", authWrapper(h.handleSaveAnalysis))
+	mux.HandleFunc("/api/v1/alerts/reasoning", authWrapper(h.handleReasoning))
 }
 
 // handleAlerts handles GET /api/v1/alerts

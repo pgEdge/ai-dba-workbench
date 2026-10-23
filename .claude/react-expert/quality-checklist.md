@@ -823,6 +823,26 @@ that, and #373 centralised the construction. Current callers are
 `utils/agenticLoop.ts`, `hooks/chat/chatAgenticLoop.ts`,
 `hooks/useChartAnalysis.ts` and `hooks/useQueryOverview.ts`.
 
+## Anomaly Detection Reasoning
+
+`GET /api/v1/alerts/reasoning?alert_id=` can make the server call an
+LLM the first time it is asked about an alert whose Tier 3 verdict came
+from a decision model (issue #626), so it is fetched only from a user
+click, never on render or polling. `hooks/useAlertReasoning.ts` is its
+only client: it caches `available` results per alert id for the
+session and shares one in-flight request between consumers, and
+`StatusPanel/AlertReasoningButton.tsx` renders the result as plain
+text in a popover. Do not add the reasoning to the `/api/v1/alerts`
+list mapping, and never render it as HTML or Markdown.
+
+Every module-level cache of per-user data is cleared on logout through
+`clearSessionCaches()` in `contexts/AuthContext.tsx`, which both
+`logout` and `forceLogout` call; add any new cache's clear function
+there, and to the spies in `AuthContext.test.tsx`. A cache whose
+requests can outlive a clear (as in `useAlertReasoning.ts`) must also
+drop results from requests started before it, or a response arriving
+after logout lands in the next user's cache.
+
 ## Generated SQL Validation
 
 Generated SQL is never offered as runnable until it has been planned

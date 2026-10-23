@@ -52,3 +52,42 @@ func TestGetConnectionIDsForAutoClusterKey(t *testing.T) {
 		t.Error("Expected an error once the connections table is gone")
 	}
 }
+
+// TestGetClusterGroupIDForAutoClusterKey covers the lookup of an
+// auto-detected cluster's group by its key.
+func TestGetClusterGroupIDForAutoClusterKey(t *testing.T) {
+	ds, pool, cleanup := newClusterQueriesTestDatastore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	mustExecClusterQueries(t, pool, `
+        INSERT INTO cluster_groups (id, name) VALUES (7, 'Seven');
+        INSERT INTO clusters (id, auto_cluster_key, name, group_id)
+        VALUES (1, 'spock:grouped', 'Grouped', 7),
+               (2, 'spock:loose', 'Loose', NULL)`)
+
+	tests := []struct {
+		key       string
+		wantID    int
+		wantFound bool
+	}{
+		{"spock:grouped", 7, true},
+		{"spock:loose", 0, false},
+		{"spock:missing", 0, false},
+	}
+	for _, tt := range tests {
+		id, found, err := ds.GetClusterGroupIDForAutoClusterKey(ctx, tt.key)
+		if err != nil {
+			t.Fatalf("GetClusterGroupIDForAutoClusterKey(%q): %v", tt.key, err)
+		}
+		if id != tt.wantID || found != tt.wantFound {
+			t.Errorf("GetClusterGroupIDForAutoClusterKey(%q) = %d, %v, want %d, %v",
+				tt.key, id, found, tt.wantID, tt.wantFound)
+		}
+	}
+
+	mustExecClusterQueries(t, pool, "DROP TABLE clusters CASCADE")
+	if _, _, err := ds.GetClusterGroupIDForAutoClusterKey(ctx, "spock:grouped"); err == nil {
+		t.Error("Expected an error once the clusters table is gone")
+	}
+}

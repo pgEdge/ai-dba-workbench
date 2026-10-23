@@ -127,3 +127,116 @@ func (h *ClusterHandler) requireVisibleAutoDetectedCluster(ctx context.Context,
 	}
 	return true
 }
+
+// requireClusterMoveMembersVisible refuses, for a restricted caller, a
+// change of the cluster's group unless the caller can see every member
+// of the cluster, as moving it changes which group overrides reach each
+// member (issue #716). The cluster's old and new groups need no such
+// check: only the moved cluster's members are affected. A request that
+// names the group the cluster is already in changes nothing, which is
+// what the client sends when it renames a cluster, so it passes.
+func (h *ClusterHandler) requireClusterMoveMembersVisible(ctx context.Context,
+	w http.ResponseWriter, r *http.Request, clusterID, groupID int,
+	visible map[int]bool) bool {
+
+	cluster, err := h.datastore.GetCluster(ctx, clusterID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			RespondError(w, http.StatusNotFound, "Cluster not found")
+			return false
+		}
+		log.Printf("[ERROR] Failed to load cluster (id=%d): %v", clusterID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update cluster")
+		return false
+	}
+	if cluster.GroupID.Valid && int(cluster.GroupID.Int32) == groupID {
+		return true
+	}
+	return checkScopeMembersVisible(w, r, h.datastore, h.denialRecorder,
+		auth.PermManageConnections, "cluster", clusterID, visible)
+}
+
+// The refusals the auto-detected cluster and cluster group routes give a
+// caller without permission. The member checks give the same answer, so
+// that they disclose nothing a missing permission would not (issue
+// #716).
+const (
+	clusterGroupDeleteRefusal = "You do not have permission to delete this cluster group"
+	autoClusterModifyRefusal  = "Permission denied: you do not have permission to modify auto-detected clusters"
+	autoClusterDeleteRefusal  = "Permission denied: you do not have permission to delete auto-detected clusters"
+)
+
+// requireAutoClusterMoveMembersVisible is requireAutoClusterMembersVisible
+// for a PUT that sets the auto-detected cluster's group. A group_id
+// naming the group the cluster is already in changes nothing, so it
+// passes, as on the numeric route.
+func (h *ClusterHandler) requireAutoClusterMoveMembersVisible(ctx context.Context,
+	w http.ResponseWriter, r *http.Request, autoKey string, groupID int) bool {
+
+	const failMsg = "Failed to update auto-detected cluster"
+	current, found, err := h.datastore.GetClusterGroupIDForAutoClusterKey(ctx, autoKey)
+	if err != nil {
+		log.Printf("[ERROR] Failed to load the group of an auto-detected cluster: %v", err)
+		RespondError(w, http.StatusInternalServerError, failMsg)
+		return false
+	}
+	if found && current == groupID {
+		return true
+	}
+	return h.requireAutoClusterMembersVisible(ctx, w, r, []string{autoKey},
+		autoClusterModifyRefusal, failMsg)
+}
+
+// requireAutoClusterMembersVisible refuses a write to the auto-detected
+// clusters with the given keys unless the caller can see every
+// connection assigned to them (issue #716). It runs after
+// requireVisibleAutoDetectedCluster, so the caller already sees the
+// cluster; the refusal is the route's own missing-permission refusal,
+// passed as reason and audited, and says nothing about which members
+// are hidden. A caller with unrestricted visibility always passes.
+func (h *ClusterHandler) requireAutoClusterMembersVisible(ctx context.Context,
+	w http.ResponseWriter, r *http.Request, keys []string,
+	reason, failMsg string) bool {
+
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for an auto-detected cluster: %v", err)
+		RespondError(w, http.StatusInternalServerError, failMsg)
+		return false
+	}
+	if allConnections {
+		return true
+	}
+	for _, key := range keys {
+		members, err := h.datastore.GetConnectionIDsForAutoClusterKey(ctx, key)
+		if err != nil {
+			log.Printf("[ERROR] Failed to list auto-detected cluster members: %v", err)
+			RespondError(w, http.StatusInternalServerError, failMsg)
+			return false
+		}
+		if !allMembersVisible(members, visible) {
+			h.denialRecorder.refuse(w, r, reason)
+			return false
+		}
+	}
+	return true
+}
+
+// autoDetectedClusterKeys returns the auto_cluster_key values a topology
+// ID may name: the one Spock key for cluster-spock-{prefix}, and for
+// server-{id} the binary, standalone and logical keys, since the ID alone
+// does not say which kind the topology builder created. Any other ID
+// names no key.
+func autoDetectedClusterKeys(clusterID string) []string {
+	if prefix, ok := strings.CutPrefix(clusterID, "cluster-spock-"); ok {
+		return []string{"spock:" + prefix}
+	}
+	if idStr, ok := strings.CutPrefix(clusterID, "server-"); ok {
+		return []string{
+			"binary:" + idStr,
+			"standalone:" + idStr,
+			"logical:" + idStr,
+		}
+	}
+	return nil
+}

@@ -153,6 +153,12 @@ func (h *ChannelOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.R
 	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
 		return
 	}
+	// A cluster or group write reaches every member, so a member the
+	// caller cannot see refuses it (issue #716).
+	if !requireScopeMembersVisible(w, r, h.rbacChecker, h.datastore, h.denialRecorder,
+		auth.PermManageNotificationChannels, scope, scopeID) {
+		return
+	}
 
 	var req database.ChannelOverrideUpdate
 	if !DecodeJSONBody(w, r, &req) {
@@ -181,6 +187,12 @@ func (h *ChannelOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.R
 		return
 	}
 	if !requireTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, &scopeID) {
+		return
+	}
+	// A cluster or group write reaches every member, so a member the
+	// caller cannot see refuses it (issue #716).
+	if !requireScopeMembersVisible(w, r, h.rbacChecker, h.datastore, h.denialRecorder,
+		auth.PermManageNotificationChannels, scope, scopeID) {
 		return
 	}
 

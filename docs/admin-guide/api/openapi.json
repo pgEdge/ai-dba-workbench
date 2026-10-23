@@ -269,7 +269,7 @@
             }
           },
           "403": {
-            "description": "Permission denied, or the API token's connection scope does not cover the target",
+            "description": "Permission denied, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -373,7 +373,7 @@
             }
           },
           "403": {
-            "description": "Permission denied, or the API token's connection scope does not cover the target",
+            "description": "Permission denied, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -2281,7 +2281,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -2380,7 +2380,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_notification_channels permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -2737,7 +2737,7 @@
       },
       "delete": {
         "summary": "Delete a cluster group",
-        "description": "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group. A group the caller cannot see is answered with 404, as a missing one is. A group with no member connections is visible only to its owner and to callers who see every connection.",
+        "description": "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group, and the caller must see every member connection of the group. A group the caller cannot see is answered with 404, as a missing one is. A group with no member connections is visible only to its owner and to callers who see every connection.",
         "operationId": "deleteClusterGroup",
         "tags": [
           "Cluster Groups"
@@ -2768,7 +2768,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission or ownership of the cluster group, or the API token's connection scope does not cover every connection",
+            "description": "Requires manage_connections permission or ownership of the cluster group, or the API token's connection scope does not cover every connection, or the group has a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -3185,7 +3185,7 @@
       },
       "put": {
         "summary": "Update a cluster",
-        "description": "Updates cluster name, description, or group assignment. Also accepts the transient auto-detected IDs server-{id} and cluster-spock-{prefix}, with an optional auto_cluster_key that must name the same cluster. Requires manage_connections permission. A cluster or group the caller cannot see is answered with 404, as a missing one is; the default group is always writable.",
+        "description": "Updates cluster name, description, or group assignment. Also accepts the transient auto-detected IDs server-{id} and cluster-spock-{prefix}, with an optional auto_cluster_key that must name the same cluster. Requires manage_connections permission. A cluster or group the caller cannot see is answered with 404, as a missing one is; the default group is always writable. A change of group requires the caller to see every member connection of the cluster being moved.",
         "operationId": "updateCluster",
         "tags": [
           "Clusters"
@@ -3244,7 +3244,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target, or the request changes the group of a cluster with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -3272,7 +3272,7 @@
       },
       "delete": {
         "summary": "Delete a cluster",
-        "description": "Deletes a cluster. Manually created clusters are hard-deleted. Auto-detected clusters are soft-deleted by setting dismissed=true so they do not reappear in topology. This applies to persisted auto-detected clusters addressed by numeric ID and to transient auto-detected IDs (server-{id} or cluster-spock-{prefix}). Requires manage_connections permission. A cluster the caller cannot see is answered with 404, as a missing one is.",
+        "description": "Deletes a cluster. Manually created clusters are hard-deleted. Auto-detected clusters are soft-deleted by setting dismissed=true so they do not reappear in topology. This applies to persisted auto-detected clusters addressed by numeric ID and to transient auto-detected IDs (server-{id} or cluster-spock-{prefix}). Requires manage_connections permission, and the caller must see every member connection of the cluster. A cluster the caller cannot see is answered with 404, as a missing one is.",
         "operationId": "deleteCluster",
         "tags": [
           "Clusters"
@@ -3303,7 +3303,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target, or the cluster has a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -3784,7 +3784,7 @@
     "/clusters/{id}/servers/{connectionId}": {
       "delete": {
         "summary": "Remove server from cluster",
-        "description": "Removes a server connection from a cluster. Requires manage_connections permission.",
+        "description": "Removes a server connection from a cluster. Requires manage_connections permission. A connection the caller cannot see is answered with 404, as one that is not a member is.",
         "operationId": "removeServerFromCluster",
         "tags": [
           "Clusters"
@@ -3835,6 +3835,16 @@
           },
           "403": {
             "description": "Requires manage_connections permission, or the API token's connection scope does not cover the target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cluster not found or not visible to the caller, or connection not found in the cluster or not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -7885,7 +7895,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -8067,7 +8077,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -8166,7 +8176,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_probes permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {

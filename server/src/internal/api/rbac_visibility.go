@@ -162,6 +162,77 @@ func scopeVisibleToCaller(ctx context.Context, w http.ResponseWriter, rbac *auth
 	return true
 }
 
+// requireScopeMembersVisible refuses a write at cluster or group scope
+// unless the caller can see every member connection of that cluster or
+// group (issue #716). An override written there applies to every member,
+// so seeing one member is not enough to change what the others do. It
+// writes the response and returns false when the caller may not
+// proceed. A server scope, and a caller with unrestricted visibility
+// (superuser or wildcard grant), always pass.
+//
+// It runs after scopeVisibleToCaller, so a cluster or group with no
+// visible member, or none at all, has already answered 404. The refusal
+// is the admin-permission refusal for permission, audited through
+// record, so that it says nothing about how many members are hidden or
+// which; a caller learns no more than that the write is not theirs to
+// make.
+func requireScopeMembersVisible(w http.ResponseWriter, r *http.Request,
+	rbac *auth.RBACChecker, ds *database.Datastore, record denialRecorder,
+	permission, scope string, scopeID int) bool {
+
+	if scope != "cluster" && scope != "group" {
+		return true
+	}
+	visible, all, err := resolveVisibleConnectionSet(r.Context(), rbac, ds)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for %s scope %d: %v", scope, scopeID, err) //nolint:gosec // G706: scope validated against allowlist; scopeID is an integer
+		RespondError(w, http.StatusInternalServerError, "Failed to check scope visibility")
+		return false
+	}
+	if all {
+		return true
+	}
+	return checkScopeMembersVisible(w, r, ds, record, permission, scope, scopeID, visible)
+}
+
+// checkScopeMembersVisible is requireScopeMembersVisible for a
+// restricted caller whose visible set is already resolved. scope must be
+// "cluster" or "group".
+func checkScopeMembersVisible(w http.ResponseWriter, r *http.Request,
+	ds rbacVisibilityDatastore, record denialRecorder, permission,
+	scope string, scopeID int, visible map[int]bool) bool {
+
+	var members []int
+	var err error
+	if scope == "cluster" {
+		members, err = ds.GetConnectionIDsForCluster(r.Context(), scopeID)
+	} else {
+		members, err = ds.GetConnectionIDsForGroup(r.Context(), scopeID)
+	}
+	if err != nil {
+		log.Printf("[ERROR] Failed to list members of %s scope %d: %v", scope, scopeID, err) //nolint:gosec // G706: scope validated against allowlist; scopeID is an integer
+		RespondError(w, http.StatusInternalServerError, "Failed to check scope visibility")
+		return false
+	}
+	if !allMembersVisible(members, visible) {
+		record.refuse(w, r, adminPermissionRefusal(permission))
+		return false
+	}
+	return true
+}
+
+// allMembersVisible reports whether every listed connection is in the
+// visible set. An empty list is vacuously visible; the callers' earlier
+// visibility check is what refuses an empty cluster or group.
+func allMembersVisible(members []int, visible map[int]bool) bool {
+	for _, id := range members {
+		if !visible[id] {
+			return false
+		}
+	}
+	return true
+}
+
 // filterGroupsByVisibilityFn drops cluster groups whose clusters contain
 // no visible member connections, keeping a group with no member
 // connections only when owner names its owner (issue #705), which is the

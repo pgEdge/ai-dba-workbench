@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -522,6 +523,32 @@ func (d *Datastore) GetConnectionIDsForAutoClusterKey(ctx context.Context, autoK
 		return nil, fmt.Errorf("failed to scan connection id: %w", err)
 	}
 	return ids, nil
+}
+
+// GetClusterGroupIDForAutoClusterKey returns the group of the cluster
+// with the given auto_cluster_key, so that the API handlers can tell
+// whether a PUT moves an auto-detected cluster. found is false when no
+// cluster has the key or the cluster has no group.
+func (d *Datastore) GetClusterGroupIDForAutoClusterKey(ctx context.Context, autoKey string) (groupID int, found bool, err error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var group *int
+	err = d.pool.QueryRow(ctx, `
+        SELECT group_id
+        FROM clusters
+        WHERE auto_cluster_key = $1
+    `, autoKey).Scan(&group)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to query cluster group for cluster key: %w", err)
+	}
+	if group == nil {
+		return 0, false, nil
+	}
+	return *group, true, nil
 }
 
 // gatherScopedServerData populates server status counts for a specific

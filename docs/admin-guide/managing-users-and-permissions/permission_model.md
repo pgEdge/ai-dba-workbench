@@ -244,6 +244,20 @@ The Workbench defines the following ten ADMIN permissions:
 Each permission allows a specific class of management operation; for example,
 `manage_users` allows creating, editing, and deleting accounts.
 
+An administrative permission applies only to what the holder can see. A
+probe, alert or notification channel override set on a cluster or a cluster
+group applies to every connection in it, so changing or deleting one requires
+the holder to see every one of those connections, whilst viewing one needs
+only one of them to be visible. The same applies to deleting a cluster or a
+cluster group, and to moving a cluster to another group, since each of those
+changes which overrides reach the cluster's connections. A change refused
+because a member connection is hidden answers in the same way as a missing
+permission, so it does not reveal which connections are hidden or how many.
+A connection the holder cannot see cannot be removed from a cluster either;
+the attempt is answered as though the connection were not a member.
+Superusers, and users granted access to all connections, see every
+connection and are not affected.
+
 For detailed instructions about assigning permissions to a group, see
 [Permission Management](permission_mgmt.md).
 

@@ -1,54 +1,44 @@
 # Schema Management
 
-This document describes the database schema management
-system for the pgEdge AI Workbench Collector.
+This document describes the database schema management system for the pgEdge AI
+Workbench Collector.
 
 ## Overview
 
-The Collector uses a migration-based schema management
-system that provides the following capabilities:
+The Collector uses a migration-based schema management system that provides the
+following capabilities:
 
-- The system automatically creates and updates database
-  schemas at startup.
+- The system automatically creates and updates database schemas at startup.
 - The system tracks which migrations have been applied.
-- The system ensures migrations are applied in the
-  correct order.
-- The system supports idempotent migrations that can
-  run multiple times safely.
-- The system creates tables, indexes, constraints, and
-  foreign keys.
+- The system ensures migrations are applied in the correct order.
+- The system supports idempotent migrations that can run multiple times safely.
+- The system creates tables, indexes, constraints, and foreign keys.
 
 ## Architecture
 
-The schema management system consists of several
-components that work together to maintain the
-database schema.
+The schema management system consists of several components that work together
+to maintain the database schema.
 
 ### SchemaManager
 
-The `SchemaManager` struct manages all database
-migrations. The manager maintains a registry of all
-available migrations, determines which migrations
-need to be applied, applies pending migrations in
-order, and tracks migration status in the database.
+The `SchemaManager` struct manages all database migrations. The manager
+maintains a registry of all available migrations, determines which migrations
+need to be applied, applies pending migrations in order, and tracks migration
+status in the database.
 
 ### Migration
 
-Each `Migration` struct represents a single schema
-change and contains the following fields:
+Each `Migration` struct represents a single schema change and contains the
+following fields:
 
-- `Version` is a unique integer identifying the
-  migration in sequential order.
-- `Description` is a human-readable description of
-  the migration.
-- `Up` is a function of the form `func(pgx.Tx) error`
-  that applies the migration on the transaction opened
-  for it.
+- `Version` is a unique integer identifying the migration in sequential order.
+- `Description` is a human-readable description of the migration.
+- `Up` is a function of the form `func(pgx.Tx) error` that applies the
+  migration on the transaction opened for it.
 
 ### schema_version Table
 
-The `schema_version` table tracks which migrations
-have been applied.
+The `schema_version` table tracks which migrations have been applied.
 
 ```sql
 CREATE TABLE schema_version (
@@ -61,79 +51,67 @@ CREATE TABLE schema_version (
 
 ### Migration Process
 
-When the Collector starts up, the system executes
-the following steps:
+When the Collector starts up, the system executes the following steps:
 
-1. The `Datastore.initializeSchema()` method is
-   called.
-2. A new `SchemaManager` is created with all
-   registered migrations.
-3. The `SchemaManager.Migrate()` method sorts the
-   migrations by version number, queries the current
-   schema version, applies each pending migration in a
-   transaction, records successful migrations in
-   `schema_version`, and rolls back on errors.
+1. The `Datastore.initializeSchema()` method is called.
+2. A new `SchemaManager` is created with all registered migrations.
+3. The `SchemaManager.Migrate()` method sorts the migrations by version number,
+   queries the current schema version, applies each pending migration in a
+   transaction, records successful migrations in `schema_version`, and rolls
+   back on errors.
 
 ## Current Migrations
 
-The migrations are defined in Go rather than in SQL
-files. The `registerMigrations()` method in
-`collector/src/database/schema.go` is the authoritative
-list, and this document does not repeat it, because a
-second copy drifts as soon as someone adds a migration.
+The migrations are defined in Go rather than in SQL files. The
+`registerMigrations()` method in `collector/src/database/schema.go` is the
+authoritative list, and this document does not repeat it, because a second copy
+drifts as soon as someone adds a migration.
 
-Each entry is a `Migration` value carrying a `Version`, a
-`Description` and an `Up` function of the form
-`func(pgx.Tx) error` that runs the migration's statements
-on the transaction the `SchemaManager` opens for it.
+Each entry is a `Migration` value carrying a `Version`, a `Description` and an
+`Up` function of the form `func(pgx.Tx) error` that runs the migration's
+statements on the transaction the `SchemaManager` opens for it.
 
-Migration 1 is the consolidated baseline; the `Up`
-function creates the complete schema, including every
-table, index and constraint, along with the seed data for
-probe configurations and alert rules. Each later migration
-is an incremental change, such as a new column, a new index
-or a corrected alert rule, for an installation that already
-holds the earlier schema. A fresh installation still applies
-every migration in version order, starting from Migration 1;
-the later migrations find their changes already present in
-the baseline, which is why each one must be idempotent.
+Migration 1 is the consolidated baseline; the `Up` function creates the
+complete schema, including every table, index and constraint, along with the
+seed data for probe configurations and alert rules. Each later migration is an
+incremental change, such as a new column, a new index or a corrected alert
+rule, for an installation that already holds the earlier schema. A fresh
+installation still applies every migration in version order, starting from
+Migration 1; the later migrations find their changes already present in the
+baseline, which is why each one must be idempotent.
 
-Versions are allocated sequentially, so the highest
-`Version` registered in `schema.go` is the schema version
-a current collector converges to. The
-`SchemaManager.LatestVersion()` method returns that value
-at run time, without needing a database connection.
+Versions are allocated sequentially, so the highest `Version` registered in
+`schema.go` is the schema version a current collector converges to. The
+`SchemaManager.LatestVersion()` method returns that value at run time, without
+needing a database connection.
 
-The `schema_version` table records what has been applied.
-The `Migrate()` method inserts a row holding the version
-number and the description of each migration it commits,
-and reads the highest version back at the next start-up to
-decide which migrations are still pending.
+The `schema_version` table records what has been applied. The `Migrate()`
+method inserts a row holding the version number and the description of each
+migration it commits, and reads the highest version back at the next start-up
+to decide which migrations are still pending.
 
 ## Adding New Migrations
 
 To add a new migration, follow the steps below.
 
-1. Edit `collector/src/database/schema.go` by appending a
-   new `Migration` to the `registerMigrations()` method.
-2. Set the version to the next free number, one higher
-   than the last migration registered in the file.
-3. Provide a clear, concise description of the migration;
-   the description is stored in `schema_version`.
-4. Implement the `Up` function, which receives the
-   transaction the migration runs in.
-5. Make the migration idempotent by using
-   `IF NOT EXISTS` clauses where possible.
+1. Edit `collector/src/database/schema.go` by appending a new `Migration` to
+   the `registerMigrations()` method.
+2. Set the version to the next free number, one higher than the last migration
+   registered in the file.
+3. Provide a clear, concise description of the migration; the description is
+   stored in `schema_version`.
+4. Implement the `Up` function, which receives the transaction the migration
+   runs in.
+5. Make the migration idempotent by using `IF NOT EXISTS` clauses where
+   possible.
 6. Describe every new object with `COMMENT ON`.
 
-The examples below use `16` as the version number; replace
-it with the next free number at the time you write the
-migration.
+The examples below use `16` as the version number; replace it with the next
+free number at the time you write the migration.
 
 ### Example: Adding a New Table
 
-In the following example, the migration creates a new
-table:
+In the following example, the migration creates a new table:
 
 ```go
 sm.migrations = append(sm.migrations, Migration{
@@ -169,8 +147,8 @@ sm.migrations = append(sm.migrations, Migration{
 
 ### Example: Adding an Index
 
-In the following example, the migration creates an index
-on the `collected_at` column:
+In the following example, the migration creates an index on the `collected_at`
+column:
 
 ```go
 sm.migrations = append(sm.migrations, Migration{
@@ -198,19 +176,17 @@ sm.migrations = append(sm.migrations, Migration{
 })
 ```
 
-PostgreSQL cannot build an index with
-`CREATE INDEX CONCURRENTLY` inside a transaction, and the
-`SchemaManager` wraps every migration in one, so an index
-added by a migration is built with a plain `CREATE INDEX`
-that blocks writes to the table whilst it runs.
+PostgreSQL cannot build an index with `CREATE INDEX CONCURRENTLY` inside a
+transaction, and the `SchemaManager` wraps every migration in one, so an index
+added by a migration is built with a plain `CREATE INDEX` that blocks writes to
+the table whilst it runs.
 
 ### Example: Adding a Constraint
 
-PostgreSQL has no `ADD CONSTRAINT IF NOT EXISTS`, so
-`schema.go` provides the `addConstraintIfMissing` helper,
-which checks `pg_constraint` first and leaves an existing
-constraint untouched. In the following example, the
-migration adds a foreign key:
+PostgreSQL has no `ADD CONSTRAINT IF NOT EXISTS`, so `schema.go` provides the
+`addConstraintIfMissing` helper, which checks `pg_constraint` first and leaves
+an existing constraint untouched. In the following example, the migration adds
+a foreign key:
 
 ```go
 if err := addConstraintIfMissing(ctx, tx,
@@ -225,8 +201,7 @@ if err := addConstraintIfMissing(ctx, tx,
 
 ### Example: Modifying an Existing Column
 
-In the following example, the migration adds a new column
-to an existing table:
+In the following example, the migration adds a new column to an existing table:
 
 ```go
 sm.migrations = append(sm.migrations, Migration{
@@ -256,41 +231,33 @@ sm.migrations = append(sm.migrations, Migration{
 
 ## Best Practices
 
-Follow these best practices when designing
-migrations and schema changes.
+Follow these best practices when designing migrations and schema changes.
 
 ### Migration Design
 
 The following guidelines apply to migration design:
 
-- Include one logical change per migration; each
-  migration should represent a single logical schema
-  change.
-- Never modify applied migrations; create a new
-  migration instead.
-- Make migrations idempotent; use `IF NOT EXISTS`,
-  `IF EXISTS`, and existence checks.
-- Use transactions; the SchemaManager wraps each
-  migration in a transaction.
-- Test migrations thoroughly on a development
-  database before deploying.
+- Include one logical change per migration; each migration should represent a
+  single logical schema change.
+- Never modify applied migrations; create a new migration instead.
+- Make migrations idempotent; use `IF NOT EXISTS`, `IF EXISTS`, and existence
+  checks.
+- Use transactions; the SchemaManager wraps each migration in a transaction.
+- Test migrations thoroughly on a development database before deploying.
 
 ### Schema Design
 
 The following guidelines apply to schema design:
 
-- Use constraints by defining CHECK, NOT NULL,
-  UNIQUE, and FOREIGN KEY to enforce data integrity.
-- Create indexes strategically for foreign key
-  columns, WHERE clause columns, ORDER BY columns,
-  and JOIN conditions.
-- Use appropriate data types such as SERIAL for
-  auto-incrementing IDs, TIMESTAMPTZ for timestamps, and
-  TEXT for unlimited-length strings.
-- Include `created_at` and `updated_at` audit columns
-  to track record modifications.
-- Plan for partitioning early for large tables such
-  as metrics tables.
+- Use constraints by defining CHECK, NOT NULL, UNIQUE, and FOREIGN KEY to
+  enforce data integrity.
+- Create indexes strategically for foreign key columns, WHERE clause columns,
+  ORDER BY columns, and JOIN conditions.
+- Use appropriate data types such as SERIAL for auto-incrementing IDs,
+  TIMESTAMPTZ for timestamps, and TEXT for unlimited-length strings.
+- Include `created_at` and `updated_at` audit columns to track record
+  modifications.
+- Plan for partitioning early for large tables such as metrics tables.
 
 ## Testing
 
@@ -298,15 +265,13 @@ This section covers testing schema migrations.
 
 ### Running Schema Tests
 
-In the following example, the `make` command runs
-all tests:
+In the following example, the `make` command runs all tests:
 
 ```bash
 make test
 ```
 
-In the following example, the `go test` command runs
-only the migration tests:
+In the following example, the `go test` command runs only the migration tests:
 
 ```bash
 go test -v -run TestMigrate
@@ -320,8 +285,9 @@ not run against the database named in the connection string; instead,
 creates a database named `ai_workbench_test_<YYYYMMDD_HHMMSS>_<microseconds>`,
 and points the tests that connect through `getTestConnection()` at that
 generated database. One test, `TestMigration_PgSettings`, does not use the
-generated database; the Testing the pg_settings Migration section describes the
-exception.
+generated database;
+[Testing the pg_settings Migration](#testing-the-pg_settings-migration)
+describes the exception.
 
 #### Selecting a Server
 
@@ -342,9 +308,9 @@ generated name for the tests. The role in the connection string therefore needs
 the `CREATEDB` privilege, or superuser rights.
 
 If neither variable is set, the helpers fall back to
-`host=localhost port=5432 user=postgres sslmode=disable` rather than
-skipping the tests. Always set `TEST_AI_WORKBENCH_SERVER` explicitly, so
-that the run resolves to the loopback server you intend.
+`host=localhost port=5432 user=postgres sslmode=disable` rather than skipping
+the tests. Always set `TEST_AI_WORKBENCH_SERVER` explicitly, so that the run
+resolves to the loopback server you intend.
 
 #### Testing the pg_settings Migration
 
@@ -360,17 +326,17 @@ contents you need to keep, because this test destroys its schema on every run.
 
 #### Keeping or Skipping Databases
 
-Two further variables control what the run does with the database. In
-the following example, `TEST_AI_WORKBENCH_KEEP_DB` keeps the generated
-database after the tests finish, which helps when a migration test fails
-and the resulting schema needs inspection:
+Two further variables control what the run does with the database. In the
+following example, `TEST_AI_WORKBENCH_KEEP_DB` keeps the generated database
+after the tests finish, which helps when a migration test fails and the
+resulting schema needs inspection:
 
 ```bash
 export TEST_AI_WORKBENCH_KEEP_DB=1
 ```
 
-`TEST_AI_WORKBENCH_KEEP_DB` also accepts the value `true`. In the
-following example, `SKIP_DB_TESTS` skips the database tests altogether:
+`TEST_AI_WORKBENCH_KEEP_DB` also accepts the value `true`. In the following
+example, `SKIP_DB_TESTS` skips the database tests altogether:
 
 ```bash
 export SKIP_DB_TESTS=1
@@ -384,7 +350,7 @@ connection or because `DROP DATABASE` returns an error. A complete run also
 leaves databases behind, because the three tests in `maintenance_test.go` each
 call `setupTestDatabase()` again; each call replaces the generated database for
 the rest of the run, and teardown drops only the last one. Leftover databases
-are safe to drop once you have confirmed that no test run or other client is
+are safe to drop when you have confirmed that no test run or other client is
 still connected to them.
 
 #### Confirming the Tests Ran
@@ -392,23 +358,21 @@ still connected to them.
 A passing run is not by itself evidence that the tests ran. When
 `setupTestDatabase()` fails for any reason, `TestMain` prints
 `Skipping database tests` and calls `os.Exit(0)`, so the package reports
-success having run nothing; a wrong connection string produces a pass
-rather than an error. Run the tests with `go test -v` and check the
-output for that message, and for the individual test results, whenever a
-connection setting changes.
+success having run nothing; a wrong connection string produces a pass rather
+than an error. Run the tests with `go test -v` and check the output for that
+message, and for the individual test results, whenever a connection setting
+changes.
 
 ### Writing Migration Tests
 
-When adding a new migration, add corresponding tests
-that verify the following:
+When adding a new migration, add corresponding tests that verify the following:
 
 - The migration applies successfully without errors.
 - Running the migration twice does not cause errors.
 - Constraints work as expected.
 - Indexes are created correctly.
 
-In the following example, the test verifies that a
-migration creates a table:
+In the following example, the test verifies that a migration creates a table:
 
 ```go
 func TestProbeEventsTable(t *testing.T) {
@@ -447,72 +411,53 @@ This section covers common schema management issues.
 
 If a migration fails, follow these steps:
 
-1. Check the error message for details about the
-   failure.
+1. Check the error message for details about the failure.
 2. Verify that the database connection is accessible.
 3. Review the migration code for logic errors.
-4. Check for manual schema changes that conflict
-   with the migration.
+4. Check for manual schema changes that conflict with the migration.
 
 ### Migration Applied but Schema Incorrect
 
-If a migration was applied but the schema is
-incorrect, follow these steps:
+If a migration was applied but the schema is incorrect, follow these steps:
 
-1. Check the `schema_version` table to verify which
-   migrations were applied.
-2. Investigate whether the migration partially
-   applied before failing.
-3. Create a new fix-up migration to correct the
-   schema.
+1. Check the `schema_version` table to verify which migrations were applied.
+2. Investigate whether the migration partially applied before failing.
+3. Create a new fix-up migration to correct the schema.
 
 ### Rolling Back Migrations
 
-The current system does not support automatic
-rollback. To roll back manually, follow these steps:
+The current system does not support automatic rollback. To roll back manually,
+follow these steps:
 
 1. Use SQL to undo the migration changes manually.
-2. Remove the migration record from
-   `schema_version`.
-3. Consider creating a new forward migration that
-   reverts the changes instead.
+2. Remove the migration record from `schema_version`.
+3. Consider creating a new forward migration that reverts the changes instead.
 
 ## Security Considerations
 
-Follow these security practices when writing
-migrations.
+Follow these security practices when writing migrations.
 
 ### Secure Migration Practices
 
 The following guidelines apply to secure migrations:
 
-- Validate inputs if migrations use any configuration
-  values.
-- Use parameterized queries when migration logic
-  includes dynamic values.
-- Run migrations with a database user that has only
-  the necessary privileges.
-- Review all migrations for security implications
-  before applying.
+- Validate inputs if migrations use any configuration values.
+- Use parameterized queries when migration logic includes dynamic values.
+- Run migrations with a database user that has only the necessary privileges.
+- Review all migrations for security implications before applying.
 
 ### Data Protection
 
 The following guidelines apply to data protection:
 
-- Always back up the database before applying
-  migrations in production.
-- Test migrations on a copy of production data before
-  applying to production.
-- Ensure migrations do not inadvertently expose
-  sensitive data.
+- Always back up the database before applying migrations in production.
+- Test migrations on a copy of production data before applying to production.
+- Ensure migrations do not inadvertently expose sensitive data.
 
 ## See Also
 
 The following resources provide additional details.
 
-- [Database Schema](schema.md) covers the schema
-  structure and design.
-- [Probes](probes.md) explains how probes collect
-  and store data.
-- [Architecture](architecture.md) describes the
-  overall system design.
+- [Database Schema](schema.md) covers the schema structure and design.
+- [Probes](probes.md) explains how probes collect and store data.
+- [Architecture](architecture.md) describes the overall system design.

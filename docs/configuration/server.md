@@ -1,0 +1,1169 @@
+# Configuring the Server
+
+The MCP server supports configuration through a YAML file, command-line flags,
+and environment variables.
+
+The server applies configuration values in the following order from highest to
+lowest priority:
+
+1. Command-line flags (highest priority).
+2. Environment variables.
+3. Configuration file.
+4. Built-in defaults (lowest priority).
+
+The server does not require a restart after every configuration change. Sending
+a SIGHUP signal reloads database connection, LLM proxy, and knowledgebase
+settings, and the federated login policy, at runtime without interrupting
+active connections. The other authentication settings and the HTTP server
+settings are exceptions; changes to either require a full restart to take
+effect, since these govern the listener and session state the server
+establishes at startup.
+
+## Reloading or Restarting the Server
+
+If you have configured the server to use systemd, you can restart the service
+with `systemctl` to apply changes that require a full restart, such as
+authentication or HTTP server settings:
+
+```bash
+sudo systemctl restart pgedge-ai-dba-server
+```
+
+Without systemd, stop and relaunch the process manually:
+
+```bash
+pkill -f ai-dba-server
+/opt/ai-workbench/ai-dba-server -config /etc/pgedge/ai-dba-server.yaml &
+```
+
+!!! hint
+
+    Docker Compose deployments use a dedicated `restart` subcommand instead;
+    see
+    [Deploying the Workbench with Docker](../getting-started/docker.md#server-cannot-connect-to-the-database)
+    for details.
+
+If you have made configuration changes that require only a reload, you can use
+a runtime configuration reload via `SIGHUP` to update the configuration:
+
+```bash
+kill -SIGHUP $(pgrep ai-dba-server)
+```
+
+A `SIGHUP` signal reloads the following settings:
+
+- Database connection settings.
+- LLM proxy settings.
+- Knowledgebase settings.
+- The federated login policy under `http.auth.oidc`, as described in
+  [Single Sign-On](../admin-guide/managing-users-and-permissions/sso.md).
+
+A database setting given on the command line at startup, such as `-db-host`,
+keeps priority over the configuration file on every reload, as it does at
+startup.
+
+The other authentication settings and the HTTP server settings require a full
+restart. A reload keeps the value the server started with and logs a warning
+for each such setting whose change the server detects. These settings include
+`http.auth.max_failed_attempts_before_lockout`, which the authentication store
+reads once at startup, so account lockout stays as configured at the last
+restart until the server restarts again.
+
+
+## Specifying Server Options on the Command-Line
+
+Command-line options take priority over environment variables and options
+specified in the configuration file. The following subsections group the flags
+by functionality:
+
+- [General Options](#general-options)
+- [HTTP Server Options](#http-server-options)
+- [Database Connection Options](#database-connection-options)
+- [Token Management Options](#token-management-options)
+- [User Management Options](#user-management-options)
+- [Group Management Options](#group-management-options)
+- [Privilege Management Options](#privilege-management-options)
+- [Token Scope Options](#token-scope-options)
+- [Audit Log Options](#audit-log-options)
+
+### General Options
+
+The general options set the configuration file path, debug logging, the data
+directory, and the trace file.
+
+| Flag | Description |
+|------|-------------|
+| `-config string` | Path to configuration file |
+| `-debug` | Enable debug logging |
+| `-data-dir string` | Data directory for auth and conversations |
+| `-trace-file string` | Path to MCP trace file |
+
+### HTTP Server Options
+
+The HTTP server options configure the listen address and TLS certificate files
+for encrypted connections.
+
+| Flag | Description |
+|------|-------------|
+| `-addr string` | HTTP address (default: `:8080`) |
+| `-tls` | Enable TLS/HTTPS |
+| `-cert string` | Path to TLS certificate file |
+| `-key string` | Path to TLS key file |
+| `-chain string` | Path to TLS certificate chain |
+
+### Database Connection Options
+
+The database connection options set the host, port, credentials, and SSL mode
+for the PostgreSQL connection.
+
+| Flag | Description |
+|------|-------------|
+| `-db-host string` | Database host |
+| `-db-port int` | Database port |
+| `-db-name string` | Database name |
+| `-db-user string` | Database user |
+| `-db-password string` | Database password |
+| `-db-password-file string` | Path to DB password file, read at startup only; overrides the configured password |
+| `-db-sslmode string` | SSL mode |
+
+### Token Management Options
+
+Use the token management options to create, remove, list, and annotate service
+tokens.
+
+| Flag | Description |
+|------|-------------|
+| `-add-token` | Add a new service token |
+| `-remove-token string` | Remove token by ID or hash |
+| `-list-tokens` | List all service tokens |
+| `-token-note string` | Annotation for new token |
+| `-token-expiry string` | Token expiry duration |
+| `-user string` | Owner username for the token |
+
+### User Management Options
+
+The user management options add, update, delete, enable, and disable user and
+service accounts.
+
+| Flag | Description |
+|------|-------------|
+| `-add-user` | Add a new user |
+| `-update-user` | Update an existing user |
+| `-delete-user` | Delete a user |
+| `-list-users` | List all users |
+| `-enable-user` | Enable a user account |
+| `-disable-user` | Disable a user account |
+| `-add-service-account` | Add a service account |
+| `-username string` | Username for user commands |
+| `-password string` | Password for user commands |
+| `-full-name string` | Full name for the user |
+| `-email string` | Email address for the user |
+| `-user-note string` | Annotation for new user |
+
+### Group Management Options
+
+The group management options create, delete, and list RBAC groups, and manage
+group membership and superuser status.
+
+| Flag | Description |
+|------|-------------|
+| `-add-group` | Add a new RBAC group |
+| `-delete-group` | Delete an RBAC group |
+| `-list-groups` | List all RBAC groups |
+| `-list-members` | List the members of a group |
+| `-add-member` | Add a user or group to a group |
+| `-remove-member` | Remove a member from a group |
+| `-group string` | Group name for group commands |
+| `-member-group string` | Member group for nesting |
+| `-set-superuser` | Set superuser status |
+| `-unset-superuser` | Remove superuser status |
+
+### Privilege Management Options
+
+The privilege management options grant, revoke, register, and list MCP
+privileges and connection access levels.
+
+| Flag | Description |
+|------|-------------|
+| `-grant-privilege` | Grant an MCP privilege |
+| `-revoke-privilege` | Revoke an MCP privilege |
+| `-grant-connection` | Grant connection access |
+| `-revoke-connection` | Revoke connection access |
+| `-list-privileges` | List MCP privileges |
+| `-show-group-privileges` | Show group privileges |
+| `-register-privilege` | Register a new privilege |
+| `-privilege string` | MCP privilege identifier |
+| `-privilege-type string` | Privilege type |
+| `-privilege-description string` | Description |
+| `-connection int` | Connection ID |
+| `-access-level string` | Access level (default: read) |
+
+### Token Scope Options
+
+The token scope options set, clear, and display the connections and tools a
+service token can access.
+
+| Flag | Description |
+|------|-------------|
+| `-scope-token-connections` | Set connection scope |
+| `-scope-token-tools` | Set MCP tool scope |
+| `-clear-token-scope` | Clear all scope restrictions |
+| `-show-token-scope` | Show current token scope |
+| `-token-id int` | Token ID for scope commands |
+| `-scope-connections string` | Connection ID list |
+| `-scope-tools string` | Tool name list |
+
+### Audit Log Options
+
+The audit log records every change to users, groups, tokens, and privileges;
+the [Audit Log](../admin-guide/managing-users-and-permissions/audit-log.md)
+page describes the events and how to read them. The audit log options read and
+verify the log. The `-rechain-audit-log` option either re-hashes an inherited
+log or re-anchors a log that no longer verifies; a re-anchor leaves the
+existing events as they are and appends an anchor event.
+
+| Flag | Description |
+|------|-------------|
+| `-list-audit` | List RBAC audit log events |
+| `-verify-audit-log` | Verify the audit log hash chain |
+| `-rechain-audit-log` | Re-hash an inherited audit log, or re-anchor one that no longer verifies |
+| `-confirm-rechain` | Confirm `-rechain-audit-log` without an interactive prompt |
+| `-previous-secret-file string` | Secret file the older audit events were written under, needed by `-confirm-rechain` to re-anchor them |
+| `-audit-actor string` | Filter events by actor name |
+| `-audit-action string` | Filter events by action |
+| `-audit-target-type string` | Filter events by target type |
+| `-audit-target-id int` | Filter events by target ID |
+| `-audit-outcome string` | Filter events by outcome |
+| `-audit-since string` | Earliest event time to show |
+| `-audit-until string` | Latest event time to show |
+| `-audit-limit int` | Maximum events to show (default: 50) |
+| `-json` | Emit output as one JSON object per line |
+
+
+## Using Environment Variables to Specify Server Properties
+
+The server reads environment variables at startup; those server properties
+specified in an environment variable are overridden by properties specified on
+the command line, but take precedence over properties written in a
+configuration file. The server supports the following variables:
+
+- [`PGEDGE_POSTGRES_CONNECTION_STRING`](#pgedge_postgres_connection_string)
+- [`PGEDGE_DB_LOG_LEVEL`](#pgedge_db_log_level)
+- [`PGEDGE_MEMORY_ENABLED`](#pgedge_memory_enabled)
+- [`PGEDGE_AUDIT_RETENTION_DAYS`](#pgedge_audit_retention_days)
+
+### `PGEDGE_POSTGRES_CONNECTION_STRING`
+
+The `PGEDGE_POSTGRES_CONNECTION_STRING` variable provides a PostgreSQL
+connection string for the datastore. The server uses this variable as a
+fallback when the configuration file does not specify database settings.
+
+In the following example, the variable specifies a remote database:
+
+```bash
+export PGEDGE_POSTGRES_CONNECTION_STRING=\
+"postgres://user:pass@db.example.com:5432/\
+ai_workbench?sslmode=require"
+```
+
+### `PGEDGE_DB_LOG_LEVEL`
+
+The `PGEDGE_DB_LOG_LEVEL` variable controls the verbosity of database operation
+logging. The server writes database log messages to `stderr` with a
+`[DATABASE]` prefix.
+
+The following values are supported:
+
+- `none` disables all database logging (default).
+- `info` logs connections, queries, and errors.
+- `debug` logs metadata, pool details, and queries.
+- `trace` logs full queries, row counts, and timings.
+
+An empty or unrecognized value defaults to `none`.
+
+In the following example, the variable enables debug logging:
+
+```bash
+export PGEDGE_DB_LOG_LEVEL=debug
+```
+
+### `PGEDGE_MEMORY_ENABLED`
+
+The `PGEDGE_MEMORY_ENABLED` variable controls the chat memory feature for Ask
+Ellie. The server reads this variable at startup and applies the value as an
+override to the `memory.enabled` configuration option.
+
+The following values are supported:
+
+- `true` enables chat memory (default).
+- `false` disables chat memory.
+
+In the following example, the variable disables chat memory:
+
+```bash
+export PGEDGE_MEMORY_ENABLED=false
+```
+
+### `PGEDGE_AUDIT_RETENTION_DAYS`
+
+The `PGEDGE_AUDIT_RETENTION_DAYS` variable controls how many days of RBAC audit
+events the server keeps. The server reads this variable at startup and applies
+the value as an override to the `http.auth.audit_retention_days` configuration
+option. A value of `0` keeps audit events forever.
+
+In the following example, the variable keeps a year of audit events:
+
+```bash
+export PGEDGE_AUDIT_RETENTION_DAYS=365
+```
+
+
+## Specifying Properties in a Configuration File
+
+After applying command-line flags and environment variables, the server uses
+the configuration file to fill in any remaining settings. For details about
+using the server configuration file, see:
+
+- [HTTP Server Properties](#http-server-properties)
+    - [Using the auth Properties](#using-the-auth-properties)
+    - [Using the cors_origin Property](#using-the-cors_origin-property)
+- [Connection Security Properties](#connection-security-properties)
+- [Database Properties](#database-properties)
+    - [Using the statement_timeout Property](#using-the-statement_timeout-property)
+    - [Using the pool_max_conns Property](#using-the-pool_max_conns-property)
+- [Embedding Properties](#embedding-properties)
+- [LLM Proxy Properties](#llm-proxy-properties)
+    - [Using the `temperature` Property](#using-the-temperature-property)
+    - [Using the `max_tokens` Property](#using-the-max_tokens-property)
+    - [Using the `timeout_seconds` Property](#using-the-timeout_seconds-property)
+    - [Using the `compact_tool_descriptions` Property](#using-the-compact_tool_descriptions-property)
+    - [Using the `openai_base_url` Property](#using-the-openai_base_url-property)
+- [Knowledgebase Properties](#knowledgebase-properties)
+- [Memory Properties](#memory-properties)
+    - [Using the Memory Tool Properties](#using-the-memory-tool-properties)
+- [Built-in Features Properties](#built-in-features-properties)
+    - [Using the Datastore Query Tool Properties](#using-the-datastore-query-tool-properties)
+- [Paths and Directories](#paths-and-directories)
+    - [Using the data_dir Property](#using-the-data_dir-property)
+    - [Using the trace_file Property](#using-the-trace_file-property)
+
+To review a sample file, see [Configuration Examples](#configuration-examples).
+
+The server searches for the configuration file in the following locations in
+the following order:
+
+1. The absolute path specified via the `-config` flag.
+2. The per-user `config` directory at `~/.config/pgedge/ai-dba-server.yaml` on
+   Linux (honouring `$XDG_CONFIG_HOME`),
+   `~/Library/Application Support/pgedge/ai-dba-server.yaml` on macOS, and
+   `%AppData%\pgedge\ai-dba-server.yaml` on Windows.
+3. System wide in `/etc/pgedge/ai-dba-server.yaml`.
+
+!!! note
+
+    If `-config` is set and the file is missing, the server exits with an
+    error. If `-config` is not set and none of the default locations contain a
+    configuration file, the server uses built-in defaults silently. The server
+    does not search the binary directory or the current working directory.
+
+    The same search paths apply to `secret_file` discovery for
+    `ai-dba-server.secret`; however, secret discovery is not silent. If no
+    `secret_file` is set in the YAML and no `ai-dba-server.secret` file is
+    present at any search path, the server exits with an error at startup.
+
+
+### HTTP Server Properties
+
+The HTTP server properties configure the listener address, TLS certificates,
+and authentication rate limiting.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `address` | string | `:8080` | Listen address |
+| `tls.enabled` | bool | `false` | Enable TLS |
+| `tls.cert_file` | string | | Certificate file |
+| `tls.key_file` | string | | Private key file |
+| `tls.chain_file` | string | | Certificate chain |
+| `trusted_proxies` | list | `[]` | Trusted proxy CIDRs; required behind a reverse proxy when OIDC login is enabled |
+| `cors_origin` | string | `""` | Allowed CORS origin |
+| `hsts_enabled` | bool | `false` | Send the Strict-Transport-Security header |
+| `auth.max_failed_attempts_before_lockout` | int | `10` | Lock after N failures (`0` disables); restart required |
+| `auth.max_user_token_days` | int | `0` | Max token lifetime |
+| `auth.rate_limit_window_minutes` | int | `15` | Rate limit window |
+| `auth.rate_limit_max_attempts` | int | `10` | Max attempts per window |
+| `auth.audit_retention_days` | int | `90` | Days to keep RBAC audit events (`0` keeps forever) |
+| `auth.local.enabled` | bool | `true` | Enable username and password login |
+| `auth.oidc.enabled` | bool | `false` | Enable federated login |
+| `auth.oidc.issuer` | string | | Identity provider issuer URL |
+| `auth.oidc.client_id` | string | | OAuth 2.0 client identifier |
+| `auth.oidc.client_secret` | string | | Inline client secret |
+| `auth.oidc.client_secret_file` | string | | File holding the client secret |
+| `auth.oidc.redirect_url` | string | | Callback URL registered at the provider |
+| `auth.oidc.scopes` | list | `[openid, email, profile]` | Scopes requested at the provider |
+| `auth.oidc.username_claim` | string | `email` | Claim used as the username |
+| `auth.oidc.display_name_claim` | string | `name` | Claim used as the display name |
+| `auth.oidc.groups_claim` | string | `groups` | Claim carrying group membership |
+| `auth.oidc.button_label` | string | `Sign in with your identity provider` | Federated login button label |
+| `auth.oidc.provision_users` | bool | `false` | Create an account on first login |
+| `auth.oidc.allowed_email_domains` | list | `[]` | Permitted verified email domains |
+| `auth.oidc.superuser_group` | string | | Provider group granting superuser |
+| `auth.oidc.group_map` | map | `{}` | Provider group to Workbench group map |
+| `auth.oidc.allow_unprefixed_state_cookie` | bool | `false` | Accept an unprefixed login state cookie behind a proxy |
+
+#### Using the auth Properties
+
+The `auth` section governs both login methods. Local username and password
+login is on unless `auth.local.enabled` is set to `false`, and federated login
+is off unless `auth.oidc.enabled` is set to `true`. The server refuses to start
+when neither method is available.
+
+The server ignores every `auth.oidc.*` option while federated login is
+disabled. The
+[Single Sign-On guide](../admin-guide/managing-users-and-permissions/sso.md)
+describes each option in full, along with registering the Workbench at an
+identity provider and mapping provider groups onto Workbench groups.
+
+The server also refuses to start when federated login is enabled with an
+`https` `auth.oidc.redirect_url`, `tls.enabled` set to `false`, and an empty
+`trusted_proxies` list. In that deployment, the login state cookie cannot use
+the `__Host-` name prefix, so a sibling subdomain that can set cookies can log
+users in as an attacker. Set `trusted_proxies` to the reverse proxy's address,
+or set `auth.oidc.allow_unprefixed_state_cookie` to `true` to accept the risk.
+
+#### Using the cors_origin Property
+
+The `cors_origin` option sets the value for the `Access-Control-Allow-Origin`
+response header. The empty default suits same-origin deployments, where the web
+client and the server share an origin. The server omits CORS headers entirely
+in that case.
+
+Set `cors_origin` to an explicit origin when the web client runs on a different
+origin than the server. For example, use `https://workbench.example.com` as the
+value. The server returns `Access-Control-Allow-Credentials: true` so browsers
+can attach session cookies to cross-origin requests.
+
+The server rejects a `cors_origin` value of `"*"` at startup when
+authentication is enabled. Browsers disallow combining
+`Access-Control-Allow-Origin: *` with `Access-Control-Allow-Credentials: true`
+per the Fetch spec. Use an explicit origin, or leave the option empty for
+same-origin deployments.
+
+In the following example, the `http` section allows cross-origin requests from
+a dedicated workbench host:
+
+```yaml
+http:
+  address: ":8443"
+  cors_origin: "https://workbench.example.com"
+  auth:
+    local:
+      enabled: true
+```
+
+### Connection Security Properties
+
+The connection security section controls SSRF protection for user-created
+database connections.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `allow_internal_networks` | bool | `false` | Allow RFC 1918 addresses |
+| `allowed_hosts` | list | `[]` | Always-permitted hosts |
+| `blocked_hosts` | list | `[]` | Always-blocked hosts |
+
+### Database Properties
+
+The database properties configure the PostgreSQL connection and connection pool
+for the server's datastore.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `host` | string | `localhost` | Database host |
+| `port` | int | `5432` | Database port |
+| `database` | string | `postgres` | Database name |
+| `user` | string | | Database user (required) |
+| `password` | string | | Database password |
+| `password_file` | string | | DB password file (if `password` empty) |
+| `sslmode` | string | `prefer` | SSL mode |
+| `pool_max_conns` | int | `20` | Max pool connections |
+| `pool_min_conns` | int | `0` | Min pool connections |
+| `pool_max_conn_idle_time` | string | `30m` | Max idle time |
+| `statement_timeout` | string | `30s` | Server-side statement timeout |
+
+#### Using the statement_timeout Property
+
+The `statement_timeout` option bounds how long a single statement may run on a
+datastore pool connection before PostgreSQL cancels the statement. The server
+already cancels its own queries when the request that asked for them has given
+up, but that cancellation is a request sent over the same connection. A lost
+cancel, or a backend that is not at a point where it can be interrupted,
+leaves the query running and holding one of the few pool connections; the
+server-side timeout is what actually frees the connection.
+
+The default of `30s` matches the longest deadline the server grants a
+datastore query, so the timeout rejects nothing that would otherwise have
+completed. The value accepts any Go duration string, such as `45s` or
+`1m30s`. A value of `0` disables the timeout; disabling the timeout is not
+recommended, because a single runaway query can then starve the pool.
+
+#### Using the pool_max_conns Property
+
+The `pool_max_conns` option sets the size of the datastore connection pool
+that every API request shares. A single dashboard page load issues more than
+twenty metrics requests at once, so a small pool makes a page wait on itself
+and lets a few slow requests hold up the rest of the API. The default of `20`
+leaves room for a second user. Together with the collector's default of 25 and
+the alerter's default of 10, the server's pool uses 55 of the 97 connections
+that the PostgreSQL default `max_connections` of 100 makes available to
+ordinary users. Raise the datastore's `max_connections` before raising any of
+the three pools past that total.
+
+The server sizes the datastore pool at startup, so a change takes effect on
+restart rather than on a `SIGHUP` reload. When the option is set explicitly,
+the same value also caps each per-session pool that the server opens to a
+monitored database, and a per-session pool opened after a `SIGHUP` reload uses
+the reloaded value. When the option is unset, including when the database is
+configured only through the `-db-*` command-line flags, those pools use the
+connection library's default.
+
+### Embedding Properties
+
+The `provider` option accepts `voyage`, `openai`, `gemini`, or `ollama`. The
+`model` option accepts any model name the chosen provider recognizes; the
+server passes the name through rather than checking a fixed list, so a new
+provider model works as soon as the provider publishes the model. Leaving
+`model` empty selects the default model for the provider. Google publishes
+`gemini-embedding-001` (the default, 3072 dimensions) and `gemini-embedding-2`
+(also 3072 dimensions); model availability varies by Gemini API key tier, so
+run ListModels to verify which embedding models a given key can access.
+
+Because the server does not restrict the model name, an OpenAI-compatible
+local model server such as llama.cpp or vLLM can supply embeddings. Set
+`provider` to `openai`, point `openai_base_url` at that server, and set
+`model` to the name the server provides.
+
+The configured `model` must not produce vectors with more than 4000
+dimensions. The server stores chat memory embeddings as `halfvec(4000)` and
+zero-pads each embedding to 4000 dimensions; 4000 is pgvector's HNSW index
+limit for the `halfvec` type. The server rejects a model that exceeds 4000
+dimensions with a clear error rather than truncating the vector. Storing
+embeddings as `halfvec` requires pgvector `0.7.0` or newer; upgrading an
+existing installation against an older pgvector causes the embedding-column
+migration to fail.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable embeddings |
+| `provider` | string | `ollama` | Provider name |
+| `model` | string | varies | Model name |
+| `ollama_url` | string | `http://localhost:11434` | Ollama URL |
+| `voyage_api_key_file` | string | | Voyage API key path |
+| `openai_api_key_file` | string | | OpenAI API key path |
+| `gemini_api_key_file` | string | | Gemini API key path |
+| `voyage_base_url` | string | `https://api.voyageai.com/v1/embeddings` | Voyage base URL |
+| `openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
+| `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
+
+### LLM Proxy Properties
+
+The LLM proxy is optional. When no valid API key is configured for the chosen
+provider, the server disables all AI features at startup. The web client
+detects the server's capabilities through the `/api/v1/capabilities` endpoint
+and hides all AI-dependent UI elements. The hidden elements include the AI
+Overview, Ask Ellie chat, alert analysis, chart analysis, and server analysis.
+The system continues to function as a monitoring tool without AI features.
+
+For Ollama, a valid URL is sufficient because Ollama does not require an API
+key. For Anthropic, OpenAI, and Gemini, the corresponding API key file must
+contain a valid key.
+
+The settings in this section govern every AI feature the server drives,
+including the Ask Ellie chat proxy, the AI Overview, and the server-info AI
+database analysis. The following table describes the LLM proxy options:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `provider` | string | `anthropic` | LLM provider |
+| `model` | string | `claude-sonnet-5` | Model name |
+| `anthropic_api_key_file` | string | | Anthropic key path |
+| `openai_api_key_file` | string | | OpenAI key path |
+| `gemini_api_key_file` | string | | Gemini key path |
+| `ollama_url` | string | `http://localhost:11434` | Ollama URL |
+| `max_tokens` | int | `4096` | Max output tokens per response |
+| `temperature` | float | `0.7` | Sampling temperature; `0` is honored |
+| `max_iterations` | int | `50` | Max tool-call iterations |
+| `compact_tool_descriptions` | string | `auto` | Tool description mode |
+| `timeout_seconds` | int | `120` | LLM HTTP request timeout |
+| `anthropic_base_url` | string | `https://api.anthropic.com/v1` | Anthropic base URL |
+| `openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
+| `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
+
+#### Using the `temperature` Property
+
+Some models accept only their own default temperature; these models include
+`claude-sonnet-5`, the default model, and OpenAI's GPT-6 models. When a model
+rejects the configured `temperature`, the server resends the request without
+the setting and omits the setting from later requests. The model's own default
+then applies, so the `temperature` option has no effect, and the server does
+not log the change.
+
+#### Using the `max_tokens` Property
+
+The `max_tokens` option caps the number of output tokens a model may generate
+for a single response. The budget applies to the following AI features:
+
+- The Ask Ellie chat proxy sends the budget with every chat request that the
+  proxy forwards to a provider.
+- The AI Overview applies the budget to the estate summary and to each scoped
+  summary.
+- The server-info AI database analysis applies the budget to the per-database
+  descriptions.
+
+The default value is `4096` tokens; a value less than or equal to zero falls
+back to the default. Earlier releases capped the AI Overview and the
+server-info analysis at 512 tokens and ignored the configured value on both
+paths.
+
+A reasoning model counts its internal thinking tokens against this same
+budget. A budget that suits a conventional model can therefore leave no room
+for the answer itself. The model then returns a response that contains no
+text, and the affected panel has nothing to render. Raise `max_tokens` when a
+summary or an analysis comes back empty; alternatively, select a model that
+emits less reasoning.
+
+The server reports an empty response instead of discarding the response
+silently. A scoped AI Overview request fails with an error, and the estate
+summary records the failure in the server log. The
+`GET /api/v1/server-info/{id}/ai-analysis` endpoint returns `502` with a
+message that names the likely cause.
+
+In the following example, the `llm` section raises the budget for a reasoning
+model that a local llama.cpp server hosts:
+
+```yaml
+llm:
+  provider: "openai"
+  model: "qwen3-8b"
+  openai_base_url: "http://localhost:8080/v1"
+  max_tokens: 8192
+```
+
+#### Using the `timeout_seconds` Property
+
+The `timeout_seconds` option sets the HTTP client timeout, in seconds, for
+every request the server makes to the configured LLM provider. The timeout
+applies uniformly to Anthropic, OpenAI, Gemini, and Ollama, including Ask Ellie
+chat requests. The default value is `120` seconds; values less than or equal to
+zero fall back to the default.
+
+Increase this value when running local models on low-resource hardware or when
+full-context prompts regularly exceed the default; large prompts that combine
+schema, metrics, and connection data can take longer than 120 seconds on slow
+Ollama hosts. Raising the timeout to `300` prevents `context deadline exceeded`
+errors in these environments.
+
+In the following example, the `llm` section extends the timeout for a slow
+local Ollama server:
+
+```yaml
+llm:
+  provider: "ollama"
+  model: "llama3:latest"
+  ollama_url: "http://localhost:11434"
+  timeout_seconds: 300
+```
+
+#### Using the `compact_tool_descriptions` Property
+
+The `compact_tool_descriptions` option controls whether the server sends
+compact or verbose tool descriptions to the LLM. The option accepts three
+values:
+
+- `auto` (default) uses compact descriptions for localhost endpoints and
+  verbose descriptions for remote APIs. Compact descriptions reduce prompt
+  token count by approximately fifty-four percent.
+- `true` always sends compact tool descriptions.
+- `false` always sends verbose tool descriptions.
+
+This setting affects the chat proxy (Ask Ellie) only. MCP protocol clients
+always receive full tool descriptions regardless of this setting.
+
+In the following example, the `llm` section configures verbose tool
+descriptions:
+
+```yaml
+llm:
+  provider: "anthropic"
+  model: "claude-sonnet-5"
+  anthropic_api_key_file: "~/.anthropic-api-key"
+  compact_tool_descriptions: "false"
+```
+
+#### Using the `openai_base_url` Property
+
+The `openai` provider works with any server that implements the
+OpenAI-compatible API. Set `openai_base_url` to point at a local inference
+server. The API key is optional when using a custom base URL.
+
+The following local inference servers are compatible:
+
+- Docker Model Runner uses `http://localhost:12434/engines/llama.cpp/v1` as the
+  default endpoint.
+- llama.cpp uses `http://localhost:8080/v1` as the default endpoint.
+- LM Studio uses `http://localhost:1234/v1` as the default endpoint.
+- EXO uses `http://localhost:52415/v1` as the default endpoint.
+
+In the following example, the `llm` section configures a local llama.cpp
+server:
+
+```yaml
+llm:
+  provider: "openai"
+  model: "my-local-model"
+  openai_base_url: "http://localhost:8080/v1"
+```
+
+A local server that hosts a reasoning model usually needs a larger output
+budget than the default. For details, see
+[Using the `max_tokens` Property](#using-the-max_tokens-property).
+
+### Knowledgebase Properties
+
+The `pgedge-ai-kb` packages install one knowledgebase database per embedding
+provider and model. On Linux these files live in
+`/usr/share/pgedge/pgedge-ai-kb/`, and each file is named
+`kb-<provider>-<model>.db`. The `<provider>` and `<model>` parts match the
+configured `embedding_provider` and `embedding_model` values. For the default
+ollama provider with the `nomic-embed-text` model, the file is
+`kb-ollama-nomic-embed-text.db`. The full default path is therefore
+`/usr/share/pgedge/pgedge-ai-kb/kb-ollama-nomic-embed-text.db`. The exact
+location can vary by deployment method and operating system.
+
+The built-in `database_path` default still points at the legacy
+`/usr/share/pgedge/postgres-mcp-kb/kb.db` location. Set `database_path`
+explicitly when you use the current `pgedge-ai-kb` packages, so the server
+reads the installed file.
+
+The `embedding_provider` option accepts `voyage`, `openai`, `gemini`, or
+`ollama`, and `embedding_model` accepts any model name the chosen provider
+recognizes. Google publishes `gemini-embedding-001` (the default, 3072
+dimensions) and `gemini-embedding-2` (also 3072 dimensions); model
+availability varies by Gemini API key tier, so run ListModels to verify which
+embedding models a given key can access.
+
+When Gemini provides the knowledgebase embeddings, the configured
+`embedding_model` must match the model that the KB Builder used to produce the
+knowledgebase. The KB Builder uses `gemini-embedding-001`; selecting a
+different model produces incompatible embeddings and breaks similarity search.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable knowledgebase |
+| `database_path` | string | `/usr/share/pgedge/postgres-mcp-kb/kb.db` | SQLite database path |
+| `embedding_provider` | string | `ollama` | Embedding provider |
+| `embedding_model` | string | `nomic-embed-text` | Embedding model |
+| `embedding_ollama_url` | string | `http://localhost:11434` | Ollama URL |
+| `embedding_voyage_api_key_file` | string | | Voyage API key path |
+| `embedding_openai_api_key_file` | string | | OpenAI key path |
+| `embedding_gemini_api_key_file` | string | | Gemini key path |
+| `embedding_voyage_base_url` | string | `https://api.voyageai.com/v1/embeddings` | Voyage base URL |
+| `embedding_openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
+| `embedding_gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
+
+### Memory Properties
+
+The memory section controls the chat memory feature for Ask Ellie. Chat memory
+allows Ellie to store and recall information across conversations.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable chat memory |
+
+The memory feature requires a configured PostgreSQL datastore connection. The
+server stores memories in the datastore alongside other persistent data. When
+memory is disabled, the three memory tools (`store_memory`, `recall_memories`,
+`delete_memory`) are unavailable even when enabled in the `builtins.tools`
+section.
+
+Creating system-scoped memories requires the `store_system_memory` admin
+permission. Administrators assign this permission to groups through the admin
+panel. Users without the permission can only create user-scoped memories.
+
+In the following example, the `memory` section disables chat memory:
+
+```yaml
+memory:
+  enabled: false
+```
+
+The `PGEDGE_MEMORY_ENABLED` environment variable can also control this setting;
+see
+[Environment Variables](#using-environment-variables-to-specify-server-properties)
+for details.
+
+### Built-in Features Properties
+
+The builtins section enables or disables individual tools and resources.
+
+Two tools are always enabled and cannot be turned off through the
+`builtins.tools` section. The `test_query` tool validates SQL without
+executing the query, and the server asks Ellie to check every statement
+through that tool before presenting the statement to a user. The
+`read_resource` tool backs resource listing, so resources become unreachable
+without the tool.
+
+In the following example, the `builtins` section lists each configurable tool
+and resource:
+
+```yaml
+builtins:
+  tools:
+    query_database: true
+    get_schema_info: true
+    similarity_search: true
+    execute_explain: true
+    count_rows: true
+    list_probes: true
+    describe_probe: true
+    query_metrics: true
+    list_connections: true
+    get_alert_history: true
+    get_alert_rules: true
+    get_metric_baselines: true
+    get_blackouts: true
+    get_timeline_events: true
+    query_datastore: true
+    describe_datastore: true
+    generate_embedding: true
+    search_knowledgebase: true
+    store_memory: true
+    recall_memories: true
+    delete_memory: true
+  resources:
+    system_info: true
+    connection_info: true
+```
+
+#### Using the Datastore Query Tool Properties
+
+The `query_datastore` tool runs structured queries against the datastore, and
+the `describe_datastore` tool lists the sources that `query_datastore` can
+read and describes their columns. Both tools default to `true`. The
+`query_datastore` tool does not accept SQL; the tool limits
+connection-specific rows to the connections the caller can access, while
+estate-wide configuration rows remain readable. The
+[MCP Tools and Resources](../user-guide/ai/mcp-tools.md#querying-the-datastore)
+page describes the tool's parameters.
+
+In the following example, the configuration disables both datastore query
+tools:
+
+```yaml
+builtins:
+  tools:
+    query_datastore: false
+    describe_datastore: false
+```
+
+#### Using the Memory Tool Properties
+
+The memory tools (`store_memory`, `recall_memories`, `delete_memory`) allow
+Ellie to store and recall information across conversations. The server stores
+memories in the PostgreSQL datastore. When embedding generation is enabled, the
+`recall_memories` tool uses semantic similarity for searching. The tool falls
+back to text matching when embeddings are unavailable.
+
+Set any memory tool to `false` in the `builtins.tools` section to disable the
+tool.
+
+In the following example, the configuration disables the `store_memory` and
+`delete_memory` tools while keeping `recall_memories` enabled:
+
+```yaml
+builtins:
+  tools:
+    store_memory: false
+    delete_memory: false
+    recall_memories: true
+```
+
+### Paths and Directories
+
+These properties configure filesystem paths for secrets, custom prompts,
+persistent data, and tracing.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `secret_file` | string | `/etc/pgedge/ai-dba-server.secret` | Encryption secret path |
+| `custom_definitions_path` | string | | Custom prompts file path |
+| `data_dir` | string | `./data/` | Directory location for persistent storage of auth and chat data |
+| `trace_file` | string | | MCP trace file path |
+
+#### Using the data_dir Property
+
+The `data_dir` property specifies the location of persistent data files used
+for data storage:
+
+- `auth.db` stores authentication data in a SQLite database.
+- `conversations.db` stores chat history in a SQLite database.
+
+The default location of the data files is `./data/` relative to the server
+binary.
+
+In the following example, the `-data-dir` flag specifies a custom location:
+
+```bash
+./ai-dba-server -data-dir /var/lib/ai-workbench/data
+```
+
+The `data` directory can also be set in the configuration file:
+
+```yaml
+data_dir: "/var/lib/ai-workbench/data"
+```
+
+#### Using the trace_file Property
+
+You can use the `trace_file` property to instruct the server to log all MCP
+requests and responses to a trace file for debugging purposes.
+
+In the following example, the `-trace-file` flag enables tracing:
+
+```bash
+./ai-dba-server \
+    -trace-file /var/log/ai-workbench/mcp-trace.log
+```
+
+The trace file can also be set in the configuration file:
+
+```yaml
+trace_file: "/var/log/ai-workbench/mcp-trace.log"
+```
+
+
+## Configuration Examples
+
+The examples that follow demonstrate how you might use server properties to
+configure your system. A complete sample configuration file is available at
+[examples/ai-dba-server.yaml](https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-server.yaml)
+in the project repository.
+
+```yaml
+#=====================================================
+# HTTP SERVER CONFIGURATION
+#=====================================================
+http:
+  # Address to listen on (host:port or :port)
+  address: ":8080"
+
+  # TLS/HTTPS Configuration
+  tls:
+    enabled: false
+    # cert_file: "/etc/ai-workbench/certs/cert.pem"
+    # key_file: "/etc/ai-workbench/certs/key.pem"
+    # chain_file: "/etc/ai-workbench/certs/chain.pem"
+
+  # Trusted reverse proxies (CIDR ranges)
+  # trusted_proxies:
+  #   - "10.0.0.0/8"
+  #   - "172.16.0.0/12"
+
+  # CORS origin for cross-origin deployments
+  # cors_origin: "https://workbench.example.com"
+
+  # Authentication Configuration
+  auth:
+    max_failed_attempts_before_lockout: 10
+    max_user_token_days: 0
+    rate_limit_window_minutes: 15
+    rate_limit_max_attempts: 10
+    # Local username and password login
+    local:
+      enabled: true
+    # Federated (OpenID Connect) login
+    # oidc:
+    #   enabled: true
+    #   issuer: "https://idp.example.com"
+    #   client_id: "pgedge-workbench"
+    #   client_secret_file: "/etc/pgedge/oidc-client-secret.txt"
+    #   redirect_url: "https://workbench.example.com/api/v1/auth/oidc/callback"
+    audit_retention_days: 90
+
+#=====================================================
+# CONNECTION SECURITY
+#=====================================================
+connection_security:
+  allow_internal_networks: false
+  # allowed_hosts:
+  #   - "db.example.com"
+  #   - "192.168.1.0/24"
+  # blocked_hosts:
+  #   - "169.254.169.254"
+
+#=====================================================
+# DATABASE CONNECTION
+#=====================================================
+database:
+  host: "localhost"
+  port: 5432
+  database: "ai_workbench"
+  user: "postgres"
+  # password: ""
+  # password_file: "/etc/pgedge/password.txt"
+  sslmode: "prefer"
+  pool_max_conns: 20
+  pool_min_conns: 0
+  pool_max_conn_idle_time: "30m"
+  statement_timeout: "30s"
+
+#=====================================================
+# EMBEDDING GENERATION
+#=====================================================
+embedding:
+  enabled: false
+  provider: "ollama"
+  model: "nomic-embed-text"
+  ollama_url: "http://localhost:11434"
+  # voyage_api_key_file: "~/.voyage-api-key"
+  # openai_api_key_file: "~/.openai-api-key"
+  # gemini_api_key_file: "~/.gemini-api-key"
+
+#=====================================================
+# LLM CONFIGURATION (Chat Proxy and AI Analysis)
+#=====================================================
+llm:
+  provider: "anthropic"
+  model: "claude-sonnet-5"
+  # anthropic_api_key_file: "~/.anthropic-api-key"
+  # openai_api_key_file: "~/.openai-api-key"
+  # gemini_api_key_file: "~/.gemini-api-key"
+  ollama_url: "http://localhost:11434"
+  max_tokens: 4096
+  temperature: 0.7
+  max_iterations: 50
+  compact_tool_descriptions: "auto"
+
+#=====================================================
+# KNOWLEDGEBASE CONFIGURATION
+#=====================================================
+knowledgebase:
+  enabled: false
+  # database_path: "/usr/share/pgedge/postgres-mcp-kb/kb.db"
+  embedding_provider: "ollama"
+  embedding_model: "nomic-embed-text"
+  embedding_ollama_url: "http://localhost:11434"
+
+#=====================================================
+# CHAT MEMORY CONFIGURATION
+#=====================================================
+memory:
+  enabled: true
+
+#=====================================================
+# BUILT-IN TOOLS, RESOURCES, AND PROMPTS
+#=====================================================
+builtins:
+  tools:
+    query_database: true
+    get_schema_info: true
+    similarity_search: true
+    execute_explain: true
+    count_rows: true
+    list_probes: true
+    describe_probe: true
+    query_metrics: true
+    list_connections: true
+    get_alert_history: true
+    get_alert_rules: true
+    get_metric_baselines: true
+    get_blackouts: true
+    get_timeline_events: true
+    query_datastore: true
+    describe_datastore: true
+    generate_embedding: true
+    search_knowledgebase: true
+    store_memory: true
+    recall_memories: true
+    delete_memory: true
+  resources:
+    system_info: true
+    connection_info: true
+
+#=====================================================
+# PATHS AND DATA DIRECTORIES
+#=====================================================
+# secret_file: "/etc/ai-workbench/server.secret"
+# custom_definitions_path: "/etc/ai-workbench/defs.yaml"
+# data_dir: "/var/lib/ai-workbench/data"
+```
+
+### Sample: Development Configuration
+
+```yaml
+http:
+  address: ":8080"
+  tls:
+    enabled: false
+  auth:
+    local:
+      enabled: true
+connection_security:
+  allow_internal_networks: true
+database:
+  host: "localhost"
+  port: 5432
+  database: "ai_workbench"
+  user: "postgres"
+  sslmode: "disable"
+embedding:
+  enabled: true
+  provider: "ollama"
+  model: "nomic-embed-text"
+llm:
+  provider: "ollama"
+  model: "llama3:latest"
+```
+
+### Sample: Production Configuration
+
+```yaml
+http:
+  address: ":8443"
+  tls:
+    enabled: true
+    cert_file: "/etc/ai-workbench/certs/cert.pem"
+    key_file: "/etc/ai-workbench/certs/key.pem"
+  trusted_proxies:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+  cors_origin: "https://workbench.example.com"
+  auth:
+    local:
+      enabled: true
+    max_failed_attempts_before_lockout: 5
+    max_user_token_days: 90
+connection_security:
+  allow_internal_networks: false
+  allowed_hosts:
+    - "db.internal.example.com"
+  blocked_hosts:
+    - "169.254.169.254"
+database:
+  host: "db.internal.example.com"
+  port: 5432
+  database: "ai_workbench_prod"
+  user: "ai_workbench"
+  sslmode: "verify-full"
+  pool_max_conns: 20
+embedding:
+  enabled: true
+  provider: "voyage"
+  model: "voyage-3"
+  voyage_api_key_file: "/etc/ai-workbench/voyage-key"
+llm:
+  provider: "anthropic"
+  model: "claude-sonnet-5"
+  anthropic_api_key_file: "/etc/ai-workbench/ant-key"
+secret_file: "/etc/ai-workbench/server.secret"
+data_dir: "/var/lib/ai-workbench/data"
+```

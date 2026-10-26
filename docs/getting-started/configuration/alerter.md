@@ -648,6 +648,21 @@ the following example:
 Decision model typesafe/jev-latest: alert (P(real issue)=0.87, suppress threshold 0.50)
 ```
 
+Because the decision model gives no explanation, the server
+generates one on demand when a user asks why such an alert
+was raised. The first request asks the LLM configured in the
+`llm` section of the server configuration, the same LLM the
+server uses for AI analysis, to explain the verdict from the
+alert's stored data. The server stores the explanation on
+the alert, so later requests return it without another LLM
+call. When the server has no LLM configured, or the call
+fails, no explanation is available and a later request tries
+again; see the
+[server configuration reference](server.md#llm-proxy-llm)
+for the server's `llm` settings. A reasoning model verdict
+needs no server LLM, because the server returns the
+reasoning stored with the tier 3 response.
+
 The `tier3_source` column of the `anomaly_candidates` table
 records whether a `decision` or a `reasoning` model produced
 the tier 3 outcome, and the `tier3_model` column records the

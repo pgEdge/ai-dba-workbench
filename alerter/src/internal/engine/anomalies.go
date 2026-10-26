@@ -20,6 +20,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 )
 
 // effectiveStdDev applies the hybrid variance floor described in
@@ -918,13 +919,15 @@ func (e *Engine) classifyWithReasoning(ctx context.Context, candidate *database.
 	// Call the LLM for classification
 	response, err := e.reasoningProvider.Classify(tier3Ctx, prompt)
 	if err != nil {
-		errStr := redactProviderLogError(err.Error(), configuredSecrets(cfg))
+		errStr := redact.ProviderLogError(err.Error(), configuredSecrets(cfg))
 		e.log("ERROR: Tier 3 LLM classification failed for candidate %d: %s", candidate.ID, errStr)
 		if decisionFailure != "" {
 			errStr = decisionFailure + "; the reasoning model then failed too: " + errStr
 		}
 		candidate.Tier3Error = &errStr
-		// On LLM failure, default to alert (fail safe)
+		// On LLM failure, default to alert (fail safe). The server's
+		// reasoningFailSafeResult matches this text so that it is never
+		// shown as an alert's reasoning; change the two together.
 		e.failSafeTier3(candidate, "LLM classification failed, defaulting to alert")
 		return
 	}

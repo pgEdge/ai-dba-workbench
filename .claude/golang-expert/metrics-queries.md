@@ -1523,6 +1523,28 @@ needs adding in the same three places. The decision provider is health
 tracked as its own tier, `tier3_decision`, which shares no outcomes with
 the reasoning tiers.
 
+A decision verdict stores only a one-line summary as `tier3_result`, so
+the server's `GET /api/v1/alerts/reasoning`
+(`api/alert_reasoning_handlers.go`) generates an explanation on first
+request with the server's `llm` config and stores it in
+`alerts.anomaly_details` under `tier3_reasoning`
+(`database.Tier3ReasoningKey`, written by `SaveAlertTier3Reasoning` only
+when absent); later requests read it back. The alerter never rewrites
+an anomaly alert's `anomaly_details` after raising it (only system
+alerts have theirs rewritten), so that key is the server's alone:
+alerter code must not overwrite an anomaly alert's `anomaly_details`
+wholesale, and `buildReevaluationPrompt` does not read the key.
+`GetAlertTier3Info` joins the candidate that raised the alert, ordering
+the linked rows by `(tier3_pass IS NOT NULL) DESC, id ASC`: the alerter
+links later duplicates to the open alert with every Tier 3 column NULL,
+so "newest" would pick a duplicate. Every Tier 3 path, the fail-safe
+included, sets `tier3_pass`. The prompt takes `metric_value` and
+`z_score` from that candidate, since `refreshAnomalyAlertSQL` rewrites
+the alert row's values, and omits the database name. Reasoning verdicts
+are served from the candidate's `tier3_result` with no LLM call.
+Provider error redaction lives in `pkg/redact` (`ProviderLogError`,
+`BaseURLSecrets`), shared by the alerter and the server.
+
 ### Anomaly alert recovery (#611)
 
 `cleanResolvedAlerts` only handles threshold alerts (`clearResolvedAlert`

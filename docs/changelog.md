@@ -45,6 +45,22 @@ project adheres to
   median latency of Claude Haiku 4.5, so `typesafe` is the
   recommended provider.
 
+- Explain why an anomaly alert was raised (#626). Anomaly alerts
+  in the status panel have a "Why was this flagged?" button that
+  shows the reasoning behind the tier 3 decision, served by the
+  new `GET /api/v1/alerts/reasoning` endpoint. A reasoning model
+  verdict returns the model's stored reasoning. A decision model
+  verdict carries no explanation, so the first request asks the
+  LLM configured in the server's `llm` section to write one from
+  the alert's stored data, and stores it in the alert's
+  `anomaly_details` under `tier3_reasoning` for later requests.
+  Without a server LLM, a decision model verdict has no
+  explanation. Any user who can see an alert can view, and so
+  trigger generation of, its reasoning. Logging out now also
+  clears the client's cached query analyses and SQL validation
+  results, as well as the cached reasoning, so the next user to
+  log in on the same browser cannot see them.
+
 - Add the `describe_datastore` MCP tool, which lists the sources
   that `query_datastore` can read, with each source's kind, time
   column and scoping rule, and describes one source's columns

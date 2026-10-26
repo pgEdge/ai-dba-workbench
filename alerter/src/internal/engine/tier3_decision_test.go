@@ -25,6 +25,7 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/alerter/internal/llm"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 )
 
 // These tests cover the decision model path of Tier 3 (GitHub issue #626).
@@ -695,7 +696,7 @@ func TestRunTier3RedactsProviderErrors(t *testing.T) {
 				if strings.Contains(text, "abcd1234") {
 					t.Errorf("%s repeats the credential: %q", what, text)
 				}
-				if !strings.Contains(text, redactedMarker) {
+				if !strings.Contains(text, redact.ProviderMarker) {
 					t.Errorf("%s shows no redaction: %q", what, text)
 				}
 			}

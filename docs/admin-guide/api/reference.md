@@ -131,6 +131,7 @@ The API provides endpoints in the following categories.
 | POST | `/api/v1/alerts/acknowledge` | Acknowledge an alert. |
 | DELETE | `/api/v1/alerts/acknowledge` | Remove an alert acknowledgement. |
 | PUT | `/api/v1/alerts/analysis` | Save an AI analysis for an alert. |
+| GET | `/api/v1/alerts/reasoning` | Get why Tier 3 raised an anomaly alert. |
 
 ### Alert Rules
 

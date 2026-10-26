@@ -1070,6 +1070,87 @@
         ]
       }
     },
+    "/alerts/reasoning": {
+      "get": {
+        "summary": "Get Tier 3 reasoning for alert",
+        "description": "Explains why an anomaly alert's Tier 3 classification raised it. For a verdict from a reasoning model, the model's stored reasoning is returned. A decision model returns a probability rather than text, so the first request for such an alert asks the configured LLM for an explanation, stores it on the alert and returns it; later requests return the stored text. Concurrent first requests share one LLM call. Generation failures are reported as status unavailable rather than as an error, so the request may be retried. Any caller who can see the alert may read, and so trigger, its reasoning; an alert the caller cannot see is answered with 404, exactly as a missing one",
+        "operationId": "getAlertReasoning",
+        "tags": [
+          "Alerts"
+        ],
+        "parameters": [
+          {
+            "name": "alert_id",
+            "in": "query",
+            "description": "Alert ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tier 3 reasoning, or why none is available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertReasoningResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid alert_id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Alert not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed; the Allow header names GET"
+          },
+          "500": {
+            "description": "Failed to load the alert",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/auth/login": {
       "post": {
         "summary": "User login",
@@ -10879,6 +10960,41 @@
           "threshold",
           "severity",
           "enabled"
+        ]
+      },
+      "AlertReasoningResponse": {
+        "type": "object",
+        "properties": {
+          "alert_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Alert ID"
+          },
+          "reasoning": {
+            "type": "string",
+            "description": "Why the alert was raised; present only when status is available"
+          },
+          "source": {
+            "type": "string",
+            "description": "The kind of model that made the Tier 3 verdict; omitted when not applicable",
+            "enum": [
+              "decision",
+              "reasoning"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "available when reasoning is returned; unavailable when it could not be generated now (no LLM configured, or the call failed) and a later request may succeed; not_applicable when the alert has no Tier 3 alert verdict to explain",
+            "enum": [
+              "available",
+              "unavailable",
+              "not_applicable"
+            ]
+          }
+        },
+        "required": [
+          "alert_id",
+          "status"
         ]
       },
       "AlertRule": {

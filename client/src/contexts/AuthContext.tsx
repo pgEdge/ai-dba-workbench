@@ -14,6 +14,9 @@ import { apiGet, apiPost } from '../utils/apiClient';
 import { clearAlertAnalysisCache } from '../hooks/useAlertAnalysis';
 import { clearChartAnalysisCache } from '../hooks/useChartAnalysis';
 import { clearAnalysisCache as clearServerAnalysisCache } from '../hooks/useServerAnalysis';
+import { clearQueryAnalysisCache } from '../hooks/useQueryAnalysis';
+import { clearAlertReasoningCache } from '../hooks/useAlertReasoning';
+import { clearSqlValidationCache } from '../utils/sqlValidation';
 import { logger } from '../utils/logger';
 
 // Wildcard entry in admin_permissions that grants every admin permission.
@@ -58,6 +61,20 @@ interface LoginResponse {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+/**
+ * Drop every module-level cache that holds data fetched for the
+ * signed-in user, so that none of it survives into the next user's
+ * session in the same tab.
+ */
+const clearSessionCaches = (): void => {
+    clearAlertAnalysisCache();
+    clearChartAnalysisCache();
+    clearServerAnalysisCache();
+    clearQueryAnalysisCache();
+    clearAlertReasoningCache();
+    clearSqlValidationCache();
+};
 
 export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElement => {
     const [user, setUser] = useState<User | null>(null);
@@ -143,9 +160,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
             logger.error('Logout request failed:', error);
             // Continue with local logout even if server request fails
         }
-        clearAlertAnalysisCache();
-        clearChartAnalysisCache();
-        clearServerAnalysisCache();
+        clearSessionCaches();
         setUser(null);
         setAdminPermissions([]);
     }, []);
@@ -169,9 +184,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
         } catch {
             // Ignore errors during force logout
         }
-        clearAlertAnalysisCache();
-        clearChartAnalysisCache();
-        clearServerAnalysisCache();
+        clearSessionCaches();
         setUser(null);
         setAdminPermissions([]);
     }, []);

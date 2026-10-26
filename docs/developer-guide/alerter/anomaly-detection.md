@@ -577,6 +577,72 @@ re-evaluation of acknowledged anomaly alerts always uses the
 reasoning model, for the reasons the Decision Model Trade-offs
 section gives.
 
+### On-Demand Reasoning
+
+The server explains a decision model's verdict on demand, since the
+alerter stores only a summary. The `GET /api/v1/alerts/reasoning`
+endpoint, with an `alert_id` query parameter, returns the reasoning
+behind an anomaly alert's Tier 3 decision; the handler lives in
+`server/src/internal/api/alert_reasoning_handlers.go`. The response
+holds `alert_id`, a `status`, a `source` of `decision` or
+`reasoning`, and the `reasoning` text when the status is
+`available`. Any user who can see the alert can read the reasoning,
+and so can cause the server to generate it; an alert the caller
+cannot see returns 404, as a missing alert does.
+
+The endpoint reads the alert together with the candidate that
+raised it. Several `anomaly_candidates` rows can link to one alert,
+because the alerter links each later duplicate to the open alert,
+usually with every Tier 3 column NULL; the query therefore takes the
+oldest linked candidate with a Tier 3 outcome (`tier3_pass` set),
+and the oldest linked candidate when none has one. It answers as
+follows:
+
+- a reasoning model verdict returns the `reasoning` field of the
+  stored Tier 3 response, or the whole response when it holds no
+  readable `reasoning` field, with no LLM call.
+- the first request for a decision model verdict asks the LLM
+  configured in the server's `llm` section to explain the verdict,
+  stores the text in the alert's `anomaly_details` under the
+  `tier3_reasoning` key, and returns it.
+- later requests for a decision model verdict return the stored
+  `tier3_reasoning` text without calling the LLM.
+- a decision model verdict returns the `unavailable` status when the
+  server has no LLM configured, the LLM call fails or returns no
+  text, or storing the text fails; nothing is stored, so a request
+  made more than a minute after the failure tries again. The status
+  is also `unavailable` whilst four generations are already running.
+- a non-anomaly alert, a fail-safe verdict and a candidate classified
+  before migration 22 return the `not_applicable` status, with no
+  `source`; so does an alert whose candidate retention has deleted,
+  unless the server stored `tier3_reasoning` on the alert first.
+
+The prompt for a decision model verdict holds only the alert's stored
+data: the metric name, the trigger time, the metric value and z-score
+that the candidate recorded (the alerter refreshes the alert row's
+values whilst the alert is open, so they may no longer be the ones
+Tier 3 judged), the decision model and its summary, the baseline
+context, and the Tier 2 similarity score. The database name is left
+out, because a monitored server chooses it and it could carry
+instructions to the model. The values arrive as JSON inside
+`<anomaly_data>` tags, which the system prompt tells the model to
+treat strictly as data. The server caps the stored text at 4,000
+characters, removes control and format characters other than
+newlines and tabs, and bounds the LLM call with a 60 second timeout.
+When the call fails, the logged error has its control characters, the
+configured API keys, base URL credentials and custom header values,
+and anything shaped like a credential removed, using the same
+`pkg/redact` functions that the alerter uses for provider errors.
+
+Concurrent first requests for one alert share a single LLM call
+through a `singleflight` group, and the call runs detached from the
+request, so a client that disconnects does not cancel it for the
+others. `SaveAlertTier3Reasoning` writes the key only when it is
+absent, so when two server processes generate reasoning at once the
+first write wins and the second returns the stored text. The alerter
+writes `anomaly_details` only when it raises an alert, so the
+`tier3_reasoning` key belongs to the server alone.
+
 ### Decision Model Fallback
 
 Any decision model failure sends the candidate to the reasoning

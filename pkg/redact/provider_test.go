@@ -84,6 +84,8 @@ func TestProviderLogError_RemovesCredentials(t *testing.T) {
 		{"gemini key", "bad AIzaSyA0123456789abcdefghijklmn", "AIzaSyA0123456789abcdefghijklmn"},
 		{"userinfo", "dial https://user:pw99@llm.example/v1", "user:pw99"},
 		{"userinfo with @ in password", "dial https://user:a@longsecret@llm.example/v1", "longsecret"},
+		{"userinfo with # in password", "dial https://user:hunter2#x@llm.example/v1/chat", "hunter2"},
+		{"userinfo with ? in password", "dial https://user:hunter2?x@llm.example/v1/chat", "hunter2"},
 		{"format character", "bad\u202eevil", "\u202e"},
 		{"line separator", "one\u2028two", "\u2028"},
 	}

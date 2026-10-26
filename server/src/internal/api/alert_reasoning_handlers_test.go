@@ -322,6 +322,27 @@ func TestAlertReasoning_Outcomes(t *testing.T) {
 			wantStatus: alertReasoningAvailable, wantSource: "reasoning", wantText: "Sustained spike.",
 		},
 		{
+			// A successful fallback keeps the decision model's error,
+			// and the reasoning model may answer in prose.
+			name: "reasoning model prose after decision fallback",
+			mutate: func(i *database.AlertTier3Info) {
+				i.Tier3Source = strPtr("reasoning")
+				i.Tier3Error = strPtr("decision model failed; fell back to the reasoning model")
+				i.Tier3Result = strPtr("Connections are well above their baseline.")
+			},
+			gen:        okGen,
+			wantStatus: alertReasoningAvailable, wantSource: "reasoning", wantText: "Connections are well above their baseline.",
+		},
+		{
+			name: "reasoning model JSON without reasoning",
+			mutate: func(i *database.AlertTier3Info) {
+				i.Tier3Source = strPtr("reasoning")
+				i.Tier3Result = strPtr(`{"decision": "alert", "reasoning": "  "}`)
+			},
+			gen:        okGen,
+			wantStatus: alertReasoningNotApplicable,
+		},
+		{
 			name: "reasoning model prose",
 			mutate: func(i *database.AlertTier3Info) {
 				i.Tier3Source = strPtr("reasoning")
@@ -765,5 +786,22 @@ func TestReasoningLogSecrets(t *testing.T) {
 	h.SetReasoningLLM(nil)
 	if h.reasoningSecrets != nil {
 		t.Error("turning generation off should drop the secrets")
+	}
+}
+
+func TestReasoningFromTier3Result(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"reasoning field", `{"decision": "alert", "reasoning": " Spike. "}`, "Spike."},
+		{"no reasoning field", `{"decision":"alert"}`, ""},
+		{"blank reasoning", `{"decision": "alert", "reasoning": ""}`, ""},
+		{"invalid JSON", `  {not json}  `, "{not json}"},
+		{"prose", " A real issue. ", "A real issue."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := reasoningFromTier3Result(tt.in); got != tt.want {
+				t.Errorf("reasoningFromTier3Result(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }

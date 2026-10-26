@@ -51,6 +51,13 @@ const (
 	tier3SourceReasoning = "reasoning"
 )
 
+// reasoningFailSafeResult is the Tier 3 result the alerter stores when
+// the reasoning model fails and the candidate is raised as an alert
+// unclassified (classifyWithReasoning in the alerter's engine package).
+// It describes a failure rather than a decision, so it is never shown
+// as reasoning.
+const reasoningFailSafeResult = "LLM classification failed, defaulting to alert"
+
 // alertReasoningTimeout bounds the LLM call that generates reasoning.
 const alertReasoningTimeout = 60 * time.Second
 
@@ -292,12 +299,17 @@ func (h *AlertHandler) alertReasoning(ctx context.Context, info *database.AlertT
 
 	switch derefString(info.Tier3Source) {
 	case tier3SourceReasoning:
-		// When the reasoning model itself failed, the fail-safe stored a
-		// failure message rather than a response, and recorded the
-		// failure. A recorded error with a readable response is a
-		// decision model failure that fell back successfully.
-		reasoning, parsed := reasoningFromTier3Result(derefString(info.Tier3Result))
-		if reasoning == "" || (!parsed && derefString(info.Tier3Error) != "") {
+		// When the reasoning model itself failed, the fail-safe stored
+		// its own failure message rather than a response. A recorded
+		// error alone says nothing, since a decision model failure that
+		// fell back successfully keeps its error beside the reasoning
+		// model's response, which may be prose.
+		result := derefString(info.Tier3Result)
+		if strings.TrimSpace(result) == reasoningFailSafeResult {
+			return resp
+		}
+		reasoning := reasoningFromTier3Result(result)
+		if reasoning == "" {
 			return resp
 		}
 		resp.Status = alertReasoningAvailable
@@ -529,11 +541,11 @@ func anomalyDetailsForPrompt(raw string) map[string]any {
 
 // reasoningFromTier3Result extracts the reasoning from a reasoning
 // model's stored Tier 3 response, which asks for a JSON object with a
-// reasoning field but may wrap it in prose or a code fence. It reports
-// whether it found that field. A response with no readable reasoning
-// field is returned whole, trimmed, since it is the model's own
-// explanation.
-func reasoningFromTier3Result(result string) (string, bool) {
+// reasoning field but may wrap it in prose or a code fence. Valid JSON
+// with no or blank reasoning yields "", since the model gave no
+// explanation. A response holding no valid JSON is returned whole,
+// trimmed, since it is the model's own explanation in prose.
+func reasoningFromTier3Result(result string) string {
 	result = strings.TrimSpace(result)
 	start := strings.Index(result, "{")
 	end := strings.LastIndex(result, "}")
@@ -542,12 +554,10 @@ func reasoningFromTier3Result(result string) (string, bool) {
 			Reasoning string `json:"reasoning"`
 		}
 		if json.Unmarshal([]byte(result[start:end+1]), &parsed) == nil {
-			if reasoning := strings.TrimSpace(parsed.Reasoning); reasoning != "" {
-				return reasoning, true
-			}
+			return strings.TrimSpace(parsed.Reasoning)
 		}
 	}
-	return result, false
+	return result
 }
 
 // truncateRunes shortens s to at most limit runes.

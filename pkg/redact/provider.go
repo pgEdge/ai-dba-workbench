@@ -23,21 +23,23 @@ import (
 const ProviderMarker = "[REDACTED]"
 
 // providerPatterns match credentials a provider error may repeat:
-// a bearer or basic credential, the query string of a URL, a key or
-// token parameter or header, a key-shaped value from a known provider,
-// and the userinfo of a URL.
+// a bearer or basic credential, the userinfo and the query string of a
+// URL, a key or token parameter or header, and a key-shaped value from a
+// known provider.
 var providerPatterns = []struct {
 	re   *regexp.Regexp
 	repl string
 }{
 	{regexp.MustCompile(`(?i)\b((?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+`), "${1}[REDACTED]"},
+	// The userinfo of a URL, matched before the query pattern so that a
+	// password holding an unescaped '?' or '#' is not split there. It is
+	// greedy, running to the last '@' before the path, so a password
+	// holding an unescaped '@' is removed whole too.
+	{regexp.MustCompile(`(://)[^/\s]+@`), "${1}[REDACTED]@"},
 	{regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://[^\s?#"'<>]*)\?[^\s"'<>#]*`), "${1}?[REDACTED]"},
 	{regexp.MustCompile(`(?i)((?:api[_-]?key|x-api-key|x-goog-api-key|access[_-]?token|token|key|secret|password|authorization)["']?\s*[:=]\s*["']?)[^\s"'&,;}]+`), "${1}[REDACTED]"},
 	{regexp.MustCompile(`\b(?:sk|pa|pk)-[A-Za-z0-9_\-]{8,}`), "[REDACTED]"},
 	{regexp.MustCompile(`\bAIza[0-9A-Za-z_\-]{20,}`), "[REDACTED]"},
-	// Greedy, so that the match runs to the last '@' before the host
-	// and a password holding an unescaped '@' is removed whole.
-	{regexp.MustCompile(`(://)[^/?#\s]+@`), "${1}[REDACTED]@"},
 }
 
 // ProviderLogError prepares an LLM provider's error message for a log

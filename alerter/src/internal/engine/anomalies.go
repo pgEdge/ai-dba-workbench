@@ -925,7 +925,9 @@ func (e *Engine) classifyWithReasoning(ctx context.Context, candidate *database.
 			errStr = decisionFailure + "; the reasoning model then failed too: " + errStr
 		}
 		candidate.Tier3Error = &errStr
-		// On LLM failure, default to alert (fail safe)
+		// On LLM failure, default to alert (fail safe). The server's
+		// reasoningFailSafeResult matches this text so that it is never
+		// shown as an alert's reasoning; change the two together.
 		e.failSafeTier3(candidate, "LLM classification failed, defaulting to alert")
 		return
 	}

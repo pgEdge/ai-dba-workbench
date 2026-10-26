@@ -86,7 +86,7 @@ func TestAlertTier3Info_RaisingCandidateAndConditionalSave(t *testing.T) {
 	_, err := pool.Exec(ctx, `
 		INSERT INTO anomaly_candidates (alert_id, metric_value, z_score, tier3_pass,
 		                                tier3_result, tier3_source, tier3_model, final_decision)
-		VALUES ($1, 300.7, 4.6, true, 'Decision model m: alert', 'decision', 'm', 'alert'),
+		VALUES ($1, 1234567, 4.6, true, 'Decision model m: alert', 'decision', 'm', 'alert'),
 		       ($1, 350, 4.8, NULL, NULL, NULL, NULL, 'alert'),
 		       ($1, 380, 5.0, true, 'later', 'reasoning', 'r', 'alert')`, alertID)
 	if err != nil {
@@ -105,11 +105,13 @@ func TestAlertTier3Info_RaisingCandidateAndConditionalSave(t *testing.T) {
 		t.Errorf("expected the raising candidate, got source=%v pass=%v", info.Tier3Source, info.Tier3Pass)
 	}
 	// The alert row holds refreshed values (412, 5.2); the prompt must
-	// get the values Tier 3 judged, exactly as stored rather than with
-	// the float32 noise a plain REAL to float8 cast adds (4.599999904...).
-	if info.CandidateMetricValue == nil || *info.CandidateMetricValue != 300.7 ||
+	// get the values Tier 3 judged, exactly as stored: without the
+	// float32 noise a plain REAL to float8 cast adds (4.599999904...),
+	// and without the rounding to six digits a cast through numeric
+	// applies (1234570).
+	if info.CandidateMetricValue == nil || *info.CandidateMetricValue != 1234567 ||
 		info.CandidateZScore == nil || *info.CandidateZScore != 4.6 {
-		t.Errorf("candidate values = %v, %v, want 300.7, 4.6", info.CandidateMetricValue, info.CandidateZScore)
+		t.Errorf("candidate values = %v, %v, want 1234567, 4.6", info.CandidateMetricValue, info.CandidateZScore)
 	}
 	if info.StoredReasoning != nil {
 		t.Errorf("no reasoning should be stored yet, got %q", *info.StoredReasoning)

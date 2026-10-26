@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -72,11 +73,12 @@ func (d *Datastore) GetAlertTier3Info(ctx context.Context, alertID int64) (*Aler
 	defer d.mu.RUnlock()
 
 	var info AlertTier3Info
+	var candidateValue, candidateZ *float32
 	err := d.pool.QueryRow(ctx, `
 		SELECT a.id, a.alert_type, a.connection_id,
 		       a.metric_name, a.triggered_at,
 		       a.anomaly_details::text, a.anomaly_details ->> $2,
-		       c.metric_value::numeric::float8, c.z_score::numeric::float8,
+		       c.metric_value, c.z_score,
 		       c.tier3_source, c.tier3_model, c.tier3_result, c.tier3_pass,
 		       c.tier3_error, c.final_decision
 		FROM alerts a
@@ -94,7 +96,7 @@ func (d *Datastore) GetAlertTier3Info(ctx context.Context, alertID int64) (*Aler
 		&info.AlertID, &info.AlertType, &info.ConnectionID,
 		&info.MetricName, &info.TriggeredAt,
 		&info.AnomalyDetails, &info.StoredReasoning,
-		&info.CandidateMetricValue, &info.CandidateZScore,
+		&candidateValue, &candidateZ,
 		&info.Tier3Source, &info.Tier3Model, &info.Tier3Result, &info.Tier3Pass,
 		&info.Tier3Error, &info.FinalDecision,
 	)
@@ -104,7 +106,26 @@ func (d *Datastore) GetAlertTier3Info(ctx context.Context, alertID int64) (*Aler
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Tier 3 information for alert %d: %w", alertID, err)
 	}
+	info.CandidateMetricValue = realToFloat64(candidateValue)
+	info.CandidateZScore = realToFloat64(candidateZ)
 	return &info, nil
+}
+
+// realToFloat64 widens a REAL column's value to the float64 with the
+// same shortest decimal form, so 5.2 stays 5.2 rather than becoming
+// 5.199999809265137, and 1234567 keeps all seven digits (a cast through
+// numeric would round it to 1234570). It returns nil for a NULL.
+func realToFloat64(v *float32) *float64 {
+	if v == nil {
+		return nil
+	}
+	// A float32's shortest decimal form always parses as a float64, so
+	// the plain widening is only a fallback.
+	f, err := strconv.ParseFloat(strconv.FormatFloat(float64(*v), 'g', -1, 32), 64)
+	if err != nil {
+		f = float64(*v)
+	}
+	return &f
 }
 
 // SaveAlertTier3Reasoning stores reasoning in the alert's

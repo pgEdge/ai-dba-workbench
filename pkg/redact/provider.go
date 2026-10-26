@@ -61,17 +61,31 @@ func ProviderLogError(msg string, secrets []string) string {
 	// them: before, for a secret the message repeats with such a
 	// character, and after, for one the message splits with such a
 	// character or repeats without the one the secret holds.
-	removeSecrets := func(msg string, form func(string) string) string {
-		for _, secret := range secrets {
-			if secret = form(secret); secret != "" {
+	// The first pass may replace one part of a URL's userinfo, such as
+	// the password, before the second could match the whole; each part
+	// is listed in its own right, so that is enough.
+	removeSecrets := func(msg string, list []string) string {
+		for _, secret := range list {
+			if secret != "" {
 				msg = strings.ReplaceAll(msg, secret, ProviderMarker)
 			}
 		}
 		return msg
 	}
-	msg = removeSecrets(strings.ToValidUTF8(msg, "\uFFFD"),
-		func(s string) string { return s })
-	msg = removeSecrets(deleteFormatChars(msg), deleteFormatChars)
+	// A deleted form is kept only when it is as long as a derived
+	// secret must be, or is the secret unchanged, so that deleting
+	// characters cannot leave a short form that matches ordinary text.
+	// Longest first, so that no form cuts a longer one apart.
+	var deleted []string
+	for _, secret := range secrets {
+		form := deleteFormatChars(secret)
+		if form != "" && (len(form) >= minDerivedSecretLen || form == secret) {
+			deleted = append(deleted, form)
+		}
+	}
+	sort.SliceStable(deleted, func(i, j int) bool { return len(deleted[i]) > len(deleted[j]) })
+	msg = removeSecrets(strings.ToValidUTF8(msg, "\uFFFD"), secrets)
+	msg = removeSecrets(deleteFormatChars(msg), deleted)
 	for _, p := range providerPatterns {
 		msg = p.re.ReplaceAllString(msg, p.repl)
 	}

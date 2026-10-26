@@ -92,6 +92,21 @@ func TestProviderLogError_SecretWithFormatCharacter(t *testing.T) {
 	}
 }
 
+// TestProviderLogError_DeletedFormsShortAndOrdered checks that a secret
+// left shorter than a derived secret by the deletion is not used, so it
+// neither removes ordinary text nor cuts a longer secret apart, and that
+// the deleted forms are removed longest first.
+func TestProviderLogError_DeletedFormsShortAndOrdered(t *testing.T) {
+	msg := redact.ProviderLogError("grab ab\u200bcd", []string{"\u200b\u200bab", "abcd"})
+	if msg != "grab [REDACTED]" {
+		t.Errorf("short deleted form gave %q", msg)
+	}
+	msg = redact.ProviderLogError("rejected abcdef", []string{"ab\u200bcd", "abcd\u200bef"})
+	if msg != "rejected [REDACTED]" {
+		t.Errorf("deleted forms out of order gave %q", msg)
+	}
+}
+
 func TestProviderLogError_RemovesCredentials(t *testing.T) {
 	tests := []struct {
 		name, in, leak string

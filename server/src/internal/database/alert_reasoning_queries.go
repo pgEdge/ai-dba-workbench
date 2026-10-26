@@ -119,12 +119,9 @@ func realToFloat64(v *float32) *float64 {
 	if v == nil {
 		return nil
 	}
-	// A float32's shortest decimal form always parses as a float64, so
-	// the plain widening is only a fallback.
-	f, err := strconv.ParseFloat(strconv.FormatFloat(float64(*v), 'g', -1, 32), 64)
-	if err != nil {
-		f = float64(*v)
-	}
+	// FormatFloat always yields a valid number within float64 range, so
+	// ParseFloat cannot fail here.
+	f, _ := strconv.ParseFloat(strconv.FormatFloat(float64(*v), 'g', -1, 32), 64) //nolint:errcheck // input is FormatFloat output, which always parses
 	return &f
 }
 

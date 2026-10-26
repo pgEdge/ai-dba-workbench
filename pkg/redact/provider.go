@@ -50,27 +50,45 @@ var providerPatterns = []struct {
 
 // ProviderLogError prepares an LLM provider's error message for a log
 // line. It deletes control and formatting characters, removes the
-// secrets given verbatim and anything that looks like a credential,
-// replacing each with ProviderMarker, and keeps endpoint details. The
-// alerter and the server pass the API keys they hold and the
-// BaseURLSecrets of each configured base URL.
+// secrets given, whether or not the secret or the message holds such a
+// character where the other does not, and anything that looks like a
+// credential, replacing each with ProviderMarker, and keeps endpoint
+// details. The alerter and the server pass the API keys they hold and
+// the BaseURLSecrets of each configured base URL.
 func ProviderLogError(msg string, secrets []string) string {
-	msg = strings.Map(func(r rune) rune {
+	// Secrets are removed both before and after the characters are
+	// deleted, the second time with the same characters deleted from
+	// them: before, for a secret the message repeats with such a
+	// character, and after, for one the message splits with such a
+	// character or repeats without the one the secret holds.
+	removeSecrets := func(msg string, form func(string) string) string {
+		for _, secret := range secrets {
+			if secret = form(secret); secret != "" {
+				msg = strings.ReplaceAll(msg, secret, ProviderMarker)
+			}
+		}
+		return msg
+	}
+	msg = removeSecrets(strings.ToValidUTF8(msg, "\uFFFD"),
+		func(s string) string { return s })
+	msg = removeSecrets(deleteFormatChars(msg), deleteFormatChars)
+	for _, p := range providerPatterns {
+		msg = p.re.ReplaceAllString(msg, p.repl)
+	}
+	return msg
+}
+
+// deleteFormatChars deletes the control and formatting characters, and
+// the line and paragraph separators, that ProviderLogError keeps out of
+// a log line.
+func deleteFormatChars(s string) string {
+	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
 			r == '\u2028' || r == '\u2029' {
 			return -1
 		}
 		return r
-	}, strings.ToValidUTF8(msg, "\uFFFD"))
-	for _, secret := range secrets {
-		if secret != "" {
-			msg = strings.ReplaceAll(msg, secret, ProviderMarker)
-		}
-	}
-	for _, p := range providerPatterns {
-		msg = p.re.ReplaceAllString(msg, p.repl)
-	}
-	return msg
+	}, s)
 }
 
 // minDerivedSecretLen is the shortest base_url userinfo or query value

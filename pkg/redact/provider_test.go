@@ -72,6 +72,26 @@ func TestBaseURLSecrets_MalformedQuery(t *testing.T) {
 	}
 }
 
+// TestProviderLogError_SecretWithFormatCharacter covers a supplied
+// secret holding a character the message has deleted, whether or not
+// the message repeats that character, a clean secret the message splits
+// with one, and a secret of nothing but such characters.
+func TestProviderLogError_SecretWithFormatCharacter(t *testing.T) {
+	held := "zw\u200bsecret9876"
+	if msg := redact.ProviderLogError("rejected "+held, []string{held}); strings.Contains(msg, "secret9876") {
+		t.Errorf("secret holding a format character left in %q", msg)
+	}
+	if msg := redact.ProviderLogError("rejected split\u200bsecret5432", []string{"splitsecret5432"}); strings.Contains(msg, "secret5432") {
+		t.Errorf("secret split by a format character left in %q", msg)
+	}
+	if msg := redact.ProviderLogError("rejected zwsecret1234", []string{"zw\u200bsecret1234"}); strings.Contains(msg, "secret1234") {
+		t.Errorf("secret echoed without its format character left in %q", msg)
+	}
+	if msg := redact.ProviderLogError("rejected \u200bkey", []string{"\u200b"}); msg != "rejected [REDACTED]key" {
+		t.Errorf("secret of format characters only gave %q", msg)
+	}
+}
+
 func TestProviderLogError_RemovesCredentials(t *testing.T) {
 	tests := []struct {
 		name, in, leak string

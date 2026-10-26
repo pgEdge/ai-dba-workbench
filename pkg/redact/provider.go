@@ -31,11 +31,16 @@ var providerPatterns = []struct {
 	repl string
 }{
 	{regexp.MustCompile(`(?i)\b((?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+`), "${1}[REDACTED]"},
-	// The userinfo of a URL, matched before the query pattern so that a
-	// password holding an unescaped '?' or '#' is not split there. It is
-	// greedy, running to the last '@' before the path, so a password
-	// holding an unescaped '@' is removed whole too.
-	{regexp.MustCompile(`(://)[^/\s]+@`), "${1}[REDACTED]@"},
+	// An '@' after a '?' or '#' before the path may end a userinfo whose
+	// password holds that character, or may sit in a query value or
+	// fragment of a URL with no path. The two cannot be told apart, so
+	// everything up to the path is removed, host included. Matched
+	// before the query pattern, which would otherwise split it at '?'.
+	{regexp.MustCompile(`(://)[^/\s"'<>]*[?#][^/\s"'<>]*@[^/\s"'<>]*`), "${1}[REDACTED]"},
+	// The userinfo of a URL. Greedy, so that the match runs to the last
+	// '@' before the host and a password holding an unescaped '@' is
+	// removed whole.
+	{regexp.MustCompile(`(://)[^/?#\s]+@`), "${1}[REDACTED]@"},
 	{regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://[^\s?#"'<>]*)\?[^\s"'<>#]*`), "${1}?[REDACTED]"},
 	{regexp.MustCompile(`(?i)((?:api[_-]?key|x-api-key|x-goog-api-key|access[_-]?token|token|key|secret|password|authorization)["']?\s*[:=]\s*["']?)[^\s"'&,;}]+`), "${1}[REDACTED]"},
 	{regexp.MustCompile(`\b(?:sk|pa|pk)-[A-Za-z0-9_\-]{8,}`), "[REDACTED]"},

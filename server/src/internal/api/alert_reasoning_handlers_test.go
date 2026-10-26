@@ -343,6 +343,15 @@ func TestAlertReasoning_Outcomes(t *testing.T) {
 			wantStatus: alertReasoningNotApplicable,
 		},
 		{
+			name: "reasoning model control characters only",
+			mutate: func(i *database.AlertTier3Info) {
+				i.Tier3Source = strPtr("reasoning")
+				i.Tier3Result = strPtr("{\"decision\": \"alert\", \"reasoning\": \"\\u202e\\u0007\"}")
+			},
+			gen:        okGen,
+			wantStatus: alertReasoningNotApplicable,
+		},
+		{
 			name: "reasoning model prose",
 			mutate: func(i *database.AlertTier3Info) {
 				i.Tier3Source = strPtr("reasoning")

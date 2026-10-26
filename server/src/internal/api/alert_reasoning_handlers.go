@@ -308,13 +308,13 @@ func (h *AlertHandler) alertReasoning(ctx context.Context, info *database.AlertT
 		if strings.TrimSpace(result) == reasoningFailSafeResult {
 			return resp
 		}
-		reasoning := reasoningFromTier3Result(result)
+		reasoning := cleanReasoningText(reasoningFromTier3Result(result))
 		if reasoning == "" {
 			return resp
 		}
 		resp.Status = alertReasoningAvailable
 		resp.Source = tier3SourceReasoning
-		resp.Reasoning = truncateRunes(cleanReasoningText(reasoning), maxAlertReasoningRunes)
+		resp.Reasoning = truncateRunes(reasoning, maxAlertReasoningRunes)
 		return resp
 	case tier3SourceDecision:
 		// A decision model failure leaves the source as decision only

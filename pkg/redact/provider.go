@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // ProviderMarker replaces each credential removed from an LLM provider's
@@ -63,48 +64,103 @@ func ProviderLogError(msg string, secrets []string) string {
 	// only when it is as long as a derived secret must be, or is the
 	// secret unchanged, so that deletion cannot leave a short form that
 	// matches ordinary text; any other secret is matched verbatim
-	// against the message before the deletion instead. Doing that only
-	// for those secrets keeps a shorter secret from replacing the start
-	// of a longer one the second pass would otherwise have matched.
-	// Each list goes longest first, so that no secret cuts a longer
-	// one apart.
-	removeSecrets := func(msg string, list []string) string {
-		sort.SliceStable(list, func(i, j int) bool { return len(list[i]) > len(list[j]) })
-		for _, secret := range list {
-			if secret != "" {
-				msg = strings.ReplaceAll(msg, secret, ProviderMarker)
-			}
-		}
-		return msg
-	}
-	var verbatim, deleted []string
+	// against the message as given instead. Every match is recorded as a
+	// span of the message, and overlapping or touching spans are
+	// replaced as one, so that no secret's match can cut another's
+	// apart, whatever the order of the secrets.
+	msg = strings.ToValidUTF8(msg, "\uFFFD")
+	deleted, offsets := deleteFormatCharsMapped(msg)
+	var spans [][2]int
 	for _, secret := range secrets {
 		form := deleteFormatChars(secret)
 		if form != "" && (len(form) >= minDerivedSecretLen || form == secret) {
-			deleted = append(deleted, form)
-		} else {
-			verbatim = append(verbatim, secret)
+			// Map each match in the deleted text back to the message,
+			// ending just after the last byte the match kept.
+			for _, s := range matchSpans(deleted, form) {
+				spans = append(spans, [2]int{offsets[s[0]], offsets[s[1]-1] + 1})
+			}
+		} else if secret != "" {
+			spans = append(spans, matchSpans(msg, secret)...)
 		}
 	}
-	msg = removeSecrets(strings.ToValidUTF8(msg, "\uFFFD"), verbatim)
-	msg = removeSecrets(deleteFormatChars(msg), deleted)
+	msg = deleteFormatChars(replaceSpans(msg, spans))
 	for _, p := range providerPatterns {
 		msg = p.re.ReplaceAllString(msg, p.repl)
 	}
 	return msg
 }
 
-// deleteFormatChars deletes the control and formatting characters, and
-// the line and paragraph separators, that ProviderLogError keeps out of
+// isFormatChar reports whether r is a control or formatting character,
+// or a line or paragraph separator, which ProviderLogError keeps out of
 // a log line.
+func isFormatChar(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
+		r == '\u2028' || r == '\u2029'
+}
+
+// deleteFormatChars deletes each character isFormatChar reports from s.
 func deleteFormatChars(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
-			r == '\u2028' || r == '\u2029' {
+		if isFormatChar(r) {
 			return -1
 		}
 		return r
 	}, s)
+}
+
+// deleteFormatCharsMapped deletes each character isFormatChar reports
+// from s, which must be valid UTF-8, and returns for each byte of the
+// result its offset in s.
+func deleteFormatCharsMapped(s string) (string, []int) {
+	var b strings.Builder
+	offsets := make([]int, 0, len(s))
+	for i, r := range s {
+		if isFormatChar(r) {
+			continue
+		}
+		size := utf8.RuneLen(r)
+		for j := 0; j < size; j++ {
+			offsets = append(offsets, i+j)
+		}
+		b.WriteString(s[i : i+size])
+	}
+	return b.String(), offsets
+}
+
+// matchSpans returns the byte span of every occurrence of sub in s,
+// overlapping occurrences included.
+func matchSpans(s, sub string) [][2]int {
+	var spans [][2]int
+	for start := 0; start < len(s); {
+		i := strings.Index(s[start:], sub)
+		if i < 0 {
+			break
+		}
+		start += i
+		spans = append(spans, [2]int{start, start + len(sub)})
+		_, size := utf8.DecodeRuneInString(s[start:])
+		start += size
+	}
+	return spans
+}
+
+// replaceSpans replaces each run of overlapping or touching spans of s
+// with a single ProviderMarker.
+func replaceSpans(s string, spans [][2]int) string {
+	sort.Slice(spans, func(i, j int) bool { return spans[i][0] < spans[j][0] })
+	var b strings.Builder
+	pos := 0
+	for i := 0; i < len(spans); {
+		start, end := spans[i][0], spans[i][1]
+		for i++; i < len(spans) && spans[i][0] <= end; i++ {
+			end = max(end, spans[i][1])
+		}
+		b.WriteString(s[pos:start])
+		b.WriteString(ProviderMarker)
+		pos = end
+	}
+	b.WriteString(s[pos:])
+	return b.String()
 }
 
 // minDerivedSecretLen is the shortest base_url userinfo or query value

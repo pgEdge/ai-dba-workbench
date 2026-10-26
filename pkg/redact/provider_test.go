@@ -92,10 +92,35 @@ func TestProviderLogError_SecretWithFormatCharacter(t *testing.T) {
 	}
 }
 
+// TestProviderLogError_OverlappingMatches checks that secrets whose
+// matches overlap are removed as one, so that neither cuts the other
+// apart: a format character matched verbatim inside a longer secret,
+// and two secrets sharing part of the message.
+func TestProviderLogError_OverlappingMatches(t *testing.T) {
+	tests := []struct {
+		name, in string
+		secrets  []string
+	}{
+		{"format character inside a secret", "rejected prefix\u200bVerySensitivePassword",
+			[]string{"prefixVerySensitivePassword", "\u200b"}},
+		{"partly overlapping secrets", "rejected abcdefghi", []string{"abcdef", "defghi"}},
+		{"touching secrets", "rejected abcdwxyz", []string{"wxyz", "abcd"}},
+		{"overlapping occurrences", "rejected aaaaaa", []string{"aaaa"}},
+		{"multi-byte secret split", "rejected k\u00e9\u200by\u00e9", []string{"k\u00e9y\u00e9"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if msg := redact.ProviderLogError(tt.in, tt.secrets); msg != "rejected [REDACTED]" {
+				t.Errorf("got %q", msg)
+			}
+		})
+	}
+}
+
 // TestProviderLogError_PrefixSecretBeforeFormatCharacter checks that a
 // shorter secret does not replace the start of a longer one the message
 // splits with a format character, leaving the rest of it behind, and
-// that secrets matched verbatim go longest first.
+// that a shorter secret matched verbatim does not cut a longer one.
 func TestProviderLogError_PrefixSecretBeforeFormatCharacter(t *testing.T) {
 	msg := redact.ProviderLogError("rejected prefix\u200bVerySensitivePassword",
 		[]string{"prefixVerySensitivePassword", "prefix"})
@@ -111,7 +136,7 @@ func TestProviderLogError_PrefixSecretBeforeFormatCharacter(t *testing.T) {
 // TestProviderLogError_DeletedFormsShortAndOrdered checks that a secret
 // left shorter than a derived secret by the deletion is not used, so it
 // neither removes ordinary text nor cuts a longer secret apart, and that
-// the deleted forms are removed longest first.
+// a shorter deleted form does not cut a longer one.
 func TestProviderLogError_DeletedFormsShortAndOrdered(t *testing.T) {
 	msg := redact.ProviderLogError("grab ab\u200bcd", []string{"\u200b\u200bab", "abcd"})
 	if msg != "grab [REDACTED]" {

@@ -87,6 +87,7 @@ func TestProviderLogError_RemovesCredentials(t *testing.T) {
 		{"userinfo with # in password", "dial https://user:hunter2#x@llm.example/v1/chat", "hunter2"},
 		{"userinfo with ? in password", "dial https://user:hunter2?x@llm.example/v1/chat", "hunter2"},
 		{"@ in query with no path", "dial https://llm.example?key=abc@leakme failed", "leakme"},
+		{"@ then / in query with no path", "dial https://llm.example?token=abc@def/remaining-secret failed", "remaining-secret"},
 		{"@ in fragment with no path", "dial https://llm.example#abc@leakme failed", "leakme"},
 		{"userinfo and @ in query", "dial https://user:pw99@llm.example/v1?key=abc@leakme", "leakme"},
 		{"userinfo and @ in query, no path", "dial https://user:pw99@llm.example?key=abc@leakme", "pw99"},

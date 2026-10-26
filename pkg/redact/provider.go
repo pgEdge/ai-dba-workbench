@@ -56,15 +56,20 @@ var providerPatterns = []struct {
 // details. The alerter and the server pass the API keys they hold and
 // the BaseURLSecrets of each configured base URL.
 func ProviderLogError(msg string, secrets []string) string {
-	// Secrets are removed both before and after the characters are
-	// deleted, the second time with the same characters deleted from
-	// them: before, for a secret the message repeats with such a
-	// character, and after, for one the message splits with such a
-	// character or repeats without the one the secret holds.
-	// The first pass may replace one part of a URL's userinfo, such as
-	// the password, before the second could match the whole; each part
-	// is listed in its own right, so that is enough.
+	// Each secret is matched with the same characters deleted from it
+	// against the message with them deleted, which catches it whether
+	// the message repeats it with such a character, splits it with one
+	// or repeats it without the one it holds. A deleted form is used
+	// only when it is as long as a derived secret must be, or is the
+	// secret unchanged, so that deletion cannot leave a short form that
+	// matches ordinary text; any other secret is matched verbatim
+	// against the message before the deletion instead. Doing that only
+	// for those secrets keeps a shorter secret from replacing the start
+	// of a longer one the second pass would otherwise have matched.
+	// Each list goes longest first, so that no secret cuts a longer
+	// one apart.
 	removeSecrets := func(msg string, list []string) string {
+		sort.SliceStable(list, func(i, j int) bool { return len(list[i]) > len(list[j]) })
 		for _, secret := range list {
 			if secret != "" {
 				msg = strings.ReplaceAll(msg, secret, ProviderMarker)
@@ -72,19 +77,16 @@ func ProviderLogError(msg string, secrets []string) string {
 		}
 		return msg
 	}
-	// A deleted form is kept only when it is as long as a derived
-	// secret must be, or is the secret unchanged, so that deleting
-	// characters cannot leave a short form that matches ordinary text.
-	// Longest first, so that no form cuts a longer one apart.
-	var deleted []string
+	var verbatim, deleted []string
 	for _, secret := range secrets {
 		form := deleteFormatChars(secret)
 		if form != "" && (len(form) >= minDerivedSecretLen || form == secret) {
 			deleted = append(deleted, form)
+		} else {
+			verbatim = append(verbatim, secret)
 		}
 	}
-	sort.SliceStable(deleted, func(i, j int) bool { return len(deleted[i]) > len(deleted[j]) })
-	msg = removeSecrets(strings.ToValidUTF8(msg, "\uFFFD"), secrets)
+	msg = removeSecrets(strings.ToValidUTF8(msg, "\uFFFD"), verbatim)
 	msg = removeSecrets(deleteFormatChars(msg), deleted)
 	for _, p := range providerPatterns {
 		msg = p.re.ReplaceAllString(msg, p.repl)

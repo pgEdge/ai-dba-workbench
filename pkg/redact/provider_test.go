@@ -92,6 +92,22 @@ func TestProviderLogError_SecretWithFormatCharacter(t *testing.T) {
 	}
 }
 
+// TestProviderLogError_PrefixSecretBeforeFormatCharacter checks that a
+// shorter secret does not replace the start of a longer one the message
+// splits with a format character, leaving the rest of it behind, and
+// that secrets matched verbatim go longest first.
+func TestProviderLogError_PrefixSecretBeforeFormatCharacter(t *testing.T) {
+	msg := redact.ProviderLogError("rejected prefix\u200bVerySensitivePassword",
+		[]string{"prefixVerySensitivePassword", "prefix"})
+	if msg != "rejected [REDACTED]" {
+		t.Errorf("longer secret split after a shorter one gave %q", msg)
+	}
+	msg = redact.ProviderLogError("rejected x\u200babc", []string{"\u200bab", "\u200babc"})
+	if msg != "rejected x[REDACTED]" {
+		t.Errorf("verbatim secrets out of order gave %q", msg)
+	}
+}
+
 // TestProviderLogError_DeletedFormsShortAndOrdered checks that a secret
 // left shorter than a derived secret by the deletion is not used, so it
 // neither removes ordinary text nor cuts a longer secret apart, and that

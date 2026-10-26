@@ -76,7 +76,7 @@ func (d *Datastore) GetAlertTier3Info(ctx context.Context, alertID int64) (*Aler
 		SELECT a.id, a.alert_type, a.connection_id,
 		       a.metric_name, a.triggered_at,
 		       a.anomaly_details::text, a.anomaly_details ->> $2,
-		       c.metric_value::float8, c.z_score::float8,
+		       c.metric_value::numeric::float8, c.z_score::numeric::float8,
 		       c.tier3_source, c.tier3_model, c.tier3_result, c.tier3_pass,
 		       c.tier3_error, c.final_decision
 		FROM alerts a

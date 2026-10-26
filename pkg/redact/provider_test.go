@@ -11,6 +11,7 @@
 package redact_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -56,6 +57,21 @@ func TestBaseURLSecrets(t *testing.T) {
 	}
 }
 
+// TestBaseURLSecrets_MalformedQuery covers query pairs that url.Query
+// drops: one split by ';', one with a bad escape, and a bare value.
+func TestBaseURLSecrets_MalformedQuery(t *testing.T) {
+	got := redact.BaseURLSecrets("https://llm.example/v1?token=abcd1234;debug=1&k=ef%zz5678&bare-value-90")
+	for _, want := range []string{"abcd1234", "ef%zz5678", "bare-value-90"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("secrets %q lack %q", got, want)
+		}
+	}
+	msg := redact.ProviderLogError("upstream rejected abcd1234 and ef%zz5678", got)
+	if strings.Contains(msg, "abcd1234") || strings.Contains(msg, "ef%zz5678") {
+		t.Errorf("secret left in %q", msg)
+	}
+}
+
 func TestProviderLogError_RemovesCredentials(t *testing.T) {
 	tests := []struct {
 		name, in, leak string
@@ -67,6 +83,7 @@ func TestProviderLogError_RemovesCredentials(t *testing.T) {
 		{"openai key", "Incorrect API key provided: sk-proj1234567890abcdef", "sk-proj1234567890abcdef"},
 		{"gemini key", "bad AIzaSyA0123456789abcdefghijklmn", "AIzaSyA0123456789abcdefghijklmn"},
 		{"userinfo", "dial https://user:pw99@llm.example/v1", "user:pw99"},
+		{"userinfo with @ in password", "dial https://user:a@longsecret@llm.example/v1", "longsecret"},
 		{"format character", "bad\u202eevil", "\u202e"},
 		{"line separator", "one\u2028two", "\u2028"},
 	}

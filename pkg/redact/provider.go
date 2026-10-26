@@ -35,7 +35,9 @@ var providerPatterns = []struct {
 	{regexp.MustCompile(`(?i)((?:api[_-]?key|x-api-key|x-goog-api-key|access[_-]?token|token|key|secret|password|authorization)["']?\s*[:=]\s*["']?)[^\s"'&,;}]+`), "${1}[REDACTED]"},
 	{regexp.MustCompile(`\b(?:sk|pa|pk)-[A-Za-z0-9_\-]{8,}`), "[REDACTED]"},
 	{regexp.MustCompile(`\bAIza[0-9A-Za-z_\-]{20,}`), "[REDACTED]"},
-	{regexp.MustCompile(`(://)[^/@\s]+@`), "${1}[REDACTED]@"},
+	// Greedy, so that the match runs to the last '@' before the host
+	// and a password holding an unescaped '@' is removed whole.
+	{regexp.MustCompile(`(://)[^/?#\s]+@`), "${1}[REDACTED]@"},
 }
 
 // ProviderLogError prepares an LLM provider's error message for a log
@@ -83,9 +85,19 @@ func BaseURLSecrets(base string) []string {
 			values = append(values, password)
 		}
 	}
-	// Query keeps the pairs that parse and drops malformed ones.
-	for _, vs := range u.Query() {
-		values = append(values, vs...)
+	// Split the raw query by hand rather than with Query, which drops
+	// a pair holding a ';' or a bad escape, and with it the secret.
+	for _, pair := range strings.FieldsFunc(u.RawQuery, func(r rune) bool {
+		return r == '&' || r == ';'
+	}) {
+		v := pair
+		if _, after, found := strings.Cut(pair, "="); found {
+			v = after
+		}
+		values = append(values, v)
+		if decoded, err := url.QueryUnescape(v); err == nil {
+			values = append(values, decoded)
+		}
 	}
 	seen := map[string]bool{}
 	var secrets []string

@@ -2793,7 +2793,7 @@ func fillMergeTestValue(t *testing.T, v reflect.Value, path string, counter *int
 			}
 			fillMergeTestValue(t, v.Field(i), path+"."+typ.Field(i).Name, counter)
 		}
-	case reflect.Ptr:
+	case reflect.Pointer:
 		elem := reflect.New(v.Type().Elem())
 		fillMergeTestValue(t, elem.Elem(), path, counter)
 		v.Set(elem)
@@ -2841,7 +2841,7 @@ func compareMergedValue(dest, src reflect.Value, path string, unmerged *[]string
 			compareMergedValue(dest.Field(i), src.Field(i),
 				path+"."+typ.Field(i).Name, unmerged)
 		}
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if dest.Pointer() != src.Pointer() {
 			*unmerged = append(*unmerged, path)
 		}

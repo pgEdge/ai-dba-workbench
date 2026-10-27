@@ -2583,6 +2583,14 @@ project adheres to
   answers 400 instead. Relationships left behind by earlier moves
   are not removed retrospectively. (#707)
 
+- Apply the same rule when topology auto-detection moves a
+  connection to the cluster it now detects it in: the connection's
+  relationships outside that cluster are deleted in the same
+  transaction as the move. Detection that only reconfirms a
+  connection's current cluster leaves its relationships alone, so
+  relationships left behind by earlier moves are still not removed.
+  (#719)
+
 ### Removed
 
 - Remove the hard-coded allow-list of embedding model names, which

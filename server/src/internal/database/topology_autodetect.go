@@ -13,11 +13,14 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgedge/ai-workbench/pkg/redact"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
 // getAllConnectionsWithRoles queries all connections with their role data
@@ -459,21 +462,13 @@ func (d *Datastore) syncAutoDetectedClusterAssignments(ctx context.Context, auto
 		//   connection is detected in this cluster.
 		for _, sr := range serversAndRoles {
 			// Assign when NULL (new discovery) or reassign when auto
-			_, err := d.pool.Exec(ctx,
-				`UPDATE connections
-                 SET cluster_id = $1, role = $2, updated_at = CURRENT_TIMESTAMP
-                 WHERE id = $3
-                   AND deleted_at IS NULL
-                   AND (cluster_id IS NULL OR cluster_id = $1 OR membership_source = 'auto')`,
-				clusterID, sr.Role, sr.ID,
-			)
-			if err != nil {
+			if err := d.assignAutoDetectedConnection(ctx, clusterID, sr.ID, sr.Role); err != nil {
 				logger.Errorf("syncAutoDetectedClusterAssignments: failed to update connection %d: %v", sr.ID, err)
 			}
 
 			// For manual connections pointing to a different cluster,
 			// update only the role so failover is tracked.
-			_, err = d.pool.Exec(ctx,
+			_, err := d.pool.Exec(ctx,
 				`UPDATE connections
                  SET role = $1, updated_at = CURRENT_TIMESTAMP
                  WHERE id = $2
@@ -489,6 +484,59 @@ func (d *Datastore) syncAutoDetectedClusterAssignments(ctx context.Context, auto
 	}
 
 	return clusterIDMap
+}
+
+// assignAutoDetectedConnection sets the cluster_id and role of a
+// connection that auto-detection found in clusterID, unless it is
+// deleted or was placed in another cluster manually. When that moves the
+// connection out of another cluster, or out of none, its relationship
+// rows outside clusterID are deleted in the same transaction, the rule
+// AssignConnectionToCluster applies (issue #719); a connection already
+// in clusterID keeps its rows.
+func (d *Datastore) assignAutoDetectedConnection(ctx context.Context, clusterID, connectionID int, role string) error {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+
+	// FOR NO KEY UPDATE is the lock the UPDATE below takes anyway; taking
+	// it here pins the previous cluster_id until commit.
+	var previous *int
+	err = tx.QueryRow(ctx,
+		`SELECT cluster_id FROM connections
+         WHERE id = $1
+           AND deleted_at IS NULL
+           AND (cluster_id IS NULL OR cluster_id = $2 OR membership_source = 'auto')
+         FOR NO KEY UPDATE`,
+		connectionID, clusterID,
+	).Scan(&previous)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to lock connection: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE connections
+         SET cluster_id = $1, role = $2, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $3`,
+		clusterID, role, connectionID,
+	); err != nil {
+		return fmt.Errorf("failed to assign connection: %w", err)
+	}
+
+	if previous == nil || *previous != clusterID {
+		if err := dropRelationshipsOutsideCluster(ctx, tx, connectionID, &clusterID); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
 }
 
 // getPersistedClusterMembers queries connections that have cluster_id set

@@ -469,7 +469,13 @@ beyond the token's is refused, unless the token holds everything a superuser
 does. Federated sign-in matches groups by the names in the OIDC `group_map`,
 so creating a group with such a name, renaming a group from or to such a
 name, or deleting such a group needs a token that holds everything a
-superuser does.
+superuser does. The check reads `group_map` as it stands after the most
+recent configuration reload, so a newly mapped group is protected at once.
+A group that a reload removes from `group_map` loses this protection at once,
+so a bounded token can then rename or delete it within the rest of the
+ceiling, even though its
+federated members keep their membership as [Single Sign-On](sso.md)
+describes; remap the group rather than removing it to keep the protection.
 
 ### Changing Users and Tokens
 

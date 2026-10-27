@@ -128,6 +128,11 @@ type AuthStore struct {
 	// the re-chain writes only after its confirmation callback agrees.
 	// Set once at construction.
 	allowUnkeyedAuditRows bool
+	// superuserCountSQL, when set, replaces the query with which a
+	// federated superuser revocation counts the enabled superusers left.
+	// Only in-package tests set it, to make that count fail, since no
+	// state of the database fails it whilst the reads before it succeed.
+	superuserCountSQL string
 	// failures coalesces repeated failure events; see
 	// audit_failures.go. It guards itself.
 	failures failureCoalescer

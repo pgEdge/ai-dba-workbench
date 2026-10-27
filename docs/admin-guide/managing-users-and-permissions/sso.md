@@ -112,6 +112,12 @@ revokes nothing: federated users keep their current superuser status,
 and no later login changes it, so point the setting at a group that no
 one belongs to when the aim is to demote every federated superuser.
 
+The identity provider decides the superuser flag, so a login is not
+refused when removing the flag leaves no enabled superuser; the server
+logs a warning instead. To restore access, add the account you need to
+the superuser group at the provider, or add a local superuser with the
+`-add-user` and `-set-superuser` command line options.
+
 Switching federated login off stops new federated logins only. Sessions
 already established and API tokens already issued stay valid until they
 expire, so follow the steps in Revocation and Its Limits below to cut

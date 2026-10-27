@@ -2707,6 +2707,16 @@ project adheres to
 
 ### Security
 
+- Apply the API token protections on groups named in the OIDC
+  `group_map` to the map as it stands after a configuration
+  reload (#595). The protections read the map once at start-up,
+  whereas federated login applies a reloaded map at the next
+  login, so a group mapped by a reload could be created, renamed
+  or deleted by a token that does not hold everything a superuser
+  does until the server restarted. A federated login that removes
+  the last enabled superuser, and an account lockout that disables
+  it, now also log a warning.
+
 - Mask statement text returned by `query_datastore` in the same way
   as the metrics routes (#724). The tool masked the `query` column
   of `pg_stat_activity` and `pg_stat_statements`, and the statements

@@ -36,12 +36,15 @@ type RBACHandler struct {
 	// those checks fail closed for a connection-bounded token.
 	connLister auth.ConnectionVisibilityLister
 
-	// federatedGroups holds the Workbench group names the OIDC group map
-	// assigns federated users to. Federation matches a group by name, so
-	// renaming one of these, or renaming another group to one of them,
-	// moves federated users between groups; a bounded token may do
-	// neither. The map is read at startup and changes only on restart.
-	federatedGroups map[string]bool
+	// federatedGroupMap supplies the OIDC group map (provider group to
+	// Workbench group) currently in force. Federation matches a group by
+	// name, so renaming a group the map names, or renaming another group
+	// to such a name, moves federated users between groups; a bounded
+	// token may do neither. It is read on every check rather than once,
+	// because a SIGHUP reload applies group_map to the next federated
+	// login, and a frozen copy would leave a newly mapped group without
+	// this protection until the next restart (issue #595).
+	federatedGroupMap func() map[string]string
 }
 
 // NewRBACHandler creates a new RBAC handler
@@ -58,16 +61,40 @@ func (h *RBACHandler) SetConnectionLister(lister auth.ConnectionVisibilityLister
 	h.connLister = lister
 }
 
-// SetFederatedGroupMap records the Workbench groups the OIDC group map
-// (provider group to Workbench group) names, so that a bounded token
-// cannot rename a group into or out of it.
+// SetFederatedGroupMap records a fixed OIDC group map (provider group
+// to Workbench group), so that a bounded token cannot rename a group into
+// or out of it. Production code uses SetFederatedGroupMapSource, which
+// follows a configuration reload.
 func (h *RBACHandler) SetFederatedGroupMap(groupMap map[string]string) {
-	h.federatedGroups = make(map[string]bool, len(groupMap))
+	fixed := make(map[string]string, len(groupMap))
+	for providerGroup, workbenchGroup := range groupMap {
+		fixed[providerGroup] = workbenchGroup
+	}
+	h.SetFederatedGroupMapSource(func() map[string]string { return fixed })
+}
+
+// SetFederatedGroupMapSource makes the handler read the OIDC group map
+// from source on every check, so that the federated group protections
+// follow the same live configuration the federated login applies.
+func (h *RBACHandler) SetFederatedGroupMapSource(source func() map[string]string) {
+	h.federatedGroupMap = source
+}
+
+// federatedGroups returns the Workbench group names the OIDC group map
+// currently assigns federated users to. A provider group mapped to ""
+// grants nothing, so it names no group.
+func (h *RBACHandler) federatedGroups() map[string]bool {
+	if h.federatedGroupMap == nil {
+		return nil
+	}
+	groupMap := h.federatedGroupMap()
+	names := make(map[string]bool, len(groupMap))
 	for _, workbenchGroup := range groupMap {
 		if workbenchGroup != "" {
-			h.federatedGroups[workbenchGroup] = true
+			names[workbenchGroup] = true
 		}
 	}
+	return names
 }
 
 // RecordDenial writes a denied audit event for a refusal made by another

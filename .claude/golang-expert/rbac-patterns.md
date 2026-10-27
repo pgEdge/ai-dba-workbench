@@ -1372,11 +1372,20 @@ disable or delete that would leave no enabled superuser
 enabled superusers, service accounts included, inside the change's own
 transaction). It applies to `updateUserAtomic`, `setUserEnabled`,
 `setUserSuperuser` and `deleteUser`, so sessions, tokens and the CLI
-alike; `respondUserStoreError` maps it to 409. Known exceptions, not
-yet ruled on: the lockout disable in `disableForLockout`, and the
-federated login's `is_superuser` sync in `federation.go`. Pinned by
-`internal/auth/last_superuser_test.go` (including a concurrent mutual
-demotion) and `internal/api/rbac_last_superuser_test.go`.
+alike; `respondUserStoreError` maps it to 409. Two changes are exempt
+by ruling on #595, and each logs a warning through
+`warnIfNoEnabledSuperuserLocked` (in `federation.go`) when it leaves no
+enabled superuser: the federated login's `is_superuser` sync
+(`revokeFederatedSuperuserLocked`), because the provider is
+authoritative, and the lockout disable in `disableForLockout`, which
+counts only when the locked user was a superuser, because guarding it
+would let an attacker guess the last superuser's password forever.
+Pinned by `internal/auth/last_superuser_test.go` (including a
+concurrent mutual demotion and `TestLockoutWarnsWhenNoSuperuserRemains`),
+`TestReconcileFederatedGroupsWarnsWhenNoSuperuserRemains` in
+`federation_test.go`, and `internal/api/rbac_last_superuser_test.go`.
+The unexported `AuthStore.superuserCountSQL` field lets in-package
+tests make that count fail; production never sets it.
 
 ## Store Refusals Map to 400
 

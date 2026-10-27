@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -171,6 +172,93 @@ func TestLiveConfigFallsBackToTheStartupConfiguration(t *testing.T) {
 				t.Errorf("liveConfig = %p, want the start-up configuration %p", got, startup)
 			}
 		})
+	}
+}
+
+// TestLiveOIDCGroupMapFollowsTheLiveConfiguration pins the source the RBAC
+// handler's federated group protections read (issue #595): the group map
+// from the latest reload, and nothing when there is no configuration.
+func TestLiveOIDCGroupMapFollowsTheLiveConfiguration(t *testing.T) {
+	startup := &config.Config{}
+	startup.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-admins": "wb-admins"}
+	reloaded := &config.Config{}
+	reloaded.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-ops": "wb-ops"}
+
+	deps := &HandlerDependencies{Config: startup,
+		LiveConfig: func() *config.Config { return reloaded }}
+	if got := deps.liveOIDCGroupMap(); got["idp-ops"] != "wb-ops" || len(got) != 1 {
+		t.Errorf("liveOIDCGroupMap = %v, want the reloaded map", got)
+	}
+	if got := (&HandlerDependencies{}).liveOIDCGroupMap(); got != nil {
+		t.Errorf("liveOIDCGroupMap with no configuration = %v, want nil", got)
+	}
+}
+
+// TestRBACRoutesFollowAReloadedGroupMap pins the wiring in SetupHandlers
+// (issue #595): the RBAC handler's federated group protections must read
+// the group map from the live configuration, so a bounded token cannot
+// create a group that only a reload has mapped. Wiring the start-up
+// snapshot instead lets the create through.
+func TestRBACRoutesFollowAReloadedGroupMap(t *testing.T) {
+	store, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("auth.NewAuthStore: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := store.Close(); closeErr != nil {
+			t.Errorf("closing the auth store: %v", closeErr)
+		}
+	})
+	if err := store.CreateUser("root", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := store.SetUserSuperuser("root", true); err != nil {
+		t.Fatalf("SetUserSuperuser: %v", err)
+	}
+	system := store.AsActor(auth.SystemActor())
+	rawToken, token, err := system.CreateToken("root", "bounded token", nil, true)
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+	if err := system.SetTokenConnectionScope(token.ID, []auth.ScopedConnection{
+		{ConnectionID: 5, AccessLevel: auth.AccessLevelReadWrite},
+	}, true); err != nil {
+		t.Fatalf("SetTokenConnectionScope: %v", err)
+	}
+
+	startup := &config.Config{}
+	startup.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-admins": "wb-admins"}
+	reloaded := &config.Config{}
+	reloaded.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-new": "wb-new"}
+	// The reload lands after registration, so a snapshot taken while
+	// SetupHandlers runs would hold only the start-up map and let the
+	// create through.
+	var live atomic.Pointer[config.Config]
+	live.Store(startup)
+	deps := &HandlerDependencies{
+		Config:     startup,
+		LiveConfig: live.Load,
+		AuthStore:  store,
+	}
+	mux := http.NewServeMux()
+	if err := SetupHandlers(deps)(mux); err != nil {
+		t.Fatalf("SetupHandlers: %v", err)
+	}
+	live.Store(reloaded)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/groups",
+		strings.NewReader(`{"name":"wb-new"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "OIDC group map") {
+		t.Fatalf("creating a group only the reloaded map names = %d %s, want the federated refusal",
+			rec.Code, rec.Body.String())
+	}
+	if group, err := store.GetGroupByName("wb-new"); err != nil || group != nil {
+		t.Errorf("wb-new = %v (%v), want it not to be created", group, err)
 	}
 }
 

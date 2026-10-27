@@ -139,7 +139,7 @@ The API provides endpoints in the following categories.
 |--------|----------|-------------|
 | GET | `/api/v1/alert-rules` | List all alert rules. |
 | GET | `/api/v1/alert-rules/{id}` | Get an alert rule by ID. |
-| PUT | `/api/v1/alert-rules/{id}` | Update an alert rule. |
+| PUT | `/api/v1/alert-rules/{id}` | Update an alert rule (caller must see every connection). |
 
 ### Alert Overrides
 
@@ -171,15 +171,15 @@ The API provides endpoints in the following categories.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/v1/notification-channels` | List all notification channels. |
-| POST | `/api/v1/notification-channels` | Create a notification channel. |
+| POST | `/api/v1/notification-channels` | Create a notification channel (caller must see every connection). |
 | GET | `/api/v1/notification-channels/{id}` | Get a channel by ID. |
-| PUT | `/api/v1/notification-channels/{id}` | Update a channel. |
-| DELETE | `/api/v1/notification-channels/{id}` | Delete a channel. |
+| PUT | `/api/v1/notification-channels/{id}` | Update a channel (caller must see every connection). |
+| DELETE | `/api/v1/notification-channels/{id}` | Delete a channel (caller must see every connection). |
 | POST | `/api/v1/notification-channels/{id}/test` | Send a test notification. |
 | GET | `/api/v1/notification-channels/{id}/recipients` | List email recipients. |
-| POST | `/api/v1/notification-channels/{id}/recipients` | Add an email recipient. |
-| PUT | `/api/v1/notification-channels/{id}/recipients/{recipientId}` | Update a recipient. |
-| DELETE | `/api/v1/notification-channels/{id}/recipients/{recipientId}` | Delete a recipient. |
+| POST | `/api/v1/notification-channels/{id}/recipients` | Add an email recipient (caller must see every connection). |
+| PUT | `/api/v1/notification-channels/{id}/recipients/{recipientId}` | Update a recipient (caller must see every connection). |
+| DELETE | `/api/v1/notification-channels/{id}/recipients/{recipientId}` | Delete a recipient (caller must see every connection). |
 
 ### Channel Overrides
 
@@ -195,7 +195,7 @@ The API provides endpoints in the following categories.
 |--------|----------|-------------|
 | GET | `/api/v1/probe-configs` | List probe configurations. |
 | GET | `/api/v1/probe-configs/{id}` | Get a probe configuration by ID. |
-| PUT | `/api/v1/probe-configs/{id}` | Update a probe configuration. |
+| PUT | `/api/v1/probe-configs/{id}` | Update a probe configuration (a global one needs the caller to see every connection). |
 
 ### Probe Overrides
 

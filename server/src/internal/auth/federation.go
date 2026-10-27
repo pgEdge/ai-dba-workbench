@@ -1123,14 +1123,15 @@ const (
           AND (external_subject IS NULL OR external_subject = ?)`
 )
 
-// linkUpdateStatement returns the UPDATE that links username to key, and its
-// arguments.
-func linkUpdateStatement(username, key string, relink bool) (string, []any) {
-	args := []any{AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC, key, AuthSourceOIDC}
+// execLinkUpdate runs the UPDATE that links username to key inside tx. Each
+// branch passes its statement constant straight to Exec.
+func execLinkUpdate(tx *sql.Tx, username, key string, relink bool) (sql.Result, error) {
 	if relink {
-		return linkRelinkUpdateSQL, args
+		return tx.Exec(linkRelinkUpdateSQL,
+			AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC, key, AuthSourceOIDC)
 	}
-	return linkUpdateSQL, append(args, key)
+	return tx.Exec(linkUpdateSQL,
+		AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC, key, AuthSourceOIDC, key)
 }
 
 // explainLinkFailureLocked turns a failed link UPDATE into the error the
@@ -1189,8 +1190,7 @@ func (s *AuthStore) applyLinkLocked(actor Actor, username, issuer, subject strin
 	}
 	target.targetID = &before.id
 
-	query, args := linkUpdateStatement(username, key, relink)
-	result, err := tx.Exec(query, args...)
+	result, err := execLinkUpdate(tx, username, key, relink)
 	if err != nil {
 		// The explanation reads outside the transaction, so it is rolled
 		// back first; failAudit's own rollback is then a no-op.

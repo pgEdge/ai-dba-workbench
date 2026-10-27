@@ -12,6 +12,7 @@ package auth
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -1382,6 +1383,9 @@ func seedAdminScope(t *testing.T, s *AuthStore, tokenID int64) {
 // that the token revocation an unlink performs is fail-closed like every
 // other audited token deletion: when the token.delete events cannot be
 // written, the unlink reports the failure rather than revoking silently.
+// Only the token.delete events are made to fail, since the account change
+// records an event of its own first and would otherwise be refused before
+// the revocation is reached.
 func TestUnlinkFederatedIdentityFailsWhenRevocationCannotBeAudited(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
@@ -1395,10 +1399,19 @@ func TestUnlinkFederatedIdentityFailsWhenRevocationCannotBeAudited(t *testing.T)
 		t.Fatalf("LinkFederatedIdentity: %v", err)
 	}
 	mustCreateToken(t, store, "leaver", "to be revoked")
-	mustExec(t, store, "DROP TRIGGER audit_events_no_update")
-	mustExec(t, store, "DROP TABLE audit_events")
+	mustExec(t, store, `CREATE TRIGGER fail_token_delete_audit BEFORE INSERT ON audit_events
+        WHEN NEW.action = 'token.delete'
+        BEGIN SELECT RAISE(ABORT, 'token.delete audit refused'); END`)
 
-	if _, _, err := store.UnlinkFederatedIdentity("leaver", false); err == nil {
-		t.Fatal("Expected the unlink to fail when its token revocation cannot be audited")
+	_, _, err := store.UnlinkFederatedIdentity("leaver", false)
+	if !errors.Is(err, ErrPartialUnlink) {
+		t.Fatalf("Expected a partial unlink when its token revocation cannot be audited, got %v", err)
+	}
+	var tokens int
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM tokens").Scan(&tokens); err != nil {
+		t.Fatalf("counting tokens: %v", err)
+	}
+	if tokens != 1 {
+		t.Errorf("tokens = %d, want the unaudited revocation rolled back", tokens)
 	}
 }

@@ -1448,9 +1448,19 @@ The grants in the same login stay fail-closed: `grantFederatedLocked`
 and `grantFederatedSuperuserTx` call `recordAudit(tx, ev)` inside the
 grant transaction, so a failure rolls the grant back and refuses the
 login (`TestReconcileFederatedGroupsRollsBackAnUnauditedGrant`). Every
-federated event uses the system actor with `details.reason` set to
-`identity_provider` and `details.issuer` to the token issuer, and is
-written only when a row actually changed.
+event a federated login writes uses the system actor with
+`details.reason` set to `identity_provider` and `details.issuer` to the
+token issuer, and is written only when a row actually changed; that
+includes provisioning, which `insertFederatedUserLocked` records as
+`user.create` inside the INSERT transaction, so an unaudited account is
+never created. Linking and unlinking are operator changes, not
+provider ones: `ActorStore.LinkFederatedIdentity` and
+`ActorStore.UnlinkFederatedIdentity` (called through `cliStore` by the
+`-link-oidc-user` and `-unlink-oidc-user` commands) record
+`user.link_identity` and `user.unlink_identity` fail-closed under the
+operator's `cli` actor, and the unlink's token revocations
+(`revokeAccountTokensLocked`) record `token.delete` under the same
+actor. Tests are in `federation_account_audit_test.go`.
 
 Two schema-level invariants back the chain, both in `auditSchemaDDL`
 in `audit.go`. `idx_audit_prev_hash` is a unique index, so no two

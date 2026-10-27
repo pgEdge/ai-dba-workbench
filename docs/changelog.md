@@ -2781,6 +2781,18 @@ project adheres to
   back and the login refused; a revocation stands and the failure is
   logged.
 
+- Record audit events when a federated account is provisioned, linked
+  or unlinked (#748). Provisioning now records `user.create`,
+  attributed to the `system` actor with a `details.reason` of
+  `identity_provider`, the issuer and the subject; an account whose
+  event cannot be written is not created. The `-link-oidc-user` and
+  `-unlink-oidc-user` commands record the new `user.link_identity` and
+  `user.unlink_identity` actions, attributed to the operator's `cli`
+  actor, with the account's provider identity before and after the
+  change, and are rolled back if their event cannot be written. The
+  `token.delete` events an unlink records are now attributed to the
+  operator rather than to `system`.
+
 - Apply the API token protections on groups named in the OIDC
   `group_map` to the map as it stands after a configuration
   reload (#595). The protections read the map once at start-up,

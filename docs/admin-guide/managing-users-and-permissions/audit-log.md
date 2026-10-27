@@ -37,6 +37,8 @@ changes:
 | `user.disable` | A user account was disabled. |
 | `user.set_superuser` | A user was made a superuser. |
 | `user.unset_superuser` | Superuser status was removed from a user. |
+| `user.link_identity` | A user account was linked to an identity provider subject. |
+| `user.unlink_identity` | A user account was detached from its identity provider. |
 | `service_account.create` | A service account was created. |
 
 The following table describes the actions recorded for API token
@@ -315,11 +317,15 @@ address, and takes the actor name from the operating system user running
 the command. The `system` actor covers changes the server makes on its
 own account; the clearest example is the automatic account lockout after
 too many failed sign-in attempts, which records a `user.disable` event
-attributed to `system` with a `details.reason` of `lockout`. The group
-and superuser changes a federated login makes are attributed to
-`system` too, with a `details.reason` of `identity_provider` and the
-provider's issuer in `details.issuer`; see
+attributed to `system` with a `details.reason` of `lockout`. The
+account a federated login provisions (`user.create`) and the group and
+superuser changes it makes are attributed to `system` too, with a
+`details.reason` of `identity_provider` and the provider's issuer in
+`details.issuer`; see
 [Single Sign-On](sso.md#granting-superuser-from-a-provider-group).
+Linking and unlinking an account with `-link-oidc-user` and
+`-unlink-oidc-user` are operator changes, so they and the token
+revocations an unlink makes are attributed to `cli`.
 
 The lockout and a privilege revoked by a federated login are the only
 changes applied even when their event cannot be recorded. Everywhere

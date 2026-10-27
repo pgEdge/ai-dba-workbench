@@ -123,10 +123,15 @@ for the events it keeps.
 
 A request that an authorisation check refuses is recorded with the
 action the request would have used had it been allowed, so that a denial
-and the change it was refused share a vocabulary. Two action names
+and the change it was refused share a vocabulary. Three action names
 appear only on denials: `audit.read`, for a refused read of the audit
-log itself, and `token.scope.set`, for a refused scope update, because a
-single endpoint covers all three scope types. A refused read of a
+log itself; `token.scope.set`, for a refused scope update, because a
+single endpoint covers all three scope types; and `token.use`, for an
+API token refused because its owner signs in through an identity
+provider whilst `http.auth.oidc.allow_api_tokens` is off, as described
+in [Single Sign-On](sso.md#api-tokens-and-federated-users). A
+`token.use` event is attributed to the refused token, names it as the
+target, and carries no client address. A refused read of a
 configuration object, such as a notification channel, is recorded as
 the object's kind followed by `.read`, such as
 `notification_channel.read` or `alert_override.read`. A token refused

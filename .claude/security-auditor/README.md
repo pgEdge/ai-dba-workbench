@@ -512,6 +512,20 @@ moved.
   widening change (provisioning on, a domain added or the list emptied,
   `superuser_group` set or retargeted, a new `group_map` mapping);
   `logOIDCChanges` itself warns when `enabled` is switched back on.
+  `allow_api_tokens` (#742) is live too: `SetupHandlers` registers
+  `AuthStore.SetFederatedAPITokenPolicy` reading `LiveConfig`, and
+  `oidcAccessWarnings` warns when it is switched on. The CLI reads it
+  from the configuration file only (`loadCLITokenPolicy`).
+- Federated sessions (#742, `auth/federated_session.go`) expire with
+  the ID token; `ValidateSessionToken` hands an expired one to
+  `OIDCHandler.RefreshFederatedSession` (`api/oidc_refresh.go`),
+  single-flighted per session by `federatedSession.mu`, which checks
+  the account, redeems the in-memory refresh token, re-checks subject
+  and email domain, and reconciles groups. The refresh token must never
+  reach disk, logs or errors. Whilst `allow_api_tokens` is off,
+  `createToken` and `validateToken` (`auth/federated_tokens.go`) refuse
+  tokens whose OWNER is federated, whoever the caller is; the use
+  refusal is audited as a coalesced `token.use` denial.
   Removing a group from `group_map` revokes nothing because only mapped
   Workbench groups are reconciled; clearing `superuser_group` revokes
   nothing because `ReconcileFederatedGroups` leaves `is_superuser`

@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -139,12 +140,26 @@ type AuthStore struct {
 	// denials coalesces repeated denial events; see audit_denials.go.
 	// It guards itself.
 	denials denialCoalescer
+	// refresher redeems a federated session's refresh token when the
+	// session reaches its ID token's expiry; see federated_session.go.
+	// It is nil until federated login registers one, and an expired
+	// federated session then simply ends.
+	refresher atomic.Pointer[refresherBox]
+	// federatedAPITokens reports whether accounts that sign in through an
+	// identity provider may own API tokens; see federated_tokens.go. It
+	// is nil until the server wires the setting in, which refuses them.
+	federatedAPITokens atomic.Pointer[func() bool]
 }
 
 // SessionInfo holds session information (in-memory only)
 type SessionInfo struct {
 	Username  string
 	ExpiresAt time.Time
+
+	// federated is set on a session minted by a federated login, and is
+	// nil on a local one. It carries the provider's refresh token, which
+	// must never leave memory; see federated_session.go.
+	federated *federatedSession
 }
 
 // ConnectionSession represents a selected database connection for a token
@@ -1372,8 +1387,14 @@ func (s *AuthStore) ValidateSessionToken(token string) (string, error) {
 		return "", fmt.Errorf("invalid session data")
 	}
 	if session.ExpiresAt.Before(time.Now()) {
-		s.sessions.Delete(tokenHash)
-		return "", fmt.Errorf("invalid session token")
+		// A federated session that has reached its ID token's expiry is
+		// extended only by the identity provider agreeing to refresh it;
+		// every other expired session simply ends.
+		refreshed, err := s.refreshFederatedSession(tokenHash, session)
+		if err != nil {
+			return "", err
+		}
+		session = refreshed
 	}
 
 	// Verify user is still enabled. The session is dropped on either
@@ -1453,14 +1474,7 @@ func (s *AuthStore) StartSessionCleanup(interval time.Duration) {
 		for {
 			select {
 			case <-ticker.C:
-				now := time.Now()
-				s.sessions.Range(func(key, value any) bool {
-					session, ok := value.(*SessionInfo)
-					if ok && session.ExpiresAt.Before(now) {
-						s.sessions.Delete(key)
-					}
-					return true
-				})
+				s.sweepExpiredSessions(time.Now())
 			case <-stop:
 				return
 			}
@@ -1506,6 +1520,10 @@ func (s *AuthStore) StopSessionCleanup() {
 // same transaction, is not the guard's own user (issue #522). A handler
 // checks the owner's name first, but a user deleted and recreated under
 // that name in between would otherwise receive the token.
+//
+// Last it refuses, with ErrFederatedAPITokensDisabled, an owner who
+// signs in through an identity provider while allow_api_tokens is off
+// (issue #742), whoever the caller is.
 func (s *AuthStore) createToken(actor Actor, ownerUsername, annotation string,
 	requestedExpiry *time.Time, callerIsSuperuser bool,
 	owner TokenOwnerGuard) (raw string, stored *StoredToken, err error) {
@@ -1531,10 +1549,11 @@ func (s *AuthStore) createToken(actor Actor, ownerUsername, annotation string,
 	// Look up the user to get their ID and superuser status
 	var userID int64
 	var isSuperuser bool
+	var authSource string
 	lookupErr := tx.QueryRow(
-		"SELECT id, is_superuser FROM users WHERE username = ?",
+		"SELECT id, is_superuser, auth_source FROM users WHERE username = ?",
 		ownerUsername,
-	).Scan(&userID, &isSuperuser)
+	).Scan(&userID, &isSuperuser, &authSource)
 	if errors.Is(lookupErr, sql.ErrNoRows) {
 		err = fmt.Errorf("user '%s' not found", ownerUsername)
 		return "", nil, err
@@ -1549,6 +1568,10 @@ func (s *AuthStore) createToken(actor Actor, ownerUsername, annotation string,
 	}
 	if !owner.anyOwner && userID != owner.callerUserID {
 		err = ErrTokenNotOwned
+		return "", nil, err
+	}
+	if !s.APITokensAllowedFor(authSource) {
+		err = ErrFederatedAPITokensDisabled
 		return "", nil, err
 	}
 
@@ -1642,9 +1665,12 @@ func (s *AuthStore) ListUserTokens(username string) ([]*StoredToken, error) {
 // Token Validation (all token types)
 // =============================================================================
 
-// ValidateToken checks if a token is valid.
-// Returns the token info if valid.
-func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
+// validateToken does ValidateToken's work under the store's read lock,
+// returning, for a token refused because its owner is federated, what
+// ValidateToken needs to audit the refusal once the lock is released.
+func (s *AuthStore) validateToken(rawToken string) (*StoredToken,
+	*federatedTokenRefusal, error) {
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -1663,7 +1689,7 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 		&token.ExpiresAt, &annotation, &token.CreatedAt, &database)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("invalid token")
+		return nil, nil, fmt.Errorf("invalid token")
 	}
 	if err != nil {
 		// A database failure is not a bad token. It is logged, because
@@ -1674,7 +1700,7 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 		//nolint:gosec // G706: error text passed through logging.SanitizeForLog
 		log.Printf("[AUTH] Token validation failed: the authentication database could not be read: %s",
 			logging.SanitizeForLog(err.Error()))
-		return nil, fmt.Errorf("token validation error: %w: %w", ErrAuthStoreUnavailable, err)
+		return nil, nil, fmt.Errorf("token validation error: %w: %w", ErrAuthStoreUnavailable, err)
 	}
 	if annotation.Valid {
 		token.Annotation = annotation.String
@@ -1685,25 +1711,19 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 
 	// Check expiration
 	if token.ExpiresAt != nil && token.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("token has expired")
+		return nil, nil, fmt.Errorf("token has expired")
 	}
 
-	// Verify the owning user is still enabled. An owner row that cannot
-	// be read is a database failure, reported and logged as such; an
-	// owner that is missing or disabled is a refused token.
-	var enabled bool
-	err = s.db.QueryRow("SELECT enabled FROM users WHERE id = ?", token.OwnerID).Scan(&enabled)
-	if err != nil && err != sql.ErrNoRows {
-		//nolint:gosec // G706: error text passed through logging.SanitizeForLog
-		log.Printf("[AUTH] Token validation failed: the token owner could not be read: %s",
-			logging.SanitizeForLog(err.Error()))
-		return nil, fmt.Errorf("token validation error: %w: %w", ErrAuthStoreUnavailable, err)
-	}
-	if err != nil || !enabled {
-		return nil, fmt.Errorf("token owner is disabled")
+	// Verify the owning user is still enabled, and may own tokens. An
+	// owner row that cannot be read is a database failure, reported and
+	// logged as such; an owner that is missing or disabled is a refused
+	// token.
+	refusal, err := s.checkTokenOwner(&token)
+	if err != nil {
+		return nil, refusal, err
 	}
 
-	return &token, nil
+	return &token, nil, nil
 }
 
 // =============================================================================

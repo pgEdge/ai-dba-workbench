@@ -93,6 +93,33 @@ func loadCLISecretFile(configPath string) (string, error) {
 	return secretFile, nil
 }
 
+// cliTokenPolicy carries http.auth.oidc.allow_api_tokens from the
+// configuration file to the command line, which main sets through
+// loadCLITokenPolicy before it runs any command, so that -add-token
+// refuses a token for a federated account exactly as the server does
+// (issue #742). It is package state for the reason cliSecretSource is.
+var cliTokenPolicy struct {
+	allowFederatedAPITokens bool
+}
+
+// loadCLITokenPolicy reads allow_api_tokens from the configuration file
+// into cliTokenPolicy. A file that cannot be read or parsed is fatal,
+// as it is for loadCLISecretFile, rather than a reason to guess.
+func loadCLITokenPolicy(configPath string) error {
+	cliTokenPolicy.allowFederatedAPITokens = false
+	if !config.ConfigFileExists(configPath) {
+		return nil
+	}
+
+	allowed, err := config.LoadConfigOIDCAllowAPITokens(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read http.auth.oidc.allow_api_tokens "+
+			"from the configuration file %s: %w", configPath, err)
+	}
+	cliTokenPolicy.allowFederatedAPITokens = allowed
+	return nil
+}
+
 // openAuthStoreCLI opens the auth store and prints its path to stderr.
 // This helps users diagnose issues where CLI commands and the server
 // use different auth.db paths.
@@ -106,6 +133,8 @@ func openAuthStoreCLI(dataDir string) (*auth.AuthStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	allowFederated := cliTokenPolicy.allowFederatedAPITokens
+	store.SetFederatedAPITokenPolicy(func() bool { return allowFederated })
 	fmt.Fprintf(os.Stderr, "Auth store: %s\n", store.Path())
 	return store, nil
 }

@@ -753,6 +753,9 @@ func TestExternalSubjectRejectsTheEmptyString(t *testing.T) {
 func TestUnlinkFederatedIdentityRevokesTokens(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
+	// A linked account may own tokens only while allow_api_tokens is on
+	// (issue #742).
+	store.SetFederatedAPITokenPolicy(func() bool { return true })
 
 	if err := store.CreateUser("wendy", linkTestPassword, "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
@@ -793,6 +796,9 @@ func TestUnlinkFederatedIdentityRevokesTokens(t *testing.T) {
 func TestUnlinkFederatedIdentityKeepsTokensWithRestorePassword(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
+	// A linked account may own tokens only while allow_api_tokens is on
+	// (issue #742).
+	store.SetFederatedAPITokenPolicy(func() bool { return true })
 
 	if err := store.CreateUser("xavier", linkTestPassword, "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
@@ -846,6 +852,9 @@ func TestUnlinkFederatedIdentityWithNoTokens(t *testing.T) {
 func TestLinkFederatedIdentityIdempotentRelinkKeepsSessions(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
+	// A linked account may own tokens only while allow_api_tokens is on
+	// (issue #742).
+	store.SetFederatedAPITokenPolicy(func() bool { return true })
 
 	if err := store.CreateUser("zach", linkTestPassword, "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
@@ -902,6 +911,9 @@ func countRowsFor(t *testing.T, store *AuthStore, query string, arg any) int {
 func TestUnlinkFederatedIdentityRevocationIsScopedAndComplete(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
+	// A linked account may own tokens only while allow_api_tokens is on
+	// (issue #742).
+	store.SetFederatedAPITokenPolicy(func() bool { return true })
 
 	for _, name := range []string{"leaver", "bystander"} {
 		if err := store.CreateUser(name, linkTestPassword, "", "", ""); err != nil {

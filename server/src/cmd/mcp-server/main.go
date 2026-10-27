@@ -106,6 +106,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
+	if err := loadCLITokenPolicy(configPath); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Handle CLI commands (token, user, group, privilege management)
 	if RunCLICommands(flags, dataDir, configSecretFile) {

@@ -1385,6 +1385,9 @@ func seedAdminScope(t *testing.T, s *AuthStore, tokenID int64) {
 func TestUnlinkFederatedIdentityFailsWhenRevocationCannotBeAudited(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
+	// A linked account may own tokens only while allow_api_tokens is on
+	// (issue #742).
+	store.SetFederatedAPITokenPolicy(func() bool { return true })
 
 	mustCreateTokenOwner(t, store, "leaver")
 	if _, err := store.LinkFederatedIdentity("leaver", "https://idp.example.com",

@@ -880,6 +880,17 @@ exceeded "this token's access" (fixed so the denial audit coalesces).
   `internal/api/rbac_token_write_race_test.go`,
   `internal/auth/token_owner_guard_test.go` and
   `internal/auth/token_scope_snapshot_test.go`.
+- Federated token owners (#742): whilst `http.auth.oidc.allow_api_tokens`
+  is off, the store refuses to mint a token whose OWNER has a non-local
+  `auth_source` (`ErrFederatedAPITokensDisabled`, whoever the caller,
+  superuser included; `respondTokenWriteError` maps it to a 403 with
+  `FederatedAPITokenRefusalReason`, and `failAudit` skips it so only the
+  denial row is written), and `validateToken` refuses such a token on
+  use with an audited `token.use` denial. The policy is a func on the
+  store (`SetFederatedAPITokenPolicy`), so tests that create tokens for
+  a linked account must switch it on. Pinned by
+  `internal/auth/federated_tokens_test.go` and
+  `internal/api/rbac_token_federated_test.go`.
 - Connection scope shape: `auth.ValidateScopedConnections` (store, HTTP
   and CLI alike) refuses a duplicate connection ID, a negative ID, an
   unknown level, and connection 0 (all connections) combined with any

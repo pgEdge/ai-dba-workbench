@@ -1584,8 +1584,16 @@ type stubFederationStore struct {
 	resolveErr     error
 	reconcileErr   error
 	sessionErr     error
+	getUserErr     error
 	reconcileCalls int
 	sessionCalls   int
+}
+
+func (s *stubFederationStore) GetUser(string) (*auth.StoredUser, error) {
+	if s.getUserErr != nil {
+		return nil, s.getUserErr
+	}
+	return s.user, nil
 }
 
 func (s *stubFederationStore) ResolveFederatedUser(auth.FederatedIdentity,
@@ -1602,7 +1610,8 @@ func (s *stubFederationStore) ReconcileFederatedGroups(int64, auth.FederatedIden
 	return s.reconcileErr
 }
 
-func (s *stubFederationStore) CreateSessionForUser(string) (string, time.Time, error) {
+func (s *stubFederationStore) CreateFederatedSession(string, string,
+	time.Time) (string, time.Time, error) {
 	s.sessionCalls++
 	if s.sessionErr != nil {
 		return "", time.Time{}, s.sessionErr

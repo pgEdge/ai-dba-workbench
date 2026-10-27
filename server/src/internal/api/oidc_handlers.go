@@ -170,10 +170,10 @@ type OIDCHandler struct {
 	tlsEnabled  bool
 }
 
-// federationStore is the slice of auth.AuthStore a federated login
-// actually uses: resolve the account, reconcile its groups, mint the
-// session. It is an interface rather than the concrete store so that a
-// test can drive the failure of any one of the three, including the
+// federationStore is the slice of auth.AuthStore a federated login and
+// a federated session refresh actually use: resolve or read the account,
+// reconcile its groups, mint the session. It is an interface rather than
+// the concrete store so that a test can drive the failure of each, including the
 // session failure, which on the real store needs the account to change
 // between two calls inside one request and is therefore not reachable
 // otherwise.
@@ -186,7 +186,9 @@ type federationStore interface {
 		opts auth.FederationOptions) (*auth.StoredUser, error)
 	ReconcileFederatedGroups(userID int64, identity auth.FederatedIdentity,
 		opts auth.FederationOptions) error
-	CreateSessionForUser(username string) (string, time.Time, error)
+	CreateFederatedSession(username, refreshToken string,
+		expiresAt time.Time) (string, time.Time, error)
+	GetUser(username string) (*auth.StoredUser, error)
 }
 
 // NewOIDCHandler creates the federated login handler.
@@ -445,12 +447,12 @@ func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 	// everyone behind the reverse proxy, and lock federated login for
 	// the whole deployment.
 	ipAddress := h.extractIPFromRequest(r)
-	identity, ok := h.exchange(w, r, state, ipAddress)
+	tokens, ok := h.exchange(w, r, state, ipAddress)
 	if !ok {
 		return
 	}
 
-	h.completeLogin(w, r, state, identity, ipAddress)
+	h.completeLogin(w, r, state, tokens, ipAddress)
 }
 
 // openPresentedState performs every check that can be made before the
@@ -522,12 +524,13 @@ func (h *OIDCHandler) openPresentedState(w http.ResponseWriter, r *http.Request,
 }
 
 // exchange redeems the authorization code and returns the verified
-// identity, having reported any failure to the browser itself. It is
-// also where the per-client rate limit is charged, immediately before
-// the call to the provider, so that the limit bounds exactly what it
-// claims to bound; see the comment in handleCallback.
+// identity, with the refresh token and expiry that came with it, having
+// reported any failure to the browser itself. It is also where the
+// per-client rate limit is charged, immediately before the call to the
+// provider, so that the limit bounds exactly what it claims to bound;
+// see the comment in handleCallback.
 func (h *OIDCHandler) exchange(w http.ResponseWriter, r *http.Request,
-	state *oidc.LoginState, ipAddress string) (*oidc.Identity, bool) {
+	state *oidc.LoginState, ipAddress string) (*oidc.Tokens, bool) {
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
@@ -547,7 +550,7 @@ func (h *OIDCHandler) exchange(w http.ResponseWriter, r *http.Request,
 	ctx, cancel := context.WithTimeout(r.Context(), exchangeTimeout)
 	defer cancel()
 
-	identity, err := h.provider.Exchange(ctx, code, state)
+	tokens, err := h.provider.Exchange(ctx, code, state)
 	if err != nil {
 		// This error can embed the token endpoint's raw response body
 		// and claim values from the ID token, so it goes to the log and
@@ -559,15 +562,18 @@ func (h *OIDCHandler) exchange(w http.ResponseWriter, r *http.Request,
 		return nil, false
 	}
 
-	return identity, true
+	return tokens, true
 }
 
 // completeLogin turns a verified identity into a session, applying the
 // operator's email domain policy, resolving the Workbench account and
-// reconciling its group membership on the way.
+// reconciling its group membership on the way. The session expires with
+// the ID token, and keeps the refresh token, if the provider issued one,
+// in memory so that the session can be extended (issue #742).
 func (h *OIDCHandler) completeLogin(w http.ResponseWriter, r *http.Request,
-	state *oidc.LoginState, identity *oidc.Identity, ipAddress string) {
+	state *oidc.LoginState, tokens *oidc.Tokens, ipAddress string) {
 
+	identity := tokens.Identity
 	logIdentityDiagnostics(identity)
 
 	// One read of the configuration serves every policy decision below.
@@ -617,7 +623,8 @@ func (h *OIDCHandler) completeLogin(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	token, expiration, err := h.authStore.CreateSessionForUser(user.Username)
+	token, expiration, err := h.authStore.CreateFederatedSession(user.Username,
+		tokens.RefreshToken, tokens.Expiry)
 	if err != nil {
 		//nolint:gosec // G706: error text passed through logging.SanitizeForLog
 		log.Printf("[OIDC] Refusing federated login: %s", logging.SanitizeForLog(err.Error()))
@@ -625,16 +632,25 @@ func (h *OIDCHandler) completeLogin(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
+	// A session that a refresh can extend outlives the expiry it starts
+	// with, so its cookie is left without one and lasts for the browser
+	// session; the server decides when the session ends. A session with
+	// no refresh token ends at that expiry, and its cookie says so.
+	cookieExpiry := expiration
+	if tokens.RefreshToken != "" {
+		cookieExpiry = time.Time{}
+	}
+
 	secure := requestIsSecure(r, h.tlsEnabled, h.ipExtractor)
 	// #nosec G124 -- Secure is conditional on requestIsSecure for the
 	// same reason as in handleLogin, whose cookie attributes this
-	// deliberately matches exactly so that a federated session is
-	// indistinguishable from a local one to the browser.
+	// deliberately matches, bar the expiry, so that a federated session
+	// is otherwise indistinguishable from a local one to the browser.
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    token,
 		Path:     "/",
-		Expires:  expiration,
+		Expires:  cookieExpiry,
 		HttpOnly: true,
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,

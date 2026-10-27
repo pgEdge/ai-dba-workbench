@@ -14796,6 +14796,17 @@
       "UserInfoResponse": {
         "type": "object",
         "properties": {
+          "admin_permissions": {
+            "type": "array",
+            "description": "Admin permissions the caller holds",
+            "items": {
+              "type": "string"
+            }
+          },
+          "api_tokens_allowed": {
+            "type": "boolean",
+            "description": "Whether the authenticated user's account may own API tokens. False for an account that signs in through an identity provider while http.auth.oidc.allow_api_tokens is off; it does not say whether the caller may manage tokens, which admin_permissions answers"
+          },
           "authenticated": {
             "type": "boolean",
             "description": "Whether the user is authenticated"

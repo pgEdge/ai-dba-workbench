@@ -15,6 +15,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -173,14 +174,48 @@ func NewProvider(ctx context.Context, cfg config.OIDCConfig) (*Provider, error) 
 }
 
 // requestedScopes returns the configured scopes with "openid" prepended
-// if the operator left it out. Without that scope the provider is under
-// no obligation to return an ID token at all, and the whole flow depends
-// on one.
+// and "offline_access" appended, each only if the operator left it out.
+//
+// Without "openid" the provider is under no obligation to return an ID
+// token at all, and the whole flow depends on one. "offline_access" asks
+// for a refresh token, which is what lets a federated session outlive
+// its first ID token: the session ends when that ID token expires, and
+// is extended only by redeeming the refresh token, which the provider
+// refuses once the user has been removed or disabled there (issue #742).
+// A provider that will not issue one simply returns none, and the
+// session then ends at the ID token's expiry.
 func requestedScopes(configured []string) []string {
-	if slices.Contains(configured, oidc.ScopeOpenID) {
-		return slices.Clone(configured)
+	scopes := slices.Clone(configured)
+	if !slices.Contains(scopes, oidc.ScopeOpenID) {
+		scopes = append([]string{oidc.ScopeOpenID}, scopes...)
 	}
-	return append([]string{oidc.ScopeOpenID}, configured...)
+	if !slices.Contains(scopes, oidc.ScopeOfflineAccess) {
+		scopes = append(scopes, oidc.ScopeOfflineAccess)
+	}
+	return scopes
+}
+
+// Tokens is what a code exchange or a refresh yields: the verified
+// identity, if the provider sent an ID token, the refresh token to
+// redeem next, and when the session they support expires.
+//
+// RefreshToken is a long-lived credential. It must be held in memory
+// only, never written to disk, and never logged; nothing in this package
+// formats it into an error.
+type Tokens struct {
+	// Identity is the verified end user. Exchange always sets it; Refresh
+	// sets it only when the provider returned an ID token, which it is
+	// not obliged to do on a refresh.
+	Identity *Identity
+
+	// RefreshToken is empty when the provider issued none. After a
+	// refresh that did not rotate it, it holds the token that was
+	// redeemed, which remains valid.
+	RefreshToken string
+
+	// Expiry is the ID token's expiry when the response carried one, and
+	// otherwise the access token's. It is never zero on success.
+	Expiry time.Time
 }
 
 // AuthCodeURL returns the URL to send the browser to in order to start a
@@ -196,7 +231,8 @@ func (p *Provider) AuthCodeURL(state *LoginState) string {
 }
 
 // Exchange redeems an authorization code for tokens and returns the
-// verified Identity it describes.
+// verified Identity it describes, together with any refresh token the
+// provider issued and the ID token's expiry.
 //
 // It proves four separate things before returning: that the provider
 // will redeem the code against the PKCE code verifier held in state (so
@@ -226,7 +262,7 @@ func (p *Provider) AuthCodeURL(state *LoginState) string {
 // than cosmetic: an error message carrying provider-influenced text goes
 // into the server log, and a value with an interior newline in it would
 // write what looks like a second log record.
-func (p *Provider) Exchange(ctx context.Context, code string, state *LoginState) (*Identity, error) {
+func (p *Provider) Exchange(ctx context.Context, code string, state *LoginState) (*Tokens, error) {
 	token, err := p.oauth2Config.Exchange(ctx, code,
 		oauth2.SetAuthURLParam("code_verifier", state.CodeVerifier))
 	if err != nil {
@@ -261,6 +297,77 @@ func (p *Provider) Exchange(ctx context.Context, code string, state *LoginState)
 		return nil, fmt.Errorf("ID token nonce does not match the login request")
 	}
 
+	identity, err := p.identityFromIDToken(idToken)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Tokens{
+		Identity:     identity,
+		RefreshToken: token.RefreshToken,
+		Expiry:       idToken.Expiry,
+	}, nil
+}
+
+// Refresh redeems a refresh token and returns what the provider sent
+// back: the refresh token to use next (rotated or not), the new expiry,
+// and the verified identity when the response carried an ID token.
+//
+// An ID token returned by a refresh is verified exactly as one from a
+// code exchange is (signature, issuer, audience, expiry) except for the
+// nonce, which a refresh request does not carry. The caller must still
+// check that its issuer and subject are the ones the session belongs to,
+// as OpenID Connect Core 1.0 section 12.2 requires; Refresh has no
+// session to compare against.
+//
+// A provider that answers without an ID token leaves the session's
+// expiry to the access token's, and a response carrying neither expiry
+// is refused, because a session must end at some point the provider
+// chose.
+//
+// As with Exchange, the caller must pass a context carrying a timeout,
+// and no error returned here may reach a browser: a token endpoint
+// failure embeds the provider's response body. None of them carries the
+// refresh token.
+func (p *Provider) Refresh(ctx context.Context, refreshToken string) (*Tokens, error) {
+	if refreshToken == "" {
+		return nil, fmt.Errorf("no refresh token to redeem")
+	}
+
+	// A token with no access token is never valid, so the token source
+	// goes straight to the refresh grant. When the provider does not
+	// rotate the refresh token, oauth2 carries the redeemed one over
+	// into the result.
+	token, err := p.oauth2Config.TokenSource(ctx,
+		&oauth2.Token{RefreshToken: refreshToken}).Token()
+	if err != nil {
+		return nil, fmt.Errorf("failed to redeem refresh token: %w", err)
+	}
+
+	result := &Tokens{RefreshToken: token.RefreshToken, Expiry: token.Expiry}
+
+	if rawIDToken, ok := token.Extra("id_token").(string); ok && rawIDToken != "" {
+		idToken, err := p.verifier.Verify(ctx, rawIDToken)
+		if err != nil {
+			return nil, fmt.Errorf("failed to verify refreshed ID token: %w", err)
+		}
+		identity, err := p.identityFromIDToken(idToken)
+		if err != nil {
+			return nil, err
+		}
+		result.Identity = identity
+		result.Expiry = idToken.Expiry
+	}
+
+	if result.Expiry.IsZero() {
+		return nil, fmt.Errorf("identity provider refresh response carried no expiry")
+	}
+	return result, nil
+}
+
+// identityFromIDToken decodes a verified ID token's claims into an
+// Identity.
+func (p *Provider) identityFromIDToken(idToken *oidc.IDToken) (*Identity, error) {
 	var claims map[string]any
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, fmt.Errorf("failed to decode ID token claims: %w", err)

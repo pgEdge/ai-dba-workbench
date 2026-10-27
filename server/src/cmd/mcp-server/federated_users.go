@@ -27,12 +27,31 @@ const sessionCaveat = "Browser sessions the running server has already issued ar
 	"server's memory and are not cleared by this command: disable the account with -disable-user, " +
 	"or restart the server, to end them."
 
-// tokenCaveat is printed when an account is linked. Linking decides how the
-// account signs in and nothing else, so every API token it already owns keeps
-// working at its full privilege: that is precisely why unlinking revokes them.
+// tokenCaveat is printed when an account is linked whilst
+// http.auth.oidc.allow_api_tokens is on. Linking decides how the account
+// signs in and nothing else, so every API token it already owns keeps
+// working at its full privilege: that is precisely why unlinking revokes
+// them.
 const tokenCaveat = "Every API token the account already owns also keeps working at its full " +
 	"privilege: list them with -list-tokens and remove any that should not outlive the change " +
 	"with -remove-token."
+
+// refusedTokenCaveat is printed instead whilst allow_api_tokens is off,
+// when a federated account's tokens are refused on use (issue #742). They
+// are refused, not deleted, so they come back if the setting is switched
+// on.
+const refusedTokenCaveat = "API tokens the account already owns are refused whilst " +
+	"http.auth.oidc.allow_api_tokens is off, but are not deleted, and work again if it is " +
+	"switched on: list them with -list-tokens and remove them with -remove-token."
+
+// linkTokenCaveat returns the caveat about the account's tokens that
+// matches the configured policy.
+func linkTokenCaveat() string {
+	if cliTokenPolicy.allowFederatedAPITokens {
+		return tokenCaveat
+	}
+	return refusedTokenCaveat
+}
 
 // linkOIDCUserCommand handles the link-oidc-user command, attaching an
 // existing account to an identity provider subject. With
@@ -78,7 +97,7 @@ func linkOIDCUserCommand(dataDir, username, issuer, subject string, relink bool)
 	// when it is not: an operator tightening an account's authentication
 	// has to deal with its password-era tokens separately.
 	fmt.Printf("\n%s\n", sessionCaveat)
-	fmt.Printf("%s\n\n", tokenCaveat)
+	fmt.Printf("%s\n\n", linkTokenCaveat())
 
 	return nil
 }

@@ -92,6 +92,10 @@ func TestLinkOIDCUserCommand(t *testing.T) {
 
 	t.Run("links the account and reports it", func(t *testing.T) {
 		dataDir := seedLinkTestUser(t, "alice")
+		// The tokens keep working only whilst allow_api_tokens is on;
+		// the wording with it off is covered in federated_tokens_test.go.
+		cliTokenPolicy.allowFederatedAPITokens = true
+		t.Cleanup(func() { cliTokenPolicy.allowFederatedAPITokens = false })
 
 		var err error
 		output := captureStdout(t, func() {

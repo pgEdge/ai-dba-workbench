@@ -318,6 +318,25 @@ type OIDCConfig struct {
 	// validateOIDCStateCookiePrefix. It is a pointer for the same reason
 	// ProvisionUsers is; read it through UnprefixedStateCookieAllowed.
 	AllowUnprefixedStateCookie *bool `yaml:"allow_unprefixed_state_cookie" json:"allow_unprefixed_state_cookie"`
+
+	// AllowAPITokens lets accounts that sign in through an identity
+	// provider own API tokens. An API token is checked against the
+	// Workbench's own database only, so a federated user's token keeps
+	// working after the provider removes the user, until it expires or
+	// is revoked; that is why the setting is off unless switched on
+	// (issue #742). It applies whether or not federated login is
+	// enabled, since accounts linked earlier remain federated, and a
+	// reload applies it. It is a pointer for the same reason
+	// ProvisionUsers is; read it through APITokensAllowed.
+	AllowAPITokens *bool `yaml:"allow_api_tokens" json:"allow_api_tokens"`
+}
+
+// APITokensAllowed returns the effective value of AllowAPITokens,
+// defaulting to false when the pointer is nil: an operator who has said
+// nothing has not accepted tokens that outlive the user's removal at the
+// identity provider.
+func (o OIDCConfig) APITokensAllowed() bool {
+	return o.AllowAPITokens != nil && *o.AllowAPITokens
 }
 
 // EffectiveClientSecret returns the OIDC client secret to use. An inline
@@ -1046,6 +1065,9 @@ func mergeConfig(dest, src *Config) {
 	if src.HTTP.Auth.OIDC.AllowUnprefixedStateCookie != nil {
 		dest.HTTP.Auth.OIDC.AllowUnprefixedStateCookie = src.HTTP.Auth.OIDC.AllowUnprefixedStateCookie
 	}
+	if src.HTTP.Auth.OIDC.AllowAPITokens != nil {
+		dest.HTTP.Auth.OIDC.AllowAPITokens = src.HTTP.Auth.OIDC.AllowAPITokens
+	}
 
 	// Database - if source has database defined, use it
 	if src.Database != nil {
@@ -1675,25 +1697,9 @@ type configDataDir struct {
 // before the full config is loaded. It returns an empty string if the file
 // does not exist, is empty, or does not specify data_dir.
 func LoadConfigDataDir(configPath string) (string, error) {
-	if configPath == "" {
-		return "", nil
-	}
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	if len(data) == 0 {
-		return "", nil
-	}
-
 	var cfg configDataDir
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return "", fmt.Errorf("failed to parse config file: %w", err)
+	if err := readConfigFileInto(configPath, &cfg); err != nil {
+		return "", err
 	}
 
 	return cfg.DataDir, nil
@@ -1713,28 +1719,68 @@ type configSecretFile struct {
 // when the file does not exist, is empty, or sets no secret_file, in
 // which case the caller falls back to the default search order.
 func LoadConfigSecretFile(configPath string) (string, error) {
+	var cfg configSecretFile
+	if err := readConfigFileInto(configPath, &cfg); err != nil {
+		return "", err
+	}
+
+	return cfg.SecretFile, nil
+}
+
+// configOIDCAllowAPITokens is a minimal struct for extracting just the
+// http.auth.oidc.allow_api_tokens setting from a config file.
+type configOIDCAllowAPITokens struct {
+	HTTP struct {
+		Auth struct {
+			OIDC struct {
+				AllowAPITokens *bool `yaml:"allow_api_tokens"`
+			} `yaml:"oidc"`
+		} `yaml:"auth"`
+	} `yaml:"http"`
+}
+
+// LoadConfigOIDCAllowAPITokens extracts just the
+// http.auth.oidc.allow_api_tokens setting from a config file, so that
+// the command line, which runs before the full configuration is loaded,
+// refuses an API token for a federated account exactly as the server
+// does. It returns false, the setting's default, when the file does not
+// exist, is empty, or does not set it.
+func LoadConfigOIDCAllowAPITokens(configPath string) (bool, error) {
+	var cfg configOIDCAllowAPITokens
+	if err := readConfigFileInto(configPath, &cfg); err != nil {
+		return false, err
+	}
+
+	allowed := cfg.HTTP.Auth.OIDC.AllowAPITokens
+	return allowed != nil && *allowed, nil
+}
+
+// readConfigFileInto parses a config file into out, a minimal struct
+// naming only the settings an early reader needs. It leaves out
+// untouched when the path is empty, or the file does not exist or is
+// empty.
+func readConfigFileInto(configPath string, out any) error {
 	if configPath == "" {
-		return "", nil
+		return nil
 	}
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", nil
+			return nil
 		}
-		return "", fmt.Errorf("failed to read config file: %w", err)
+		return fmt.Errorf("failed to read config file: %w", err)
 	}
 
 	if len(data) == 0 {
-		return "", nil
+		return nil
 	}
 
-	var cfg configSecretFile
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return "", fmt.Errorf("failed to parse config file: %w", err)
+	if err := yaml.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	return cfg.SecretFile, nil
+	return nil
 }
 
 // GetDefaultSecretPath returns the path to an existing default

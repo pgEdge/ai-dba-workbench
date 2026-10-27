@@ -371,6 +371,7 @@ as they are and appends an anchor event:
 | `auth.oidc.superuser_group` | string | | Provider group granting superuser |
 | `auth.oidc.group_map` | map | `{}` | Provider group to Workbench group map |
 | `auth.oidc.allow_unprefixed_state_cookie` | bool | `false` | Accept an unprefixed login state cookie behind a proxy |
+| `auth.oidc.allow_api_tokens` | bool | `false` | Let federated users own API tokens |
 
 #### Authentication (`auth`)
 
@@ -398,7 +399,20 @@ as an attacker. Set `trusted_proxies` to the reverse
 proxy's address, or set
 `auth.oidc.allow_unprefixed_state_cookie` to `true` to
 accept the risk.
+
 | `auth.audit_retention_days` | int | `90` | Days to keep RBAC audit events (0 keeps forever) |
+
+!!! warning
+
+    While `auth.oidc.allow_api_tokens` is `false`, the
+    default, an account that signs in through the
+    identity provider cannot create API tokens, and any
+    token such an account already owns is refused on use.
+    Switching it on lets those tokens keep working after
+    the person is removed at the identity provider,
+    until each token expires or is revoked, because the
+    provider is never consulted when a token is used.
+    Use a local service account for automation instead.
 
 #### CORS Origin (`cors_origin`)
 

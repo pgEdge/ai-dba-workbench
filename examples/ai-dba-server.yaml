@@ -187,6 +187,14 @@ http:
     #   # start in that case unless this is true; set trusted_proxies
     #   # instead wherever possible.
     #   # allow_unprefixed_state_cookie: false
+    #
+    #   # Let users who sign in through the identity provider own API
+    #   # tokens. A token is checked against the Workbench alone, so with
+    #   # this on a federated user's tokens keep working after the
+    #   # provider removes the user, until they expire or are revoked.
+    #   # Use a local service account for automation instead.
+    #   # Default: false
+    #   # allow_api_tokens: false
 
 #=========================================================================
 # CONNECTION SECURITY

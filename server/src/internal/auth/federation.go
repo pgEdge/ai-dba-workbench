@@ -1098,39 +1098,37 @@ func (st federatedLinkState) auditView() map[string]any {
 	return view
 }
 
-// The UPDATE statements that link an account. Sessions are not for service
-// accounts: CreateSessionForUser refuses one outright, so a linked service
-// account could never complete a login and the link would be a trap rather
-// than a configuration. The auth_source condition is the converse of the
-// belt-and-braces check lookupFederatedUserLocked makes, and keeps this from
-// quietly converting an account whose identity some future source owns.
+// execLinkUpdate runs the UPDATE that links username to key inside tx.
 //
-// The last condition of linkRelinkUpdateSQL excludes a row that already says
-// exactly what the UPDATE would say. SQLite's changes() counts matched rows
-// rather than modified ones, so without it the documented idempotent re-link
-// would report a row affected and log the user out; a
+// Sessions are not for service accounts: CreateSessionForUser refuses one
+// outright, so a linked service account could never complete a login and the
+// link would be a trap rather than a configuration. The auth_source condition
+// is the converse of the belt-and-braces check lookupFederatedUserLocked
+// makes, and keeps this from quietly converting an account whose identity
+// some future source owns.
+//
+// The (external_subject IS NOT ? OR auth_source <> ?) condition excludes a
+// row that already says exactly what the UPDATE would say. SQLite's changes()
+// counts matched rows rather than modified ones, so without it the documented
+// idempotent re-link would report a row affected and log the user out; a
 // configuration-management run that reasserts links every pass would then log
 // every federated user out every pass. IS NOT is used rather than <> because
-// external_subject is nullable. linkUpdateSQL adds the condition that refuses
-// to move an account already holding a different identity without -relink.
-const (
-	linkRelinkUpdateSQL = `UPDATE users SET auth_source = ?, external_subject = ?
-        WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
-          AND (external_subject IS NOT ? OR auth_source <> ?)`
-	linkUpdateSQL = `UPDATE users SET auth_source = ?, external_subject = ?
-        WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
-          AND (external_subject IS NOT ? OR auth_source <> ?)
-          AND (external_subject IS NULL OR external_subject = ?)`
-)
-
-// execLinkUpdate runs the UPDATE that links username to key inside tx. Each
-// branch passes its statement constant straight to Exec.
+// external_subject is nullable. Without relink, a last condition refuses to
+// move an account already holding a different identity.
+//
+// Each statement is written out in full at its Exec call, rather than shared
+// or assembled, so a static analyser can see that it is a literal.
 func execLinkUpdate(tx *sql.Tx, username, key string, relink bool) (sql.Result, error) {
 	if relink {
-		return tx.Exec(linkRelinkUpdateSQL,
+		return tx.Exec(`UPDATE users SET auth_source = ?, external_subject = ?
+            WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
+              AND (external_subject IS NOT ? OR auth_source <> ?)`,
 			AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC, key, AuthSourceOIDC)
 	}
-	return tx.Exec(linkUpdateSQL,
+	return tx.Exec(`UPDATE users SET auth_source = ?, external_subject = ?
+        WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
+          AND (external_subject IS NOT ? OR auth_source <> ?)
+          AND (external_subject IS NULL OR external_subject = ?)`,
 		AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC, key, AuthSourceOIDC, key)
 }
 

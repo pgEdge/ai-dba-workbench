@@ -734,6 +734,25 @@ configured wait period.
 - Check network connectivity to the database server.
 - Verify that the database server is responsive.
 
+### ColdFront Metrics Storage Errors
+
+The collector checks the metrics storage mode before running any
+migration and refuses to start when the datastore does not match the
+`use_coldfront_for_metrics` setting. The following table describes
+each startup error and the corrective step:
+
+| Error Message Begins With | Cause | Fix |
+|---------------------------|-------|-----|
+| `use_coldfront_for_metrics is enabled but the coldfront extension is not installed in the datastore` | The option is enabled, but the datastore has no `coldfront` extension. | Install a ColdFront build that includes the `coldfront._partition_clause` function and run `CREATE EXTENSION coldfront`, or disable the option. |
+| `use_coldfront_for_metrics is enabled but the installed coldfront extension is too old` | The installed ColdFront build lacks `coldfront._partition_clause(jsonb,text[])`. | Upgrade ColdFront to `1.0.0-rc1` or later. |
+| `use_coldfront_for_metrics is enabled but the datastore already stores metrics in PostgreSQL tables` | The datastore was created in standard mode. | Use a new datastore for ColdFront storage, or disable the option. |
+| `use_coldfront_for_metrics is disabled but the datastore stores metrics in ColdFront views` | The datastore was created in ColdFront mode. | Enable the option, or use a new datastore for standard storage. |
+
+The two mismatch errors name up to three of the affected metrics
+relations. The
+[Storing Metrics in pgEdge ColdFront](coldfront-metrics.md) document
+describes the prerequisites of ColdFront mode.
+
 ## Security Best Practices
 
 Follow these practices to protect collector credentials and

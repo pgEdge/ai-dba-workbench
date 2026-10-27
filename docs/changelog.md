@@ -110,17 +110,22 @@ project adheres to
   alerter need no setting. In this mode the Workbench performs
   no metrics retention: it creates and drops no partitions,
   deletes no old rows, does not run the garbage collector and
-  ignores `retention_days`, and purging a connection leaves its
-  metrics rows in place. Some column types are stored
-  differently, metrics tables have no indexes, the pgvector
-  chat-memory embedding feature is disabled, and `list_probes`
-  may report a probe's row count as unknown. The datastore
-  needs `pg_duckdb` and ColdFront `1.0.0-rc1` or later, with
-  `coldfront.grant_app_access` run for each Workbench role.
-  Choose the mode when creating the datastore: switching an
-  existing datastore is not supported, and the collector
-  refuses to start when the setting does not match the
-  existing metrics tables.
+  ignores `retention_days`; purging a connection removes the
+  connection but leaves its metrics rows in place and logs the
+  views it skipped. Some column types are stored differently,
+  metrics tables have no indexes or foreign keys, the pgvector
+  chat-memory embedding feature is disabled, `list_probes`
+  shows `unknown` as the row count of a probe stored as a view,
+  and `query_datastore` cannot filter, sort, group or take the
+  minimum or maximum of `pg_node_role.role_details`. The
+  datastore needs `pg_duckdb` and a ColdFront build that
+  includes `coldfront._partition_clause` (`1.0.0-rc1` or
+  later), with `coldfront.grant_app_access` run for each
+  Workbench role. Choose the mode when creating the datastore:
+  switching an existing datastore is not supported, and the
+  collector refuses to start when the extension is missing or
+  too old, or when the setting does not match the existing
+  metrics tables.
 
 - Classify tier 3 anomaly candidates with an optional decision
   model (#626). The new `llm.decision_provider` option selects

@@ -40,14 +40,18 @@ must meet the following requirements:
 - ColdFront is configured with an Iceberg catalog, such as
   [Lakekeeper](https://github.com/lakekeeper/lakekeeper), and with
   object storage, as the ColdFront documentation describes.
-- The installed ColdFront build is version `1.0.0-rc1` or later.
+- The installed ColdFront build includes the
+  `coldfront._partition_clause(jsonb,text[])` function.
 - The datastore roles that the Workbench components use have been
   granted access to ColdFront.
 
-ColdFront `1.0.0-rc1` is the first build that includes the changes the
-collector depends on. Earlier builds, including the `v1.0.0-beta2`
-release, are too old; the collector checks the installed ColdFront
-version at startup and refuses to start on an unsupported build.
+The `coldfront._partition_clause` function arrived in pgEdge ColdFront
+pull request #92, which also contains the read support from pull
+request #85 that the server relies on. Use ColdFront `1.0.0-rc1` or
+later; the `v1.0.0-beta2` release is too old. ColdFront reports the
+same extension version in every build, so the collector checks for the
+function instead of a version number. The collector refuses to start
+when the installed ColdFront build lacks that function.
 
 ### Granting ColdFront Access to Workbench Roles
 
@@ -96,9 +100,11 @@ the command-line flag instead:
 
 Choose the storage mode when you create the datastore. The collector
 creates the metrics tables during its first schema migration, and the
-mode cannot change afterwards; the
-[Limitations](#understanding-the-limitations) section describes the
-consequences of a mismatch.
+mode cannot change afterwards. The collector checks the datastore
+before running any migration and refuses to start when the setting
+does not match the existing metrics tables; the
+[Collector Configuration](collector.md#troubleshooting) document lists
+each startup error and its fix.
 
 ## Understanding Behavioural Differences
 
@@ -121,10 +127,16 @@ responsibility.
 
 ### Purging Deleted Connections
 
-When a user deletes a connection, the server removes the connection
-itself but leaves the connection's metrics rows in place on a
-ColdFront datastore. The operator can remove those rows with the
-methods that ColdFront provides.
+When a user deletes a connection, the server's background purge still
+removes the connection itself, but leaves the connection's metrics
+rows in place in every ColdFront view. The server logs one line for
+each purge that names the metrics views in which it left rows. The
+operator can remove those rows with the methods that ColdFront
+provides.
+
+In ColdFront mode, the collector also creates no foreign keys from the
+metrics tables to the `connections` table. Deleting a connection
+therefore never cascades to the connection's metrics rows.
 
 ### Storing Column Types
 
@@ -140,7 +152,7 @@ how the collector stores each affected type:
 | `inet` | `text` | The address is stored in its text form. |
 | `"char"` | `text` | The single character is stored as text. |
 | `name` | `text` | The identifier is stored as text. |
-| unbounded `numeric` | `numeric(38,0)` | The column holds whole numbers of up to 38 digits; fractional digits are not kept. |
+| unbounded `numeric` | `numeric(38,0)` | The value is stored as a whole number; the two affected columns hold byte counts. |
 | `jsonb` | `jsonb` | Queries return the column as `json`. |
 
 Custom queries against the metrics tables, such as those run through
@@ -156,8 +168,8 @@ on per-file column statistics to limit the data that each query reads.
 ### Reporting Probe Row Counts
 
 The `list_probes` tool reports an approximate row count for each probe.
-A ColdFront-backed probe has no PostgreSQL row estimate, so the tool
-may report the row count of that probe as unknown.
+The tool never counts the rows of a view, so the `row_count` column
+shows `unknown` for every probe that ColdFront stores as a view.
 
 ## Understanding the Limitations
 
@@ -169,8 +181,11 @@ ColdFront mode has the following limitations:
   value does not match the kind of metrics tables already in the
   datastore.
 - The optional pgvector chat-memory embedding feature is disabled.
-- The collector refuses to start on a ColdFront build older than
-  `1.0.0-rc1`.
+- The collector refuses to start on a ColdFront build that lacks the
+  `coldfront._partition_clause` function.
+- The `pg_node_role.role_details` column reads back as `json`, so a
+  `query_datastore` filter, `order_by`, `group_by`, `min` or `max` on
+  that column fails; a plain select of the column works.
 
 To move from one storage mode to the other, create a new datastore with
 the required mode and point the Workbench components at that datastore.

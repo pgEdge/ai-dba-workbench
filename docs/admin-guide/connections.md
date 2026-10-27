@@ -223,7 +223,9 @@ five minutes, and immediately after each delete; a server
 restart resumes any purge that was interrupted.
 
 On a datastore that stores metrics in pgEdge ColdFront,
-the purge leaves the connection's metrics rows in place.
+the purge removes the connection but leaves the
+connection's metrics rows in place, and logs one line
+naming the metrics views it left untouched.
 The
 [Storing Metrics in pgEdge ColdFront](../getting-started/configuration/coldfront-metrics.md)
 document describes that mode.

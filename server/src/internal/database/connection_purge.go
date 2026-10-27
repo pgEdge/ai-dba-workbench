@@ -226,8 +226,8 @@ func logSkippedMetricsViews(id int, views []string) {
 		return
 	}
 	purgeLogf("[INFO] Connection purge: left connection %d's metrics rows in place "+
-		"in %d view(s), because pgEdge ColdFront manages that data's lifecycle: metrics.%s",
-		id, len(views), strings.Join(views, ", metrics."))
+		"in %d view(s) of the metrics schema, because pgEdge ColdFront manages that "+
+		"data's lifecycle: %s", id, len(views), strings.Join(views, ", "))
 }
 
 // purgeConnection is PurgeConnection with a hook that runs between the

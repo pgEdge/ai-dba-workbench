@@ -119,8 +119,9 @@ func TestLogSkippedMetricsViews(t *testing.T) {
 
 	logSkippedMetricsViews(7, []string{"pg_stat_wal", "pg_stat_database"})
 	got := lines()
-	want := "[INFO] Connection purge: left connection 7's metrics rows in place in 2 view(s), " +
-		"because pgEdge ColdFront manages that data's lifecycle: metrics.pg_stat_wal, metrics.pg_stat_database"
+	want := "[INFO] Connection purge: left connection 7's metrics rows in place in 2 view(s) " +
+		"of the metrics schema, because pgEdge ColdFront manages that data's lifecycle: " +
+		"pg_stat_wal, pg_stat_database"
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("logged %q, want [%q]", got, want)
 	}

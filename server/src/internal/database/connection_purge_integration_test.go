@@ -693,7 +693,7 @@ func TestPurgeConnection_LeavesColdFrontViewsInPlace(t *testing.T) {
 	if len(logged) != 1 {
 		t.Fatalf("logged %d notes, want exactly one: %q", len(logged), logged)
 	}
-	if !strings.Contains(logged[0], "metrics.purge_test_cf") ||
+	if !strings.Contains(logged[0], "purge_test_cf") ||
 		!strings.Contains(logged[0], "ColdFront") {
 		t.Errorf("the note should name the view and ColdFront: %q", logged[0])
 	}

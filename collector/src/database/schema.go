@@ -37,6 +37,11 @@ type Migration struct {
 // SchemaManager handles database schema migrations
 type SchemaManager struct {
 	migrations []Migration
+
+	// useColdFrontForMetrics creates the metrics.* tables through pgEdge
+	// ColdFront instead of as partitioned PostgreSQL tables; see
+	// WithColdFrontMetrics. The migrations read it when they run.
+	useColdFrontForMetrics bool
 }
 
 // addConstraintIfMissing emits an idempotent ALTER TABLE ... ADD CONSTRAINT
@@ -109,10 +114,17 @@ func quoteSQLLiteral(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
-// NewSchemaManager creates a new schema manager
-func NewSchemaManager() *SchemaManager {
+// NewSchemaManager creates a new schema manager. Without options the
+// metrics.* tables are partitioned PostgreSQL tables; pass
+// WithColdFrontMetrics(true) to create them through pgEdge ColdFront.
+// The options are variadic so that callers which only need the default
+// schema, such as the server's integration tests, are unaffected.
+func NewSchemaManager(opts ...SchemaManagerOption) *SchemaManager {
 	sm := &SchemaManager{
 		migrations: []Migration{},
+	}
+	for _, opt := range opts {
+		opt(sm)
 	}
 	sm.registerMigrations()
 	return sm
@@ -546,7 +558,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// =====================================================================
 
 			// metrics.pg_stat_activity
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_activity", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_activity (
 					connection_id INTEGER NOT NULL,
 					pid INTEGER NOT NULL,
@@ -585,7 +597,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_all_tables (consolidated with pg_statio_all_tables)
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_all_tables", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_all_tables (
 					connection_id INTEGER NOT NULL,
 					database_name TEXT NOT NULL,
@@ -637,7 +649,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_all_indexes (consolidated with pg_statio_all_indexes)
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_all_indexes", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_all_indexes (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -671,7 +683,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_all_indexes table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_stat_all_indexes",
 				"fk_pg_stat_all_indexes_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -680,7 +692,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_statements
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_statements", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_statements (
 					connection_id INTEGER NOT NULL,
 					database_name TEXT NOT NULL,
@@ -743,7 +755,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_database
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_database", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_database (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -789,7 +801,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_database table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_stat_database",
 				"fk_pg_stat_database_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -798,7 +810,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_database_conflicts
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_database_conflicts", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_database_conflicts (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -825,7 +837,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_database_conflicts table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_stat_database_conflicts",
 				"fk_pg_stat_database_conflicts_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -834,7 +846,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_checkpointer (consolidated with pg_stat_bgwriter)
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_checkpointer", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_checkpointer (
 					connection_id INTEGER NOT NULL,
 					num_timed BIGINT,
@@ -863,7 +875,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_checkpointer table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_stat_checkpointer",
 				"fk_pg_stat_checkpointer_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -872,7 +884,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_wal (consolidated with pg_stat_archiver)
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_wal", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_wal (
 					connection_id INTEGER NOT NULL,
 					wal_records BIGINT,
@@ -904,7 +916,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_wal table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_stat_wal",
 				"fk_pg_stat_wal_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -913,7 +925,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_replication (consolidated with pg_stat_wal_receiver)
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_replication", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_replication (
 					connection_id INTEGER NOT NULL,
 					pid INTEGER NOT NULL,
@@ -965,7 +977,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_replication table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_stat_replication",
 				"fk_pg_stat_replication_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -974,7 +986,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_replication_slots (consolidated with pg_stat_replication_slots)
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_replication_slots", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_replication_slots (
 					connection_id INTEGER NOT NULL,
 					slot_name TEXT NOT NULL,
@@ -1008,7 +1020,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_replication_slots table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_replication_slots",
 				"fk_pg_replication_slots_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1017,7 +1029,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_subscription (consolidated with pg_stat_subscription_stats)
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_subscription", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_subscription (
 					connection_id INTEGER NOT NULL,
 					subid OID NOT NULL,
@@ -1049,7 +1061,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_subscription table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_stat_subscription",
 				"fk_pg_stat_subscription_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1058,7 +1070,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_recovery_prefetch
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_recovery_prefetch", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_recovery_prefetch (
 					connection_id INTEGER NOT NULL,
 					prefetch BIGINT,
@@ -1084,7 +1096,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_recovery_prefetch table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_stat_recovery_prefetch",
 				"fk_pg_stat_recovery_prefetch_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1093,7 +1105,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_io
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_io", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_io (
 					connection_id INTEGER NOT NULL,
 					backend_type TEXT NOT NULL,
@@ -1133,7 +1145,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_io table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_stat_io",
 				"fk_pg_stat_io_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1142,7 +1154,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_connection_security (merged from pg_stat_ssl and pg_stat_gssapi)
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_connection_security", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_connection_security (
 					connection_id INTEGER NOT NULL,
 					pid INTEGER NOT NULL,
@@ -1172,7 +1184,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_connection_security table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_stat_connection_security",
 				"fk_pg_stat_connection_security_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1181,7 +1193,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_user_functions
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_stat_user_functions", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_user_functions (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -1208,7 +1220,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_user_functions table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_stat_user_functions",
 				"fk_pg_stat_user_functions_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1217,7 +1229,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_statio_all_sequences
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_statio_all_sequences", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_statio_all_sequences (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -1241,7 +1253,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_statio_all_sequences table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_statio_all_sequences",
 				"fk_pg_statio_all_sequences_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1250,7 +1262,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_database
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_database", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_database (
 					connection_id INTEGER NOT NULL,
 					datname TEXT NOT NULL,
@@ -1281,7 +1293,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_database table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_database",
 				"fk_pg_database_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1290,7 +1302,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_settings
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_settings", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_settings (
 					connection_id INTEGER NOT NULL,
 					name TEXT NOT NULL,
@@ -1325,7 +1337,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_settings table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_settings",
 				"fk_pg_settings_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1334,7 +1346,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_hba_file_rules
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_hba_file_rules", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_hba_file_rules (
 					connection_id INTEGER NOT NULL,
 					rule_number INTEGER NOT NULL,
@@ -1363,7 +1375,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_hba_file_rules table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_hba_file_rules",
 				"fk_pg_hba_file_rules_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1372,7 +1384,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_ident_file_mappings
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_ident_file_mappings", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_ident_file_mappings (
 					connection_id INTEGER NOT NULL,
 					map_number INTEGER NOT NULL,
@@ -1397,7 +1409,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_ident_file_mappings table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_ident_file_mappings",
 				"fk_pg_ident_file_mappings_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1406,7 +1418,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_server_info
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_server_info", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_server_info (
 					connection_id INTEGER NOT NULL,
 					server_version TEXT,
@@ -1431,7 +1443,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_server_info table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_server_info",
 				"fk_pg_server_info_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1440,7 +1452,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_node_role
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_node_role", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_node_role (
 					connection_id INTEGER NOT NULL,
 					is_in_recovery BOOLEAN NOT NULL,
@@ -1483,7 +1495,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_node_role table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_node_role",
 				"fk_pg_node_role_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1492,7 +1504,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_extension
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_extension", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_extension (
 					connection_id INTEGER NOT NULL,
 					database_name TEXT NOT NULL,
@@ -1513,7 +1525,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_extension table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_extension",
 				"fk_pg_extension_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1522,7 +1534,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_connectivity
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_connectivity", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_connectivity (
 					connection_id INTEGER NOT NULL,
 					collected_at TIMESTAMPTZ NOT NULL,
@@ -1546,7 +1558,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// =====================================================================
 
 			// metrics.pg_sys_cpu_info
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_sys_cpu_info", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_cpu_info (
 					connection_id INTEGER NOT NULL,
 					vendor TEXT,
@@ -1577,7 +1589,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_cpu_usage_info
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_sys_cpu_usage_info", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_cpu_usage_info (
 					connection_id INTEGER NOT NULL,
 					usermode_normal_process_percent REAL,
@@ -1604,7 +1616,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_cpu_usage_info table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_sys_cpu_usage_info",
 				"fk_pg_sys_cpu_usage_info_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1613,7 +1625,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_cpu_memory_by_process
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_sys_cpu_memory_by_process", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_cpu_memory_by_process (
 					connection_id INTEGER NOT NULL,
 					pid INTEGER NOT NULL,
@@ -1637,7 +1649,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_cpu_memory_by_process table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_sys_cpu_memory_by_process",
 				"fk_pg_sys_cpu_memory_by_process_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1646,7 +1658,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_memory_info
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_sys_memory_info", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_memory_info (
 					connection_id INTEGER NOT NULL,
 					total_memory BIGINT,
@@ -1673,7 +1685,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_disk_info
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_sys_disk_info", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_disk_info (
 					connection_id INTEGER NOT NULL,
 					mount_point TEXT NOT NULL,
@@ -1702,7 +1714,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_disk_info table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_sys_disk_info",
 				"fk_pg_sys_disk_info_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1711,7 +1723,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_io_analysis_info
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_sys_io_analysis_info", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_io_analysis_info (
 					connection_id INTEGER NOT NULL,
 					device_name TEXT NOT NULL,
@@ -1735,7 +1747,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_load_avg_info
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_sys_load_avg_info", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_load_avg_info (
 					connection_id INTEGER NOT NULL,
 					load_avg_one_minute REAL,
@@ -1755,7 +1767,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_load_avg_info table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_sys_load_avg_info",
 				"fk_pg_sys_load_avg_info_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1764,7 +1776,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_network_info
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_sys_network_info", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_network_info (
 					connection_id INTEGER NOT NULL,
 					interface_name TEXT NOT NULL,
@@ -1793,7 +1805,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_network_info table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_sys_network_info",
 				"fk_pg_sys_network_info_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1802,7 +1814,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_os_info
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_sys_os_info", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_os_info (
 					connection_id INTEGER NOT NULL,
 					name TEXT,
@@ -1828,7 +1840,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_os_info table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_sys_os_info",
 				"fk_pg_sys_os_info_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -1837,7 +1849,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_process_info
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "pg_sys_process_info", `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_process_info (
 					connection_id INTEGER NOT NULL,
 					total_processes INTEGER,
@@ -1858,7 +1870,7 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_process_info table: %w", err)
 			}
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.pg_sys_process_info",
 				"fk_pg_sys_process_info_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -2612,16 +2624,25 @@ func (sm *SchemaManager) registerMigrations() {
 			// PART 7: pgvector Support (Optional)
 			// =====================================================================
 
-			// Check if pgvector extension is available
+			// Check if pgvector extension is available. Under ColdFront
+			// the optional setup is skipped altogether: it runs inside
+			// SAVEPOINTs, which pg_duckdb does not allow in a
+			// transaction that has already written to Iceberg, as this
+			// one has by creating the metrics tables.
 			var vectorAvailable bool
-			err = tx.QueryRow(ctx, `
+			if !sm.useColdFrontForMetrics {
+				err = tx.QueryRow(ctx, `
 				SELECT EXISTS(SELECT 1 FROM pg_available_extensions WHERE name = 'vector')
 			`).Scan(&vectorAvailable)
-			if err != nil {
-				return fmt.Errorf("failed to check vector extension availability: %w", err)
+				if err != nil {
+					return fmt.Errorf("failed to check vector extension availability: %w", err)
+				}
 			}
 
-			if vectorAvailable {
+			switch {
+			case sm.useColdFrontForMetrics:
+				logger.Info("pgvector setup skipped: metrics are stored in ColdFront")
+			case vectorAvailable:
 				// pgvector setup runs inside its own SAVEPOINT so a
 				// failure here (extension actually missing despite
 				// pg_available_extensions, HNSW operator not
@@ -2635,7 +2656,7 @@ func (sm *SchemaManager) registerMigrations() {
 					logger.Infof("pgvector setup skipped: %v", err)
 					vectorAvailable = false
 				}
-			} else {
+			default:
 				logger.Info("pgvector extension not available, skipping anomaly embeddings setup")
 			}
 
@@ -2813,7 +2834,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// the natural Spock keys (remote_origin, remote_commit_ts,
 			// command_counter, retry_errored_at) collide across databases
 			// without the database_name discriminator.
-			_, err := tx.Exec(ctx, `
+			err := sm.execMetricsDDL(ctx, tx, "spock_exception_log", `
 				CREATE TABLE IF NOT EXISTS metrics.spock_exception_log (
 					connection_id INTEGER NOT NULL,
 					database_name TEXT NOT NULL,
@@ -2854,7 +2875,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// because there is a window where the FK is absent; the
 			// catalog-check variant leaves an existing constraint
 			// completely untouched.
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.spock_exception_log",
 				"fk_spock_exception_log_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -2872,7 +2893,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// databases; without the discriminator two rows with the same id
 			// collected from different databases on the same monitored
 			// connection would collide on the composite key.
-			_, err = tx.Exec(ctx, `
+			err = sm.execMetricsDDL(ctx, tx, "spock_resolutions", `
 				CREATE TABLE IF NOT EXISTS metrics.spock_resolutions (
 					connection_id INTEGER NOT NULL,
 					database_name TEXT NOT NULL,
@@ -2908,7 +2929,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create metrics.spock_resolutions: %w", err)
 			}
 			// See the note above the spock_exception_log helper call.
-			if err := addConstraintIfMissing(ctx, tx,
+			if err := sm.addMetricsConstraint(ctx, tx,
 				"metrics.spock_resolutions",
 				"fk_spock_resolutions_connection_id",
 				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
@@ -3018,7 +3039,11 @@ func (sm *SchemaManager) registerMigrations() {
 			// child indexes on every weekly partition; DROP INDEX on
 			// the parent cascades to those children. On fresh v4
 			// installs the indexes were never created, so the
-			// IF EXISTS clause keeps the migration idempotent.
+			// IF EXISTS clause keeps the migration idempotent. Under
+			// ColdFront the metrics views never had these indexes.
+			if sm.useColdFrontForMetrics {
+				return nil
+			}
 			_, err = tx.Exec(ctx, `
 				DROP INDEX IF EXISTS metrics.idx_pg_stat_all_indexes_conn_db_time;
 				DROP INDEX IF EXISTS metrics.idx_pg_stat_statements_conn_db_time;
@@ -3068,6 +3093,13 @@ func (sm *SchemaManager) registerMigrations() {
 		Description: "Widen embedding columns to halfvec(4000) for multi-provider support",
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
+
+			// Under ColdFront migration #1 skipped the pgvector setup, so
+			// there is no embedding column to widen, and the upgrade's
+			// SAVEPOINT is avoided.
+			if sm.useColdFrontForMetrics {
+				return nil
+			}
 
 			if err := upgradeEmbeddingColumnToHalfvec(ctx, tx,
 				"chat_memories", "embedding",
@@ -3476,6 +3508,11 @@ func (sm *SchemaManager) registerMigrations() {
 		Description: "Add covering index for the windowed top-queries aggregation",
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
+
+			// A ColdFront view cannot be indexed.
+			if sm.useColdFrontForMetrics {
+				return nil
+			}
 
 			_, err := tx.Exec(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_identity_time
@@ -3909,6 +3946,13 @@ func (sm *SchemaManager) registerMigrations() {
 		Description: "Mask secrets stored in pg_hba_file_rules options and errors",
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
+			// Under ColdFront there is nothing to rewrite: an existing
+			// datastore cannot be switched to ColdFront, so its metrics
+			// tables were created empty during this same startup by a
+			// collector whose probes already mask these values.
+			if sm.useColdFrontForMetrics {
+				return nil
+			}
 			// The values of ldapbindpasswd and radiussecrets, the
 			// options PostgreSQL reports with a credential as the
 			// value, keeping the element order.
@@ -3967,8 +4011,12 @@ func (sm *SchemaManager) registerMigrations() {
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
 
-			if err := redactStoredPgSettings(ctx, tx); err != nil {
-				return fmt.Errorf("failed to redact stored pg_settings values: %w", err)
+			// Under ColdFront the table is empty, as for migration 24,
+			// so only the comments apply.
+			if !sm.useColdFrontForMetrics {
+				if err := redactStoredPgSettings(ctx, tx); err != nil {
+					return fmt.Errorf("failed to redact stored pg_settings values: %w", err)
+				}
 			}
 
 			_, err := tx.Exec(ctx, `
@@ -4004,8 +4052,12 @@ func (sm *SchemaManager) registerMigrations() {
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
 
-			if err := redactStoredStatementText(ctx, tx); err != nil {
-				return fmt.Errorf("failed to redact stored statement text: %w", err)
+			// Under ColdFront the tables are empty, as for migration
+			// 24, so only the comments apply.
+			if !sm.useColdFrontForMetrics {
+				if err := redactStoredStatementText(ctx, tx); err != nil {
+					return fmt.Errorf("failed to redact stored statement text: %w", err)
+				}
 			}
 
 			_, err := tx.Exec(ctx, `

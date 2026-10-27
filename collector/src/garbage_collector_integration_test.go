@@ -46,6 +46,7 @@ func (c *gcTestConfig) GetPgSSLKey() string                 { return "" }
 func (c *gcTestConfig) GetPgSSLRootCert() string            { return "" }
 func (c *gcTestConfig) GetDatastorePoolMaxConnections() int { return 4 }
 func (c *gcTestConfig) GetDatastorePoolMaxIdleSeconds() int { return 60 }
+func (c *gcTestConfig) GetUseColdFrontForMetrics() bool     { return false }
 
 // gcTestEnv parses TEST_AI_WORKBENCH_SERVER into connection parts. The
 // tests skip when it is unset, matching the rest of the suite.

@@ -169,6 +169,7 @@ func (c *datastoreCfg) GetPgSSLKey() string                 { return "" }
 func (c *datastoreCfg) GetPgSSLRootCert() string            { return "" }
 func (c *datastoreCfg) GetDatastorePoolMaxConnections() int { return c.maxConnections }
 func (c *datastoreCfg) GetDatastorePoolMaxIdleSeconds() int { return c.maxIdleSeconds }
+func (c *datastoreCfg) GetUseColdFrontForMetrics() bool     { return false }
 
 func parseTestServer(t *testing.T) *datastoreCfg {
 	t.Helper()

@@ -82,6 +82,10 @@ func (m *mockConfig) GetDatastorePoolMaxIdleSeconds() int {
 	return m.datastorePoolMaxIdleSeconds
 }
 
+func (m *mockConfig) GetUseColdFrontForMetrics() bool {
+	return false
+}
+
 func TestBuildConnectionString(t *testing.T) {
 	config := &mockConfig{
 		pgHost:                      "testhost",

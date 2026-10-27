@@ -39,6 +39,10 @@ type Config interface {
 	GetPgSSLRootCert() string
 	GetDatastorePoolMaxConnections() int
 	GetDatastorePoolMaxIdleSeconds() int
+
+	// GetUseColdFrontForMetrics reports whether the metrics.* tables are
+	// stored in pgEdge ColdFront rather than as partitioned tables.
+	GetUseColdFrontForMetrics() bool
 }
 
 // Datastore represents a connection to the PostgreSQL datastore
@@ -136,8 +140,17 @@ func (ds *Datastore) initializeSchema() error {
 	}
 	defer ds.ReturnConnection(conn)
 
+	// Refuse a datastore that cannot hold metrics in the configured
+	// storage mode before any migration touches it.
+	useColdFront := ds.config.GetUseColdFrontForMetrics()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := CheckMetricsStorage(ctx, conn, useColdFront); err != nil {
+		return err
+	}
+
 	// Use the schema manager to apply migrations
-	schemaManager := NewSchemaManager()
+	schemaManager := NewSchemaManager(WithColdFrontMetrics(useColdFront))
 	if err := schemaManager.Migrate(conn); err != nil {
 		return fmt.Errorf("failed to migrate schema: %w", err)
 	}

@@ -148,8 +148,14 @@ var partitionCandidatesQuery = sqlmarker.Tag(`
         ORDER BY c.relname
     `)
 
-// EnsurePartition creates a partition for the given week if it doesn't exist
+// EnsurePartition creates a partition for the given week if it doesn't
+// exist. Under ColdFront it does nothing: the metrics tables are views
+// over Iceberg tables that ColdFront partitions itself.
 func EnsurePartition(ctx context.Context, conn DatastoreQuerier, tableName string, timestamp time.Time) error {
+	if ColdFrontMetricsEnabled() {
+		return nil
+	}
+
 	nameSuffix, weekStart, weekEnd := weeklyPartitionBounds(timestamp)
 
 	partitionName := fmt.Sprintf("%s_%s", tableName, nameSuffix)
@@ -201,7 +207,14 @@ func EnsurePartition(ctx context.Context, conn DatastoreQuerier, tableName strin
 // Rows result set. Doing so surfaces as a "conn busy" error. The two
 // catalog queries used here are therefore fully drained and closed
 // before any DROP TABLE is issued against the same connection.
+//
+// Under ColdFront it drops nothing: ColdFront and the operator own the
+// lifecycle of the metrics data, and the Workbench performs no retention.
 func DropExpiredPartitions(ctx context.Context, conn DatastoreQuerier, tableName string, retentionDays int) (int, error) {
+	if ColdFrontMetricsEnabled() {
+		return 0, nil
+	}
+
 	// Calculate the cutoff timestamp
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 

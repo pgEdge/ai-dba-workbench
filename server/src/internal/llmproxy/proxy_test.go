@@ -25,8 +25,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/provider/anthropic"
 	"github.com/pgEdge/pgedge-go-llm-lib/llm/proxy"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/pgedge/ai-workbench/pkg/llmsettings"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/chat"
@@ -1587,5 +1590,135 @@ func TestNewHandler_ToolResultsReachProviderAsToolRole(t *testing.T) {
 	}
 	if len(last.Content) != 1 || last.Content[0].ToolUseID != "call_1" {
 		t.Errorf("expected the call_1 tool result to be preserved, got %+v", last.Content)
+	}
+}
+
+// -----------------------------------------------------------------------
+// Request settings: reasoning effort, prompt caching and extra body
+// (issue #726).
+// -----------------------------------------------------------------------
+
+func testRequestSettings() llmsettings.Settings {
+	return llmsettings.Settings{
+		ReasoningEffort: "medium",
+		PromptCaching:   "auto",
+		ExtraBody:       map[string]any{"prompt_cache_key": "ellie"},
+	}
+}
+
+func assertRequestSettingsApplied(t *testing.T, opts pgllm.Options) {
+	t.Helper()
+	if opts.ReasoningEffort != pgllm.ReasoningEffortMedium {
+		t.Errorf("ReasoningEffort: got %q, want medium", opts.ReasoningEffort)
+	}
+	if opts.PromptCaching != pgllm.PromptCachingAuto {
+		t.Errorf("PromptCaching: got %q, want auto", opts.PromptCaching)
+	}
+	if opts.ExtraBody["prompt_cache_key"] != "ellie" {
+		t.Errorf("ExtraBody: got %v, want prompt_cache_key=ellie", opts.ExtraBody)
+	}
+}
+
+// TestProviderOptions_RequestSettings verifies that the operator's
+// request settings become the client defaults of every proxy provider.
+func TestProviderOptions_RequestSettings(t *testing.T) {
+	for _, provider := range []string{"anthropic", "openai", "gemini", "ollama"} {
+		t.Run(provider, func(t *testing.T) {
+			cfg := &Config{Model: "m", RequestSettings: testRequestSettings()}
+			assertRequestSettingsApplied(t, cfg.providerOptions(provider, "k", ""))
+		})
+	}
+}
+
+// TestBuildClientOptions_RequestSettings verifies that the analysis
+// clients get the same request settings as the chat proxy.
+func TestBuildClientOptions_RequestSettings(t *testing.T) {
+	cfg := &Config{Provider: "openai", Model: "m", OpenAIAPIKey: "k", RequestSettings: testRequestSettings()}
+	assertRequestSettingsApplied(t, cfg.BuildClientOptions(0.1))
+}
+
+// TestBuildClientOptions_NoRequestSettings verifies that an unset
+// configuration leaves the request settings at the library's defaults.
+func TestBuildClientOptions_NoRequestSettings(t *testing.T) {
+	cfg := &Config{Provider: "openai", Model: "m", OpenAIAPIKey: "k"}
+	opts := cfg.BuildClientOptions(0.1)
+	if opts.ReasoningEffort != "" || opts.PromptCaching != "" || opts.ExtraBody != nil {
+		t.Errorf("expected unset request settings, got effort=%q caching=%q extra=%v",
+			opts.ReasoningEffort, opts.PromptCaching, opts.ExtraBody)
+	}
+}
+
+// TestTransformRequest_PromptCaching verifies that the tool list and the
+// system prompt are marked for Anthropic prompt caching only when
+// prompt_caching is auto.
+func TestTransformRequest_PromptCaching(t *testing.T) {
+	tests := []struct {
+		name      string
+		caching   string
+		tools     []pgllm.Tool
+		wantExt   bool
+		wantTools int
+	}{
+		{name: "auto with tools", caching: "auto", tools: []pgllm.Tool{{Name: "a"}, {Name: "b"}}, wantExt: true, wantTools: 1},
+		{name: "auto without tools", caching: "auto", wantExt: true, wantTools: -1},
+		{name: "off", caching: "off", tools: []pgllm.Tool{{Name: "a"}}},
+		{name: "unset", tools: []pgllm.Tool{{Name: "a"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{RequestSettings: llmsettings.Settings{PromptCaching: tt.caching}}
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", nil)
+			llmReq := &pgllm.ChatRequest{Tools: tt.tools}
+			if err := cfg.transformRequest(req, llmReq); err != nil {
+				t.Fatalf("transformRequest error: %v", err)
+			}
+			if !tt.wantExt {
+				if len(llmReq.Extensions) != 0 {
+					t.Fatalf("expected no extensions, got %v", llmReq.Extensions)
+				}
+				return
+			}
+			if len(llmReq.Extensions) != 1 {
+				t.Fatalf("expected one extension, got %v", llmReq.Extensions)
+			}
+			ext, ok := llmReq.Extensions[0].(anthropic.Extension)
+			if !ok {
+				t.Fatalf("expected an Anthropic extension, got %T", llmReq.Extensions[0])
+			}
+			if !ext.CacheSystem {
+				t.Error("expected the system prompt to be marked for caching")
+			}
+			if ext.CacheToolsThrough != tt.wantTools {
+				t.Errorf("CacheToolsThrough: got %d, want %d", ext.CacheToolsThrough, tt.wantTools)
+			}
+			if llmReq.SystemPrompt != chat.SystemPrompt {
+				t.Error("expected the system prompt to be unchanged by caching")
+			}
+		})
+	}
+}
+
+// TestProviderOptions_HeaderLoadErrorTreatedAsNoHeaders verifies that a
+// header-loading failure in the proxy path is logged and treated as no
+// headers, so the request settings and credentials still apply.
+func TestProviderOptions_HeaderLoadErrorTreatedAsNoHeaders(t *testing.T) {
+	cfg := &Config{
+		Model: "m",
+		LLMConfig: &config.LLMConfig{
+			CustomHeadersFiles: map[string]string{
+				"X-From-File": "/nonexistent/does/not/exist/header",
+			},
+		},
+		RequestSettings: llmsettings.Settings{ReasoningEffort: "low"},
+	}
+	opts := cfg.providerOptions("anthropic", "k", "")
+	if opts.CustomHeaders != nil {
+		t.Errorf("expected nil headers when header loading fails, got %v", opts.CustomHeaders)
+	}
+	if opts.APIKey != "k" {
+		t.Errorf("APIKey: got %q, want %q", opts.APIKey, "k")
+	}
+	if opts.ReasoningEffort != "low" {
+		t.Errorf("ReasoningEffort: got %q, want low", opts.ReasoningEffort)
 	}
 }

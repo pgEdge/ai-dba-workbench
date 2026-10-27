@@ -1,10 +1,10 @@
 module github.com/pgedge/ai-workbench/pkg
 
-go 1.26.8
+go 1.26.10
 
 require (
 	golang.org/x/crypto v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/pgEdge/pgedge-go-llm-lib v0.5.0
+require github.com/pgEdge/pgedge-go-llm-lib v0.6.0

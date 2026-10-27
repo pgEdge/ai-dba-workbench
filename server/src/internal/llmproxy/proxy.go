@@ -32,7 +32,10 @@ import (
 
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	_ "github.com/pgEdge/pgedge-go-llm-lib/llm/all" // register all built-in providers
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/provider/anthropic"
 	"github.com/pgEdge/pgedge-go-llm-lib/llm/proxy"
+
+	"github.com/pgedge/ai-workbench/pkg/llmsettings"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/chat"
@@ -61,6 +64,11 @@ type Config struct {
 	MemoryStore            *memory.Store     // Memory store for pinned memory injection (may be nil)
 	AuthStore              *auth.AuthStore   // Auth store for user context injection (may be nil)
 	LLMConfig              *config.LLMConfig // LLMConfig for accessing custom headers (may be nil)
+
+	// RequestSettings holds the operator's reasoning effort, prompt
+	// caching and extra body settings, applied as client defaults to
+	// every provider the proxy and the analysis clients build.
+	RequestSettings llmsettings.Settings
 }
 
 // maxChatBodySize caps the chat/embed/rerank request body at 5MB to
@@ -298,6 +306,7 @@ func (c *Config) providerOptions(name, apiKey, baseURL string) pgllm.Options {
 	if c.LLMConfig != nil && c.LLMConfig.TimeoutSeconds > 0 {
 		opts.RequestTimeout = time.Duration(c.LLMConfig.TimeoutSeconds) * time.Second
 	}
+	c.RequestSettings.Apply(&opts)
 	return opts
 }
 
@@ -377,6 +386,7 @@ func (c *Config) BuildClientOptions(temperature float64) pgllm.Options {
 	if c.LLMConfig != nil && c.LLMConfig.TimeoutSeconds > 0 {
 		opts.RequestTimeout = time.Duration(c.LLMConfig.TimeoutSeconds) * time.Second
 	}
+	c.RequestSettings.Apply(&opts)
 	return opts
 }
 
@@ -424,7 +434,9 @@ func (c *Config) authorize(r *http.Request) error {
 //  1. compact tool-description selection (Workbench policy);
 //  2. default to the Ellie system prompt when the request omits one;
 //  3. wrap with pinned-memory context (when a memory store is present);
-//  4. wrap with user/RBAC context (when an auth store is present).
+//  4. wrap with user/RBAC context (when an auth store is present);
+//  5. with prompt_caching set to auto, mark the tool list and the
+//     system prompt for Anthropic prompt caching.
 //
 // The Ellie persona is ALWAYS applied when the request carries no system
 // prompt; this was previously done inside the chat clients and is now
@@ -445,7 +457,24 @@ func (c *Config) transformRequest(r *http.Request, req *pgllm.ChatRequest) error
 	base = c.applyUserContext(ctx, base)
 
 	req.SystemPrompt = base
+	c.applyPromptCaching(req)
 	return nil
+}
+
+// applyPromptCaching marks the tool list and the system prompt as
+// cacheable prefixes when prompt_caching is auto, using the library's
+// Anthropic helpers, which other providers ignore. The client default
+// set by providerOptions already has Anthropic cache the conversation
+// up to its last block; these markers add breakpoints at the end of the
+// tools and of the system prompt, which normally stay the same on every
+// step of an Ask Ellie tool loop, so each step reads them from the cache
+// even when the conversation after them has changed. With caching off the
+// request is left as it is, so no cache write is ever billed.
+func (c *Config) applyPromptCaching(req *pgllm.ChatRequest) {
+	if !c.RequestSettings.CachingEnabled() {
+		return
+	}
+	*req = anthropic.WithSystemCaching(anthropic.WithToolCaching(*req))
 }
 
 // normalizeToolResultRoles moves tool_result blocks out of user-role

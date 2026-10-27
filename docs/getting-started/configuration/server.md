@@ -142,6 +142,9 @@ llm:
   temperature: 0.7
   max_iterations: 50
   compact_tool_descriptions: "auto"
+  # reasoning_effort: "medium"
+  # prompt_caching: "auto"
+  # extra_body: {}
 
 #=====================================================
 # KNOWLEDGEBASE CONFIGURATION
@@ -567,6 +570,9 @@ database analysis.
 | `anthropic_base_url` | string | `https://api.anthropic.com/v1` | Anthropic base URL |
 | `openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 | `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
+| `reasoning_effort` | string | | Reasoning effort level |
+| `prompt_caching` | string | | Prompt caching mode |
+| `extra_body` | mapping | | Extra request body fields (OpenAI only) |
 
 #### Sampling Temperature (`temperature`)
 
@@ -684,6 +690,89 @@ llm:
   anthropic_api_key_file: "~/.anthropic-api-key"
   compact_tool_descriptions: "false"
 ```
+
+#### Reasoning Effort (`reasoning_effort`)
+
+The `reasoning_effort` option sets how much a
+reasoning model thinks before it answers. The option
+accepts `none`, `minimal`, `low`, `medium`, `high`,
+`xhigh`, or `max`; the server refuses to start with
+any other value. When the option is unset, the server
+leaves the setting out of each request and the model
+uses its own default.
+
+The setting applies to Ask Ellie, the AI Overview,
+and the server-info AI database analysis. Each
+provider translates the level into its own request
+field:
+
+- OpenAI sends the level as `reasoning_effort`.
+- Anthropic enables adaptive thinking at the given
+  effort, treating `minimal` as `low`; `none` turns
+  thinking off.
+- Gemini sends the level as the thinking level,
+  treating `none` as `minimal`, and `xhigh` and `max`
+  as `high`.
+- Ollama ignores the setting.
+
+Which levels a model accepts varies by model. When a
+model rejects a level, the server retries the request
+without the setting. A model counts its thinking tokens against
+`max_tokens`, so a higher effort may need a larger
+output budget.
+
+#### Prompt Caching (`prompt_caching`)
+
+The `prompt_caching` option accepts `auto` or `off`;
+an unset value means `off`. With `auto`, Anthropic
+caches the tool list, the system prompt, and the
+conversation so far, so each step of an Ask Ellie
+tool loop reads the unchanged part of the prompt from
+the cache instead of paying the full input rate for
+the part again. OpenAI and Gemini cache prompts
+automatically, so the option makes no difference for
+those providers; Ollama ignores the option.
+
+Anthropic charges more than the normal input rate to
+write a prompt to the cache, so leave the option off
+when requests rarely repeat a prompt.
+
+#### Extra Request Fields (`extra_body`)
+
+The `extra_body` option adds fields to the JSON body
+of every chat request the server sends through the
+`openai` provider. Use the option to pass a setting
+that the server does not model, such as the options
+of an OpenAI-compatible gateway. A field in
+`extra_body` replaces any field of the same name that
+the server builds. The Anthropic, Gemini, and Ollama
+providers ignore the option.
+
+The server refuses to start when `extra_body` sets
+`stream`, which the server chooses for each request,
+or contains a value that cannot be sent as JSON. The
+server never logs the values in `extra_body`, but you
+should still store a credential in an API key file
+rather than in this option.
+
+In the following example, the `llm` section asks a
+reasoning model for low effort and passes a caching
+option to an OpenAI-compatible gateway:
+
+```yaml
+llm:
+  provider: "openai"
+  model: "anthropic/claude-sonnet-5"
+  openai_base_url: "https://gateway.example.com/v1"
+  reasoning_effort: "low"
+  extra_body:
+    providerOptions:
+      gateway:
+        caching: "auto"
+```
+
+The server reads these three options at startup only;
+restart the server to apply a change.
 
 #### OpenAI-Compatible Local Servers
 

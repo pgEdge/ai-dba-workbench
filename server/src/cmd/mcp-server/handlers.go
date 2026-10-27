@@ -576,6 +576,7 @@ func newLLMProxyConfig(llm *config.LLMConfig) *llmproxy.Config {
 		Temperature:            pgllm.Float(llm.Temperature()),
 		UseCompactDescriptions: llm.UseCompactDescriptions(),
 		LLMConfig:              llm,
+		RequestSettings:        llm.RequestSettings,
 	}
 }
 

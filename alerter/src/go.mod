@@ -1,10 +1,10 @@
 module github.com/pgedge/ai-workbench/alerter
 
-go 1.26.8
+go 1.26.10
 
 require (
 	github.com/jackc/pgx/v5 v5.9.2
-	github.com/pgEdge/pgedge-go-llm-lib v0.5.0
+	github.com/pgEdge/pgedge-go-llm-lib v0.6.0
 	github.com/pgedge/ai-workbench/pkg v0.0.0
 	github.com/robfig/cron/v3 v3.0.1
 	gopkg.in/yaml.v3 v3.0.1

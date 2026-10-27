@@ -26,7 +26,7 @@ jobs:
         runs-on: ubuntu-latest
         strategy:
             matrix:
-                go-version: ['1.26.8']
+                go-version: ['1.26.10']
                 postgres-version: ['14', '15', '16', '17', '18']
             fail-fast: false
 
@@ -73,7 +73,7 @@ jobs:
               run: go mod download
 
             - name: Lint server code
-              if: matrix.go-version == '1.26.8' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26.10' && matrix.postgres-version == '18'
               working-directory: server
               run: |
                   go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
@@ -81,12 +81,12 @@ jobs:
                   make lint
 
             - name: Run go vet
-              if: matrix.go-version == '1.26.8' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26.10' && matrix.postgres-version == '18'
               working-directory: server/src
               run: go vet ./...
 
             - name: Check formatting
-              if: matrix.go-version == '1.26.8' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26.10' && matrix.postgres-version == '18'
               working-directory: server
               run: |
                   gofmt -l ./src > /tmp/gofmt.out
@@ -119,7 +119,7 @@ jobs:
               run: make coverage
 
             - name: Generate coverage report
-              if: matrix.go-version == '1.26.8' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26.10' && matrix.postgres-version == '18'
               working-directory: server/src
               run: |
                   go tool cover -func=coverage.out
@@ -134,7 +134,7 @@ jobs:
             # we set working-directory there and use relative paths for
             # -infile/-outfile.
             - name: Convert coverage to lcov
-              if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.go-version == '1.26.8' && matrix.postgres-version == '18'
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.go-version == '1.26.10' && matrix.postgres-version == '18'
               working-directory: server/src
               run: |
                   go install github.com/jandelgado/gcov2lcov@v1.1.1
@@ -144,7 +144,7 @@ jobs:
             # Finalization (the single `final` call) happens in the client
             # CI workflow after all language partials have been pushed.
             - name: Upload coverage to Codacy
-              if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.go-version == '1.26.8' && matrix.postgres-version == '18'
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.go-version == '1.26.10' && matrix.postgres-version == '18'
               env:
                   CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
               run: |
@@ -155,7 +155,7 @@ jobs:
                     -r server/src/coverage.lcov
 
             - name: Upload build artifact
-              if: matrix.go-version == '1.26.8' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26.10' && matrix.postgres-version == '18'
               uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: ai-dba-server-linux-amd64
@@ -163,7 +163,7 @@ jobs:
                   retention-days: 7
 
             - name: Upload coverage artifact
-              if: matrix.go-version == '1.26.8' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26.10' && matrix.postgres-version == '18'
               uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
               with:
                   name: server-coverage

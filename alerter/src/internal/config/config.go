@@ -18,6 +18,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/pkg/llmsettings"
 	"gopkg.in/yaml.v3"
 )
 
@@ -434,6 +435,11 @@ type OllamaConfig struct {
 	BaseURL        string `yaml:"base_url"`
 	EmbeddingModel string `yaml:"embedding_model"`
 	ReasoningModel string `yaml:"reasoning_model"`
+
+	// RequestSettings holds reasoning_effort, prompt_caching and
+	// extra_body, applied to the tier-3 reasoning client when this
+	// provider is llm.reasoning_provider.
+	RequestSettings llmsettings.Settings `yaml:",inline"`
 }
 
 // OpenAIConfig holds OpenAI provider settings
@@ -447,6 +453,11 @@ type OpenAIConfig struct {
 	// llm.decision_provider is "openai".
 	DecisionModel string `yaml:"decision_model"`
 	apiKey        string
+
+	// RequestSettings holds reasoning_effort, prompt_caching and
+	// extra_body, applied to the tier-3 reasoning client when this
+	// provider is llm.reasoning_provider.
+	RequestSettings llmsettings.Settings `yaml:",inline"`
 }
 
 // AnthropicConfig holds Anthropic provider settings
@@ -455,6 +466,11 @@ type AnthropicConfig struct {
 	BaseURL        string `yaml:"base_url"`
 	ReasoningModel string `yaml:"reasoning_model"`
 	apiKey         string
+
+	// RequestSettings holds reasoning_effort, prompt_caching and
+	// extra_body, applied to the tier-3 reasoning client when this
+	// provider is llm.reasoning_provider.
+	RequestSettings llmsettings.Settings `yaml:",inline"`
 }
 
 // VoyageConfig holds Voyage provider settings
@@ -472,6 +488,11 @@ type GeminiConfig struct {
 	EmbeddingModel string `yaml:"embedding_model"`
 	ReasoningModel string `yaml:"reasoning_model"`
 	apiKey         string
+
+	// RequestSettings holds reasoning_effort, prompt_caching and
+	// extra_body, applied to the tier-3 reasoning client when this
+	// provider is llm.reasoning_provider.
+	RequestSettings llmsettings.Settings `yaml:",inline"`
 }
 
 // TypeSafeConfig holds the settings of the TypeSafe provider, which serves
@@ -747,7 +768,31 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("anomaly.provider_health.failure_rate_window must be between 1 and %d",
 			MaxProviderFailureRateWindow)
 	}
+	if err := c.validateRequestSettings(); err != nil {
+		return err
+	}
 	return c.validateDecisionProvider()
+}
+
+// validateRequestSettings checks the reasoning_effort, prompt_caching and
+// extra_body settings of every provider section, whether or not that
+// provider is in use, so a mistake is caught before it is switched on.
+func (c *Config) validateRequestSettings() error {
+	sections := []struct {
+		name     string
+		settings llmsettings.Settings
+	}{
+		{"llm.openai", c.LLM.OpenAI.RequestSettings},
+		{"llm.anthropic", c.LLM.Anthropic.RequestSettings},
+		{"llm.gemini", c.LLM.Gemini.RequestSettings},
+		{"llm.ollama", c.LLM.Ollama.RequestSettings},
+	}
+	for _, s := range sections {
+		if err := s.settings.Validate(s.name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // validateDecisionProvider checks llm.decision_provider and, when one is

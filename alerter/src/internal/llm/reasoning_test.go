@@ -19,6 +19,7 @@ import (
 
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
+	"github.com/pgedge/ai-workbench/pkg/llmsettings"
 )
 
 // thinkingBlock is the content-block type a reasoning model emits for its
@@ -227,7 +228,7 @@ func TestNewLibReasoningMaxTokensResolution(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := newLibReasoning("openai", "test-key", "gpt-4o", "", tt.maxTokens)
+			p, err := newLibReasoning("openai", "test-key", "gpt-4o", "", tt.maxTokens, llmsettings.Settings{})
 			if err != nil {
 				t.Fatalf("newLibReasoning: %v", err)
 			}
@@ -307,7 +308,7 @@ func TestNewReasoningProviderPassesConfiguredMaxTokens(t *testing.T) {
 // accepted and that the default model (llama3.2) is applied when none is given.
 // No network is attempted: the library constructs the client without dialing.
 func TestNewLibReasoningOllamaExplicitBaseURL(t *testing.T) {
-	r, err := newLibReasoning("ollama", "", "", "http://localhost:11434", 0)
+	r, err := newLibReasoning("ollama", "", "", "http://localhost:11434", 0, llmsettings.Settings{})
 	if err != nil {
 		t.Fatalf("newLibReasoning: %v", err)
 	}
@@ -319,7 +320,7 @@ func TestNewLibReasoningOllamaExplicitBaseURL(t *testing.T) {
 // TestNewLibReasoningDefaultModel verifies that an empty model falls back
 // to the per-provider default and that the resulting client reports it.
 func TestNewLibReasoningDefaultModel(t *testing.T) {
-	r, err := newLibReasoning("openai", "test-key", "", "", 4096)
+	r, err := newLibReasoning("openai", "test-key", "", "", 4096, llmsettings.Settings{})
 	if err != nil {
 		t.Fatalf("newLibReasoning: %v", err)
 	}
@@ -330,7 +331,7 @@ func TestNewLibReasoningDefaultModel(t *testing.T) {
 
 // TestNewLibReasoningExplicitModel verifies an explicit model is preserved.
 func TestNewLibReasoningExplicitModel(t *testing.T) {
-	r, err := newLibReasoning("openai", "test-key", "gpt-4o", "", 4096)
+	r, err := newLibReasoning("openai", "test-key", "gpt-4o", "", 4096, llmsettings.Settings{})
 	if err != nil {
 		t.Fatalf("newLibReasoning: %v", err)
 	}
@@ -342,7 +343,7 @@ func TestNewLibReasoningExplicitModel(t *testing.T) {
 // TestNewLibReasoningUnknownProvider verifies NewClient errors propagate
 // through newLibReasoning as a wrapped error.
 func TestNewLibReasoningUnknownProvider(t *testing.T) {
-	if _, err := newLibReasoning("does-not-exist", "k", "m", "", 4096); err == nil {
+	if _, err := newLibReasoning("does-not-exist", "k", "m", "", 4096, llmsettings.Settings{}); err == nil {
 		t.Fatal("expected error for unknown provider")
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/pkg/llmsettings"
 	"gopkg.in/yaml.v3"
 )
 
@@ -603,6 +604,11 @@ type LLMConfig struct {
 	OpenAICustomHeaders    map[string]string `yaml:"openai_custom_headers"`    // Custom headers for OpenAI requests
 	GeminiCustomHeaders    map[string]string `yaml:"gemini_custom_headers"`    // Custom headers for Gemini requests
 	OllamaCustomHeaders    map[string]string `yaml:"ollama_custom_headers"`    // Custom headers for Ollama requests
+
+	// RequestSettings carries reasoning_effort, prompt_caching and
+	// extra_body, which sit directly under llm and apply to the chat
+	// proxy and the analysis clients alike. Validated by validateConfig.
+	RequestSettings llmsettings.Settings `yaml:",inline"`
 }
 
 // DefaultLLMTemperature is the sampling temperature used when
@@ -1139,6 +1145,15 @@ func mergeConfig(dest, src *Config) {
 	if src.LLM.CompactToolDescriptions != "" {
 		dest.LLM.CompactToolDescriptions = src.LLM.CompactToolDescriptions
 	}
+	if src.LLM.RequestSettings.ReasoningEffort != "" {
+		dest.LLM.RequestSettings.ReasoningEffort = src.LLM.RequestSettings.ReasoningEffort
+	}
+	if src.LLM.RequestSettings.PromptCaching != "" {
+		dest.LLM.RequestSettings.PromptCaching = src.LLM.RequestSettings.PromptCaching
+	}
+	if src.LLM.RequestSettings.ExtraBody != nil {
+		dest.LLM.RequestSettings.ExtraBody = src.LLM.RequestSettings.ExtraBody
+	}
 
 	// Knowledgebase - merge if any KB fields are set
 	if src.Knowledgebase.DatabasePath != "" || src.Knowledgebase.Enabled {
@@ -1492,6 +1507,10 @@ func validateConfig(cfg *Config) error {
 	// Database configuration validation
 	if cfg.Database != nil && cfg.Database.User == "" {
 		return fmt.Errorf("database user is required (set via -db-user flag or config file)")
+	}
+
+	if err := cfg.LLM.RequestSettings.Validate("llm"); err != nil {
+		return err
 	}
 
 	// OIDC configuration validation

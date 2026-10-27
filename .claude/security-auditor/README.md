@@ -521,7 +521,9 @@ moved.
   `OIDCHandler.RefreshFederatedSession` (`api/oidc_refresh.go`),
   single-flighted per session by `federatedSession.mu`, which checks
   the account, redeems the in-memory refresh token, re-checks subject
-  and email domain, and reconciles groups only when the refreshed ID
+  and email domain when the refresh returns an ID token (a refresh
+  without one skips them, as `applyRefreshedIdentity` runs only on
+  `tokens.Identity != nil`), and reconciles groups only when the refreshed ID
   token carries the groups claim (`Identity.GroupsClaimPresent`; an
   absent claim or no ID token keeps memberships and the superuser
   flag). Because of that, every federated session also has an absolute

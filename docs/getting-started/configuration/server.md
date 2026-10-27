@@ -383,8 +383,10 @@ login is off unless `auth.oidc.enabled` is set to
 `true`. The server refuses to start when neither
 method is available.
 
-Every `auth.oidc.*` option is ignored while federated
-login is disabled. The
+While federated login is disabled, the server ignores
+every `auth.oidc.*` option except `auth_params`, which
+it still validates, and `allow_api_tokens`, which still
+applies to accounts linked to a provider earlier. The
 [Single Sign-On guide](../../admin-guide/managing-users-and-permissions/sso.md)
 describes each option in full, along with registering
 the Workbench at an identity provider and mapping

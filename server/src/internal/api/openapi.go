@@ -4657,7 +4657,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("TokenCreateResponse", "Token created with raw value"),
 					"400": jsonResponse("ErrorResponse", "Invalid request body or token name"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission; a caller who is not a superuser naming any owner but itself, or an owner that does not exist, is refused; or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind, or a superuser's session"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission; a caller who is not a superuser naming any owner but itself, or an owner that does not exist, is refused; or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind, or a superuser's session; or the owner signs in through an identity provider while http.auth.oidc.allow_api_tokens is off"),
 					"500": jsonResponse("ErrorResponse", "Failed to create token, including when the owner could not be read; \"Failed to get user\" when the owner could not be looked up for a caller who is not a superuser"),
 				},
 			},

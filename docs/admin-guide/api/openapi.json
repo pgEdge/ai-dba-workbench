@@ -9694,7 +9694,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission; a caller who is not a superuser naming any owner but itself, or an owner that does not exist, is refused; or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind, or a superuser's session",
+            "description": "Requires manage_token_scopes permission; a caller who is not a superuser naming any owner but itself, or an owner that does not exist, is refused; or the new token owner's access exceeds the API token's access (its owner's privileges narrowed by its scope); a token for a superuser needs a superuser's token unrestricted in every scope kind, or a superuser's session; or the owner signs in through an identity provider while http.auth.oidc.allow_api_tokens is off",
             "content": {
               "application/json": {
                 "schema": {

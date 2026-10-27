@@ -881,16 +881,32 @@ plainly rather than crediting the design with more than it does.
 
 A verification that passes is not evidence that nothing happened.
 
-The audit write is fail-closed everywhere but one place: a mutation
-whose event cannot be recorded is rolled back. The exception is
+The audit write is fail-closed everywhere but two places: a mutation
+whose event cannot be recorded is rolled back. The first exception is
 `disableForLockout` in `actor_store_users.go`, which commits the
 failed-login lockout first and records `user.disable` afterwards in a
 transaction of its own, logging rather than returning a failure. This
 is deliberate. Sharing one transaction let an audit failure, a full
 disk or a lock held past the busy timeout roll the lockout back and
-hand a password-guessing attacker an account that stayed enabled. Do
-not report the best-effort event as a missing fail-closed path; report
-any *new* audited mutation that copies the pattern.
+hand a password-guessing attacker an account that stayed enabled.
+
+The second exception is the revocations a federated login makes in
+`ReconcileFederatedGroups` (`federation.go`):
+`revokeFederatedSuperuserLocked` and `revokeFederatedLocked` commit
+the removal of superuser and of mapped-group memberships first, then
+record `user.update` and `group.member.remove` in a separate
+transaction, logging a failure. Refusing a revocation on an audit
+failure would leave a privilege the identity provider has withdrawn in
+place, which is the worse outcome; `TestReconcileFederatedGroupsKeepsAnUnauditedRevocation`
+in `federation_audit_test.go` pins it, including the logged failure.
+The grants in the same login stay fail-closed: `grantFederatedLocked`
+writes `group.member.add` and the superuser `user.update` inside the
+grant transaction, so an audit failure rolls the grant back and the
+login is refused (`TestReconcileFederatedGroupsRollsBackAnUnauditedGrant`).
+
+Do not report either best-effort event as a missing fail-closed path;
+report any *new* audited mutation that copies the pattern, or a
+federated grant that moves out of its transaction.
 
 ## Reporting
 

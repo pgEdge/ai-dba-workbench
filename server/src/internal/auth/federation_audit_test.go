@@ -10,6 +10,7 @@
 package auth
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -51,8 +52,8 @@ func assertFederatedEvent(t *testing.T, ev AuditEvent, action, targetType,
 		t.Errorf("outcome = %q, want success", ev.Outcome)
 	}
 	details := auditDetails(t, ev)
-	if details["reason"] != federatedAuditReason {
-		t.Errorf("details.reason = %v, want %q", details["reason"], federatedAuditReason)
+	if details["reason"] != "identity_provider" {
+		t.Errorf("details.reason = %v, want %q", details["reason"], "identity_provider")
 	}
 	if details["issuer"] != testFederatedIssuer {
 		t.Errorf("details.issuer = %v, want %q", details["issuer"], testFederatedIssuer)
@@ -245,6 +246,7 @@ func TestReconcileFederatedGroupsKeepsAnUnauditedRevocation(t *testing.T) {
 	assertSuperuser(t, store, user.Username, true)
 
 	dropAuditLog(t, store)
+	logged := captureLog(t)
 
 	if err := store.ReconcileFederatedGroups(user.ID, FederatedIdentity{
 		Issuer: testFederatedIssuer}, opts); err != nil {
@@ -252,6 +254,18 @@ func TestReconcileFederatedGroupsKeepsAnUnauditedRevocation(t *testing.T) {
 	}
 	assertInGroup(t, store, user.ID, groupID, false)
 	assertSuperuser(t, store, user.Username, false)
+
+	for _, want := range []string{
+		"Failed to record the federated superuser revocation for user " +
+			user.Username,
+		"Failed to record 1 federated membership removal audit event(s) " +
+			"for user " + user.Username,
+	} {
+		if !strings.Contains(logged.String(), want) {
+			t.Errorf("log does not record the unaudited revocation; "+
+				"want %q in:\n%s", want, logged.String())
+		}
+	}
 }
 
 // TestRecordFederatedSuperuserRevocationErrorPaths covers the failures the

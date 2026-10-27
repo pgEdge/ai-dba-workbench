@@ -70,7 +70,11 @@ Changing a connection's cluster (`AssignConnectionToCluster` behind
 `POST /clusters/{id}/servers`) deletes, in the same transaction, every
 row naming the connection, as source or target, manual or
 auto-detected, whose `cluster_id` is not the new one
-(`dropRelationshipsOutsideCluster`, issue #707). That delete takes no
+(`dropRelationshipsOutsideCluster`, issue #707). Auto-detection's
+reassignment (`assignAutoDetectedConnection` in
+`topology_autodetect.go`) applies the same delete when it changes the
+connection's `cluster_id`, but not when it only reconfirms the
+current cluster (issue #719). That delete takes no
 `permitted` set, as `RemoveServerFromCluster` takes none: the caller
 has passed the gates for moving the connection, and a row in a cluster
 the connection has left describes a node that is no longer a member.

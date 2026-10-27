@@ -494,8 +494,6 @@ jobs:
               run: |
                   set -euo pipefail
                   mkdir -p .github/actions
-                  # Pinned to gated-release: it carries repo_client_crt/repo_client_key.
-                  # REVERT to the default branch once that is merged to main.
                   # Pinned to an immutable commit of pgedge-builder-action's gated-release
                   # branch, which carries repo_client_crt/repo_client_key. A branch ref can be
                   # retargeted, and this checkout runs with the repo client certificate and key.
@@ -721,8 +719,6 @@ jobs:
               run: |
                   set -euo pipefail
                   mkdir -p .github/actions
-                  # Pinned to gated-release: it carries repo_client_crt/repo_client_key.
-                  # REVERT to the default branch once that is merged to main.
                   # Pinned to an immutable commit of pgedge-builder-action's gated-release
                   # branch, which carries repo_client_crt/repo_client_key. A branch ref can be
                   # retargeted, and this checkout runs with the repo client certificate and key.

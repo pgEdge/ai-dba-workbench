@@ -71,7 +71,8 @@ func TestCreateUserInfoHandlerReportsAPITokensAllowed(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			allowed.Store(tt.allowed)
 			body := callUserInfo(t, store, func(r *http.Request) {
-				r.AddCookie(&http.Cookie{Name: "session_token", Value: tt.session})
+				r.AddCookie(&http.Cookie{Name: "session_token", Value: tt.session,
+					Secure: true, HttpOnly: true})
 			})
 			if body["authenticated"] != true {
 				t.Fatalf("authenticated = %v, want true", body["authenticated"])

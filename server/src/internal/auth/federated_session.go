@@ -185,30 +185,17 @@ func (s *AuthStore) refreshFederatedSession(tokenHash string,
 
 	// Another request may have refreshed or ended the session whilst
 	// this one waited for the mutex.
-	value, ok := s.sessions.Load(tokenHash)
-	if !ok {
+	current := s.loadFederatedSession(tokenHash, fs)
+	if current == nil {
 		return nil, errSessionEnded
 	}
-	current, ok := value.(*SessionInfo)
-	if !ok || current.federated != fs {
-		return nil, errSessionEnded
-	}
-	now := time.Now()
-	if current.ExpiresAt.After(now) {
+	if current.ExpiresAt.After(time.Now()) {
 		return current, nil
 	}
 
 	refresher := s.currentRefresher()
-	switch {
-	case fs.refreshToken == "":
-		return nil, s.endFederatedSession(tokenHash, current,
-			"it reached its ID token's expiry and the identity provider issued no refresh token")
-	case now.After(current.ExpiresAt.Add(federatedRefreshWindow)):
-		return nil, s.endFederatedSession(tokenHash, current,
-			"it was idle for longer than the refresh window")
-	case refresher == nil:
-		return nil, s.endFederatedSession(tokenHash, current,
-			"federated login is not configured, so it cannot be refreshed")
+	if reason := unrefreshableReason(current, refresher, time.Now()); reason != "" {
+		return nil, s.endFederatedSession(tokenHash, current, reason)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), federatedRefreshTimeout)
@@ -226,14 +213,10 @@ func (s *AuthStore) refreshFederatedSession(tokenHash string,
 		fs.refreshToken = refreshed.RefreshToken
 	}
 
-	expiresAt := refreshed.ExpiresAt
-	now = time.Now()
-	if !expiresAt.After(now) {
+	expiresAt, ok := cappedRefreshExpiry(refreshed.ExpiresAt, time.Now())
+	if !ok {
 		return nil, s.endFederatedSession(tokenHash, current,
 			"the identity provider refreshed it with an expiry already past")
-	}
-	if ceiling := now.Add(DefaultSessionExpiry); expiresAt.After(ceiling) {
-		expiresAt = ceiling
 	}
 
 	next := &SessionInfo{Username: current.Username, ExpiresAt: expiresAt, federated: fs}
@@ -248,6 +231,51 @@ func (s *AuthStore) refreshFederatedSession(tokenHash string,
 	log.Printf("[AUTH] Refreshed federated session for user %s",
 		logging.SanitizeForLog(current.Username))
 	return next, nil
+}
+
+// loadFederatedSession returns the session stored under tokenHash, or
+// nil when it has gone or is no longer the federated session fs belongs
+// to.
+func (s *AuthStore) loadFederatedSession(tokenHash string, fs *federatedSession) *SessionInfo {
+	value, ok := s.sessions.Load(tokenHash)
+	if !ok {
+		return nil
+	}
+	current, ok := value.(*SessionInfo)
+	if !ok || current.federated != fs {
+		return nil
+	}
+	return current
+}
+
+// unrefreshableReason explains why an expired federated session cannot
+// be offered to the identity provider, or returns "" when it can. The
+// caller holds the session's mutex, which guards its refresh token.
+func unrefreshableReason(session *SessionInfo, refresher FederatedSessionRefresher,
+	now time.Time) string {
+
+	switch {
+	case session.federated.refreshToken == "":
+		return "it reached its ID token's expiry and the identity provider issued no refresh token"
+	case now.After(session.ExpiresAt.Add(federatedRefreshWindow)):
+		return "it was idle for longer than the refresh window"
+	case refresher == nil:
+		return "federated login is not configured, so it cannot be refreshed"
+	}
+	return ""
+}
+
+// cappedRefreshExpiry caps a refreshed session's expiry at a local
+// session's lifetime from now, and reports false when the provider gave
+// an expiry that has already passed.
+func cappedRefreshExpiry(expiresAt, now time.Time) (time.Time, bool) {
+	if !expiresAt.After(now) {
+		return time.Time{}, false
+	}
+	if ceiling := now.Add(DefaultSessionExpiry); expiresAt.After(ceiling) {
+		return ceiling, true
+	}
+	return expiresAt, true
 }
 
 // endFederatedSession removes a federated session that could not be

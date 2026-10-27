@@ -16,7 +16,9 @@ import (
 	"fmt"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
+	"github.com/pgedge/ai-workbench/server/internal/oidc"
 )
 
 // errFederatedLoginOff refuses a refresh while federated login is
@@ -56,18 +58,9 @@ func (h *OIDCHandler) RefreshFederatedSession(ctx context.Context,
 	// The account is checked before the provider is asked, so that a
 	// session whose account has gone or been disabled here ends without
 	// a call to the provider.
-	user, err := h.authStore.GetUser(username)
+	user, err := h.refreshableAccount(username)
 	if err != nil {
-		return auth.FederatedRefresh{}, fmt.Errorf("the account could not be read: %w", err)
-	}
-	if user == nil {
-		return auth.FederatedRefresh{}, errors.New("the account no longer exists")
-	}
-	if !user.Enabled {
-		return auth.FederatedRefresh{}, errors.New("the account is disabled")
-	}
-	if user.AuthSource != auth.AuthSourceOIDC || user.IsServiceAccount {
-		return auth.FederatedRefresh{}, errors.New("the account is no longer federated")
+		return auth.FederatedRefresh{}, err
 	}
 
 	tokens, err := h.provider.Refresh(ctx, refreshToken)
@@ -76,21 +69,8 @@ func (h *OIDCHandler) RefreshFederatedSession(ctx context.Context,
 	}
 
 	if identity := tokens.Identity; identity != nil {
-		logIdentityDiagnostics(identity)
-		if auth.ExternalSubjectKey(identity.Issuer, identity.Subject) != user.ExternalSubject {
-			return auth.FederatedRefresh{}, fmt.Errorf(
-				"the refreshed ID token names subject %s, which is not the one the account is linked to",
-				logging.SanitizeForLog(identity.Subject))
-		}
-		if !emailDomainAllowed(cfg, identity) {
-			return auth.FederatedRefresh{}, errors.New(
-				"the refreshed ID token's email address is not in an allowed domain")
-		}
-		if identity.GroupsClaimPresent {
-			if err := h.authStore.ReconcileFederatedGroups(user.ID,
-				federatedIdentity(identity), federationOptions(cfg)); err != nil {
-				return auth.FederatedRefresh{}, fmt.Errorf("group reconciliation failed: %w", err)
-			}
+		if err := h.applyRefreshedIdentity(cfg, user, identity); err != nil {
+			return auth.FederatedRefresh{}, err
 		}
 	}
 
@@ -98,4 +78,49 @@ func (h *OIDCHandler) RefreshFederatedSession(ctx context.Context,
 		RefreshToken: tokens.RefreshToken,
 		ExpiresAt:    tokens.Expiry,
 	}, nil
+}
+
+// refreshableAccount returns the account behind a federated session, or
+// an error when it no longer exists, is disabled, or is no longer
+// federated.
+func (h *OIDCHandler) refreshableAccount(username string) (*auth.StoredUser, error) {
+	user, err := h.authStore.GetUser(username)
+	if err != nil {
+		return nil, fmt.Errorf("the account could not be read: %w", err)
+	}
+	if user == nil {
+		return nil, errors.New("the account no longer exists")
+	}
+	if !user.Enabled {
+		return nil, errors.New("the account is disabled")
+	}
+	if user.AuthSource != auth.AuthSourceOIDC || user.IsServiceAccount {
+		return nil, errors.New("the account is no longer federated")
+	}
+	return user, nil
+}
+
+// applyRefreshedIdentity checks a refreshed ID token against the account
+// and the login policy, and reconciles groups and the superuser flag from
+// it only when it carries the groups claim (see RefreshFederatedSession).
+func (h *OIDCHandler) applyRefreshedIdentity(cfg config.OIDCConfig, user *auth.StoredUser,
+	identity *oidc.Identity) error {
+
+	logIdentityDiagnostics(identity)
+	if auth.ExternalSubjectKey(identity.Issuer, identity.Subject) != user.ExternalSubject {
+		return fmt.Errorf(
+			"the refreshed ID token names subject %s, which is not the one the account is linked to",
+			logging.SanitizeForLog(identity.Subject))
+	}
+	if !emailDomainAllowed(cfg, identity) {
+		return errors.New("the refreshed ID token's email address is not in an allowed domain")
+	}
+	if !identity.GroupsClaimPresent {
+		return nil
+	}
+	if err := h.authStore.ReconcileFederatedGroups(user.ID,
+		federatedIdentity(identity), federationOptions(cfg)); err != nil {
+		return fmt.Errorf("group reconciliation failed: %w", err)
+	}
+	return nil
 }

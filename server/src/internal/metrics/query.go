@@ -494,6 +494,20 @@ func EntityKeyColumns(cols []string, colTypes map[string]string) []string {
 	return keys
 }
 
+// ProbeExistsQuery counts the relations named $1 in the metrics schema
+// that can hold a probe's rows, so a count of zero means there is no such
+// probe. On a plain PostgreSQL datastore each probe is a partitioned
+// table, which information_schema.tables reports as a BASE TABLE; on a
+// pgEdge ColdFront datastore each one is a VIEW over Apache Iceberg
+// storage (issue #755). Both kinds are accepted, and the server needs no
+// setting to tell the datastores apart.
+const ProbeExistsQuery = `
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_schema = 'metrics'
+            AND table_name = $1
+            AND table_type IN ('BASE TABLE', 'VIEW')
+    `
+
 // IsValidIdentifier checks whether a string is a valid SQL identifier.
 func IsValidIdentifier(s string) bool {
 	if s == "" {
@@ -1650,13 +1664,7 @@ func QueryTimeSeries(
 
 	// Verify probe exists
 	var count int
-	existsQuery := `
-        SELECT COUNT(*) FROM information_schema.tables
-        WHERE table_schema = 'metrics'
-            AND table_name = $1
-            AND table_type = 'BASE TABLE'
-    `
-	if err := pool.QueryRow(ctx, existsQuery, probeName).Scan(&count); err != nil {
+	if err := pool.QueryRow(ctx, ProbeExistsQuery, probeName).Scan(&count); err != nil {
 		return nil, fmt.Errorf("failed to verify probe: %w", err)
 	}
 	if count == 0 {
@@ -2270,13 +2278,7 @@ func discoverLatestRowColumns(
 	filters *MetricFilters,
 ) ([]string, map[string]string, string, error) {
 	var count int
-	existsQuery := `
-        SELECT COUNT(*) FROM information_schema.tables
-        WHERE table_schema = 'metrics'
-            AND table_name = $1
-            AND table_type = 'BASE TABLE'
-    `
-	if err := pool.QueryRow(ctx, existsQuery, probeName).Scan(&count); err != nil {
+	if err := pool.QueryRow(ctx, ProbeExistsQuery, probeName).Scan(&count); err != nil {
 		return nil, nil, "", fmt.Errorf("failed to verify probe: %w", err)
 	}
 	if count == 0 {

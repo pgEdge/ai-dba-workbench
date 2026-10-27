@@ -684,14 +684,16 @@ var errUnknownDatastoreSource = errors.New("unknown source: call describe_datast
 
 // datastoreMetricTableQuery finds a parent probe table in the metrics
 // schema. Partitions are excluded by relispartition rather than by name,
-// so a probe whose name happens to contain "_p" is still found.
+// so a probe whose name happens to contain "_p" is still found. A view
+// (relkind 'v') is a probe too: on a pgEdge ColdFront datastore every
+// probe is a view over Apache Iceberg storage (issue #755).
 const datastoreMetricTableQuery = `
         SELECT COALESCE(obj_description(c.oid, 'pg_class'), '')
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'metrics'
             AND c.relname = $1
-            AND c.relkind IN ('r', 'p')
+            AND c.relkind IN ('r', 'p', 'v')
             AND NOT c.relispartition
     `
 
@@ -816,13 +818,14 @@ func lookupMetricColumns(ctx context.Context, pool *pgxpool.Pool, name string) (
 // datastoreMetricSourcesQuery lists every parent probe table in the
 // metrics schema that carries the bookkeeping columns
 // lookupDatastoreSource requires, so describe_datastore lists exactly the
-// metric sources query_datastore accepts.
+// metric sources query_datastore accepts. It takes the same relkinds as
+// datastoreMetricTableQuery, ColdFront views included.
 const datastoreMetricSourcesQuery = `
         SELECT c.relname, COALESCE(obj_description(c.oid, 'pg_class'), '')
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'metrics'
-            AND c.relkind IN ('r', 'p')
+            AND c.relkind IN ('r', 'p', 'v')
             AND NOT c.relispartition
             AND EXISTS (SELECT 1 FROM pg_attribute a
                         WHERE a.attrelid = c.oid AND a.attname = 'connection_id'

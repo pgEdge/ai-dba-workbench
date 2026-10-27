@@ -432,6 +432,52 @@ func TestLatestSnapshot_OrderingAndLimits(t *testing.T) {
 	})
 }
 
+// latestViewProbe is a view over the latest-tables fixture, standing in
+// for a pgEdge ColdFront datastore, where every probe is a view over
+// Apache Iceberg storage (issue #755).
+const (
+	latestViewProbe     = latestTablesProbe + "_cf"
+	latestViewCreateSQL = `CREATE VIEW metrics."` + latestViewProbe +
+		`" AS SELECT * FROM metrics."` + latestTablesProbe + `"`
+	latestViewDropSQL = `DROP VIEW IF EXISTS metrics."` + latestViewProbe + `"`
+)
+
+// TestLatestSnapshot_View checks that the endpoint finds a probe stored as
+// a view and returns the same rows as from the table beneath it.
+func TestLatestSnapshot_View(t *testing.T) {
+	h := setupLatestTablesFixture(t)
+	pool := h.datastore.GetPool()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, latestViewCreateSQL); err != nil {
+		t.Fatalf("failed to create the probe view: %v", err)
+	}
+	// Cleanups run last-registered first, so the view is gone before the
+	// fixture drops the table it depends on.
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), latestViewDropSQL); err != nil {
+			t.Logf("failed to drop the probe view: %v", err)
+		}
+		tableColumnCache.Delete(latestViewProbe)
+		tableDBColCache.Delete(latestViewProbe)
+	})
+
+	const params = "&order_by=n_live_tup&exclude_system_schemas=true"
+	fromTable := decodeLatest(t, getLatest(t, h,
+		"connection_id=1&probe_name="+latestTablesProbe+params))
+	fromView := decodeLatest(t, getLatest(t, h,
+		"connection_id=1&probe_name="+latestViewProbe+params))
+
+	if fromView.TotalCount == 0 || fromView.TotalCount != fromTable.TotalCount {
+		t.Fatalf("view total_count = %d, table %d; want the same non-zero count",
+			fromView.TotalCount, fromTable.TotalCount)
+	}
+	got := strings.Join(qualifiedNames(fromView.Rows), ",")
+	want := strings.Join(qualifiedNames(fromTable.Rows), ",")
+	if got != want {
+		t.Errorf("view rows = %s, want %s", got, want)
+	}
+}
+
 // TestLatestSnapshot_RequestErrors covers the validation failures that need
 // a real datastore to reach.
 func TestLatestSnapshot_RequestErrors(t *testing.T) {

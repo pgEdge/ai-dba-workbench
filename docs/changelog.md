@@ -1224,6 +1224,16 @@ project adheres to
 
 ### Fixed
 
+- Apply the custom LLM headers set in the server configuration
+  file (#754). The `llm.custom_headers`,
+  `llm.custom_headers_files` and four
+  `llm.<provider>_custom_headers` options were read from the
+  file and then discarded, without a warning, so no configured
+  header reached the LLM provider; only the
+  `LLM_CUSTOM_HEADERS` and `LLM_<PROVIDER>_CUSTOM_HEADERS`
+  environment variables worked. The options are now applied,
+  and documented in the server configuration reference.
+
 - List a server's databases when one of them is dropped whilst
   the list is being built (#723). The size lookup for the
   dropped database returned NULL, or failed because the database

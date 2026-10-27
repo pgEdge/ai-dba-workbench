@@ -493,6 +493,36 @@ llm:
   #     gateway:
   #       caching: "auto"
 
+  #-----------------------------------------------------------------------
+  # Custom HTTP Headers
+  #-----------------------------------------------------------------------
+  #
+  # Extra headers to send with every LLM request, for example to an LLM
+  # gateway that needs a token or a routing header. Sources apply in
+  # this order, a later one replacing a header of the same name:
+  #   1. custom_headers (all providers)
+  #   2. custom_headers_files (all providers; values read from files)
+  #   3. the LLM_CUSTOM_HEADERS environment variable (all providers)
+  #   4. <provider>_custom_headers (the matching provider only)
+  #   5. the LLM_<PROVIDER>_CUSTOM_HEADERS environment variable
+  # The environment variables take comma-separated NAME=value pairs.
+  #
+  # custom_headers_files keeps secret values out of this file. The chat
+  # proxy reads each file once at startup, so restart the server after
+  # replacing one; the other AI features read it on every call. A
+  # missing, unreadable or empty file is logged, and the affected
+  # requests are sent without any custom headers.
+  #
+  # custom_headers:
+  #   X-Team: "dba"
+  # custom_headers_files:
+  #   X-Gateway-Token: "/etc/ai-workbench/gateway-token"
+  # anthropic_custom_headers:
+  #   X-Route: "anthropic-primary"
+  # openai_custom_headers: {}
+  # gemini_custom_headers: {}
+  # ollama_custom_headers: {}
+
 #=========================================================================
 # KNOWLEDGEBASE CONFIGURATION
 #=========================================================================

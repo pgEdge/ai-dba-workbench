@@ -2750,6 +2750,108 @@ func TestMergeConfigMergesEveryToolsField(t *testing.T) {
 	}
 }
 
+// TestMergeConfigMergesEveryField is the structural guard against any
+// field being added to Config, or to a struct beneath it, without a
+// matching merge in mergeConfig. That is how the six llm custom header
+// maps came to be read from the configuration file and then silently
+// discarded (issue #754), and how six tools became unconfigurable before
+// them. It walks Config by reflection, gives every exported leaf field on
+// the source a distinct non-zero value, merges onto the defaults, and
+// names every field whose value did not arrive.
+func TestMergeConfigMergesEveryField(t *testing.T) {
+	src := &Config{}
+	counter := 0
+	fillMergeTestValue(t, reflect.ValueOf(src).Elem(), "Config", &counter)
+
+	dest := defaultConfig()
+	mergeConfig(dest, src)
+
+	var unmerged []string
+	compareMergedValue(reflect.ValueOf(dest).Elem(), reflect.ValueOf(src).Elem(),
+		"Config", &unmerged)
+	if len(unmerged) > 0 {
+		t.Fatalf("mergeConfig did not merge these fields: %s; add a merge "+
+			"for each in mergeConfig", strings.Join(unmerged, ", "))
+	}
+}
+
+// fillMergeTestValue sets v, and every exported field beneath it, to a
+// non-zero value that differs from every other field's, so that a field
+// left at its default by mergeConfig cannot match the source by chance.
+// It fails the test on a kind it does not know how to fill, so a field of
+// a new type forces this helper to be extended rather than skipped.
+func fillMergeTestValue(t *testing.T, v reflect.Value, path string, counter *int) {
+	t.Helper()
+	*counter++
+	n := *counter
+	switch v.Kind() {
+	case reflect.Struct:
+		typ := v.Type()
+		for i := 0; i < typ.NumField(); i++ {
+			if !typ.Field(i).IsExported() {
+				continue
+			}
+			fillMergeTestValue(t, v.Field(i), path+"."+typ.Field(i).Name, counter)
+		}
+	case reflect.Ptr:
+		elem := reflect.New(v.Type().Elem())
+		fillMergeTestValue(t, elem.Elem(), path, counter)
+		v.Set(elem)
+	case reflect.String:
+		v.SetString(fmt.Sprintf("merge-test-%d", n))
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v.SetInt(int64(100000 + n))
+	case reflect.Float32, reflect.Float64:
+		v.SetFloat(float64(n) + 0.25)
+	case reflect.Slice:
+		s := reflect.MakeSlice(v.Type(), 1, 1)
+		fillMergeTestValue(t, s.Index(0), path+"[0]", counter)
+		v.Set(s)
+	case reflect.Map:
+		m := reflect.MakeMap(v.Type())
+		key := reflect.New(v.Type().Key()).Elem()
+		fillMergeTestValue(t, key, path+"[key]", counter)
+		val := reflect.New(v.Type().Elem()).Elem()
+		fillMergeTestValue(t, val, path+"[value]", counter)
+		m.SetMapIndex(key, val)
+		v.Set(m)
+	case reflect.Interface:
+		v.Set(reflect.ValueOf(fmt.Sprintf("merge-test-%d", n)))
+	default:
+		t.Fatalf("%s has kind %s, which fillMergeTestValue cannot fill; "+
+			"extend it to cover this field", path, v.Kind())
+	}
+}
+
+// compareMergedValue records path in unmerged when dest does not hold
+// the value src set. Structs are walked field by field; pointers must be
+// the very pointer the source held, since mergeConfig copies pointers
+// rather than their targets, and a default pointing at an equal value
+// would otherwise hide a missing merge.
+func compareMergedValue(dest, src reflect.Value, path string, unmerged *[]string) {
+	switch src.Kind() {
+	case reflect.Struct:
+		typ := src.Type()
+		for i := 0; i < typ.NumField(); i++ {
+			if !typ.Field(i).IsExported() {
+				continue
+			}
+			compareMergedValue(dest.Field(i), src.Field(i),
+				path+"."+typ.Field(i).Name, unmerged)
+		}
+	case reflect.Ptr:
+		if dest.Pointer() != src.Pointer() {
+			*unmerged = append(*unmerged, path)
+		}
+	default:
+		if !reflect.DeepEqual(dest.Interface(), src.Interface()) {
+			*unmerged = append(*unmerged, path)
+		}
+	}
+}
+
 // TestToolsConfig_IsToolEnabledHonoursEveryField is the companion guard to
 // TestMergeConfigMergesEveryToolsField: every *bool on ToolsConfig must
 // have an IsToolEnabled case keyed on its yaml tag, so that a newly added

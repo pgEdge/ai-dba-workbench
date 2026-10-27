@@ -412,6 +412,16 @@ also belongs in `logRestartRequiredSettings` in
 values, so a SIGHUP reports a change it cannot apply instead of
 reporting success.
 
+`LoadConfig` unmarshals the server's YAML into a separate `Config` and
+copies it onto the defaults field by field in `mergeConfig`, so a new
+field that is not merged there parses cleanly and is then silently
+discarded (the `llm.*custom_headers*` maps, #754, and six tools before
+them). `TestMergeConfigMergesEveryField` in `config_test.go` walks the
+whole `Config` by reflection and names any exported field that does not
+arrive; a field of a new kind fails it until `fillMergeTestValue` is
+extended. The collector and alerter unmarshal straight onto their
+defaults and have no such merge step.
+
 The server's live-reload path is the exception: `HandlerDependencies.
 LiveConfig` (wired to `ReloadableConfig.Get` by
 `Server.handlerDependencies` in `server.go`) is read

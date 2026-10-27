@@ -221,6 +221,55 @@ func checkScopeMembersVisible(w http.ResponseWriter, r *http.Request,
 	return true
 }
 
+// requireEveryConnectionVisible refuses a write to an estate-wide object
+// unless the caller can see every connection, since the object applies
+// to all of them: an estate blackout, an alert rule's defaults, a global
+// probe config or a notification channel (issues #732 and #744). A
+// superuser or all-connections grant passes at once; anyone else passes
+// only when grants cover every connection listConnections returns. The
+// refusal is the audited missing-permission refusal for permission, as
+// for overrides (issue #716); the object stays readable, so it is not a
+// 404. It writes the response and returns false when the caller may not
+// proceed.
+func requireEveryConnectionVisible(w http.ResponseWriter, r *http.Request,
+	rbac *auth.RBACChecker, ds *database.Datastore,
+	listConnections func(context.Context) ([]int, error),
+	record denialRecorder, permission string) bool {
+
+	visible, all, err := resolveVisibleConnectionSet(r.Context(), rbac, ds)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to check access")
+		return false
+	}
+	if all {
+		return true
+	}
+	return checkEveryConnectionVisible(w, r, listConnections, record, permission, visible)
+}
+
+// checkEveryConnectionVisible is requireEveryConnectionVisible for a
+// restricted caller whose visible set is already resolved. The
+// connections are listed after that set, so one added between the two
+// reads counts as hidden and the write is refused rather than let
+// through; a list that cannot be read fails closed with a 500.
+func checkEveryConnectionVisible(w http.ResponseWriter, r *http.Request,
+	listConnections func(context.Context) ([]int, error),
+	record denialRecorder, permission string, visible map[int]bool) bool {
+
+	ids, err := listConnections(r.Context())
+	if err != nil {
+		log.Printf("[ERROR] Failed to list connections for an estate-wide write: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to check access")
+		return false
+	}
+	if !allMembersVisible(ids, visible) {
+		record.refuse(w, r, adminPermissionRefusal(permission))
+		return false
+	}
+	return true
+}
+
 // allMembersVisible reports whether every listed connection is in the
 // visible set. An empty list is vacuously visible; the callers' earlier
 // visibility check is what refuses an empty cluster or group.

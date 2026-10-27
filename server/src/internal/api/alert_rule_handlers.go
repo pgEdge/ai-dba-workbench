@@ -10,6 +10,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -26,6 +27,9 @@ type AlertRuleHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+	// allConnectionIDs lists every connection, all of which an alert
+	// rule's defaults reach; tests replace it to make the lookup fail.
+	allConnectionIDs func(context.Context) ([]int, error)
 
 	// denialAuditor audits this handler's token-scope and
 	// permission refusals.
@@ -39,6 +43,7 @@ func NewAlertRuleHandler(datastore *database.Datastore, authStore *auth.AuthStor
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
+	h.allConnectionIDs = datastore.GetAllConnectionIDs
 	h.checkPermission = requireAdminPermission(rbacChecker, &h.denialAuditor, auth.PermManageAlertRules)
 	return h
 }
@@ -136,6 +141,13 @@ func (h *AlertRuleHandler) updateAlertRule(w http.ResponseWriter, r *http.Reques
 	// override, so a token must cover every connection to change one
 	// (issue #471).
 	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+		return
+	}
+	// For the same reason the caller must see every connection, or a
+	// user granted part of the estate could change thresholds for
+	// connections they cannot see (issue #744).
+	if !requireEveryConnectionVisible(w, r, h.rbacChecker, h.datastore,
+		h.allConnectionIDs, h.denialRecorder, auth.PermManageAlertRules) {
 		return
 	}
 

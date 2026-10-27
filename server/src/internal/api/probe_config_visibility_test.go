@@ -358,8 +358,11 @@ func TestProbeConfigUpdateVisibility_Issue647(t *testing.T) {
 		global          int
 		visible, hidden map[string]int
 	}{
-		{"no grants", noGrants, http.StatusOK, all(http.StatusNotFound), all(http.StatusNotFound)},
-		{"read grant", readGrant, http.StatusOK, all(http.StatusNotFound), all(http.StatusOK)},
+		// The global config reaches every connection, so a caller who
+		// cannot see them all gets the missing-permission refusal
+		// (issue #744).
+		{"no grants", noGrants, http.StatusForbidden, all(http.StatusNotFound), all(http.StatusNotFound)},
+		{"read grant", readGrant, http.StatusForbidden, all(http.StatusNotFound), all(http.StatusOK)},
 		// The token reaches the visible configs, but only at read and
 		// only for one connection, so the token scope refuses each one;
 		// the hidden ones stay 404.

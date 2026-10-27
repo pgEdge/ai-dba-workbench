@@ -294,6 +294,13 @@ To disable a rule globally, set `default_enabled` to
 a specific scope, create an override with `enabled` set
 to `false`.
 
+A rule's defaults apply to every server without an
+override, so changing them requires the
+`manage_alert_rules` permission and the ability to see
+every server; anyone else receives a 403, as though
+they lacked the permission. Superusers, and users
+granted access to all connections, see every server.
+
 ## Creating Custom Rules
 
 Custom rules extend the built-in rule set with

@@ -69,7 +69,9 @@ relationships, needs a connection scope that covers every connection at
 `read_write`. A connection or cluster group that a token creates is owned by
 the token's owner. A change to an override, a blackout or a blackout
 schedule on a cluster or a group also requires the token's owner to see every
-connection in that cluster or group, as described in
+connection in that cluster or group, and a change to an estate-wide blackout
+or schedule, an alert rule, a global probe configuration or a notification
+channel requires the owner to see every connection, as described in
 [Administrative Permissions](permission_model.md#administrative-permissions).
 
 A `read` entry in the connection scope means read-only access to the monitored

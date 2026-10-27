@@ -73,6 +73,20 @@ func setupUserWithPermissions(t *testing.T, store *auth.AuthStore, username stri
 	return userID
 }
 
+// grantAllConnections grants the first group of the given user the
+// all-connections wildcard at read_write, so that the user sees every
+// connection, as an estate-wide write needs (issue #744).
+func grantAllConnections(t *testing.T, store *auth.AuthStore, userID int64) {
+	t.Helper()
+	groups, err := store.GetUserGroups(userID)
+	if err != nil || len(groups) == 0 {
+		t.Fatalf("GetUserGroups(%d): %v %v", userID, groups, err)
+	}
+	if err := store.GrantConnectionPrivilege(groups[0], auth.ConnectionIDAll, auth.AccessLevelReadWrite); err != nil {
+		t.Fatalf("GrantConnectionPrivilege: %v", err)
+	}
+}
+
 // createTokenForUser creates an API token for the given user.
 // Returns (tokenID, rawToken).
 func createTokenForUser(t *testing.T, store *auth.AuthStore, userID int64, tokenName string) (int64, string) {

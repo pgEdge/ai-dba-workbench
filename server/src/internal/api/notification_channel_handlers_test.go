@@ -306,6 +306,9 @@ func setupChannelHandler(t *testing.T, ds *database.Datastore) (*NotificationCha
 	authStore, cleanup := newAuthStoreForChannelTests(t)
 	userID := setupUserWithPermission(t, authStore, "channel_admin",
 		auth.PermManageNotificationChannels)
+	// Channel writes need the caller to see every connection (issue
+	// #744); the wildcard grant needs no connections table.
+	grantAllConnections(t, authStore, userID)
 	checker := auth.NewRBACChecker(authStore)
 	handler := NewNotificationChannelHandlerWithSecurity(ds, authStore, checker, false, nil, nil)
 	return handler, userID, cleanup
@@ -1181,6 +1184,7 @@ func TestCreateChannel_ValidationErrors(t *testing.T) {
 	defer cleanupStore()
 	userID := setupUserWithPermission(t, authStore, "ch_validator",
 		auth.PermManageNotificationChannels)
+	grantAllConnections(t, authStore, userID)
 	checker := auth.NewRBACChecker(authStore)
 	handler := NewNotificationChannelHandlerWithSecurity(nil, authStore, checker, false, nil, nil)
 
@@ -1591,6 +1595,7 @@ func TestCreateChannel_TelegramValidationErrors(t *testing.T) {
 	defer cleanupStore()
 	userID := setupUserWithPermission(t, authStore, "tg_validator",
 		auth.PermManageNotificationChannels)
+	grantAllConnections(t, authStore, userID)
 	checker := auth.NewRBACChecker(authStore)
 	handler := NewNotificationChannelHandlerWithSecurity(nil, authStore, checker, false, nil, nil)
 
@@ -2459,6 +2464,9 @@ func setupChannelHandlerAllowingInternal(t *testing.T, ds *database.Datastore) (
 	authStore, cleanup := newAuthStoreForChannelTests(t)
 	userID := setupUserWithPermission(t, authStore, "channel_admin",
 		auth.PermManageNotificationChannels)
+	// Channel writes need the caller to see every connection (issue
+	// #744); the wildcard grant needs no connections table.
+	grantAllConnections(t, authStore, userID)
 	checker := auth.NewRBACChecker(authStore)
 	handler := NewNotificationChannelHandlerWithSecurity(ds, authStore, checker, true, nil, nil)
 	return handler, userID, cleanup

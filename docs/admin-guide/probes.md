@@ -399,7 +399,12 @@ that does not exist. An API token sees only the
 servers in its connection scope. Updating a
 configuration follows the same rule, so a user with
 the `manage_probes` permission who cannot see the
-configuration also receives a 404.
+configuration also receives a 404. A global
+configuration applies to every server, so updating one
+also requires the caller to see every server; anyone
+else receives a 403, as though they lacked the
+permission. Superusers, and users granted access to
+all connections, see every server.
 
 The following table lists the available endpoints:
 

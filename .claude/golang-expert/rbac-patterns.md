@@ -1834,11 +1834,8 @@ visible (`adminPermissionRefusal(auth.PermManageBlackouts)`, audited). A
 schedule update checks the stored target and then the body target, so a
 schedule can be moved neither off nor onto a target with a hidden
 member. An estate target is visible to everyone but passes the member
-check only when the caller sees every connection: `a.all` passes at
-once, and anyone else passes only when every ID from
-`GetAllConnectionIDs` (through the `allConnectionIDs` field, which
-tests replace) is in the visible set. The list is read after the
-visible set, so a connection added in between fails closed. Build
+check only when the caller sees every connection, through
+`checkEveryConnectionVisible` (below). Build
 targets with `scopedBlackoutTarget`, `targetOfBlackout` or
 `targetOfSchedule`, which keep only the ID the scope names and read a
 server row without a connection as estate, as the alerter does
@@ -1848,6 +1845,27 @@ the same queries up to the 404. A create or schedule move onto a
 missing target answers 404 via `database.ErrBlackoutTargetNotFound`
 (the foreign key violation) for unrestricted callers too. Tests:
 `blackout_members_visibility_test.go`.
+
+Every other estate-wide object follows the estate-blackout rule
+(#744): `updateAlertRule`, `updateProbeConfig` for a global config,
+and every notification channel and recipient create, update and
+delete (`NotificationChannelHandler.requireEstateWriteAccess`; the
+`/test` send is not a write and is not gated). After the permission
+and token-scope checks they call `requireEveryConnectionVisible`, or
+`checkEveryConnectionVisible` when the visible set is already
+resolved, both in `rbac_visibility.go`. A superuser or all-connections
+grant passes at once; anyone else passes only when every ID from the
+handler's `allConnectionIDs` field (`GetAllConnectionIDs` in
+production, replaced in tests) is in the visible set, else
+`adminPermissionRefusal(permission)`, audited. The list is read after
+the visible set, so a connection added in between is refused, and a
+failure to read either answers 500 `Failed to check access` (for a
+probe config, a visible-set failure answers `Failed to check scope
+visibility` from the earlier visibility check). The objects stay
+readable, so this is never a 404. Any new write to an estate-wide
+object must call one of these helpers. Tests:
+`estate_config_visibility_test.go`; channel fixtures that run as a
+restricted user grant `ConnectionIDAll` via `grantAllConnections`.
 
 The rule also covers writes that change hidden members' effective
 overrides by cascade, each as the last check after permission, token

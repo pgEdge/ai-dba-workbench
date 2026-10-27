@@ -46,7 +46,13 @@ types:
 
 Administrators must have the
 `manage_notification_channels` permission to access
-these operations.
+these operations. A channel can deliver alerts from
+every server, so creating, editing, enabling,
+disabling or deleting a channel, or changing its email
+recipients, also requires the administrator to see
+every server; anyone else receives a 403, as though
+they lacked the permission. Superusers, and users
+granted access to all connections, see every server.
 
 ## Delivery Behaviour
 

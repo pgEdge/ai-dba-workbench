@@ -261,6 +261,14 @@ connection, although every user can view it. A blackout on a connection,
 cluster or group the holder cannot see at all is answered as though it did
 not exist.
 
+An alert rule's defaults, a global probe configuration, and a notification
+channel with its email recipients apply to every connection, so changing an
+alert rule or a global probe configuration, or creating, changing or deleting
+a notification channel or a recipient, requires the holder to see every
+connection, although they stay readable to everyone else. A probe
+configuration on a single connection, cluster or group follows the rule for
+overrides above.
+
 A change refused because a member connection is hidden answers in the same
 way as a missing permission, so it does not reveal which connections are
 hidden or how many. A connection the holder cannot see cannot be removed from

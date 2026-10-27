@@ -158,17 +158,11 @@ func (h *BlackoutHandler) requireBlackoutMembersVisible(w http.ResponseWriter,
 	if a.all {
 		return true
 	}
-	members := a.members
 	if t.estate() {
-		ids, err := h.allConnectionIDs(r.Context())
-		if err != nil {
-			log.Printf("[ERROR] Failed to list connections for an estate blackout: %v", err)
-			RespondError(w, http.StatusInternalServerError, "Failed to check access")
-			return false
-		}
-		members = ids
+		return checkEveryConnectionVisible(w, r, h.allConnectionIDs,
+			h.denialRecorder, auth.PermManageBlackouts, a.visible)
 	}
-	if allMembersVisible(members, a.visible) {
+	if allMembersVisible(a.members, a.visible) {
 		return true
 	}
 	h.denialRecorder.refuse(w, r, adminPermissionRefusal(auth.PermManageBlackouts))

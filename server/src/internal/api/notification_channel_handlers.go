@@ -10,6 +10,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -31,6 +32,9 @@ type NotificationChannelHandler struct {
 	rbacChecker     *auth.RBACChecker
 	hostValidator   *HostValidator
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+	// allConnectionIDs lists every connection, whose alerts a channel
+	// can serve; tests replace it to make the lookup fail.
+	allConnectionIDs func(context.Context) ([]int, error)
 
 	// denialAuditor audits this handler's token-scope and
 	// permission refusals.
@@ -46,6 +50,7 @@ func NewNotificationChannelHandlerWithSecurity(datastore *database.Datastore, au
 		rbacChecker:   rbacChecker,
 		hostValidator: NewHostValidator(allowInternal, allowedHosts, blockedHosts),
 	}
+	h.allConnectionIDs = datastore.GetAllConnectionIDs
 	h.checkPermission = requireAdminPermission(rbacChecker, &h.denialAuditor, auth.PermManageNotificationChannels)
 	return h
 }
@@ -113,6 +118,20 @@ type EmailRecipientRequest struct {
 	EmailAddress string  `json:"email_address"`
 	DisplayName  *string `json:"display_name,omitempty"`
 	Enabled      *bool   `json:"enabled,omitempty"`
+}
+
+// requireEstateWriteAccess applies the gates every channel and recipient
+// write passes after the permission check. A channel and its recipients
+// serve alerts from every connection, whether as the estate default or
+// through an override, so a token must cover every connection (issue
+// #471) and the caller must see every connection (issue #744): a user
+// granted part of the estate could otherwise route every connection's
+// alerts to their own channel, or disable or delete the estate default
+// so that nobody is told.
+func (h *NotificationChannelHandler) requireEstateWriteAccess(w http.ResponseWriter, r *http.Request) bool {
+	return requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) &&
+		requireEveryConnectionVisible(w, r, h.rbacChecker, h.datastore,
+			h.allConnectionIDs, h.denialRecorder, auth.PermManageNotificationChannels)
 }
 
 // handleChannels handles GET/POST /api/v1/notification-channels
@@ -259,9 +278,7 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 	if !h.checkPermission(w, r) {
 		return
 	}
-	// A channel and its recipients serve alerts from every connection,
-	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+	if !h.requireEstateWriteAccess(w, r) {
 		return
 	}
 
@@ -424,9 +441,7 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 	if !h.checkPermission(w, r) {
 		return
 	}
-	// A channel and its recipients serve alerts from every connection,
-	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+	if !h.requireEstateWriteAccess(w, r) {
 		return
 	}
 
@@ -636,9 +651,7 @@ func (h *NotificationChannelHandler) deleteChannel(w http.ResponseWriter, r *htt
 	if !h.checkPermission(w, r) {
 		return
 	}
-	// A channel and its recipients serve alerts from every connection,
-	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+	if !h.requireEstateWriteAccess(w, r) {
 		return
 	}
 
@@ -688,9 +701,7 @@ func (h *NotificationChannelHandler) createRecipient(w http.ResponseWriter, r *h
 	if !h.checkPermission(w, r) {
 		return
 	}
-	// A channel and its recipients serve alerts from every connection,
-	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+	if !h.requireEstateWriteAccess(w, r) {
 		return
 	}
 
@@ -743,9 +754,7 @@ func (h *NotificationChannelHandler) updateRecipient(w http.ResponseWriter, r *h
 	if !h.checkPermission(w, r) {
 		return
 	}
-	// A channel and its recipients serve alerts from every connection,
-	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+	if !h.requireEstateWriteAccess(w, r) {
 		return
 	}
 
@@ -790,9 +799,7 @@ func (h *NotificationChannelHandler) deleteRecipient(w http.ResponseWriter, r *h
 	if !h.checkPermission(w, r) {
 		return
 	}
-	// A channel and its recipients serve alerts from every connection,
-	// so a token must cover every connection to change them (#471).
-	if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker, h.denialRecorder) {
+	if !h.requireEstateWriteAccess(w, r) {
 		return
 	}
 

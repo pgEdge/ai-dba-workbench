@@ -2772,6 +2772,22 @@ project adheres to
   Superusers and users with a grant on all connections are
   unaffected, and reading blackouts is unchanged.
 
+- Refuse a change to an alert rule, a global probe
+  configuration, or a notification channel or its email
+  recipients unless the caller can see every connection (#744).
+  Each of these applies to the whole estate, so a user with
+  `manage_alert_rules`, `manage_probes` or
+  `manage_notification_channels` and a grant on only some
+  connections could previously change thresholds, collection or
+  alert delivery for connections they cannot see. Such a write,
+  including creating or deleting a channel or recipient, now
+  answers 403 with the same message and audit record as a caller
+  without the permission, as for estate-wide blackouts (#732).
+  Superusers and users with a grant on all connections are
+  unaffected, reading these objects is unchanged, and a probe
+  configuration on a single connection, cluster or group still
+  follows the rule for overrides (#716).
+
 - Require a connection on every server-scope blackout and
   blackout schedule in the datastore (#732). The collector's
   schema migration 30 converts any server-scope row stored

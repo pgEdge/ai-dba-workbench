@@ -436,7 +436,9 @@ func TestUpdateProbeConfigNeedsEveryMemberVisible(t *testing.T) {
 		{"full cluster", seed("cluster", m.fullCluster), http.StatusOK},
 		{"full group", seed("group", m.fullGroup), http.StatusOK},
 		{"server", seed("server", m.ownedFull), http.StatusOK},
-		{"global", globalID, http.StatusOK},
+		// A global config reaches every connection, and this caller
+		// cannot see them all (issue #744).
+		{"global", globalID, http.StatusForbidden},
 		{"mixed cluster", seed("cluster", m.mixedCluster), http.StatusForbidden},
 		{"mixed group", seed("group", m.mixedGroup), http.StatusForbidden},
 		{"split group", seed("group", m.splitGroup), http.StatusForbidden},

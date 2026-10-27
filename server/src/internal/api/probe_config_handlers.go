@@ -10,6 +10,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -26,6 +27,9 @@ type ProbeConfigHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+	// allConnectionIDs lists every connection, all of which a global
+	// probe config reaches; tests replace it to make the lookup fail.
+	allConnectionIDs func(context.Context) ([]int, error)
 	// denialAuditor audits this handler's token-scope and
 	// permission refusals.
 	denialAuditor
@@ -38,6 +42,7 @@ func NewProbeConfigHandler(datastore *database.Datastore, authStore *auth.AuthSt
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
+	h.allConnectionIDs = datastore.GetAllConnectionIDs
 	h.checkPermission = requireAdminPermission(rbacChecker, &h.denialAuditor, auth.PermManageProbes)
 	return h
 }
@@ -179,8 +184,10 @@ func (h *ProbeConfigHandler) requireProbeConfigVisible(
 // requireProbeConfigMembersVisible applies requireScopeMembersVisible to
 // the cluster or group a probe config names, since a cluster or group
 // config is the same override PUT /probe-overrides writes (issue #716).
-// A caller who sees every connection needs no lookup; a missing config
-// is then reported by the update itself.
+// A global config applies to every connection without its own, so the
+// caller must see every connection to change it (issue #744). A caller
+// who sees every connection needs no lookup; a missing config is then
+// reported by the update itself.
 func (h *ProbeConfigHandler) requireProbeConfigMembersVisible(
 	w http.ResponseWriter, r *http.Request, id int64) bool {
 
@@ -198,7 +205,11 @@ func (h *ProbeConfigHandler) requireProbeConfigMembersVisible(
 		return false
 	}
 	scope, scopeID, scoped := probeConfigVisibilityTarget(config)
-	if !scoped || scope == "server" {
+	if !scoped {
+		return checkEveryConnectionVisible(w, r, h.allConnectionIDs,
+			h.denialRecorder, auth.PermManageProbes, visible)
+	}
+	if scope == "server" {
 		return true
 	}
 	return checkScopeMembersVisible(w, r, h.datastore, h.denialRecorder,

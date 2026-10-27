@@ -46,7 +46,35 @@ through a long retention history could outlast any request budget.
    with no foreign key to `connections` is swept once more after the
    row is gone, because an in-flight collector write can land there
    after its batch loop and nothing would cascade it. It is
-   restart-safe, because the marked row is the work queue.
+   restart-safe, because the marked row is the work queue. A view
+   under `metrics` with a `connection_id` column (every probe on a
+   pgEdge ColdFront datastore, issue #755) is never purged: ColdFront
+   owns that data's lifecycle and the ctid batch cannot run on a view.
+   `metricsLeafTablesQuery` returns such views flagged, and
+   `splitMetricsViews`/`logSkippedMetricsViews` set them aside and log
+   one `[INFO]` line per purge through the package var `purgeLogf`
+   (tests swap it). Their rows outlive the connection, which is another
+   reason the orphan joins below must stay.
+
+## Metrics Relations May Be Views (pgEdge ColdFront)
+
+On a ColdFront datastore every `metrics.*` relation is a view (relkind
+`'v'`, `table_type` `VIEW`) over Apache Iceberg storage; on plain
+PostgreSQL they are partitioned tables. The server has no setting for
+this, so every probe-discovery query must accept both:
+`metrics.ProbeExistsQuery` (shared by `QueryTimeSeries`,
+`discoverLatestRowColumns`, the latest-snapshot handler, `query_metrics`
+and `describe_probe`) takes `BASE TABLE` and `VIEW`; the datastore
+catalog's `pg_class` lookups take relkinds `'r', 'p', 'v'`;
+`list_probes` lists a view only when it has `connection_id` and
+`collected_at`, and reports its `row_count` as `unknown` (never run
+`count(*)` against an Iceberg view). Do not add a new
+`table_type = 'BASE TABLE'` or `relkind IN ('r', 'p')` filter over
+`metrics`. A view has no primary key, so `GetProbeEntityKeyColumns`
+returns no keys on ColdFront (see the entity-key section below). JSONB
+columns read back as `json` there: `->`, `->>` and `::text`/`::jsonb`
+casts work, but `?`, `@>`, `jsonb_*` functions, `=`, `ORDER BY`,
+`min`/`max` on the raw column do not.
 
 Every reader must therefore filter `deleted_at IS NULL`: the server's
 connection, cluster, topology, estate and tool queries, the collector's
@@ -530,7 +558,9 @@ probe table's primary key other than `connection_id` and `collected_at`,
 in key order (`interface_name`; `datname`; `database_name, queryid,
 userid, dbid, toplevel`; nothing for a single-row probe such as
 `pg_stat_wal`, which then reduces to the unpartitioned form). Every
-`metrics.*` table declares such a key. Do not substitute
+`metrics.*` table declares such a key, but a ColdFront view declares
+none, so there the LAG is unpartitioned and multi-entity counter
+rates are wrong (open issue #755 follow-up). Do not substitute
 `EntityKeyColumns`/`IsEntityKeyColumn` here: those treat every text
 column as identity, and `pg_stat_wal.last_archived_wal` or
 `pg_sys_network_info.ip_address` would fragment the partition so that

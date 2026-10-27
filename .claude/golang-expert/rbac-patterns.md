@@ -1368,9 +1368,12 @@ disable or delete that would leave no enabled superuser
 enabled superusers, service accounts included, inside the change's own
 transaction). It applies to `updateUserAtomic`, `setUserEnabled`,
 `setUserSuperuser` and `deleteUser`, so sessions, tokens and the CLI
-alike; `respondUserStoreError` maps it to 409. Known exceptions, not
-yet ruled on: the lockout disable in `disableForLockout`, and the
-federated login's `is_superuser` sync in `federation.go`. Pinned by
+alike; `respondUserStoreError` maps it to 409. The federated login's
+`is_superuser` sync (`revokeFederatedSuperuserLocked` in
+`federation.go`) is exempt by ruling on #595: the provider is
+authoritative, and a revocation leaving no enabled superuser only logs a
+warning. The lockout disable in `disableForLockout` is the other
+exception, not yet ruled on. Pinned by
 `internal/auth/last_superuser_test.go` (including a concurrent mutual
 demotion) and `internal/api/rbac_last_superuser_test.go`.
 

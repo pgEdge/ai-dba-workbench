@@ -160,7 +160,8 @@ func (h *RBACHandler) requireRenameInTokenScope(w http.ResponseWriter,
 		return true
 	}
 
-	if h.federatedGroups[group.Name] || h.federatedGroups[name] {
+	federated := h.federatedGroups()
+	if federated[group.Name] || federated[name] {
 		return h.requireGrantInTokenScope(w, r, false, refuseFederated)
 	}
 	return h.requireGrantInTokenScope(w, r,
@@ -176,7 +177,7 @@ func (h *RBACHandler) requireRenameInTokenScope(w http.ResponseWriter,
 func (h *RBACHandler) federatedNameInTokenScope(ctx context.Context,
 	name string) bool {
 
-	return !h.federatedGroups[name] || h.rbacChecker.TokenHoldsEverything(ctx)
+	return !h.federatedGroups()[name] || h.rbacChecker.TokenHoldsEverything(ctx)
 }
 
 // requireGroupDeleteInTokenScope refuses a token that does not hold
@@ -188,7 +189,8 @@ func (h *RBACHandler) federatedNameInTokenScope(ctx context.Context,
 func (h *RBACHandler) requireGroupDeleteInTokenScope(w http.ResponseWriter,
 	r *http.Request, groupID int64) bool {
 
-	if len(h.federatedGroups) == 0 ||
+	federated := h.federatedGroups()
+	if len(federated) == 0 ||
 		h.rbacChecker.TokenHoldsEverything(r.Context()) {
 		return true
 	}
@@ -204,6 +206,6 @@ func (h *RBACHandler) requireGroupDeleteInTokenScope(w http.ResponseWriter,
 	if group == nil {
 		return true
 	}
-	return h.requireGrantInTokenScope(w, r, !h.federatedGroups[group.Name],
+	return h.requireGrantInTokenScope(w, r, !federated[group.Name],
 		refuseFederated)
 }

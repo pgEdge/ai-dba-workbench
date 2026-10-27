@@ -11,6 +11,7 @@ package auth
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -1061,10 +1062,14 @@ func TestReconcileFederatedGroupsSurfacesSuperuserWriteErrors(t *testing.T) {
 	defer cleanup()
 
 	user := resolveForTest(t, store)
-	if _, err := store.db.Exec(`CREATE TRIGGER refuse_user_update BEFORE UPDATE ON users
-        BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
-		t.Fatalf("create trigger: %v", err)
+	refuseUpdates := func() {
+		t.Helper()
+		if _, err := store.db.Exec(`CREATE TRIGGER refuse_user_update BEFORE UPDATE ON users
+            BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
+			t.Fatalf("create trigger: %v", err)
+		}
 	}
+	refuseUpdates()
 
 	// The grant, and then the revocation: both write is_superuser, in
 	// different phases.
@@ -1073,11 +1078,85 @@ func TestReconcileFederatedGroupsSurfacesSuperuserWriteErrors(t *testing.T) {
 		FederationOptions{SuperuserGroup: "idp-supers"}); err == nil {
 		t.Fatal("expected the superuser grant failure to surface")
 	}
+	assertSuperuser(t, store, user.Username, false)
+
+	// The revocation only writes a row that holds the flag, so the user
+	// has to be a superuser for it to reach the trigger.
+	if _, err := store.db.Exec("DROP TRIGGER refuse_user_update"); err != nil {
+		t.Fatalf("drop trigger: %v", err)
+	}
+	if _, err := store.db.Exec("UPDATE users SET is_superuser = TRUE WHERE id = ?", user.ID); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	refuseUpdates()
 	if err := store.ReconcileFederatedGroups(user.ID, FederatedIdentity{},
 		FederationOptions{SuperuserGroup: "idp-supers"}); err == nil {
 		t.Fatal("expected the superuser revocation failure to surface")
 	}
-	assertSuperuser(t, store, user.Username, false)
+	assertSuperuser(t, store, user.Username, true)
+}
+
+// TestReconcileFederatedGroupsWarnsWhenNoSuperuserRemains checks the ruling
+// on issue #595: the provider's revocation of superuser is not refused by
+// the last-superuser guard, but a revocation that leaves no enabled
+// superuser is logged as a warning, and nothing else is.
+func TestReconcileFederatedGroupsWarnsWhenNoSuperuserRemains(t *testing.T) {
+	const warning = "leaving no enabled superuser"
+	opts := FederationOptions{SuperuserGroup: "idp-supers"}
+	promote := func(t *testing.T, store *AuthStore, user *StoredUser) {
+		t.Helper()
+		if err := store.ReconcileFederatedGroups(user.ID, FederatedIdentity{
+			Groups: []string{"idp-supers"}}, opts); err != nil {
+			t.Fatalf("reconcile (granting): %v", err)
+		}
+	}
+
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, store *AuthStore, user *StoredUser)
+		wantWarn bool
+	}{
+		{
+			name:     "last superuser revoked",
+			setup:    promote,
+			wantWarn: true,
+		},
+		{
+			name: "another enabled superuser remains",
+			setup: func(t *testing.T, store *AuthStore, user *StoredUser) {
+				promote(t, store, user)
+				if err := store.CreateUser("admin", "Str0ng-Passw0rd!x", "", "", ""); err != nil {
+					t.Fatalf("CreateUser: %v", err)
+				}
+				if err := store.SetUserSuperuser("admin", true); err != nil {
+					t.Fatalf("SetUserSuperuser: %v", err)
+				}
+			},
+		},
+		{
+			name:  "user was not a superuser",
+			setup: func(*testing.T, *AuthStore, *StoredUser) {},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, cleanup := createTestAuthStoreForStore(t)
+			defer cleanup()
+
+			user := resolveForTest(t, store)
+			tt.setup(t, store, user)
+
+			logged := captureLog(t)
+			if err := store.ReconcileFederatedGroups(user.ID, FederatedIdentity{}, opts); err != nil {
+				t.Fatalf("reconcile (revoking): %v", err)
+			}
+			assertSuperuser(t, store, user.Username, false)
+			if got := strings.Contains(logged.String(), warning); got != tt.wantWarn {
+				t.Errorf("warning logged = %v, want %v; log: %q", got, tt.wantWarn, logged.String())
+			}
+		})
+	}
 }
 
 // TestReconcileFederatedGroupsCannotReEnableADisabledAccount guards the

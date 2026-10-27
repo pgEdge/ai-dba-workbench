@@ -462,8 +462,8 @@ func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIde
 	// consequential privilege here, so nothing that can fail is allowed to
 	// stand between the decision and its commit.
 	if opts.SuperuserGroup != "" && !superuser {
-		if _, err := s.db.Exec("UPDATE users SET is_superuser = FALSE WHERE id = ?", userID); err != nil {
-			return fmt.Errorf("revoking superuser for %s: %w", username, err)
+		if err := s.revokeFederatedSuperuserLocked(userID, username); err != nil {
+			return err
 		}
 	}
 
@@ -471,6 +471,52 @@ func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIde
 		return err
 	}
 	return s.grantFederatedLocked(userID, username, targets, opts, superuser)
+}
+
+// revokeFederatedSuperuserLocked clears is_superuser for a federated user
+// the provider no longer places in the superuser group.
+//
+// This deliberately does not go through guardLastSuperuserTx: the provider
+// is authoritative for the flag, and an operator who loses the last
+// superuser this way can have the provider grant it to another account, or
+// add a local one with -add-user and -set-superuser (ruled on issue #595).
+// What it does do is log a warning when the revocation leaves no enabled
+// superuser, so that the operator learns of it from the log rather than
+// from a refused administrative request. The warning is best effort: a
+// failure to read the outcome is logged and does not fail the login,
+// because the revocation it describes has already been committed. s.mu
+// must be held.
+func (s *AuthStore) revokeFederatedSuperuserLocked(userID int64, username string) error {
+	// Matching only a row that holds the flag makes the affected count say
+	// whether this login demoted anyone, rather than whether the row
+	// exists.
+	result, err := s.db.Exec(
+		"UPDATE users SET is_superuser = FALSE WHERE id = ? AND is_superuser", userID)
+	if err != nil {
+		return fmt.Errorf("revoking superuser for %s: %w", username, err)
+	}
+	// The SQLite driver's RowsAffected cannot fail, and were it to, the
+	// only cost would be a missed warning about a committed change.
+	if demoted, _ := result.RowsAffected(); demoted == 0 { //nolint:errcheck // see above
+		return nil
+	}
+
+	var remaining int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM users WHERE is_superuser AND enabled").Scan(&remaining); err != nil {
+		//nolint:gosec // G706: username passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Revoked federated superuser from %s but could not count the remaining superusers: %v",
+			logging.SanitizeForLog(username), err)
+		return nil
+	}
+	if remaining == 0 {
+		//nolint:gosec // G706: username passed through logging.SanitizeForLog
+		log.Printf("[AUTH] WARNING: the identity provider revoked superuser from %s, leaving no "+
+			"enabled superuser; grant the superuser group to another account at the provider, "+
+			"or add a local superuser with -add-user and -set-superuser",
+			logging.SanitizeForLog(username))
+	}
+	return nil
 }
 
 // mappedGroupTarget is one Workbench group named by the operator's map,

@@ -306,8 +306,10 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			rbacHandler.SetConnectionLister(database.NewVisibilityLister(deps.Datastore))
 			// Federation matches groups by name, so the RBAC handler
 			// must know which names the OIDC group map uses before it
-			// lets a bounded token rename a group (issue #471).
-			rbacHandler.SetFederatedGroupMap(deps.Config.HTTP.Auth.OIDC.GroupMap)
+			// lets a bounded token rename a group (issue #471). It reads
+			// the live configuration, as the federated login does, so a
+			// reload that maps a new group protects it at once (#595).
+			rbacHandler.SetFederatedGroupMapSource(deps.liveOIDCGroupMap)
 			// Token-scope refusals on the connection, cluster, alert
 			// rule, notification channel, blackout, probe config and
 			// alert, probe and channel override routes, and the
@@ -512,6 +514,15 @@ func authCapabilitiesFrom(cfg *config.Config, provider *oidc.Provider) authCapab
 		}
 	}
 	return info
+}
+
+// liveOIDCGroupMap returns the OIDC group map as of the latest reload, or
+// nil when there is no configuration at all.
+func (deps *HandlerDependencies) liveOIDCGroupMap() map[string]string {
+	if cfg := deps.liveConfig(); cfg != nil {
+		return cfg.HTTP.Auth.OIDC.GroupMap
+	}
+	return nil
 }
 
 // liveConfig returns the configuration as of the latest reload, or the

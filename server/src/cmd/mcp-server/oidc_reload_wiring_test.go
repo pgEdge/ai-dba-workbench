@@ -174,6 +174,25 @@ func TestLiveConfigFallsBackToTheStartupConfiguration(t *testing.T) {
 	}
 }
 
+// TestLiveOIDCGroupMapFollowsTheLiveConfiguration pins the source the RBAC
+// handler's federated group protections read (issue #595): the group map
+// from the latest reload, and nothing when there is no configuration.
+func TestLiveOIDCGroupMapFollowsTheLiveConfiguration(t *testing.T) {
+	startup := &config.Config{}
+	startup.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-admins": "wb-admins"}
+	reloaded := &config.Config{}
+	reloaded.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-ops": "wb-ops"}
+
+	deps := &HandlerDependencies{Config: startup,
+		LiveConfig: func() *config.Config { return reloaded }}
+	if got := deps.liveOIDCGroupMap(); got["idp-ops"] != "wb-ops" || len(got) != 1 {
+		t.Errorf("liveOIDCGroupMap = %v, want the reloaded map", got)
+	}
+	if got := (&HandlerDependencies{}).liveOIDCGroupMap(); got != nil {
+		t.Errorf("liveOIDCGroupMap with no configuration = %v, want nil", got)
+	}
+}
+
 // buttonLabelYAML is a federated login configuration whose button label
 // is label, standing in for the file a SIGHUP re-reads.
 func buttonLabelYAML(label string) string {

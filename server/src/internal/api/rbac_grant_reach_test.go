@@ -606,6 +606,40 @@ func TestRenameGroupRespectsTokenScope(t *testing.T) {
 	}
 }
 
+// TestFederatedGroupProtectionFollowsReload covers issue #595: a SIGHUP
+// reload applies group_map to the next federated login, so the protections
+// on create, rename and delete must follow the live map rather than the
+// one in force at start-up, both to cover a newly mapped group and to
+// release one the map no longer names.
+func TestFederatedGroupProtectionFollowsReload(t *testing.T) {
+	f, cleanup := newReachFixture(t)
+	defer cleanup()
+	live := map[string]string{"idp-admins": "wb-admins"}
+	f.h.SetFederatedGroupMapSource(func() map[string]string { return live })
+	path := func(id int64) string { return fmt.Sprintf("/api/v1/rbac/groups/%d", id) }
+	named := func(name string) string { return fmt.Sprintf(`{"name":%q}`, name) }
+
+	plain := f.group(t, "plain", nil)
+	ops := f.group(t, "wb-ops", nil)
+	assertStatus(t, f.do(f.narrowed, http.MethodPut, path(plain), named("plain-2")),
+		http.StatusOK)
+
+	// The reload maps wb-ops and drops wb-admins.
+	live = map[string]string{"idp-ops": "wb-ops"}
+
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, path(plain), named("wb-ops")))
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, path(ops), named("wb-other")))
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodDelete, path(ops), ""))
+	assertDenialRecorded(t, f.store, "group.delete", refuseFederated)
+	assertStatus(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/groups",
+		named("wb-admins")), http.StatusCreated)
+
+	// With no source at all nothing is federated.
+	f.h.SetFederatedGroupMapSource(nil)
+	assertStatus(t, f.do(f.narrowed, http.MethodDelete, path(ops), ""),
+		http.StatusNoContent)
+}
+
 // TestRenameGroupFailsClosedOnLookupError checks that a bounded token's
 // rename is refused, and the refusal audited, when the group cannot be
 // read.

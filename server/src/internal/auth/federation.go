@@ -439,6 +439,18 @@ func (s *AuthStore) unusablePasswordHashLocked() (string, error) {
 // token scope entirely. Nothing needs the flag and the membership rows to move
 // atomically, because both are revocations and a partial revocation errs in
 // the safe direction.
+//
+// Every change is audited, attributed to the system actor with a
+// details.reason of identity_provider and the issuer in details.issuer: a
+// superuser change as user.update, and a membership change as
+// group.member.add or group.member.remove. A login that changes nothing
+// records nothing. The two directions treat a failed audit write
+// differently, for the reason the lockout does (see disableForLockout). A
+// grant records its events inside its own transaction, so a grant whose event
+// cannot be written is rolled back and the login fails. A revocation records
+// its events after it has committed and logs a failed write, because rolling
+// a revocation back over an audit failure would hand the user the privilege
+// the provider has just taken away.
 func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIdentity, opts FederationOptions) error {
 	asserted := make(map[string]bool, len(identity.Groups))
 	for _, group := range identity.Groups {
@@ -462,15 +474,55 @@ func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIde
 	// consequential privilege here, so nothing that can fail is allowed to
 	// stand between the decision and its commit.
 	if opts.SuperuserGroup != "" && !superuser {
-		if err := s.revokeFederatedSuperuserLocked(userID, username); err != nil {
+		if err := s.revokeFederatedSuperuserLocked(userID, username, identity.Issuer); err != nil {
 			return err
 		}
 	}
 
-	if err := s.revokeFederatedLocked(userID, username, targets); err != nil {
+	if err := s.revokeFederatedLocked(userID, username, identity.Issuer, targets); err != nil {
 		return err
 	}
-	return s.grantFederatedLocked(userID, username, targets, opts, superuser)
+	return s.grantFederatedLocked(userID, username, identity.Issuer, targets, opts, superuser)
+}
+
+// federatedAuditReason is the details.reason of every event
+// ReconcileFederatedGroups records, as "lockout" is for the lockout's
+// user.disable.
+const federatedAuditReason = "identity_provider"
+
+// federatedAuditDetails returns the details shared by every event
+// ReconcileFederatedGroups records, with extra merged in.
+func federatedAuditDetails(issuer string, extra map[string]any) map[string]any {
+	details := map[string]any{
+		"reason": federatedAuditReason,
+		"issuer": issuer,
+	}
+	for key, value := range extra {
+		details[key] = value
+	}
+	return details
+}
+
+// federatedSuperuserEvent builds the user.update event for a superuser change
+// made by reconciliation, from the account's snapshot before the change.
+func federatedSuperuserEvent(before userSnapshot, issuer string) *AuditEvent {
+	after := before
+	after.IsSuperuser = !before.IsSuperuser
+	return newEvent(systemActor, "user.update", "user", &before.ID, before.Username,
+		federatedAuditDetails(issuer, map[string]any{
+			"before":           before,
+			"after":            after,
+			"password_changed": false,
+		}))
+}
+
+// federatedMembershipEvent builds the group.member.add or group.member.remove
+// event for a membership change made by reconciliation.
+func federatedMembershipEvent(action string, target mappedGroupTarget,
+	userID int64, username, issuer string) *AuditEvent {
+
+	return newEvent(systemActor, action, "group", &target.id, target.name,
+		federatedAuditDetails(issuer, membershipDetails(memberTypeUser, userID, username)))
 }
 
 // revokeFederatedSuperuserLocked clears is_superuser for a federated user
@@ -486,7 +538,7 @@ func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIde
 // failure to read the outcome is logged and does not fail the login,
 // because the revocation it describes has already been committed. s.mu
 // must be held.
-func (s *AuthStore) revokeFederatedSuperuserLocked(userID int64, username string) error {
+func (s *AuthStore) revokeFederatedSuperuserLocked(userID int64, username, issuer string) error {
 	// Matching only a row that holds the flag makes the affected count say
 	// whether this login demoted anyone, rather than whether the row
 	// exists.
@@ -501,11 +553,56 @@ func (s *AuthStore) revokeFederatedSuperuserLocked(userID int64, username string
 		return nil
 	}
 
+	s.recordFederatedSuperuserRevocationLocked(username, issuer)
+
 	s.warnIfNoEnabledSuperuserLocked(
 		"the identity provider revoked superuser from "+logging.SanitizeForLog(username),
 		"grant the superuser group to another account at the provider, "+
 			"or add a local superuser with -add-user and -set-superuser")
 	return nil
+}
+
+// recordFederatedSuperuserRevocationLocked records the user.update event for a
+// superuser revocation that has already been committed. The snapshot is read
+// afterwards, in the event's own transaction, so that nothing can fail between
+// the decision to revoke and its commit; the before state is that snapshot
+// with the flag still set. A failure is logged rather than returned, because
+// the revocation stands either way. s.mu must be held.
+func (s *AuthStore) recordFederatedSuperuserRevocationLocked(username, issuer string) {
+	tx, err := s.db.Begin()
+	if err == nil {
+		var after userSnapshot
+		after, err = userSnapshotTx(tx, username)
+		if err == nil {
+			before := after
+			before.IsSuperuser = true
+			err = s.recordAudit(tx, federatedSuperuserEvent(before, issuer))
+		}
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			//nolint:errcheck // Rollback error is not critical; the
+			// failure is logged below.
+			tx.Rollback()
+		}
+	}
+	if err != nil {
+		//nolint:gosec // G706: username passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Failed to record the federated superuser revocation for user %s: %v",
+			logging.SanitizeForLog(username), err)
+	}
+}
+
+// recordFederatedRevocationLocked records the events for membership removals
+// that have already been committed, in a transaction of its own. A failure is
+// logged rather than returned, because the removals stand whether or not
+// their events can be written. s.mu must be held.
+func (s *AuthStore) recordFederatedRevocationLocked(username string, evs ...*AuditEvent) {
+	if err := s.recordAuditInOwnTx(evs...); err != nil {
+		//nolint:gosec // G706: username passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Failed to record %d federated membership removal audit event(s) for user %s: %v",
+			len(evs), logging.SanitizeForLog(username), err)
+	}
 }
 
 // warnIfNoEnabledSuperuserLocked logs a warning, naming remedy, when no
@@ -612,9 +709,10 @@ func (s *AuthStore) mappedGroupTargetsLocked(opts FederationOptions, asserted ma
 // revokeFederatedLocked removes the memberships the provider no longer
 // asserts, as one transaction. It deliberately does not carry the superuser
 // revocation: that is committed by the caller beforehand, so a failure here
-// cannot roll it back and hand a demoted user their flag again. s.mu must be
-// held.
-func (s *AuthStore) revokeFederatedLocked(userID int64, username string,
+// cannot roll it back and hand a demoted user their flag again. A
+// group.member.remove event is recorded for each membership actually removed,
+// once the removals have committed. s.mu must be held.
+func (s *AuthStore) revokeFederatedLocked(userID int64, username, issuer string,
 	targets []mappedGroupTarget) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -628,15 +726,23 @@ func (s *AuthStore) revokeFederatedLocked(userID int64, username string,
 		}
 	}()
 
+	var events []*AuditEvent
 	for _, target := range targets {
 		if target.desired {
 			continue
 		}
-		if _, execErr := tx.Exec(
+		result, execErr := tx.Exec(
 			"DELETE FROM group_memberships WHERE parent_group_id = ? AND member_user_id = ?",
-			target.id, userID); execErr != nil {
+			target.id, userID)
+		if execErr != nil {
 			err = fmt.Errorf("removing %s from mapped group %q: %w", username, target.name, execErr)
 			return err
+		}
+		// The SQLite driver's RowsAffected cannot fail; were it to, the
+		// only cost would be a missing event for a committed change.
+		if removed, _ := result.RowsAffected(); removed > 0 { //nolint:errcheck // see above
+			events = append(events, federatedMembershipEvent("group.member.remove",
+				target, userID, username, issuer))
 		}
 	}
 
@@ -644,12 +750,18 @@ func (s *AuthStore) revokeFederatedLocked(userID int64, username string,
 		err = fmt.Errorf("failed to commit federated revocations for %s: %w", username, commitErr)
 		return err
 	}
+	if len(events) > 0 {
+		s.recordFederatedRevocationLocked(username, events...)
+	}
 	return nil
 }
 
 // grantFederatedLocked applies everything that adds privilege, as one
-// transaction, once every revocation has been committed. s.mu must be held.
-func (s *AuthStore) grantFederatedLocked(userID int64, username string,
+// transaction, once every revocation has been committed. Each grant actually
+// made records its group.member.add or user.update event in the same
+// transaction, so a grant whose event cannot be written is rolled back rather
+// than applied unaudited. s.mu must be held.
+func (s *AuthStore) grantFederatedLocked(userID int64, username, issuer string,
 	targets []mappedGroupTarget, opts FederationOptions, superuser bool) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -667,18 +779,31 @@ func (s *AuthStore) grantFederatedLocked(userID int64, username string,
 		if !target.desired {
 			continue
 		}
-		// UNIQUE(parent_group_id, member_user_id) makes this idempotent.
-		if _, execErr := tx.Exec(
+		// UNIQUE(parent_group_id, member_user_id) makes this idempotent,
+		// and an ignored row reports no change, so a membership the user
+		// already holds records no event.
+		result, execErr := tx.Exec(
 			"INSERT OR IGNORE INTO group_memberships (parent_group_id, member_user_id) VALUES (?, ?)",
-			target.id, userID); execErr != nil {
+			target.id, userID)
+		if execErr != nil {
 			err = fmt.Errorf("adding %s to mapped group %q: %w", username, target.name, execErr)
+			return err
+		}
+		// The SQLite driver's RowsAffected cannot fail; were it to, the
+		// grant would stand without its event.
+		if added, _ := result.RowsAffected(); added == 0 { //nolint:errcheck // see above
+			continue
+		}
+		if auditErr := s.recordAudit(tx, federatedMembershipEvent("group.member.add",
+			target, userID, username, issuer)); auditErr != nil {
+			err = fmt.Errorf("recording %s joining mapped group %q: %w", username, target.name, auditErr)
 			return err
 		}
 	}
 
 	if opts.SuperuserGroup != "" && superuser {
-		if _, execErr := tx.Exec("UPDATE users SET is_superuser = TRUE WHERE id = ?", userID); execErr != nil {
-			err = fmt.Errorf("granting superuser to %s: %w", username, execErr)
+		if grantErr := s.grantFederatedSuperuserTx(tx, userID, username, issuer); grantErr != nil {
+			err = grantErr
 			return err
 		}
 	}
@@ -686,6 +811,26 @@ func (s *AuthStore) grantFederatedLocked(userID int64, username string,
 	if commitErr := tx.Commit(); commitErr != nil {
 		err = fmt.Errorf("failed to commit federated grants for %s: %w", username, commitErr)
 		return err
+	}
+	return nil
+}
+
+// grantFederatedSuperuserTx sets is_superuser inside the grant transaction and
+// records the user.update event alongside it, doing neither when the account
+// already holds the flag. s.mu must be held.
+func (s *AuthStore) grantFederatedSuperuserTx(tx *sql.Tx, userID int64, username, issuer string) error {
+	before, err := userSnapshotTx(tx, username)
+	if err != nil {
+		return fmt.Errorf("reading %s before granting superuser: %w", username, err)
+	}
+	if before.IsSuperuser {
+		return nil
+	}
+	if _, err := tx.Exec("UPDATE users SET is_superuser = TRUE WHERE id = ?", userID); err != nil {
+		return fmt.Errorf("granting superuser to %s: %w", username, err)
+	}
+	if err := s.recordAudit(tx, federatedSuperuserEvent(before, issuer)); err != nil {
+		return fmt.Errorf("recording the superuser grant to %s: %w", username, err)
 	}
 	return nil
 }

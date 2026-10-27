@@ -665,6 +665,16 @@ The revocation is committed before any grant, so a reconciliation that
 fails part way through can only leave a user holding fewer privileges
 than the provider asserts, never more.
 
+Every change reconciliation makes is recorded in the
+[audit log](audit-log.md), attributed to the `system` actor with a
+`details.reason` of `identity_provider` and the provider's issuer in
+`details.issuer`: a superuser grant or revocation as `user.update`, and
+a mapped group membership as `group.member.add` or
+`group.member.remove`. A login that changes nothing records nothing. A
+grant whose event cannot be written is rolled back and the login fails,
+whereas a revocation stands even when its event cannot be written, and
+the failure is reported in the server log.
+
 Setting `superuser_group` hands out more than the flag's name suggests,
 and the server prints a warning at start-up whenever it is configured. A
 superuser bypasses every group grant, reaching every connection, every

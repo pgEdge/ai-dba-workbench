@@ -310,15 +310,21 @@ address, and takes the actor name from the operating system user running
 the command. The `system` actor covers changes the server makes on its
 own account; the clearest example is the automatic account lockout after
 too many failed sign-in attempts, which records a `user.disable` event
-attributed to `system` with a `details.reason` of `lockout`.
+attributed to `system` with a `details.reason` of `lockout`. The group
+and superuser changes a federated login makes are attributed to
+`system` too, with a `details.reason` of `identity_provider` and the
+provider's issuer in `details.issuer`; see
+[Single Sign-On](sso.md#granting-superuser-from-a-provider-group).
 
-The lockout is the one change that is applied even when its event
-cannot be recorded. Everywhere else a change is rolled back if the
-server cannot write the event that describes it, because refusing a
-change an operator asked for is the safe answer; here the server is
-defending an account against a password guessing attack, so the lockout
-is committed first and the event written after it. If the write fails,
-the account stays locked and the failure is reported in the server log.
+The lockout and a privilege revoked by a federated login are the only
+changes applied even when their event cannot be recorded. Everywhere
+else a change is rolled back if the server cannot write the event that
+describes it, because refusing a change an operator asked for is the
+safe answer. The lockout defends an account against a password guessing
+attack, and rolling back a revocation would hand back the privilege the
+provider has just withdrawn, so each is committed first and its event
+written after it. If the write fails, the change stands and the failure
+is reported in the server log.
 
 ## Outcomes and Details
 

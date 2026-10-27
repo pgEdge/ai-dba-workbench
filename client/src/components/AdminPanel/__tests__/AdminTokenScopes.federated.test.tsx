@@ -77,8 +77,13 @@ const BOB_TOKEN = {
 
 const SERVER_REFUSAL = `Permission denied: ${FEDERATED_TOKENS_DISABLED_TEXT}`;
 
-const mockApi = (tokens: unknown[]) => {
+const mockApi = (tokens: unknown[], userInfo: unknown = {}) => {
     mockApiGet.mockImplementation((url: string) => {
+        if (url === '/api/v1/user/info') {
+            return userInfo instanceof Error
+                ? Promise.reject(userInfo)
+                : Promise.resolve(userInfo);
+        }
         if (url === '/api/v1/rbac/tokens') {
             return Promise.resolve({ tokens });
         }
@@ -124,6 +129,48 @@ describe('AdminTokenScopes - federated logins without API tokens', () => {
         expect(await screen.findByRole('button', { name: /create token/i }))
             .toBeInTheDocument();
         expect(screen.queryByText(FEDERATED_TOKENS_DISABLED_TEXT))
+            .not.toBeInTheDocument();
+    });
+
+    it('reads the setting again when the panel opens', async () => {
+        // Logged in whilst tokens were allowed, then a reload switched
+        // them off: the panel follows the server, not the login.
+        mockCurrentUser = {
+            username: 'bob', isSuperuser: false, apiTokensAllowed: true,
+        };
+        mockApi([BOB_TOKEN], { api_tokens_allowed: false });
+        renderPanel();
+
+        expect(await screen.findByText(FEDERATED_TOKENS_DISABLED_TEXT))
+            .toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /create token/i }))
+            .not.toBeInTheDocument();
+        expect(mockApiGet).toHaveBeenCalledWith('/api/v1/user/info');
+    });
+
+    it('offers creation once a reload switches tokens back on', async () => {
+        mockCurrentUser = {
+            username: 'bob', isSuperuser: false, apiTokensAllowed: false,
+        };
+        mockApi([BOB_TOKEN], { api_tokens_allowed: true });
+        renderPanel();
+
+        expect(await screen.findByRole('button', { name: /create token/i }))
+            .toBeInTheDocument();
+        expect(screen.queryByText(FEDERATED_TOKENS_DISABLED_TEXT))
+            .not.toBeInTheDocument();
+    });
+
+    it('keeps the login-time value when the setting cannot be read', async () => {
+        mockCurrentUser = {
+            username: 'bob', isSuperuser: false, apiTokensAllowed: false,
+        };
+        mockApi([BOB_TOKEN], new Error('network down'));
+        renderPanel();
+
+        expect(await screen.findByText(FEDERATED_TOKENS_DISABLED_TEXT))
+            .toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /create token/i }))
             .not.toBeInTheDocument();
     });
 

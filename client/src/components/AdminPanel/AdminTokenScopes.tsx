@@ -132,7 +132,31 @@ const AdminTokenScopes: React.FC = () => {
     // create a token for nobody, so creation is not offered at all; a
     // superuser may still create one for another user. A server that
     // predates the field leaves it undefined, which counts as allowed.
-    const ownTokensAllowed = currentUser?.apiTokensAllowed !== false;
+    //
+    // The setting applies on a server reload, so the panel reads it again
+    // when it opens rather than relying on the value fetched at login;
+    // until that read returns, or if it fails or omits the field, the
+    // login-time value stands.
+    const [liveTokensAllowed, setLiveTokensAllowed] = useState<boolean | undefined>(undefined);
+    useEffect(() => {
+        let cancelled = false;
+        const readSetting = async () => {
+            try {
+                const info = await apiGet<{ api_tokens_allowed?: boolean }>('/api/v1/user/info');
+                if (!cancelled && typeof info?.api_tokens_allowed === 'boolean') {
+                    setLiveTokensAllowed(info.api_tokens_allowed);
+                }
+            } catch {
+                // Keep the login-time value; the server still refuses a
+                // token the account may not own.
+            }
+        };
+        void readSetting();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+    const ownTokensAllowed = (liveTokensAllowed ?? currentUser?.apiTokensAllowed) !== false;
     const canCreateTokens = isSuperuser || ownTokensAllowed;
     const [tokens, setTokens] = useState<Token[]>([]);
     const [connections, setConnections] = useState<Connection[]>([]);

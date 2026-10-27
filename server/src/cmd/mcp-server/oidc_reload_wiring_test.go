@@ -230,15 +230,21 @@ func TestRBACRoutesFollowAReloadedGroupMap(t *testing.T) {
 	startup.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-admins": "wb-admins"}
 	reloaded := &config.Config{}
 	reloaded.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-new": "wb-new"}
+	// The reload lands after registration, so a snapshot taken while
+	// SetupHandlers runs would hold only the start-up map and let the
+	// create through.
+	var live atomic.Pointer[config.Config]
+	live.Store(startup)
 	deps := &HandlerDependencies{
 		Config:     startup,
-		LiveConfig: func() *config.Config { return reloaded },
+		LiveConfig: live.Load,
 		AuthStore:  store,
 	}
 	mux := http.NewServeMux()
 	if err := SetupHandlers(deps)(mux); err != nil {
 		t.Fatalf("SetupHandlers: %v", err)
 	}
+	live.Store(reloaded)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/groups",
 		strings.NewReader(`{"name":"wb-new"}`))

@@ -1504,7 +1504,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The target connection, cluster or group was not found or is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -1562,7 +1572,7 @@
             }
           },
           "404": {
-            "description": "Schedule not found",
+            "description": "Schedule not found, or its target is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -1639,7 +1649,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -1649,7 +1659,7 @@
             }
           },
           "404": {
-            "description": "Schedule not found",
+            "description": "Schedule not found, or its target is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -1710,7 +1720,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -1720,7 +1730,7 @@
             }
           },
           "404": {
-            "description": "Schedule not found",
+            "description": "Schedule not found, or its target is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -1884,7 +1894,17 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The target connection, cluster or group was not found or is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -1942,7 +1962,7 @@
             }
           },
           "404": {
-            "description": "Blackout not found",
+            "description": "Blackout not found, or its target is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -2019,7 +2039,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -2029,7 +2049,7 @@
             }
           },
           "404": {
-            "description": "Blackout not found",
+            "description": "Blackout not found, or its target is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -2090,7 +2110,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -2100,7 +2120,7 @@
             }
           },
           "404": {
-            "description": "Blackout not found",
+            "description": "Blackout not found, or its target is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -2158,7 +2178,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target",
+            "description": "Requires manage_blackouts permission, or the API token's connection scope does not cover the target, or the target is a cluster or group with a member connection the caller cannot see",
             "content": {
               "application/json": {
                 "schema": {
@@ -2168,7 +2188,7 @@
             }
           },
           "404": {
-            "description": "Blackout not found",
+            "description": "Blackout not found, or its target is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {

@@ -211,8 +211,8 @@ func TestOverrideAndProbeConfigRefusalsAreAudited(t *testing.T) {
 
 // TestBlackoutRefusalsAreAudited checks that the blackout handler's
 // token-scope refusals are recorded, both the gate on the requested
-// target and refuseOutOfScope's 403 for a stored record, and that
-// refuseOutOfScope's 404 for a record the token cannot see is not.
+// target and the 403 for a stored record, and that the 404 for a record
+// the token cannot see is not.
 func TestBlackoutRefusalsAreAudited(t *testing.T) {
 	const estateSchedule = `{"scope":"estate","name":"n",` +
 		`"cron_expression":"0 * * * *","duration_minutes":30,"reason":"r"}`

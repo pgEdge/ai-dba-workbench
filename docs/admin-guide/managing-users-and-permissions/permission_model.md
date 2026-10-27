@@ -248,7 +248,12 @@ An administrative permission applies only to what the holder can see. A
 probe, alert or notification channel override set on a cluster or a cluster
 group applies to every connection in it, so changing or deleting one requires
 the holder to see every one of those connections, whilst viewing one needs
-only one of them to be visible. The same applies to deleting a cluster or a
+only one of them to be visible. A blackout or a blackout schedule on a
+cluster or a cluster group silences alerts on every connection in it, so
+creating, changing, stopping or deleting one likewise requires the holder to
+see every one of those connections; a blackout on a connection, cluster or
+group the holder cannot see at all is answered as though it did not exist.
+The same applies to deleting a cluster or a
 cluster group, and to moving a cluster to another group, since each of those
 changes which overrides reach the cluster's connections. A change refused
 because a member connection is hidden answers in the same way as a missing

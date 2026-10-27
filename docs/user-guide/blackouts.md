@@ -135,8 +135,16 @@ process:
 The `manage_blackouts` permission controls access to
 blackout management operations. Administrators with
 this permission can create, update, delete, and stop
-blackouts. All authenticated users can view active
-blackouts regardless of their permissions.
+blackouts. All authenticated users can view the
+blackouts on the connections they can see, regardless
+of their permissions.
+
+A blackout or blackout schedule on a cluster or a group
+silences alerts on every connection in it, so changing
+one requires you to see every one of those connections;
+seeing one of them is enough to view it. Superusers,
+and users granted access to all connections, see every
+connection.
 
 ## Related Documentation
 

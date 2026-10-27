@@ -2733,6 +2733,21 @@ project adheres to
   are unaffected, and reading cluster and group overrides is
   unchanged.
 
+- Refuse a blackout or blackout schedule created, updated,
+  stopped or deleted at cluster or group scope unless the caller
+  can see every connection in that cluster or group (#732). A
+  user with `manage_blackouts` could previously silence alerts on
+  connections they cannot see, by naming a cluster or group that
+  holds them. Such a write now answers 403 with the same message
+  and audit record as a caller without the permission, as for
+  overrides (#716). A blackout or schedule whose connection,
+  cluster or group the caller cannot see at all now answers 404
+  as though it did not exist; for an API token, that includes a
+  server outside the token's connection scope, which previously
+  answered 403. Superusers and users with a grant on all
+  connections are unaffected, and estate-wide blackouts and
+  reading blackouts are unchanged.
+
 - Reset the session on each pooled connection to a monitored
   database when a tool call releases it (#709). A tool call could
   previously leave settings such as `search_path`, temporary

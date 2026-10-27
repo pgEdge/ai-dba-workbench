@@ -267,8 +267,9 @@ func TestBlackoutWritesByIDRespectTokenScope(t *testing.T) {
 		{"move cluster schedule", updateSchedule, "blackout_schedules", 3, "narrowed", http.StatusForbidden},
 		{"move cluster schedule wildcard", updateSchedule, "blackout_schedules", 3, "wildcard", http.StatusOK},
 		// The schedule is on connection 5 today, but the body would move
-		// it onto connection 6, which the token does not hold.
-		{"move schedule out of scope", moveScheduleOut, "blackout_schedules", 1, "narrowed", http.StatusForbidden},
+		// it onto connection 6, which the token does not hold and so
+		// cannot see: that answers as a missing connection.
+		{"move schedule out of scope", moveScheduleOut, "blackout_schedules", 1, "narrowed", http.StatusNotFound},
 	}
 
 	for _, tc := range cases {
@@ -309,11 +310,11 @@ func TestBlackoutWritesByIDFastPath(t *testing.T) {
 		t.Run(caller.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			r := newScopeRequest(caller, http.MethodDelete, "")
-			if !h.requireBlackoutInTokenScope(rec, r, 1) {
+			if !h.requireBlackoutWritable(rec, r, 1) {
 				t.Errorf("Expected the blackout check to pass: %s",
 					rec.Body.String())
 			}
-			if !h.requireBlackoutScheduleInTokenScope(rec, r, 1) {
+			if _, ok := h.requireBlackoutScheduleWritable(rec, r, 1); !ok {
 				t.Errorf("Expected the schedule check to pass: %s",
 					rec.Body.String())
 			}

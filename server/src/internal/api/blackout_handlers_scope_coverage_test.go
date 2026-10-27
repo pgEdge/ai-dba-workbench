@@ -12,7 +12,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -475,50 +474,6 @@ func TestBlackoutWritesCoverage(t *testing.T) {
 
 			expectStatus(t, rec, tc.want)
 			if tc.want == http.StatusForbidden && tc.caller != "anonymous" {
-				assertOutOfTokenScope(t, rec)
-			}
-		})
-	}
-}
-
-// TestRefuseOutOfScope covers each answer refuseOutOfScope can give.
-func TestRefuseOutOfScope(t *testing.T) {
-	visibleFn := func(ok bool, err error) func(context.Context,
-		map[int]bool) (bool, error) {
-		return func(context.Context, map[int]bool) (bool, error) {
-			return ok, err
-		}
-	}
-	cases := []struct {
-		name      string
-		caller    string
-		closeAuth bool
-		visible   bool
-		err       error
-		want      int
-	}{
-		{"hidden", "narrowed", false, false, nil, http.StatusNotFound},
-		{"visible", "narrowed", false, true, nil, http.StatusForbidden},
-		// A caller who can see every connection is never told 404.
-		{"sees everything", "session", false, false, nil, http.StatusForbidden},
-		{"visibility fails", "narrowed", false, false,
-			errors.New("lookup failed"), http.StatusInternalServerError},
-		{"scope unreadable", "narrowed", true, true, nil, http.StatusInternalServerError},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h, _, callers := newTokenScopeBlackoutHandler(t)
-			if tc.closeAuth {
-				closeAuthStore(t, h)
-			}
-			rec := httptest.NewRecorder()
-			r := newScopeRequest(callers[tc.caller], http.MethodDelete, "")
-
-			h.refuseOutOfScope(rec, r, "Blackout not found",
-				visibleFn(tc.visible, tc.err))
-
-			expectStatus(t, rec, tc.want)
-			if tc.want == http.StatusForbidden {
 				assertOutOfTokenScope(t, rec)
 			}
 		})

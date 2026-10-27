@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Sentinel errors for blackout operations
@@ -24,7 +26,23 @@ var (
 
 	// ErrBlackoutScheduleNotFound is returned when a blackout schedule is not found
 	ErrBlackoutScheduleNotFound = errors.New("blackout schedule not found")
+
+	// ErrBlackoutTargetNotFound is returned when the connection, cluster
+	// or cluster group a blackout or schedule names does not exist
+	ErrBlackoutTargetNotFound = errors.New("blackout target not found")
 )
+
+// blackoutTargetError maps a foreign key violation, which a blackout or
+// schedule write raises only when the group, cluster or connection it
+// names does not exist, to ErrBlackoutTargetNotFound, and otherwise
+// wraps err with what failed.
+func blackoutTargetError(err error, what string) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolation {
+		return ErrBlackoutTargetNotFound
+	}
+	return fmt.Errorf("failed to %s: %w", what, err)
+}
 
 // BlackoutScope represents the hierarchy level of a blackout
 type BlackoutScope string
@@ -257,7 +275,7 @@ func (d *Datastore) CreateBlackout(ctx context.Context, b *Blackout) error {
 		b.CreatedBy,
 	).Scan(&b.ID, &b.CreatedAt)
 	if err != nil {
-		return fmt.Errorf("failed to create blackout: %w", err)
+		return blackoutTargetError(err, "create blackout")
 	}
 
 	return nil
@@ -543,7 +561,7 @@ func (d *Datastore) CreateBlackoutSchedule(ctx context.Context, s *BlackoutSched
 		s.Enabled, s.CreatedBy,
 	).Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt)
 	if err != nil {
-		return fmt.Errorf("failed to create blackout schedule: %w", err)
+		return blackoutTargetError(err, "create blackout schedule")
 	}
 
 	return nil
@@ -574,7 +592,7 @@ func (d *Datastore) UpdateBlackoutSchedule(ctx context.Context, s *BlackoutSched
 		if err.Error() == "no rows in result set" {
 			return ErrBlackoutScheduleNotFound
 		}
-		return fmt.Errorf("failed to update blackout schedule: %w", err)
+		return blackoutTargetError(err, "update blackout schedule")
 	}
 
 	return nil

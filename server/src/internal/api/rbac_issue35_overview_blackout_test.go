@@ -41,10 +41,25 @@ import (
 // blackoutVisible only inspects the resource pointers.
 func newBlackoutForTest(connID, clusterID, groupID *int) *database.Blackout {
 	return &database.Blackout{
+		Scope:        scopeForTest(connID, clusterID, groupID),
 		ConnectionID: connID,
 		ClusterID:    clusterID,
 		GroupID:      groupID,
 	}
+}
+
+// scopeForTest returns the scope a stored row naming these IDs has,
+// since the target a blackout silences follows its scope.
+func scopeForTest(connID, clusterID, groupID *int) string {
+	switch {
+	case connID != nil:
+		return "server"
+	case clusterID != nil:
+		return "cluster"
+	case groupID != nil:
+		return "group"
+	}
+	return "estate"
 }
 
 // overrideListInvoker describes one override list handler under test.
@@ -252,7 +267,7 @@ func TestBlackoutScheduleVisible_DecisionMatrix(t *testing.T) {
 	for _, r := range rows {
 		r := r
 		t.Run(r.name, func(t *testing.T) {
-			s := &database.BlackoutSchedule{ConnectionID: r.connID}
+			s := &database.BlackoutSchedule{Scope: scopeForTest(r.connID, nil, nil), ConnectionID: r.connID}
 			got, err := h.blackoutScheduleVisible(context.Background(), s, r.visible)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

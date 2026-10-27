@@ -1812,7 +1812,7 @@ Blackouts and blackout schedules follow the same rule and order
 (#732): every create, update, stop and delete goes through
 `requireBlackoutTargetWritable` in `blackout_write_visibility.go`
 (directly, or via `requireRequestedBlackoutTargetWritable`,
-`requireBlackoutWritable`, `requireFetchedBlackoutWritable` or
+`requireBlackoutWritable`, `fetchWritableBlackout` or
 `requireBlackoutScheduleWritable`), which checks the target is visible
 (404 `Connection not found`, `Cluster not found` or `Cluster group not
 found` for a body target, the record's own not-found message for a
@@ -1820,8 +1820,18 @@ stored one), then `requireBlackoutTargetInTokenScope`, then every member
 visible (`adminPermissionRefusal(auth.PermManageBlackouts)`, audited). A
 schedule update checks the stored target and then the body target, so a
 schedule can be moved neither off nor onto a target with a hidden
-member. Estate-scope blackouts have no member check, as estate overrides
-have none. Tests: `blackout_members_visibility_test.go`.
+member. An estate target is visible to everyone but passes the member
+check only when the caller sees every connection (`a.all`), so a
+restricted caller gets the audited 403 on any estate write. Build
+targets with `scopedBlackoutTarget`, `targetOfBlackout` or
+`targetOfSchedule`, which keep only the ID the scope names and read a
+server row without a connection as estate, as the alerter does
+(migration 30 now forbids such rows). Each route resolves access
+before loading the stored record, so a missing ID and a hidden one run
+the same queries up to the 404. A create or schedule move onto a
+missing target answers 404 via `database.ErrBlackoutTargetNotFound`
+(the foreign key violation) for unrestricted callers too. Tests:
+`blackout_members_visibility_test.go`.
 
 The rule also covers writes that change hidden members' effective
 overrides by cascade, each as the last check after permission, token

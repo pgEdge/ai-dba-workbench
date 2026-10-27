@@ -29,12 +29,35 @@ func newBlackoutTarget(groupID, clusterID, connectionID *int) blackoutTarget {
 	return blackoutTarget{groupID: groupID, clusterID: clusterID, connectionID: connectionID}
 }
 
+// scopedBlackoutTarget returns the target a row of the given scope
+// silences, keeping only the ID that scope names, as the alerter matches
+// it: a server row without a connection_id silences every connection,
+// so it is an estate target (issue #732). Migration 30 stops such rows
+// being stored, but one written before it reached the database is still
+// treated as the alerter treats it.
+func scopedBlackoutTarget(scope string, groupID, clusterID, connectionID *int) blackoutTarget {
+	switch database.BlackoutScope(scope) {
+	case database.BlackoutScopeServer:
+		return newBlackoutTarget(nil, nil, connectionID)
+	case database.BlackoutScopeCluster:
+		return newBlackoutTarget(nil, clusterID, nil)
+	case database.BlackoutScopeGroup:
+		return newBlackoutTarget(groupID, nil, nil)
+	}
+	return blackoutTarget{}
+}
+
 func targetOfBlackout(b *database.Blackout) blackoutTarget {
-	return newBlackoutTarget(b.GroupID, b.ClusterID, b.ConnectionID)
+	return scopedBlackoutTarget(b.Scope, b.GroupID, b.ClusterID, b.ConnectionID)
 }
 
 func targetOfSchedule(s *database.BlackoutSchedule) blackoutTarget {
-	return newBlackoutTarget(s.GroupID, s.ClusterID, s.ConnectionID)
+	return scopedBlackoutTarget(s.Scope, s.GroupID, s.ClusterID, s.ConnectionID)
+}
+
+// estate reports whether the target silences every connection.
+func (t blackoutTarget) estate() bool {
+	return t.groupID == nil && t.clusterID == nil && t.connectionID == nil
 }
 
 // notFoundMessage is the 404 a restricted caller gets when a request
@@ -117,17 +140,19 @@ func (h *BlackoutHandler) requireBlackoutTargetVisible(w http.ResponseWriter,
 	return true
 }
 
-// requireBlackoutMembersVisible refuses a blackout write unless a
-// restricted caller can see every connection the target reaches (issue
-// #732), since the blackout silences alerting on all of them. The
-// refusal is the missing-permission refusal, audited, so that it says
-// nothing about which members are hidden or how many, as for overrides
-// (issue #716). It runs after the token-scope check, so a narrowed
-// token keeps the token-scope refusal.
+// requireBlackoutMembersVisible refuses a blackout write unless the
+// caller can see every connection the target reaches (issue #732), since
+// the blackout silences alerting on all of them: every member of a
+// cluster or group, and every connection for an estate target, which
+// only a caller who sees all connections passes. The refusal is the
+// missing-permission refusal, audited, so that it says nothing about
+// which members are hidden or how many, as for overrides (issue #716).
+// It runs after the token-scope check, so a narrowed token keeps the
+// token-scope refusal.
 func (h *BlackoutHandler) requireBlackoutMembersVisible(w http.ResponseWriter,
-	r *http.Request, a blackoutWriteAccess) bool {
+	r *http.Request, a blackoutWriteAccess, t blackoutTarget) bool {
 
-	if a.all || allMembersVisible(a.members, a.visible) {
+	if a.all || (!t.estate() && allMembersVisible(a.members, a.visible)) {
 		return true
 	}
 	h.denialRecorder.refuse(w, r, adminPermissionRefusal(auth.PermManageBlackouts))
@@ -137,10 +162,11 @@ func (h *BlackoutHandler) requireBlackoutMembersVisible(w http.ResponseWriter,
 // requireBlackoutTargetWritable applies the gates every blackout write
 // passes, in order: the target must be visible to the caller (404 with
 // notFoundMsg, as though missing), in the token's scope (audited 403)
-// and have every member visible (audited 403). A stored blackout or
-// schedule passes the message its GET answers for a missing ID; an
-// empty notFoundMsg, for a target named in a request body, takes the
-// target's own notFoundMessage.
+// and have every member visible (audited 403); an estate target is
+// visible to everyone, so a caller who cannot see every connection gets
+// the 403. A stored blackout or schedule passes the message its GET
+// answers for a missing ID; an empty notFoundMsg, for a target named in
+// a request body, takes the target's own notFoundMessage.
 func (h *BlackoutHandler) requireBlackoutTargetWritable(w http.ResponseWriter,
 	r *http.Request, a blackoutWriteAccess, scope string, t blackoutTarget,
 	notFoundMsg string) bool {
@@ -150,7 +176,7 @@ func (h *BlackoutHandler) requireBlackoutTargetWritable(w http.ResponseWriter,
 	}
 	return h.requireBlackoutTargetVisible(w, r, &a, t, notFoundMsg) &&
 		requireBlackoutTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, scope, t.connectionID) &&
-		h.requireBlackoutMembersVisible(w, r, a)
+		h.requireBlackoutMembersVisible(w, r, a, t)
 }
 
 // requireRequestedBlackoutTargetWritable applies
@@ -160,7 +186,7 @@ func (h *BlackoutHandler) requireRequestedBlackoutTargetWritable(w http.Response
 
 	a, ok := h.resolveBlackoutWriteAccess(w, r)
 	return ok && h.requireBlackoutTargetWritable(w, r, a, scope,
-		newBlackoutTarget(groupID, clusterID, connectionID), "")
+		scopedBlackoutTarget(scope, groupID, clusterID, connectionID), "")
 }
 
 // unrestrictedBlackoutWriter reports whether the caller sees every
@@ -192,17 +218,25 @@ func (h *BlackoutHandler) requireBlackoutWritable(w http.ResponseWriter,
 		targetOfBlackout(existing), "Blackout not found")
 }
 
-// requireFetchedBlackoutWritable is requireBlackoutWritable for a
-// blackout the handler has already loaded.
-func (h *BlackoutHandler) requireFetchedBlackoutWritable(w http.ResponseWriter,
-	r *http.Request, b *database.Blackout) bool {
+// fetchWritableBlackout loads the blackout with the given ID for an
+// update and checks the write as requireBlackoutWritable does. The
+// caller's access is resolved before the blackout is loaded, so that a
+// missing ID and one whose target is hidden run the same queries up to
+// the 404.
+func (h *BlackoutHandler) fetchWritableBlackout(w http.ResponseWriter,
+	r *http.Request, id int64) (*database.Blackout, bool) {
 
 	a, ok := h.resolveBlackoutWriteAccess(w, r)
 	if !ok {
-		return false
+		return nil, false
 	}
-	return h.requireBlackoutTargetWritable(w, r, a, b.Scope,
-		targetOfBlackout(b), "Blackout not found")
+	existing, err := h.datastore.GetBlackout(r.Context(), id)
+	if respondDBError(w, err, "fetch blackout",
+		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
+		return nil, false
+	}
+	return existing, h.requireBlackoutTargetWritable(w, r, a, existing.Scope,
+		targetOfBlackout(existing), "Blackout not found")
 }
 
 // requireBlackoutScheduleWritable is requireBlackoutWritable for a

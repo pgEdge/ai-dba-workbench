@@ -2742,11 +2742,24 @@ project adheres to
   and audit record as a caller without the permission, as for
   overrides (#716). A blackout or schedule whose connection,
   cluster or group the caller cannot see at all now answers 404
-  as though it did not exist; for an API token, that includes a
-  server outside the token's connection scope, which previously
-  answered 403. Superusers and users with a grant on all
-  connections are unaffected, and estate-wide blackouts and
-  reading blackouts are unchanged.
+  as though it did not exist; for an API token, that includes
+  creating one on a server outside the token's connection scope,
+  or moving a schedule onto one, which previously answered 403.
+  Creating, updating, stopping or deleting an estate-wide
+  blackout or schedule, or moving a schedule onto or off the
+  estate, now needs the caller to see every connection, and
+  answers the same 403 otherwise. Creating a blackout or
+  schedule, or moving a schedule, onto a connection, cluster or
+  group that does not exist now answers 404 rather than 500.
+  Superusers and users with a grant on all connections are
+  unaffected, and reading blackouts is unchanged.
+
+- Require a connection on every server-scope blackout and
+  blackout schedule in the datastore (#732). The collector's
+  schema migration 30 converts any server-scope row stored
+  without a connection to an estate row, which is how the
+  alerter already treated it, and clears any group or cluster
+  stored on a server-scope row, which the alerter ignored.
 
 - Reset the session on each pooled connection to a monitored
   database when a tool call releases it (#709). A tool call could

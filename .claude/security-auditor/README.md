@@ -389,6 +389,24 @@ moved.
   allows acknowledging, unacknowledging and saving an analysis of an
   alert, and managing blackouts and blackout schedules on that server;
   the user ruled this intended, so do not report it as a finding.
+- A user must never manage a blackout that covers a server they cannot
+  see (#732). Every create, update, stop and delete of a blackout or
+  blackout schedule goes through `requireBlackoutTargetWritable`
+  (`internal/api/blackout_write_visibility.go`): a missing target, or
+  one the caller cannot see at all, answers 404 as though missing
+  (a missing target on create or schedule update maps the foreign key
+  violation to 404, never 500); a target the caller sees but may not
+  change answers the audited missing-permission 403. That covers a
+  cluster or group with a hidden member and every estate-scope blackout
+  or schedule for a caller who cannot see every connection, since
+  estate rows are visible to everyone. A server-scope row has a
+  non-NULL `connection_id` (migration 30); one written before that is
+  read as estate, as the alerter reads it. The member check holds at
+  write time only, so a connection added later to a cluster or group
+  is silenced by a blackout or schedule already on it, and there is no
+  transaction between the check and the write; both are accepted, so
+  do not report them as findings. Making estate mean "every server
+  this caller can see" is deferred to a follow-up issue.
 - `CanAccessConnection` admits a connection's owner at `read_write`
   even when a group restricts the connection (`connectionAccessRule` in
   `internal/auth/access.go`), and `updateConnection` and

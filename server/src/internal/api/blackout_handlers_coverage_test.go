@@ -159,9 +159,9 @@ func TestBlackoutHandler_BlackoutLifecycle(t *testing.T) {
 		for _, body := range bad {
 			covExpect(t, covDo(serve, http.MethodPost, "/api/v1/blackouts", body, withSuperuser), http.StatusBadRequest)
 		}
-		// A connection that does not exist violates the foreign key.
-		covExpect(t, covDo(serve, http.MethodPost, "/api/v1/blackouts",
-			`{"scope": "server", "connection_id": 999999, `+times+`}`, withSuperuser), http.StatusInternalServerError)
+		// A connection that does not exist answers as missing.
+		assertError(t, covDo(serve, http.MethodPost, "/api/v1/blackouts",
+			`{"scope": "server", "connection_id": 999999, `+times+`}`, withSuperuser), http.StatusNotFound, "Connection not found")
 		covExpect(t, covDo(serve, http.MethodPost, "/api/v1/blackouts", `{"scope": "estate", `+times+`}`,
 			func(r *http.Request) *http.Request { return withUser(r, 424242) }), http.StatusForbidden)
 	})
@@ -307,8 +307,8 @@ func TestBlackoutHandler_ScheduleLifecycle(t *testing.T) {
 			covExpect(t, covDo(serve, http.MethodPost, "/api/v1/blackout-schedules", body, withSuperuser),
 				http.StatusBadRequest)
 		}
-		covExpect(t, covDo(serve, http.MethodPost, "/api/v1/blackout-schedules",
-			`{"scope": "server", "connection_id": 999999, `+fields+`}`, withSuperuser), http.StatusInternalServerError)
+		assertError(t, covDo(serve, http.MethodPost, "/api/v1/blackout-schedules",
+			`{"scope": "server", "connection_id": 999999, `+fields+`}`, withSuperuser), http.StatusNotFound, "Connection not found")
 		covExpect(t, covDo(serve, http.MethodPost, "/api/v1/blackout-schedules", `{"scope": "estate", `+fields+`}`,
 			func(r *http.Request) *http.Request { return withUser(r, 424242) }), http.StatusForbidden)
 	})

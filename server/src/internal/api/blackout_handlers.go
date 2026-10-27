@@ -447,7 +447,8 @@ func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request)
 		CreatedBy:    username,
 	}
 
-	if err := h.datastore.CreateBlackout(r.Context(), blackout); respondDBError(w, err, "create blackout") {
+	if err := h.datastore.CreateBlackout(r.Context(), blackout); respondDBError(w, err, "create blackout",
+		notFound(database.ErrBlackoutTargetNotFound, scopedBlackoutTarget(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID).notFoundMessage())) {
 		return
 	}
 
@@ -469,13 +470,8 @@ func (h *BlackoutHandler) updateBlackout(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Fetch existing blackout
-	existing, err := h.datastore.GetBlackout(r.Context(), id)
-	if respondDBError(w, err, "fetch blackout",
-		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
-		return
-	}
-	if !h.requireFetchedBlackoutWritable(w, r, existing) {
+	existing, ok := h.fetchWritableBlackout(w, r, id)
+	if !ok {
 		return
 	}
 
@@ -737,7 +733,8 @@ func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.
 		CreatedBy:       username,
 	}
 
-	if err := h.datastore.CreateBlackoutSchedule(r.Context(), schedule); respondDBError(w, err, "create blackout schedule") {
+	if err := h.datastore.CreateBlackoutSchedule(r.Context(), schedule); respondDBError(w, err, "create blackout schedule",
+		notFound(database.ErrBlackoutTargetNotFound, scopedBlackoutTarget(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID).notFoundMessage())) {
 		return
 	}
 
@@ -771,7 +768,7 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !h.requireBlackoutTargetWritable(w, r, access, req.Scope, newBlackoutTarget(req.GroupID, req.ClusterID, req.ConnectionID), "") {
+	if !h.requireBlackoutTargetWritable(w, r, access, req.Scope, scopedBlackoutTarget(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID), "") {
 		return
 	}
 
@@ -815,7 +812,8 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 	}
 
 	if err := h.datastore.UpdateBlackoutSchedule(r.Context(), schedule); respondDBError(w, err, "update blackout schedule",
-		notFound(database.ErrBlackoutScheduleNotFound, "Blackout schedule not found")) {
+		notFound(database.ErrBlackoutScheduleNotFound, "Blackout schedule not found"),
+		notFound(database.ErrBlackoutTargetNotFound, scopedBlackoutTarget(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID).notFoundMessage())) {
 		return
 	}
 

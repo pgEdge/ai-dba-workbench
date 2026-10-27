@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
 // =============================================================================
@@ -46,6 +47,8 @@ type blackoutMemberTarget struct {
 // json renders the target as request body fields.
 func (b blackoutMemberTarget) json() string {
 	switch {
+	case b.scope == "estate":
+		return `"scope":"estate"`
 	case b.conn != nil:
 		return fmt.Sprintf(`"scope":"server","connection_id":%d`, *b.conn)
 	case b.cluster != nil:
@@ -127,6 +130,7 @@ func TestBlackoutWritesNeedEveryMemberVisible(t *testing.T) {
 
 	full := blackoutMemberTarget{name: "full cluster", scope: "cluster", cluster: intPtr(m.fullCluster), createWas: http.StatusCreated}
 	mixed := blackoutMemberTarget{name: "mixed cluster", scope: "cluster", cluster: intPtr(m.mixedCluster), createWas: http.StatusForbidden}
+	estate := blackoutMemberTarget{name: "estate", scope: "estate", createWas: http.StatusForbidden}
 	targets := []blackoutMemberTarget{
 		full,
 		{name: "full group", scope: "group", group: intPtr(m.fullGroup), createWas: http.StatusCreated},
@@ -135,6 +139,9 @@ func TestBlackoutWritesNeedEveryMemberVisible(t *testing.T) {
 		mixed,
 		{name: "mixed group", scope: "group", group: intPtr(m.mixedGroup), createWas: http.StatusForbidden},
 		{name: "split group", scope: "group", group: intPtr(m.splitGroup), createWas: http.StatusForbidden},
+		// An estate blackout is visible to everyone but silences every
+		// connection, so only a caller who sees them all may write one.
+		estate,
 		{name: "hidden cluster", scope: "cluster", cluster: intPtr(m.splitHidden), createWas: http.StatusNotFound},
 		{name: "hidden group", scope: "group", group: intPtr(f.hiddenGroupID), createWas: http.StatusNotFound},
 		{name: "hidden server", scope: "server", conn: intPtr(f.hiddenConnID), createWas: http.StatusNotFound},
@@ -234,6 +241,8 @@ func TestBlackoutWritesNeedEveryMemberVisible(t *testing.T) {
 	}{
 		{"onto a mixed cluster", full, mixed},
 		{"off a mixed cluster", mixed, full},
+		{"onto the estate", full, estate},
+		{"off the estate", estate, full},
 	}
 	for _, mv := range moves {
 		_, scheduleID := seedBlackoutRows(t, f, mv.from)
@@ -261,6 +270,33 @@ func TestBlackoutWritesNeedEveryMemberVisible(t *testing.T) {
 	assertError(t, covDo(h.handleBlackouts, http.MethodPost, "/api/v1/blackouts", memberBlackoutBody(mixed), narrowedToken),
 		http.StatusNotFound, "Cluster not found")
 
+	// A token narrowed to the one member of the mixed cluster its owner
+	// can see finds the cluster visible, but a cluster target needs every
+	// connection in the token's scope, so it gets the token-scope refusal
+	// before the member check is reached.
+	var mixedOwned int
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT id FROM connections WHERE name = 'mixed owned'`).Scan(&mixedOwned); err != nil {
+		t.Fatalf("find mixed owned: %v", err)
+	}
+	mixedMemberToken := covTokenFor(t, store, userID, []auth.ScopedConnection{
+		{ConnectionID: mixedOwned, AccessLevel: auth.AccessLevelReadWrite},
+	})
+	for _, create := range []struct {
+		route   string
+		handler http.HandlerFunc
+		body    string
+	}{
+		{"/api/v1/blackouts", h.handleBlackouts, memberBlackoutBody(mixed)},
+		{"/api/v1/blackout-schedules", h.handleBlackoutSchedules, memberScheduleBody(mixed)},
+	} {
+		audited = nil
+		assertOutOfTokenScope(t, covDo(create.handler, http.MethodPost, create.route, create.body, mixedMemberToken))
+		if len(audited) != 1 || audited[0] != targetOutOfTokenScope {
+			t.Errorf("%s: audited %v, want [%q]", create.route, audited, targetOutOfTokenScope)
+		}
+	}
+
 	// Unrestricted callers are unaffected: a superuser and a user whose
 	// group grant covers every connection.
 	wideID := setupUserWithPermissions(t, store, "wide_user", []string{auth.PermManageBlackouts})
@@ -285,6 +321,47 @@ func TestBlackoutWritesNeedEveryMemberVisible(t *testing.T) {
 		}
 	}
 
+	// A target that does not exist answers as missing for an unrestricted
+	// caller too, rather than failing on the foreign key.
+	missing := 987654321
+	_, fullScheduleID := seedBlackoutRows(t, f, full)
+	for _, tg := range []blackoutMemberTarget{
+		{name: "missing server", scope: "server", conn: &missing},
+		{name: "missing cluster", scope: "cluster", cluster: &missing},
+		{name: "missing group", scope: "group", group: &missing},
+	} {
+		msg := newBlackoutTarget(tg.group, tg.cluster, tg.conn).notFoundMessage()
+		assertError(t, covDo(h.handleBlackouts, http.MethodPost, "/api/v1/blackouts", memberBlackoutBody(tg), withSuperuser),
+			http.StatusNotFound, msg)
+		assertError(t, covDo(h.handleBlackoutSchedules, http.MethodPost, "/api/v1/blackout-schedules", memberScheduleBody(tg), withSuperuser),
+			http.StatusNotFound, msg)
+		assertError(t, covDo(h.handleBlackoutScheduleSubpath, http.MethodPut,
+			byID("/api/v1/blackout-schedules/", fullScheduleID), memberScheduleBody(tg), withSuperuser),
+			http.StatusNotFound, msg)
+	}
+
+	// A caller who sees every connection always holds a token scope that
+	// covers every connection too, since a narrowed scope narrows the
+	// visible set, so the fast path that skips loading the stored record
+	// never bypasses the token-scope check.
+	wildcardReadToken := covTokenFor(t, store, userID, []auth.ScopedConnection{
+		{ConnectionID: auth.ConnectionIDAll, AccessLevel: auth.AccessLevelRead},
+	})
+	for name, caller := range map[string]func(*http.Request) *http.Request{
+		"superuser": withSuperuser, "wide grant": wide, "session": session,
+		"wildcard token": wildcardToken, "wildcard read token": wildcardReadToken,
+		"narrowed token": narrowedToken, "mixed member token": mixedMemberToken,
+	} {
+		r := caller(httptest.NewRequest(http.MethodGet, "/", nil))
+		a, ok := h.resolveBlackoutWriteAccess(httptest.NewRecorder(), r)
+		if !ok {
+			t.Fatalf("%s: access did not resolve", name)
+		}
+		if a.all && !h.unrestrictedBlackoutWriter(r, a) {
+			t.Errorf("%s: sees every connection but its token scope is narrowed", name)
+		}
+	}
+
 	// Reads are unchanged: a blackout on a mixed cluster stays readable.
 	blackoutID, _ := seedBlackoutRows(t, f, mixed)
 	covExpect(t, covDo(h.handleBlackoutSubpath, http.MethodGet, byID("/api/v1/blackouts/", blackoutID), "", session),
@@ -301,6 +378,12 @@ func TestBlackoutWriteAccessFailures(t *testing.T) {
 	calls := map[string]func(h *BlackoutHandler, w http.ResponseWriter, c scopeCaller){
 		"create blackout": func(h *BlackoutHandler, w http.ResponseWriter, c scopeCaller) {
 			h.createBlackout(w, newScopeRequest(c, http.MethodPost, createCluster))
+		},
+		"create schedule": func(h *BlackoutHandler, w http.ResponseWriter, c scopeCaller) {
+			h.createBlackoutSchedule(w, newScopeRequest(c, http.MethodPost, clusterSchedule))
+		},
+		"stop blackout": func(h *BlackoutHandler, w http.ResponseWriter, c scopeCaller) {
+			h.stopBlackout(w, newScopeRequest(c, http.MethodPost, ""), 3)
 		},
 		"update blackout": func(h *BlackoutHandler, w http.ResponseWriter, c scopeCaller) {
 			h.updateBlackout(w, newScopeRequest(c, http.MethodPut, `{"reason":"x"}`), 3)
@@ -358,7 +441,16 @@ func TestBlackoutTargetReach(t *testing.T) {
 		{"hidden cluster", newBlackoutTarget(nil, intPtr(2), nil), []int{20}, false, "Cluster not found"},
 		{"empty cluster", newBlackoutTarget(nil, intPtr(3), nil), nil, false, "Cluster not found"},
 		{"mixed group", newBlackoutTarget(intPtr(100), nil, nil), []int{10, 20}, true, "Cluster group not found"},
+		// An estate target is visible to everyone; the member check, not
+		// visibility, refuses a caller who cannot see every connection.
 		{"estate", newBlackoutTarget(nil, nil, nil), nil, true, "Cluster group not found"},
+		// A stored row keeps only the ID its scope names, and a server row
+		// without a connection silences everything, as the alerter reads it.
+		{"server row without a connection", targetOfBlackout(&database.Blackout{Scope: "server", ClusterID: intPtr(2)}), nil, true, "Cluster group not found"},
+		{"server row with a stray cluster", targetOfBlackout(&database.Blackout{Scope: "server", ClusterID: intPtr(2), ConnectionID: intPtr(10)}), []int{10}, true, "Connection not found"},
+		{"cluster schedule with a stray group", targetOfSchedule(&database.BlackoutSchedule{Scope: "cluster", GroupID: intPtr(100), ClusterID: intPtr(2)}), []int{20}, false, "Cluster not found"},
+		{"group row", targetOfBlackout(&database.Blackout{Scope: "group", GroupID: intPtr(100), ConnectionID: intPtr(20)}), []int{10, 20}, true, "Cluster group not found"},
+		{"estate row with stray IDs", targetOfSchedule(&database.BlackoutSchedule{Scope: "estate", ConnectionID: intPtr(20)}), nil, true, "Cluster group not found"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -371,6 +463,10 @@ func TestBlackoutTargetReach(t *testing.T) {
 			}
 			if got := tc.target.notFoundMessage(); got != tc.message {
 				t.Errorf("notFoundMessage = %q, want %q", got, tc.message)
+			}
+			// Only an estate target is seen with no members.
+			if got, want := tc.target.estate(), tc.members == nil && tc.seen; got != want {
+				t.Errorf("estate() = %v, want %v", got, want)
 			}
 		})
 	}

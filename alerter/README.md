@@ -33,7 +33,7 @@ The alerter provides the following capabilities:
 
 Before installing, ensure you have the following:
 
-- [Go 1.24](https://go.dev/doc/install) or later.
+- [Go 1.26.10](https://go.dev/doc/install) or later.
 - [PostgreSQL 14](https://www.postgresql.org/download/) or
   later with pgvector extension for Tier 2 anomaly
   detection.

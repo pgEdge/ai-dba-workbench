@@ -67,7 +67,7 @@ requirements:
 Before installing the Workbench with binary files or building the project
 from source, install the following software:
 
-- [Go 1.24](https://go.dev/doc/install) or later is required for building
+- [Go 1.26.10](https://go.dev/doc/install) or later is required for building
   server-side components.
 - [Node.js 20.19](https://nodejs.org/) or later on the 20.x line,
   or Node.js 22.12 or later, is required for building the web client.

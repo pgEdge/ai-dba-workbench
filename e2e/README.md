@@ -42,7 +42,7 @@ Before running the suite, ensure you have the following:
 
 - [Docker](https://docs.docker.com/get-docker/) for the
   ephemeral Postgres container on port `55432`.
-- [Go 1.24](https://go.dev/doc/install) or later to build
+- [Go 1.26.10](https://go.dev/doc/install) or later to build
   the server and collector binaries.
 - [Node.js 24](https://nodejs.org/) or later to build the
   client bundle and drive Playwright.

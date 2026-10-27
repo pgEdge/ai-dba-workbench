@@ -573,6 +573,12 @@ database analysis.
 | `reasoning_effort` | string | | Reasoning effort level |
 | `prompt_caching` | string | | Prompt caching mode |
 | `extra_body` | mapping | | Extra request body fields (OpenAI only) |
+| `custom_headers` | mapping | | Headers sent to every provider |
+| `custom_headers_files` | mapping | | Header names mapped to secret files |
+| `anthropic_custom_headers` | mapping | | Headers sent to Anthropic only |
+| `openai_custom_headers` | mapping | | Headers sent to OpenAI only |
+| `gemini_custom_headers` | mapping | | Headers sent to Gemini only |
+| `ollama_custom_headers` | mapping | | Headers sent to Ollama only |
 
 #### Sampling Temperature (`temperature`)
 
@@ -808,6 +814,73 @@ A local server that hosts a reasoning model usually
 needs a larger output budget than the default. For
 details, see
 [Output Token Budget](#output-token-budget-max_tokens).
+
+#### Custom HTTP Headers (`custom_headers`)
+
+The custom header options add HTTP headers to every
+request the server sends to the LLM provider. Use them
+when requests pass through an LLM gateway or proxy that
+needs an authentication token or a routing header. The
+headers apply to every AI feature the server drives,
+including the Ask Ellie chat proxy and the AI Overview.
+
+The server builds the headers for a request from the
+following sources, in order; a later source replaces a
+header of the same name from an earlier one:
+
+1. The `custom_headers` map supplies headers for every
+   provider.
+2. The `custom_headers_files` map names a header and the
+   path to a file that holds its value.
+3. The `LLM_CUSTOM_HEADERS` environment variable
+   supplies headers for every provider.
+4. The `anthropic_custom_headers`,
+   `openai_custom_headers`, `gemini_custom_headers`, or
+   `ollama_custom_headers` map supplies headers for the
+   matching provider only.
+5. The `LLM_ANTHROPIC_CUSTOM_HEADERS`,
+   `LLM_OPENAI_CUSTOM_HEADERS`,
+   `LLM_GEMINI_CUSTOM_HEADERS`, or
+   `LLM_OLLAMA_CUSTOM_HEADERS` environment variable
+   supplies headers for the matching provider only.
+
+Each environment variable holds a comma-separated list
+of `NAME=value` pairs, such as
+`X-Team=dba,X-Route=primary`. The first `=` in a pair
+separates the name from the value; the server skips an
+entry with no `=`. A header with an empty value in one
+of the first three sources is ignored.
+
+Use `custom_headers_files` for a secret value, such as a
+gateway token, so that the secret stays out of the
+configuration file. The server expands a leading `~` in
+the path, removes the trailing newline from the value,
+and logs a warning when the group or other users can
+access the file. The Ask Ellie chat proxy reads each
+file once, when the server starts, so restart the server
+after replacing a file; the other AI features read the
+file each time they call the provider. When a file is
+missing, unreadable, or empty, the server logs an error
+and sends the affected requests without any custom
+headers.
+
+In the following example, the `llm` section sends a
+gateway token from a file with every request, and adds a
+routing header to Anthropic requests:
+
+```yaml
+llm:
+  provider: "anthropic"
+  model: "claude-sonnet-5"
+  anthropic_api_key_file: "~/.anthropic-api-key"
+  anthropic_base_url: "https://llm-gateway.example.com/v1"
+  custom_headers:
+    X-Team: "dba"
+  custom_headers_files:
+    X-Gateway-Token: "/etc/ai-workbench/gateway-token"
+  anthropic_custom_headers:
+    X-Route: "anthropic-primary"
+```
 
 ### Knowledgebase (`knowledgebase`)
 

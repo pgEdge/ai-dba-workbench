@@ -1154,6 +1154,27 @@ func mergeConfig(dest, src *Config) {
 	if src.LLM.RequestSettings.ExtraBody != nil {
 		dest.LLM.RequestSettings.ExtraBody = src.LLM.RequestSettings.ExtraBody
 	}
+	// Custom header maps replace the destination map whole, as the
+	// other map and list settings do; headers from the environment are
+	// layered on top later, by LoadCustomHeaders and GetProviderHeaders.
+	if len(src.LLM.CustomHeaders) > 0 {
+		dest.LLM.CustomHeaders = src.LLM.CustomHeaders
+	}
+	if len(src.LLM.CustomHeadersFiles) > 0 {
+		dest.LLM.CustomHeadersFiles = src.LLM.CustomHeadersFiles
+	}
+	if len(src.LLM.AnthropicCustomHeaders) > 0 {
+		dest.LLM.AnthropicCustomHeaders = src.LLM.AnthropicCustomHeaders
+	}
+	if len(src.LLM.OpenAICustomHeaders) > 0 {
+		dest.LLM.OpenAICustomHeaders = src.LLM.OpenAICustomHeaders
+	}
+	if len(src.LLM.GeminiCustomHeaders) > 0 {
+		dest.LLM.GeminiCustomHeaders = src.LLM.GeminiCustomHeaders
+	}
+	if len(src.LLM.OllamaCustomHeaders) > 0 {
+		dest.LLM.OllamaCustomHeaders = src.LLM.OllamaCustomHeaders
+	}
 
 	// Knowledgebase - merge if any KB fields are set
 	if src.Knowledgebase.DatabasePath != "" || src.Knowledgebase.Enabled {

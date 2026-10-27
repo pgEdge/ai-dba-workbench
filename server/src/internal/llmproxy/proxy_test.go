@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1317,6 +1318,75 @@ func TestBuildClientOptions_TimeoutAndHeaders(t *testing.T) {
 	}
 	if opts.CustomHeaders["X-Test"] != "value" {
 		t.Errorf("CustomHeaders: got %v, want X-Test=value", opts.CustomHeaders)
+	}
+}
+
+// TestBuildClientOptions_HeadersFromConfigFile loads a real YAML file
+// through config.LoadConfig and checks that every custom header key in
+// the llm section reaches the client options, for each provider. Before
+// issue #754 was fixed, mergeConfig dropped all six header keys, so the
+// file parsed cleanly and no header was ever sent.
+func TestBuildClientOptions_HeadersFromConfigFile(t *testing.T) {
+	for _, name := range []string{"LLM_CUSTOM_HEADERS", "LLM_ANTHROPIC_CUSTOM_HEADERS",
+		"LLM_OPENAI_CUSTOM_HEADERS", "LLM_GEMINI_CUSTOM_HEADERS", "LLM_OLLAMA_CUSTOM_HEADERS"} {
+		t.Setenv(name, "")
+	}
+
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "gateway-token")
+	if err := os.WriteFile(tokenPath, []byte("token-from-file\n"), 0o600); err != nil {
+		t.Fatalf("failed to write header file: %v", err)
+	}
+
+	configPath := filepath.Join(dir, "server.yaml")
+	yamlContent := `
+llm:
+  custom_headers:
+    X-Global: global-value
+    X-Overridden: global-value
+  custom_headers_files:
+    X-Gateway-Token: ` + tokenPath + `
+  anthropic_custom_headers:
+    X-Provider: anthropic-value
+    X-Overridden: anthropic-value
+  openai_custom_headers:
+    X-Provider: openai-value
+    X-Overridden: openai-value
+  gemini_custom_headers:
+    X-Provider: gemini-value
+    X-Overridden: gemini-value
+  ollama_custom_headers:
+    X-Provider: ollama-value
+    X-Overridden: ollama-value
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := config.LoadConfig(configPath, config.CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	for _, provider := range []string{"anthropic", "openai", "gemini", "ollama"} {
+		t.Run(provider, func(t *testing.T) {
+			llmCfg := &Config{Provider: provider, Model: "m", LLMConfig: &cfg.LLM}
+			got := llmCfg.BuildClientOptions(0.5).CustomHeaders
+			want := map[string]string{
+				"X-Global":        "global-value",
+				"X-Gateway-Token": "token-from-file",
+				"X-Provider":      provider + "-value",
+				"X-Overridden":    provider + "-value",
+			}
+			if len(got) != len(want) {
+				t.Errorf("CustomHeaders: got %v, want %v", got, want)
+			}
+			for k, v := range want {
+				if got[k] != v {
+					t.Errorf("CustomHeaders[%q]: got %q, want %q", k, got[k], v)
+				}
+			}
+		})
 	}
 }
 

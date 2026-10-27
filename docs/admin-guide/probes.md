@@ -270,6 +270,13 @@ WHERE name = 'pg_stat_activity'
 Retention changes take effect on the next garbage
 collection run (within 24 hours).
 
+A collector that stores metrics in pgEdge ColdFront
+runs no garbage collection and ignores `retention_days`
+for every probe. The
+[Storing Metrics in pgEdge ColdFront](../getting-started/configuration/coldfront-metrics.md)
+document describes how to manage the metrics lifecycle
+in that mode.
+
 ## Enabling and Disabling Probes
 
 In the following example, the query disables a probe

@@ -422,7 +422,12 @@ The system optimizes storage in several ways:
 ## Data Retention
 
 The garbage collector manages data retention
-automatically.
+automatically. When the `use_coldfront_for_metrics`
+option is enabled, the collector creates no partitions,
+does not start the garbage collector, and ignores
+`retention_days`; the
+[Storing Metrics in pgEdge ColdFront](../../getting-started/configuration/coldfront-metrics.md)
+document describes that mode.
 
 ### Automatic Cleanup
 

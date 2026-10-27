@@ -352,6 +352,35 @@ datastore failed.
 - Note: The collector realigns the probe's timer after that first
   execution, so the offset also spreads out steady-state collection.
 
+## Metrics Storage Options
+
+The metrics storage option selects where the collector stores the
+tables in the `metrics` schema. The option is a top-level key in the
+YAML file.
+
+### use_coldfront_for_metrics
+
+The `use_coldfront_for_metrics` option stores each metrics table in
+pgEdge ColdFront, as a PostgreSQL view over an Apache Iceberg table on
+object storage, instead of as a partitioned PostgreSQL table.
+
+- Type: boolean
+- Default: `false`
+- Required: No
+- Command-line: `-use-coldfront-for-metrics`
+- Example: `use_coldfront_for_metrics: true`
+- Note: Only the collector reads this option; the server and alerter
+  work against either kind of datastore without a setting.
+- Note: Choose the mode when you create the datastore; the collector
+  refuses to start when the value does not match the existing metrics
+  tables.
+- Note: The Workbench performs no metrics retention in this mode, and
+  the collector ignores every `retention_days` setting.
+
+The [Storing Metrics in pgEdge ColdFront](coldfront-metrics.md)
+document describes the prerequisites and the behavioural differences
+of this mode.
+
 ## Security Options
 
 The collector uses a secret file and AES-256-GCM encryption to protect
@@ -417,6 +446,7 @@ The following table lists all available command-line flags.
 | `-pg-sslcert` | Client SSL certificate | none |
 | `-pg-sslkey` | Client SSL key | none |
 | `-pg-sslrootcert` | Root SSL certificate | none |
+| `-use-coldfront-for-metrics` | Store metrics tables in pgEdge ColdFront | `false` |
 
 In the following example, the command uses flags to override
 configuration file settings:
@@ -495,7 +525,9 @@ The collector reloads probe configurations from the database every
 
 Collection interval and enabled status changes take effect within
 5 minutes. Retention changes take effect on the next garbage
-collection run (within 24 hours).
+collection run (within 24 hours). A collector that stores metrics in
+pgEdge ColdFront runs no garbage collection and ignores retention
+changes.
 
 ### Viewing Current Configuration
 

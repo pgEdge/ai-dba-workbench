@@ -34,4 +34,10 @@ scheduler:
   # every probe at once. Zero disables the jitter.
   startup_jitter_seconds: 60
 
+# Store metrics tables in pgEdge ColdFront (Apache Iceberg) instead of
+# partitioned PostgreSQL tables. Requires a datastore with pg_duckdb and
+# ColdFront installed; the Workbench then performs no metrics retention.
+# Choose the mode when creating the datastore, as it cannot change later.
+use_coldfront_for_metrics: false
+
 secret_file: /etc/pgedge/ai-dba.secret

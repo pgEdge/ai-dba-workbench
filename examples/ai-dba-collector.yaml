@@ -201,6 +201,24 @@ scheduler:
   startup_jitter_seconds: 60
 
 #=========================================================================
+# METRICS STORAGE SETTINGS
+#=========================================================================
+#
+# Store the metrics.* tables in pgEdge ColdFront (Apache Iceberg on object
+# storage) instead of in partitioned PostgreSQL tables. The datastore must
+# have pg_duckdb and ColdFront 1.0.0-rc1 or later installed and configured.
+#
+# In this mode the Workbench performs no metrics retention: partitions,
+# garbage collection and retention_days do not apply, and old data must
+# be managed outside the Workbench. Choose the mode when creating the
+# datastore; the collector refuses to start if this value does not match
+# the existing metrics tables. Only the collector reads this setting.
+#
+# Default: false
+# Command-line: -use-coldfront-for-metrics
+# use_coldfront_for_metrics: false
+
+#=========================================================================
 # SECURITY SETTINGS
 #=========================================================================
 

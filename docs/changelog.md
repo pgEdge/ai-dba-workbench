@@ -100,6 +100,27 @@ project adheres to
   The server and alerter now use `pgedge-go-llm-lib` v0.6.0, which
   requires Go 1.26.10, so the collector, server and alerter now build
   with Go 1.26.10.
+- Store metrics in pgEdge ColdFront (#755). The new collector
+  option `use_coldfront_for_metrics` (default `false`), or the
+  `-use-coldfront-for-metrics` flag, creates each `metrics.*`
+  table through `coldfront.create_iceberg_table`, as a
+  PostgreSQL view over an Apache Iceberg table on object
+  storage partitioned by day of `collected_at`; operational
+  tables stay ordinary PostgreSQL tables. The server and
+  alerter need no setting. In this mode the Workbench performs
+  no metrics retention: it creates and drops no partitions,
+  deletes no old rows, does not run the garbage collector and
+  ignores `retention_days`, and purging a connection leaves its
+  metrics rows in place. Some column types are stored
+  differently, metrics tables have no indexes, the pgvector
+  chat-memory embedding feature is disabled, and `list_probes`
+  may report a probe's row count as unknown. The datastore
+  needs `pg_duckdb` and ColdFront `1.0.0-rc1` or later, with
+  `coldfront.grant_app_access` run for each Workbench role.
+  Choose the mode when creating the datastore: switching an
+  existing datastore is not supported, and the collector
+  refuses to start when the setting does not match the
+  existing metrics tables.
 
 - Classify tier 3 anomaly candidates with an optional decision
   model (#626). The new `llm.decision_provider` option selects

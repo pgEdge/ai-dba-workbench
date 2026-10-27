@@ -88,6 +88,13 @@ partitions based on retention settings. The first
 collection runs 5 minutes after startup; subsequent
 collections run every 24 hours.
 
+When the `use_coldfront_for_metrics` option is enabled,
+the Collector stores each metrics table in pgEdge
+ColdFront, creates and drops no partitions, and does not
+start the garbage collector. The
+[Storing Metrics in pgEdge ColdFront](../../getting-started/configuration/coldfront-metrics.md)
+document describes that mode.
+
 ### Connection Pooling
 
 The Collector uses two types of connection pools.

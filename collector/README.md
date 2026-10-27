@@ -207,6 +207,8 @@ The documentation covers the following topics:
 
 - [Configuration](../docs/getting-started/configuration/collector.md)
   covers configuration options and examples.
+- [Storing Metrics in pgEdge ColdFront](../docs/getting-started/configuration/coldfront-metrics.md)
+  covers storing metrics tables in Apache Iceberg on object storage.
 - [Architecture](../docs/developer-guide/collector/architecture.md)
   covers system design and components.
 - [Probes](../docs/developer-guide/collector/probes.md) covers

@@ -22,6 +22,7 @@
   - Configuration Details:
     - [Server](docs/getting-started/configuration/server.md)
     - [Collector](docs/getting-started/configuration/collector.md)
+    - [Storing Metrics in pgEdge ColdFront](docs/getting-started/configuration/coldfront-metrics.md)
     - [Alerter](docs/getting-started/configuration/alerter.md)
     - [Web Client](docs/getting-started/configuration/client.md)
     - [Configuring systemd Services](docs/getting-started/configuration/configure_systemd.md)

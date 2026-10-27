@@ -222,6 +222,12 @@ The background purge runs when the server starts, every
 five minutes, and immediately after each delete; a server
 restart resumes any purge that was interrupted.
 
+On a datastore that stores metrics in pgEdge ColdFront,
+the purge leaves the connection's metrics rows in place.
+The
+[Storing Metrics in pgEdge ColdFront](../getting-started/configuration/coldfront-metrics.md)
+document describes that mode.
+
 ## Session Persistence
 
 Connection selections are stored in the authentication

@@ -35,7 +35,8 @@ probes in the datastore.
   `describe_probe` and `query_metrics`.
 - `description` contains a human-readable description.
 - `row_count` contains the approximate number of
-  metric rows collected.
+  metric rows collected; a probe stored in pgEdge
+  ColdFront may report an unknown row count.
 - `scope` indicates "server" for server-wide metrics
   or "database" for per-database metrics.
 

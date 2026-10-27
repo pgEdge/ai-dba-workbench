@@ -399,7 +399,7 @@ func (h *OIDCHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 		// "__Host-" prefix requires its absence.
 	})
 
-	redirectTo(w, h.provider.AuthCodeURL(state))
+	redirectTo(w, h.provider.AuthCodeURL(state, h.currentConfig().AuthParams))
 }
 
 // handleCallback handles GET /api/v1/auth/oidc/callback, the endpoint

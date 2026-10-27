@@ -309,6 +309,15 @@ type OIDCConfig struct {
 	SuperuserGroup      string            `yaml:"superuser_group" json:"superuser_group"`
 	GroupMap            map[string]string `yaml:"group_map" json:"group_map"`
 
+	// AuthParams are extra parameters appended to the authorization
+	// request, for a provider that needs one to behave as the Workbench
+	// expects; Google, for example, issues a refresh token only when
+	// asked with access_type=offline. Validation refuses any parameter
+	// the Workbench sets itself (see reservedOIDCAuthParams), and the
+	// login handler reads the map on every request, so a reload applies
+	// it.
+	AuthParams map[string]string `yaml:"auth_params" json:"auth_params"`
+
 	// AllowUnprefixedStateCookie acknowledges that, behind a
 	// TLS-terminating reverse proxy with no http.trusted_proxies, the
 	// login state cookie cannot use the "__Host-" name prefix, and so a
@@ -1062,6 +1071,9 @@ func mergeConfig(dest, src *Config) {
 	if len(src.HTTP.Auth.OIDC.GroupMap) > 0 {
 		dest.HTTP.Auth.OIDC.GroupMap = src.HTTP.Auth.OIDC.GroupMap
 	}
+	if len(src.HTTP.Auth.OIDC.AuthParams) > 0 {
+		dest.HTTP.Auth.OIDC.AuthParams = src.HTTP.Auth.OIDC.AuthParams
+	}
 	if src.HTTP.Auth.OIDC.AllowUnprefixedStateCookie != nil {
 		dest.HTTP.Auth.OIDC.AllowUnprefixedStateCookie = src.HTTP.Auth.OIDC.AllowUnprefixedStateCookie
 	}
@@ -1535,7 +1547,12 @@ func validateConfig(cfg *Config) error {
 		return err
 	}
 
-	// OIDC configuration validation
+	// OIDC configuration validation. auth_params is checked whether or
+	// not federated login is enabled, so that a reload switching it on
+	// cannot be the first time a reserved parameter is noticed.
+	if err := validateOIDCAuthParams(cfg.HTTP.Auth.OIDC.AuthParams); err != nil {
+		return err
+	}
 	if cfg.HTTP.Auth.OIDC.IsEnabled() {
 		oidc := cfg.HTTP.Auth.OIDC
 		if oidc.Issuer == "" {

@@ -103,7 +103,8 @@ Sending `SIGHUP` re-reads the configuration file, and the server logs
 each changed authentication setting as either applied or requiring a
 restart. The login policy applies from the next login without a
 restart: `provision_users`, `allowed_email_domains`, `superuser_group`,
-`group_map`, `button_label`, and setting `enabled` to `false`, which
+`group_map`, `button_label`, `auth_params`, and setting `enabled` to
+`false`, which
 switches federated login off at once and refuses a login that is
 already in progress. A reload therefore lets you stop just-in-time
 provisioning, narrow the allowed email domains or remap a Workbench
@@ -174,7 +175,8 @@ start when `local.enabled` is `false` and `oidc.enabled` is also
 ### Federated Login Settings
 
 The `http.auth.oidc` section controls federated login. Every option
-below is ignored while `enabled` is `false`.
+below is ignored while `enabled` is `false`, although the server still
+refuses an `auth_params` entry that names a parameter it sets itself.
 
 The following table describes the federated authentication options:
 
@@ -197,6 +199,7 @@ The following table describes the federated authentication options:
 | `oidc.group_map` | map | `{}` | Maps provider group names to Workbench group names. |
 | `oidc.allow_unprefixed_state_cookie` | bool | `false` | Accepts a login state cookie without the `__Host-` prefix behind a proxy; see [Requiring a Trusted Proxy List](#requiring-a-trusted-proxy-list). |
 | `oidc.allow_api_tokens` | bool | `false` | Lets accounts that sign in through the provider own API tokens; see [API Tokens and Federated Users](#api-tokens-and-federated-users). |
+| `oidc.auth_params` | map | `{}` | Extra parameters appended to the authorisation request; see [Adding Authorisation Request Parameters](#adding-authorisation-request-parameters). |
 
 Either `client_secret` or `client_secret_file` must be set. A secret
 read from `client_secret_file` is held only in memory, so saving the
@@ -330,6 +333,48 @@ provider will deliver authorisation codes to, which is where a typo
 shows up. The control that stops an authorisation code being sent
 somewhere else is the provider's own list of registered redirect URIs,
 so keep that list tight.
+
+### Adding Authorisation Request Parameters
+
+Some providers need a parameter in the authorisation request before
+they behave as the Workbench expects. The `auth_params` option takes a
+map of parameter names to values, and the Workbench appends each one
+to the URL it sends the browser to when a login starts.
+
+Google is the common case: it does not support the `offline_access`
+scope, and issues a refresh token only to a request that carries
+`access_type=offline`. It also issues one only when the user grants
+consent, which it skips after the first login unless the request
+carries `prompt=consent`. Without both, a federated session ends when
+its first ID token expires, typically after an hour. The following
+example configures them:
+
+```yaml
+http:
+  auth:
+    oidc:
+      enabled: true
+      issuer: "https://accounts.google.com"
+      client_id: "pgedge-workbench.apps.googleusercontent.com"
+      client_secret_file: "/etc/pgedge/oidc-client-secret.txt"
+      redirect_url: "https://workbench.example.com/api/v1/auth/oidc/callback"
+      auth_params:
+        access_type: "offline"
+        prompt: "consent"
+```
+
+With `prompt: consent`, Google shows its consent screen at every
+login rather than only the first.
+
+The Workbench sets some parameters itself, and refuses to start, or to
+apply a reload, when `auth_params` names any of them: `state`,
+`nonce`, `code_challenge`, `code_challenge_method`, `redirect_uri`,
+`client_id`, `response_type`, `scope`, `response_mode`, `request` and
+`request_uri`. The comparison ignores case. Request scopes through the
+`scopes` option instead. Parameter names may contain only letters,
+digits, `_`, `-` and `.`; a value may not contain control characters
+or exceed 256 bytes, and the map may hold at most 16 entries. A reload
+applies a change to `auth_params` from the next login.
 
 ## Choosing the Username Claim
 
@@ -739,12 +784,20 @@ has been removed or disabled there, or the grant has been revoked; the
 session then ends, the request is refused as unauthenticated, and the
 server log records why. When the provider agrees, the session runs on
 to the new ID token's expiry, and where the provider returns a new ID
-token the server applies the same checks as a login: the token must
-name the subject the account is linked to, the email domain policy
-applies, and the account's mapped groups and superuser flag are
-reconciled from it. A provider that leaves the groups claim out of a
-refreshed ID token therefore revokes the account's mapped group
-memberships in the same way an empty claim at login would.
+token the server checks it as a login would: the token must name the
+subject the account is linked to, and the email domain policy applies.
+
+The account's mapped groups and superuser flag are reconciled from a
+refreshed ID token only when that token carries the configured groups
+claim. Many providers leave the claim out of a refreshed ID token, and
+some return no ID token on refresh at all; in either case the
+memberships and superuser flag set at the last login stay as they were.
+A refreshed ID token that carries the claim is authoritative, so an
+empty list revokes the account's mapped groups and superuser flag in
+the same way an empty claim at login would. With a provider that never
+repeats the claim on refresh, a change to someone's groups at the
+provider takes effect at their next login, whilst removing or disabling
+them there still ends the session at the next refresh.
 
 The server also ends a federated session without asking the provider
 when federated login has been switched off, or the account has been
@@ -803,15 +856,16 @@ command line reads the setting from the configuration file named with
 
 ## Revocation and Its Limits
 
-Reconciliation runs at login and whenever a federated session is
-refreshed, as described above. Nothing re-evaluates a provider's
-assertions in the background, so the Workbench cannot notice a change
-made at the provider until the person's session next needs refreshing
-or the person next logs in.
+Reconciliation runs at login, and when a federated session is
+refreshed with an ID token that carries the groups claim, as described
+above. Nothing re-evaluates a provider's assertions in the background,
+so the Workbench cannot notice a change made at the provider until the
+person's session next needs refreshing or the person next logs in.
 
 A user removed from a mapped group at the provider therefore keeps
 whatever that group confers until their session's ID token next
-expires. API tokens never trigger a refresh, so where
+expires, or until their next login where the provider leaves the
+groups claim out of refreshed ID tokens. API tokens never trigger a refresh, so where
 `allow_api_tokens` is on, the holder of a long-lived token keeps that
 group's privileges until the token expires. The same applies to the
 superuser flag when it comes from `superuser_group`.

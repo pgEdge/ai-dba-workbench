@@ -30,10 +30,18 @@ var errFederatedLoginOff = errors.New("federated login is switched off")
 // The identity provider decides first: it refuses the refresh token once
 // the user has been removed or disabled there, or the grant revoked.
 // When it agrees and returns a new ID token, that token must name the
-// same subject at the same issuer the account is linked to, and passes
-// the same email domain policy and group reconciliation a login does, so
-// that a refresh can never confer what a fresh login would not. The
-// account must still exist, be enabled, and be federated.
+// same subject at the same issuer the account is linked to and pass the
+// same email domain policy a login does, so that a refresh can never
+// confer what a fresh login would not. The account must still exist, be
+// enabled, and be federated.
+//
+// Groups and the superuser flag are reconciled from the new ID token only
+// when it actually carries the configured groups claim. Many providers
+// leave that claim out of a refreshed ID token, and some send no ID token
+// on refresh at all; reading either silence as "the user is in no groups"
+// would strip every mapped membership an hour into each session. In both
+// cases the memberships and flag set at login stand until the provider
+// says otherwise, or refuses the refresh outright.
 //
 // Its errors are logged by the store; none of them carries the refresh
 // token, and a provider's own error text is cleaned for the log there.
@@ -78,9 +86,11 @@ func (h *OIDCHandler) RefreshFederatedSession(ctx context.Context,
 			return auth.FederatedRefresh{}, errors.New(
 				"the refreshed ID token's email address is not in an allowed domain")
 		}
-		if err := h.authStore.ReconcileFederatedGroups(user.ID,
-			federatedIdentity(identity), federationOptions(cfg)); err != nil {
-			return auth.FederatedRefresh{}, fmt.Errorf("group reconciliation failed: %w", err)
+		if identity.GroupsClaimPresent {
+			if err := h.authStore.ReconcileFederatedGroups(user.ID,
+				federatedIdentity(identity), federationOptions(cfg)); err != nil {
+				return auth.FederatedRefresh{}, fmt.Errorf("group reconciliation failed: %w", err)
+			}
 		}
 	}
 

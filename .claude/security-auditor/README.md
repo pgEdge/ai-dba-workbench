@@ -521,11 +521,21 @@ moved.
   `OIDCHandler.RefreshFederatedSession` (`api/oidc_refresh.go`),
   single-flighted per session by `federatedSession.mu`, which checks
   the account, redeems the in-memory refresh token, re-checks subject
-  and email domain, and reconciles groups. The refresh token must never
+  and email domain, and reconciles groups only when the refreshed ID
+  token carries the groups claim (`Identity.GroupsClaimPresent`; an
+  absent claim or no ID token keeps memberships and the superuser
+  flag). The refresh token must never
   reach disk, logs or errors. Whilst `allow_api_tokens` is off,
   `createToken` and `validateToken` (`auth/federated_tokens.go`) refuse
   tokens whose OWNER is federated, whoever the caller is; the use
   refusal is audited as a coalesced `token.use` denial.
+  `http.auth.oidc.auth_params` (operator-supplied authorisation request
+  parameters, read per login so a reload applies them) is validated in
+  `config/oidc_auth_params.go`, which refuses the reserved names
+  (state, nonce, PKCE, redirect_uri, client_id, response_type, scope,
+  response_mode, request, request_uri) case-insensitively;
+  `oidc.Provider.AuthCodeURL` drops any reserved name again, and
+  appends the server's own nonce and PKCE options after the extras.
   Removing a group from `group_map` revokes nothing because only mapped
   Workbench groups are reconciled; clearing `superuser_group` revokes
   nothing because `ReconcileFederatedGroups` leaves `is_superuser`

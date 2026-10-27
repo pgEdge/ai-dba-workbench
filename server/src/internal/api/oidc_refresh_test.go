@@ -168,11 +168,95 @@ func TestRefreshFederatedSessionReconcilesGroups(t *testing.T) {
 	}
 }
 
+// newMappedGroupsEnv returns a test environment that maps idp-eng to the
+// local engineers group and treats idp-admins as the superuser group,
+// after a login that placed the user in both. It returns the engineers
+// group's ID.
+func newMappedGroupsEnv(t *testing.T) (*oidcTestEnv, int64) {
+	t.Helper()
+
+	env := newTestOIDCEnv(t, func(cfg *config.OIDCConfig) {
+		cfg.GroupMap = map[string]string{"idp-eng": "engineers"}
+		cfg.SuperuserGroup = "idp-admins"
+	})
+	engineers, err := env.store.CreateGroup("engineers", "")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	env.loginWithRefreshToken(t, "rt-1", map[string]any{"groups": []any{"idp-eng", "idp-admins"}})
+	assertMappedGroupsKept(t, env, engineers)
+	return env, engineers
+}
+
+// assertMappedGroupsKept fails the test unless the user is still in the
+// engineers group and still a superuser.
+func assertMappedGroupsKept(t *testing.T, env *oidcTestEnv, engineers int64) {
+	t.Helper()
+
+	user, err := env.store.GetUser(testUsername)
+	if err != nil || user == nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if !user.IsSuperuser {
+		t.Error("the superuser flag was cleared")
+	}
+	groups, err := env.store.GetUserGroups(user.ID)
+	if err != nil {
+		t.Fatalf("GetUserGroups: %v", err)
+	}
+	if !slices.Contains(groups, engineers) {
+		t.Errorf("groups = %v, want engineers (%d) kept", groups, engineers)
+	}
+}
+
+// Many providers leave the groups claim out of a refreshed ID token. That
+// silence says nothing about the user's groups, so the memberships and
+// superuser flag from login must stand.
+func TestRefreshFederatedSessionKeepsGroupsWhenTheClaimIsAbsent(t *testing.T) {
+	env, engineers := newMappedGroupsEnv(t)
+	env.idp.SetRefreshResponse(oidctest.RefreshResponse{
+		IDToken: env.idp.MintIDToken(t, map[string]any{"email": testUsername}),
+	})
+
+	if _, err := env.handler.RefreshFederatedSession(t.Context(), testUsername, "rt-1"); err != nil {
+		t.Fatalf("RefreshFederatedSession: %v", err)
+	}
+	assertMappedGroupsKept(t, env, engineers)
+}
+
+// A refreshed ID token that does carry the groups claim is authoritative,
+// even when the list is empty: it takes the memberships and the superuser
+// flag away, exactly as an empty claim at login would.
+func TestRefreshFederatedSessionRevokesOnAnEmptyGroupsClaim(t *testing.T) {
+	env, engineers := newMappedGroupsEnv(t)
+	env.idp.SetRefreshResponse(oidctest.RefreshResponse{
+		IDToken: env.idp.MintIDToken(t, map[string]any{"email": testUsername, "groups": []any{}}),
+	})
+
+	if _, err := env.handler.RefreshFederatedSession(t.Context(), testUsername, "rt-1"); err != nil {
+		t.Fatalf("RefreshFederatedSession: %v", err)
+	}
+	user, err := env.store.GetUser(testUsername)
+	if err != nil || user == nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if user.IsSuperuser {
+		t.Error("the superuser flag survived an empty groups claim")
+	}
+	groups, err := env.store.GetUserGroups(user.ID)
+	if err != nil {
+		t.Fatalf("GetUserGroups: %v", err)
+	}
+	if slices.Contains(groups, engineers) {
+		t.Errorf("groups = %v, want engineers (%d) revoked", groups, engineers)
+	}
+}
+
 // A refresh that returns no ID token extends the session to the access
-// token's expiry, and reconciles nothing.
+// token's expiry, and keeps the memberships and superuser flag as they
+// were.
 func TestRefreshFederatedSessionWithoutAnIDToken(t *testing.T) {
-	env := newTestOIDCEnv(t)
-	env.loginWithRefreshToken(t, "rt-1", nil)
+	env, engineers := newMappedGroupsEnv(t)
 	env.idp.SetRefreshResponse(oidctest.RefreshResponse{ExpiresIn: 600})
 
 	refreshed, err := env.handler.RefreshFederatedSession(t.Context(), testUsername, "rt-1")
@@ -185,6 +269,7 @@ func TestRefreshFederatedSessionWithoutAnIDToken(t *testing.T) {
 	if refreshed.RefreshToken != "rt-1" {
 		t.Fatalf("refresh token = %q, want the unrotated one", refreshed.RefreshToken)
 	}
+	assertMappedGroupsKept(t, env, engineers)
 }
 
 func TestRefreshFederatedSessionRefusals(t *testing.T) {
@@ -311,7 +396,7 @@ func TestRefreshFederatedSessionFailsWhenReconciliationFails(t *testing.T) {
 		ExternalSubject: auth.ExternalSubjectKey(env.idp.Issuer(), "subject-1")}
 	env.idp.IssueRefreshToken("rt-1")
 	env.idp.SetRefreshResponse(oidctest.RefreshResponse{
-		IDToken: env.idp.MintIDToken(t, map[string]any{"email": testUsername}),
+		IDToken: env.idp.MintIDToken(t, map[string]any{"email": testUsername, "groups": []any{}}),
 	})
 
 	_, err := env.handler.RefreshFederatedSession(t.Context(), testUsername, "rt-1")

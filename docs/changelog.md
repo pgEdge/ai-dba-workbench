@@ -251,7 +251,13 @@ project adheres to
   the server's memory only, and the session ends if the
   provider refuses. A successful refresh reconciles the
   account's mapped groups and superuser flag from the new ID
-  token. The new `http.auth.oidc.allow_api_tokens` option,
+  token when that token carries the groups claim, and leaves
+  them unchanged when it does not. The new
+  `http.auth.oidc.auth_params` option appends extra parameters
+  to the authorisation request, such as the
+  `access_type: offline` Google needs before it issues a
+  refresh token, and refuses any the Workbench sets itself.
+  The new `http.auth.oidc.allow_api_tokens` option,
   `false` by default and applied on reload, decides whether an
   account that signs in through the provider may own API
   tokens: whilst it is off, creating one is refused with `403`

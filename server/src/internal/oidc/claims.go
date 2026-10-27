@@ -127,6 +127,7 @@ func (p *Provider) identityFromClaims(issuer, subject string, claims map[string]
 		EmailRejected:              emailRejected,
 		EmailVerified:              boolClaim(claims, emailVerifiedClaim),
 		Groups:                     groups,
+		GroupsClaimPresent:         groupsClaimPresent(claims, p.groupsClaim),
 		SkippedGroups:              skipped,
 		UnexpectedGroupsClaimShape: unexpectedShape,
 		DroppedClaims:              dropped,
@@ -322,6 +323,19 @@ func stringsClaim(claims map[string]any, name string) (groups []string, skipped 
 	default:
 		return nil, 0, fmt.Sprintf("%T", value)
 	}
+}
+
+// groupsClaimPresent reports whether the named claim is configured and
+// carried with a non-null value. A value of an unexpected shape still
+// counts as present: the provider did send the claim, and the login path
+// already treats an unreadable claim as no groups, so a refresh doing the
+// same keeps the two consistent and errs towards fewer privileges.
+func groupsClaimPresent(claims map[string]any, name string) bool {
+	if name == "" {
+		return false
+	}
+	value, present := claims[name]
+	return present && value != nil
 }
 
 func collectStrings(values []string) (groups []string, skipped int) {

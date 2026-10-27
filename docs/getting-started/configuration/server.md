@@ -372,6 +372,7 @@ as they are and appends an anchor event:
 | `auth.oidc.group_map` | map | `{}` | Provider group to Workbench group map |
 | `auth.oidc.allow_unprefixed_state_cookie` | bool | `false` | Accept an unprefixed login state cookie behind a proxy |
 | `auth.oidc.allow_api_tokens` | bool | `false` | Let federated users own API tokens |
+| `auth.oidc.auth_params` | map | `{}` | Extra authorisation request parameters |
 
 #### Authentication (`auth`)
 
@@ -399,6 +400,13 @@ as an attacker. Set `trusted_proxies` to the reverse
 proxy's address, or set
 `auth.oidc.allow_unprefixed_state_cookie` to `true` to
 accept the risk.
+
+The server likewise refuses to start, whether or not
+federated login is enabled, when
+`auth.oidc.auth_params` names a parameter the Workbench
+sets itself, such as `state` or `redirect_uri`; the
+Single Sign-On guide lists them, and gives the Google
+example that needs `access_type: offline`.
 
 | `auth.audit_retention_days` | int | `90` | Days to keep RBAC audit events (0 keeps forever) |
 

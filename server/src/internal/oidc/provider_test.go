@@ -435,7 +435,7 @@ func TestAuthCodeURLCarriesStateNonceAndPKCE(t *testing.T) {
 	provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
 
 	state := newTestLoginState(t)
-	parsed, err := url.Parse(provider.AuthCodeURL(state))
+	parsed, err := url.Parse(provider.AuthCodeURL(state, nil))
 	if err != nil {
 		t.Fatalf("AuthCodeURL: %v", err)
 	}
@@ -460,6 +460,42 @@ func TestAuthCodeURLCarriesStateNonceAndPKCE(t *testing.T) {
 	}
 	if query.Get("response_type") != "code" {
 		t.Errorf("response_type = %q, want code", query.Get("response_type"))
+	}
+}
+
+// TestAuthCodeURLAppendsAuthParams proves that the operator's extra
+// parameters reach the provider, and that one naming a parameter the
+// Workbench sets itself is dropped rather than allowed to replace it,
+// even though configuration validation should have refused it first.
+func TestAuthCodeURLAppendsAuthParams(t *testing.T) {
+	idp := oidctest.NewFakeIDP(t)
+	provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
+
+	state := newTestLoginState(t)
+	parsed, err := url.Parse(provider.AuthCodeURL(state, map[string]string{
+		"access_type":    "offline",
+		"prompt":         "consent",
+		"State":          "attacker-chosen",
+		"code_challenge": "attacker-chosen",
+		"scope":          "everything",
+	}))
+	if err != nil {
+		t.Fatalf("AuthCodeURL: %v", err)
+	}
+
+	query := parsed.Query()
+	if query.Get("access_type") != "offline" || query.Get("prompt") != "consent" {
+		t.Errorf("query = %v, want access_type=offline and prompt=consent", query)
+	}
+	if query.Get("state") != state.State || query.Has("State") {
+		t.Errorf("state = %q (State present: %v), want only %q",
+			query.Get("state"), query.Has("State"), state.State)
+	}
+	if query.Get("code_challenge") != state.CodeChallenge() {
+		t.Errorf("code_challenge = %q, want the state's own", query.Get("code_challenge"))
+	}
+	if strings.Contains(query.Get("scope"), "everything") {
+		t.Errorf("scope = %q, want the configured scopes only", query.Get("scope"))
 	}
 }
 
@@ -548,6 +584,36 @@ func TestGroupsClaimNotConfigured(t *testing.T) {
 	}
 	if identity.SkippedGroups != 0 {
 		t.Errorf("skipped = %d, want 0", identity.SkippedGroups)
+	}
+	if identity.GroupsClaimPresent {
+		t.Error("GroupsClaimPresent = true with no groups claim configured")
+	}
+}
+
+// TestGroupsClaimPresent proves that the presence flag tells an empty or
+// unreadable groups claim apart from one the provider left out, which is
+// the distinction a session refresh depends on.
+func TestGroupsClaimPresent(t *testing.T) {
+	testCases := []struct {
+		name   string
+		claims map[string]any
+		want   bool
+	}{
+		{"populated", map[string]any{"groups": []string{"a"}}, true},
+		{"empty list", map[string]any{"groups": []any{}}, true},
+		{"unexpected shape", map[string]any{"groups": 42}, true},
+		{"null", map[string]any{"groups": nil}, false},
+		{"absent", map[string]any{}, false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := groupsClaimPresent(testCase.claims, "groups"); got != testCase.want {
+				t.Errorf("groupsClaimPresent = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+	if groupsClaimPresent(map[string]any{"groups": []string{"a"}}, "") {
+		t.Error("groupsClaimPresent = true with no claim name configured")
 	}
 }
 

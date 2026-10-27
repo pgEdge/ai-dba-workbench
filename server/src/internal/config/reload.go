@@ -282,6 +282,7 @@ func oidcPolicySettings(old, cur OIDCConfig) []oidcSettingChange {
 		{"allowed_email_domains", !reflect.DeepEqual(old.AllowedEmailDomains, cur.AllowedEmailDomains)},
 		{"superuser_group", old.SuperuserGroup != cur.SuperuserGroup},
 		{"group_map", !reflect.DeepEqual(old.GroupMap, cur.GroupMap)},
+		{"auth_params", !reflect.DeepEqual(old.AuthParams, cur.AuthParams)},
 		{"button_label", old.ButtonLabel != cur.ButtonLabel},
 		{"allow_api_tokens", old.APITokensAllowed() != cur.APITokensAllowed()},
 	}

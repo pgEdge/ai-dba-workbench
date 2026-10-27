@@ -73,6 +73,17 @@ type Identity struct {
 	// strings. It is nil when the claim is absent or not configured.
 	Groups []string
 
+	// GroupsClaimPresent reports whether the token carried the configured
+	// groups claim at all, with a non-null value of any shape. It is what
+	// tells "the provider sent an empty list" (the user is in no groups)
+	// apart from "the provider left the claim out" (it said nothing about
+	// groups), which Groups alone cannot: both leave Groups nil. A session
+	// refresh relies on the distinction, because many providers omit the
+	// groups claim from a refreshed ID token, and that silence must not
+	// be read as the user having left every group. It is always false
+	// when no groups claim is configured.
+	GroupsClaimPresent bool
+
 	// SkippedGroups counts the values in the groups claim that could not
 	// be used: elements that were not strings, and strings that were too
 	// long or carried control characters. A non-zero count is not an
@@ -221,13 +232,32 @@ type Tokens struct {
 // AuthCodeURL returns the URL to send the browser to in order to start a
 // login, carrying the state's opaque state value, its nonce, and the
 // PKCE S256 code challenge derived from its code verifier.
-func (p *Provider) AuthCodeURL(state *LoginState) string {
-	return p.oauth2Config.AuthCodeURL(
-		state.State,
+//
+// extra holds the operator's http.auth.oidc.auth_params, passed per call
+// rather than fixed at construction so that a reload applies them.
+// Configuration validation already refuses a parameter the Workbench
+// sets itself; any that arrives here regardless is dropped, so that no
+// path through the configuration can replace the state, nonce or PKCE
+// challenge. They are added in sorted order, so the URL is stable.
+func (p *Provider) AuthCodeURL(state *LoginState, extra map[string]string) string {
+	names := make([]string, 0, len(extra))
+	for name := range extra {
+		if !config.IsReservedOIDCAuthParam(name) {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+
+	opts := make([]oauth2.AuthCodeOption, 0, len(names)+3)
+	for _, name := range names {
+		opts = append(opts, oauth2.SetAuthURLParam(name, extra[name]))
+	}
+	opts = append(opts,
 		oidc.Nonce(state.Nonce),
 		oauth2.SetAuthURLParam("code_challenge", state.CodeChallenge()),
 		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
 	)
+	return p.oauth2Config.AuthCodeURL(state.State, opts...)
 }
 
 // Exchange redeems an authorization code for tokens and returns the

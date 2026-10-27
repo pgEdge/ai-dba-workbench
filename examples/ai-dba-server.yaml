@@ -195,6 +195,15 @@ http:
     #   # Use a local service account for automation instead.
     #   # Default: false
     #   # allow_api_tokens: false
+    #
+    #   # Extra parameters appended to the authorisation request. Google
+    #   # issues a refresh token only when asked for offline access, and
+    #   # only at consent, so it needs both of these. Parameters the
+    #   # Workbench sets itself (state, nonce, scope, redirect_uri and
+    #   # so on) are refused.
+    #   # auth_params:
+    #   #   access_type: "offline"
+    #   #   prompt: "consent"
 
 #=========================================================================
 # CONNECTION SECURITY

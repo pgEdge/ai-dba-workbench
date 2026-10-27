@@ -23,6 +23,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/pkg/llmsettings"
 	"gopkg.in/yaml.v3"
 )
 
@@ -2434,6 +2435,11 @@ func TestMergeConfigOverridesEveryField(t *testing.T) {
 			TemperaturePtr:          float64Ptr(0.5),
 			TimeoutSeconds:          99,
 			CompactToolDescriptions: "always",
+			RequestSettings: llmsettings.Settings{
+				ReasoningEffort: "high",
+				PromptCaching:   "auto",
+				ExtraBody:       map[string]any{"k": "v"},
+			},
 		},
 		Knowledgebase: KnowledgebaseConfig{
 			Enabled:                   true,
@@ -2529,6 +2535,9 @@ func TestMergeConfigOverridesEveryField(t *testing.T) {
 		{"llm max iterations", dest.LLM.MaxIterations, 7},
 		{"llm timeout", dest.LLM.TimeoutSeconds, 99},
 		{"llm compact tool descriptions", dest.LLM.CompactToolDescriptions, "always"},
+		{"llm reasoning effort", dest.LLM.RequestSettings.ReasoningEffort, "high"},
+		{"llm prompt caching", dest.LLM.RequestSettings.PromptCaching, "auto"},
+		{"llm extra body", dest.LLM.RequestSettings.ExtraBody["k"], "v"},
 		{"kb path", dest.Knowledgebase.DatabasePath, "/tmp/kb.db"},
 		{"kb provider", dest.Knowledgebase.EmbeddingProvider, "openai"},
 		{"kb model", dest.Knowledgebase.EmbeddingModel, "text-embedding-3-small"},
@@ -2805,5 +2814,74 @@ func TestToolsConfig_IsToolEnabledBlackoutsAndRequiredTestQuery(t *testing.T) {
 	}
 	if fromFile.Builtins.Tools.IsToolEnabled("get_blackouts") {
 		t.Error("IsToolEnabled(\"get_blackouts\") = true after get_blackouts: false in YAML, want false")
+	}
+}
+
+// TestLLMRequestSettingsFromYAML loads reasoning_effort, prompt_caching
+// and extra_body from the llm section and checks that a value the
+// library would refuse stops the configuration from loading.
+func TestLLMRequestSettingsFromYAML(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "valid settings",
+			yaml: "llm:\n    reasoning_effort: low\n    prompt_caching: auto\n" +
+				"    extra_body:\n        providerOptions:\n            gateway:\n                caching: auto\n",
+		},
+		{
+			name:    "unknown reasoning effort",
+			yaml:    "llm:\n    reasoning_effort: turbo\n",
+			wantErr: "llm.reasoning_effort must be one of",
+		},
+		{
+			name:    "unknown prompt caching",
+			yaml:    "llm:\n    prompt_caching: on\n",
+			wantErr: "llm.prompt_caching must be auto, off or empty",
+		},
+		{
+			name:    "stream in extra body",
+			yaml:    "llm:\n    extra_body:\n        stream: false\n",
+			wantErr: "llm.extra_body must not set stream",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := writeTempConfig(t, tt.yaml)
+			cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("LoadConfig() error = %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadConfig() error = %v", err)
+			}
+			got := cfg.LLM.RequestSettings
+			if got.ReasoningEffort != "low" || got.PromptCaching != "auto" {
+				t.Errorf("settings = %+v, want low and auto", got)
+			}
+			gateway, ok := got.ExtraBody["providerOptions"].(map[string]any)["gateway"].(map[string]any)
+			if !ok || gateway["caching"] != "auto" {
+				t.Errorf("extra_body = %v, want providerOptions.gateway.caching auto", got.ExtraBody)
+			}
+		})
+	}
+}
+
+// TestLLMRequestSettingsDefaultToUnset checks that a configuration
+// without the new keys leaves every request as it was before them.
+func TestLLMRequestSettingsDefaultToUnset(t *testing.T) {
+	configPath := writeTempConfig(t, "llm:\n    max_tokens: 100\n")
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	got := cfg.LLM.RequestSettings
+	if got.ReasoningEffort != "" || got.PromptCaching != "" || got.ExtraBody != nil {
+		t.Errorf("settings = %+v, want all unset", got)
 	}
 }

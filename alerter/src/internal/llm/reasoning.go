@@ -21,6 +21,9 @@ import (
 	// ollama, typesafe, voyage) so pgllm.NewClient can construct them by
 	// name.
 	_ "github.com/pgEdge/pgedge-go-llm-lib/llm/all"
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/provider/anthropic"
+
+	"github.com/pgedge/ai-workbench/pkg/llmsettings"
 )
 
 // defaultReasoningModels maps a provider name to the reasoning model used
@@ -61,6 +64,12 @@ type libReasoning struct {
 	// maxTokens is the resolved (always positive) output-token budget for
 	// each classification request.
 	maxTokens int
+
+	// cacheSystem marks the system prompt for Anthropic prompt caching
+	// when the provider's prompt_caching is auto. The classification and
+	// re-evaluation prompts are constant, so every call after the first
+	// reads them from the cache.
+	cacheSystem bool
 }
 
 // Classify sends the classification system prompt and the supplied prompt
@@ -87,12 +96,16 @@ func (r *libReasoning) Reevaluate(ctx context.Context, prompt string) (string, e
 // concatenated text of the response's text blocks, or ErrNoTextContent
 // when there is none.
 func (r *libReasoning) chat(ctx context.Context, systemPrompt, prompt string) (string, error) {
-	resp, err := r.client.Chat(ctx, pgllm.ChatRequest{
+	req := pgllm.ChatRequest{
 		SystemPrompt: systemPrompt,
 		Messages:     []pgllm.Message{pgllm.UserText(prompt)},
 		MaxTokens:    pgllm.Int(r.maxTokens),
 		Temperature:  pgllm.Float(reasoningTemperature),
-	})
+	}
+	if r.cacheSystem {
+		req = anthropic.WithSystemCaching(req)
+	}
+	resp, err := r.client.Chat(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -132,8 +145,11 @@ func (r *libReasoning) ReevaluationSystemPrompt() string {
 // is empty, the per-provider default from defaultReasoningModels is used.
 // When maxTokens is zero or negative, DefaultReasoningMaxTokens is used, so
 // an unset llm.max_tokens can never produce an unusable budget. apiKey and
-// baseURL are passed straight through to the library.
-func newLibReasoning(provider, apiKey, model, baseURL string, maxTokens int) (ReasoningProvider, error) {
+// baseURL are passed straight through to the library, and settings (the
+// provider section's reasoning_effort, prompt_caching and extra_body)
+// become the client's defaults.
+func newLibReasoning(provider, apiKey, model, baseURL string, maxTokens int,
+	settings llmsettings.Settings) (ReasoningProvider, error) {
 	if model == "" {
 		model = defaultReasoningModels[provider]
 	}
@@ -141,14 +157,20 @@ func newLibReasoning(provider, apiKey, model, baseURL string, maxTokens int) (Re
 		maxTokens = DefaultReasoningMaxTokens
 	}
 
-	client, err := pgllm.NewClient(provider, pgllm.Options{
+	opts := pgllm.Options{
 		APIKey:  apiKey,
 		Model:   model,
 		BaseURL: baseURL,
-	})
+	}
+	settings.Apply(&opts)
+	client, err := pgllm.NewClient(provider, opts)
 	if err != nil {
 		return nil, fmt.Errorf("create %s reasoning client: %w", provider, err)
 	}
 
-	return &libReasoning{client: client, maxTokens: maxTokens}, nil
+	return &libReasoning{
+		client:      client,
+		maxTokens:   maxTokens,
+		cacheSystem: settings.CachingEnabled(),
+	}, nil
 }

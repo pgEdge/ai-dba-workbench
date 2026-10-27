@@ -789,6 +789,65 @@ llm:
     reasoning_model: qwen3-8b
 ```
 
+#### Reasoning Effort, Prompt Caching, and Extra Fields
+
+Each of the `llm.openai`, `llm.anthropic`, `llm.gemini`,
+and `llm.ollama` sections accepts three further options.
+The alerter applies the options of the section that
+`llm.reasoning_provider` names to the tier 3
+classification and the re-evaluation of acknowledged
+alerts. The decision model does not use the options.
+
+- `reasoning_effort` sets how much a reasoning model
+  thinks before it answers, and accepts `none`,
+  `minimal`, `low`, `medium`, `high`, `xhigh`, or
+  `max`. OpenAI, Anthropic, and Gemini translate the
+  level into their own request fields; Ollama ignores
+  the option. When a model rejects a level, the
+  alerter retries the request without the setting.
+- `prompt_caching` accepts `auto` or `off`; an unset
+  value means `off`. With `auto`, Anthropic caches the
+  classification system prompt, which stays the same
+  on every call. OpenAI and Gemini cache prompts
+  automatically, so the option makes no difference for
+  those providers; Ollama ignores the option.
+- `extra_body` adds fields to the JSON body of each
+  request the `openai` provider sends, for a setting
+  the alerter does not model, such as the options of
+  an OpenAI-compatible gateway. A field in
+  `extra_body` replaces any field of the same name
+  that the alerter builds. The other providers ignore
+  the option.
+
+The alerter refuses to start, and refuses a reload,
+when any section sets an unknown `reasoning_effort` or
+`prompt_caching` value, sets `stream` in `extra_body`,
+or puts a value in `extra_body` that cannot be sent as
+JSON. The alerter checks every section, including the
+sections of providers that are not in use. The alerter
+never logs the values in `extra_body`, but you should
+still keep a credential in an API key file rather than
+in this option.
+
+A model counts its thinking tokens against
+`max_tokens`, so a higher effort may need a larger
+output budget.
+
+In the following example, the `llm` section asks an
+OpenAI reasoning model for low effort and passes an
+option to an OpenAI-compatible gateway:
+
+```yaml
+llm:
+  reasoning_provider: openai
+  openai:
+    base_url: https://gateway.example.com/v1
+    reasoning_model: openai/gpt-6-luna
+    reasoning_effort: low
+    extra_body:
+      user: ai-dba-alerter
+```
+
 #### Ollama Configuration
 
 The `llm.ollama` section configures the local Ollama
@@ -799,6 +858,9 @@ provider.
 | `base_url` | string | `http://localhost:11434` | Ollama server URL |
 | `embedding_model` | string | `nomic-embed-text` | Embedding model |
 | `reasoning_model` | string | `qwen2.5:7b-instruct` | Reasoning model |
+| `reasoning_effort` | string | None | Reasoning effort level |
+| `prompt_caching` | string | None | Prompt caching mode |
+| `extra_body` | mapping | None | Extra request body fields |
 
 #### OpenAI Configuration
 
@@ -812,6 +874,9 @@ provider.
 | `embedding_model` | string | `text-embedding-3-small` | Embedding model |
 | `reasoning_model` | string | `gpt-6-luna` | Reasoning model |
 | `decision_model` | string | `gpt-6-luna` | Decisions API model when `decision_provider` is `openai` |
+| `reasoning_effort` | string | None | Reasoning effort level |
+| `prompt_caching` | string | None | Prompt caching mode |
+| `extra_body` | mapping | None | Extra request body fields |
 
 The decision model shares the `api_key_file` and
 `base_url` options with the OpenAI embedding and reasoning
@@ -864,6 +929,9 @@ provider.
 | `api_key_file` | string | None | Path to API key file |
 | `base_url` | string | `https://api.anthropic.com/v1` | Anthropic base URL |
 | `reasoning_model` | string | `claude-haiku-4-5` | Reasoning model |
+| `reasoning_effort` | string | None | Reasoning effort level |
+| `prompt_caching` | string | None | Prompt caching mode |
+| `extra_body` | mapping | None | Extra request body fields |
 
 #### Gemini Configuration
 
@@ -878,6 +946,9 @@ key can access.
 | `base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
 | `reasoning_model` | string | `gemini-3.8-flash` | Reasoning model |
 | `embedding_model` | string | `gemini-embedding-001` | Embedding model |
+| `reasoning_effort` | string | None | Reasoning effort level |
+| `prompt_caching` | string | None | Prompt caching mode |
+| `extra_body` | mapping | None | Extra request body fields |
 
 When Gemini is the embedding provider, the
 `embedding_model` must match the model that the KB
@@ -997,11 +1068,13 @@ control:
   restarting the process.
 
 A reload does not recreate the LLM providers, which the
-alerter builds once at startup. Changing a provider, a
-model, a base URL or an API key file, including
-`llm.decision_provider`, therefore takes a restart; the
-reloaded values of settings such as
-`anomaly.tier3.decision_suppress_threshold` apply at once.
+alerter builds once at startup. Changing a provider
+(including `llm.decision_provider`), a model, a base
+URL, an API key file, or a `reasoning_effort`,
+`prompt_caching`, or `extra_body` setting therefore
+takes a restart; the reloaded values of settings such
+as `anomaly.tier3.decision_suppress_threshold` apply at
+once.
 
 In the following example, the `kill` command reloads
 the configuration:

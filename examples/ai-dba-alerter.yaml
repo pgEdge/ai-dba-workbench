@@ -493,6 +493,17 @@ llm:
     # Default: gpt-6-luna
     # decision_model: gpt-6-luna
 
+    # Reasoning effort for the reasoning model: none, minimal, low,
+    # medium, high, xhigh or max. Unset leaves it to the model. The
+    # anthropic, gemini and ollama sections accept the same option.
+    # reasoning_effort: medium
+
+    # Extra fields added to the JSON body of each reasoning request,
+    # for options the alerter does not model, such as an
+    # OpenAI-compatible gateway's. Only the openai provider sends them.
+    # extra_body:
+    #   user: ai-dba-alerter
+
   #-------------------------------------------------------------------------
   # Anthropic Settings
   #-------------------------------------------------------------------------
@@ -508,6 +519,11 @@ llm:
     # Model to use for reasoning/classification
     # Default: claude-haiku-4-5
     reasoning_model: claude-haiku-4-5
+
+    # Prompt caching: auto caches the classification system prompt,
+    # which is the same on every call; off (the default) never writes
+    # to the cache.
+    # prompt_caching: auto
 
   #-------------------------------------------------------------------------
   # Google Gemini Settings

@@ -474,6 +474,25 @@ llm:
   # by ~54%, improving response times for local models.
   # compact_tool_descriptions: "auto"
 
+  # Reasoning effort: none, minimal, low, medium, high, xhigh or max.
+  # Unset leaves it to the model. Applies to Ask Ellie and to the AI
+  # analysis features.
+  # reasoning_effort: "medium"
+
+  # Prompt caching: "auto" has Anthropic cache the tool list, the
+  # system prompt and the conversation, so each step of an Ask Ellie
+  # tool loop reads them from the cache; "off" (the default) never
+  # writes to the cache. OpenAI and Gemini cache automatically.
+  # prompt_caching: "auto"
+
+  # Extra fields added to the JSON body of each chat request the openai
+  # provider sends, for options the server does not model, such as an
+  # OpenAI-compatible gateway's. Other providers ignore them.
+  # extra_body:
+  #   providerOptions:
+  #     gateway:
+  #       caching: "auto"
+
 #=========================================================================
 # KNOWLEDGEBASE CONFIGURATION
 #=========================================================================

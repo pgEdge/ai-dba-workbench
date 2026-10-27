@@ -1340,3 +1340,82 @@ func TestUnreachableWarmupPeriods(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadFromFileRequestSettings checks that reasoning_effort,
+// prompt_caching and extra_body decode inside each provider section
+// (issue #726).
+func TestLoadFromFileRequestSettings(t *testing.T) {
+	yamlContent := `
+llm:
+  openai:
+    reasoning_model: test-model
+    reasoning_effort: low
+    extra_body:
+      providerOptions:
+        gateway:
+          caching: auto
+  anthropic:
+    prompt_caching: auto
+  gemini:
+    reasoning_effort: high
+  ollama:
+    reasoning_effort: none
+`
+	configFile := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(configFile, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to create config file: %v", err)
+	}
+	cfg := NewConfig()
+	if err := cfg.LoadFromFile(configFile); err != nil {
+		t.Fatalf("LoadFromFile: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	openai := cfg.LLM.OpenAI
+	if openai.ReasoningModel != "test-model" || openai.RequestSettings.ReasoningEffort != "low" {
+		t.Errorf("openai = %+v", openai)
+	}
+	if _, ok := openai.RequestSettings.ExtraBody["providerOptions"]; !ok {
+		t.Errorf("openai extra_body = %v", openai.RequestSettings.ExtraBody)
+	}
+	if cfg.LLM.Anthropic.RequestSettings.PromptCaching != "auto" {
+		t.Errorf("anthropic prompt_caching = %q", cfg.LLM.Anthropic.RequestSettings.PromptCaching)
+	}
+	if cfg.LLM.Gemini.RequestSettings.ReasoningEffort != "high" {
+		t.Errorf("gemini reasoning_effort = %q", cfg.LLM.Gemini.RequestSettings.ReasoningEffort)
+	}
+	if cfg.LLM.Ollama.RequestSettings.ReasoningEffort != "none" {
+		t.Errorf("ollama reasoning_effort = %q", cfg.LLM.Ollama.RequestSettings.ReasoningEffort)
+	}
+}
+
+// TestValidateRejectsBadRequestSettings checks that Validate names the
+// provider section of a request setting the library would refuse.
+func TestValidateRejectsBadRequestSettings(t *testing.T) {
+	tests := []struct {
+		name    string
+		modify  func(*Config)
+		wantErr string
+	}{
+		{"openai effort", func(c *Config) { c.LLM.OpenAI.RequestSettings.ReasoningEffort = "turbo" },
+			"llm.openai.reasoning_effort must be one of"},
+		{"anthropic caching", func(c *Config) { c.LLM.Anthropic.RequestSettings.PromptCaching = "always" },
+			"llm.anthropic.prompt_caching must be auto, off or empty"},
+		{"gemini effort", func(c *Config) { c.LLM.Gemini.RequestSettings.ReasoningEffort = "HIGH" },
+			"llm.gemini.reasoning_effort must be one of"},
+		{"ollama stream", func(c *Config) {
+			c.LLM.Ollama.RequestSettings.ExtraBody = map[string]any{"stream": true}
+		}, "llm.ollama.extra_body must not set stream"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := NewConfig()
+			tt.modify(cfg)
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() = %v, want an error containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}

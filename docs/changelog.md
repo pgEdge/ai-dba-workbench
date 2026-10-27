@@ -12,6 +12,26 @@ project adheres to
 
 ### Added
 
+- Configure reasoning effort, prompt caching and extra request body
+  fields for LLM requests (#726). The server's `llm` section, and
+  each of the alerter's `llm.openai`, `llm.anthropic`, `llm.gemini`
+  and `llm.ollama` sections, accept `reasoning_effort` (`none`,
+  `minimal`, `low`, `medium`, `high`, `xhigh` or `max`),
+  `prompt_caching` (`auto` or `off`) and `extra_body`, a mapping of
+  fields added to each request the `openai` provider sends, for
+  options such as an OpenAI-compatible gateway's. With
+  `prompt_caching: auto`, Anthropic caches the tool list, the system
+  prompt and the conversation, so each step of an Ask Ellie tool loop
+  reads them from the cache; in the alerter it caches the
+  classification system prompt. All three are unset by default,
+  leaving requests as they were. An unknown value, `stream` in
+  `extra_body`, or an `extra_body` value that cannot be sent as JSON
+  stops the server or alerter from starting, and the alerter rejects
+  a reload that contains one; changing a setting takes a restart.
+  The server and alerter now use `pgedge-go-llm-lib` v0.6.0, which
+  requires Go 1.26.10, so the collector, server and alerter now build
+  with Go 1.26.10.
+
 - Classify tier 3 anomaly candidates with an optional decision
   model (#626). The new `llm.decision_provider` option selects
   `typesafe` (the TypeSafe Jev models, configured in the new

@@ -81,3 +81,25 @@ func TestNewLLMProxyConfigCopiesFields(t *testing.T) {
 		t.Error("path-specific fields must be left for the caller to set")
 	}
 }
+
+// TestNewLLMProxyConfigRequestSettings checks that reasoning_effort,
+// prompt_caching and extra_body loaded from the llm section reach the
+// llmproxy configuration that the chat proxy and the analysis clients
+// build their options from (issue #726).
+func TestNewLLMProxyConfigRequestSettings(t *testing.T) {
+	yaml := "llm:\n    reasoning_effort: high\n    prompt_caching: auto\n" +
+		"    extra_body:\n        prompt_cache_key: ellie\n"
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(yaml), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+	cfg, err := config.LoadConfig(configPath, config.CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	got := newLLMProxyConfig(&cfg.LLM).RequestSettings
+	if got.ReasoningEffort != "high" || got.PromptCaching != "auto" ||
+		got.ExtraBody["prompt_cache_key"] != "ellie" {
+		t.Errorf("RequestSettings = %+v, want high, auto and prompt_cache_key", got)
+	}
+}

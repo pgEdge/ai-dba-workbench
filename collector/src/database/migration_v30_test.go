@@ -305,20 +305,20 @@ func TestMigrationV30_DatabaseSpecificRows(t *testing.T) {
 		name      string
 		id        int64
 		wantScope string
-		wantEnded string
+		wantEnded string // end_time as an offset from NOW()
 	}{
-		{"past", past, "estate", "NOW() - INTERVAL '1 hour'"},
-		{"active", active, "estate", "NOW()"},
-		{"connection", server, "server", "NOW() + INTERVAL '1 hour'"},
+		{"past", past, "estate", "-1 hour"},
+		{"active", active, "estate", "0"},
+		{"connection", server, "server", "1 hour"},
 	} {
 		var scope string
 		var endMatches bool
-		if err := tx.QueryRow(ctx, `SELECT scope, end_time = `+b.wantEnded+` FROM blackouts WHERE id = $1`,
-			b.id).Scan(&scope, &endMatches); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT scope, end_time = NOW() + $2::interval FROM blackouts WHERE id = $1`,
+			b.id, b.wantEnded).Scan(&scope, &endMatches); err != nil {
 			t.Fatalf("%s blackout: read back: %v", b.name, err)
 		}
 		if scope != b.wantScope || !endMatches {
-			t.Errorf("%s blackout: scope %s, end_time = %s %v; want scope %s and true",
+			t.Errorf("%s blackout: scope %s, end_time = NOW() + %s: %v; want scope %s and true",
 				b.name, scope, b.wantEnded, endMatches, b.wantScope)
 		}
 	}

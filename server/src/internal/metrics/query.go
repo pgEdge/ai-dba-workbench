@@ -578,7 +578,26 @@ func GetProbeMetricColumns(ctx context.Context, pool *pgxpool.Pool, probeName st
 // value columns such as pg_stat_wal's last_archived_wal are deliberately
 // not treated as entity keys, which is why this reads the constraint
 // rather than reusing EntityKeyColumns.
+//
+// On a pgEdge ColdFront datastore every probe is a view, which has no
+// primary key (issue #755). When the probe has none, the keys come from
+// probeEntityKeyFallback instead, which holds what the primary key gives
+// on plain PostgreSQL; a probe missing from it has no entity keys. The
+// map is consulted only when there is no primary key, so nothing changes
+// on plain PostgreSQL.
 func GetProbeEntityKeyColumns(ctx context.Context, pool *pgxpool.Pool, probeName string) ([]string, error) {
+	keys, hasKey, err := primaryKeyEntityColumns(ctx, pool, probeName)
+	if err != nil || hasKey {
+		return keys, err
+	}
+	return slices.Clone(probeEntityKeyFallback[probeName]), nil
+}
+
+// primaryKeyEntityColumns returns the entity-key columns of probeName's
+// primary key, as GetProbeEntityKeyColumns describes, and whether the
+// probe has a primary key at all. A key of only connection_id and
+// collected_at gives no columns but hasKey true.
+func primaryKeyEntityColumns(ctx context.Context, pool *pgxpool.Pool, probeName string) (keys []string, hasKey bool, err error) {
 	query := `
         SELECT kcu.column_name
         FROM information_schema.table_constraints tc
@@ -593,26 +612,26 @@ func GetProbeEntityKeyColumns(ctx context.Context, pool *pgxpool.Pool, probeName
 
 	rows, err := pool.Query(ctx, query, probeName)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 
-	var keys []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			return nil, err
+			return nil, false, err
 		}
+		hasKey = true
 		if name == "connection_id" || name == "collected_at" {
 			continue
 		}
 		if !IsValidIdentifier(name) {
-			return nil, fmt.Errorf("invalid entity key column %q", name)
+			return nil, false, fmt.Errorf("invalid entity key column %q", name)
 		}
 		keys = append(keys, name)
 	}
 
-	return keys, rows.Err()
+	return keys, hasKey, rows.Err()
 }
 
 // ResolveDatabaseColumn discovers which database-name column exists in a

@@ -71,7 +71,8 @@ catalog's `pg_class` lookups take relkinds `'r', 'p', 'v'`;
 `count(*)` against an Iceberg view). Do not add a new
 `table_type = 'BASE TABLE'` or `relkind IN ('r', 'p')` filter over
 `metrics`. A view has no primary key, so `GetProbeEntityKeyColumns`
-returns no keys on ColdFront (see the entity-key section below). JSONB
+falls back to `probeEntityKeyFallback` on ColdFront (see the entity-key
+section below). JSONB
 columns read back as `json` there: `->`, `->>` and `::text`/`::jsonb`
 casts work, but `?`, `@>`, `jsonb_*` functions, `=`, `ORDER BY`,
 `min`/`max` on the raw column do not.
@@ -555,12 +556,23 @@ only that entity's share.
 
 The entity keys come from `GetProbeEntityKeyColumns`: the columns of the
 probe table's primary key other than `connection_id` and `collected_at`,
-in key order (`interface_name`; `datname`; `database_name, queryid,
-userid, dbid, toplevel`; nothing for a single-row probe such as
-`pg_stat_wal`, which then reduces to the unpartitioned form). Every
-`metrics.*` table declares such a key, but a ColdFront view declares
-none, so there the LAG is unpartitioned and multi-entity counter
-rates are wrong (open issue #755 follow-up). Do not substitute
+in key order (`interface_name`; `database_name` for `pg_stat_database`;
+`database_name, queryid, userid, dbid, toplevel`; nothing for a
+single-row probe such as `pg_stat_wal`, which then reduces to the
+unpartitioned form). On plain PostgreSQL the keyed probes declare such a
+key (`primaryKeyEntityColumns` reads it and also reports whether any key
+exists). A pgEdge ColdFront view declares none (issue #755), so when
+there is no primary key at all the keys come from the static
+`probeEntityKeyFallback` map in `internal/metrics/entity_keys.go`
+instead; a probe absent from the map gets no keys, as before. The map is
+never consulted when a key exists, so plain PostgreSQL is unchanged.
+`TestProbeEntityKeyFallbackMatchesCollectorSchema`
+(`entity_keys_db_test.go`) migrates the collector schema into a scratch
+database (`_metrics_schema` suffix) and fails when an entry differs
+from a probe's primary key, a keyed probe is missing, or an entry is
+stale, so a collector migration that changes a probe's key must update
+the map in the same change. `TestQueryTimeSeries_ViewRatesPerEntity`
+shows a key-less `pg_stat_database` view rating per database. Do not substitute
 `EntityKeyColumns`/`IsEntityKeyColumn` here: those treat every text
 column as identity, and `pg_stat_wal.last_archived_wal` or
 `pg_sys_network_info.ip_address` would fragment the partition so that

@@ -4127,7 +4127,21 @@ func (sm *SchemaManager) registerMigrations() {
 		Version:     30,
 		Description: "Require a connection on server-scope blackouts and schedules",
 		Up: func(tx pgx.Tx) error {
+			// A server row with no connection but a database_name matches
+			// that database on every connection. Estate ignores
+			// database_name, so before such a row becomes estate it must
+			// stop suppressing anything: a future blackout is deleted, an
+			// active one ends now, one already over is kept as history,
+			// and a schedule is disabled for an administrator to review.
 			_, err := tx.Exec(context.Background(), `
+				DELETE FROM blackouts
+				WHERE scope = 'server' AND connection_id IS NULL
+				  AND database_name IS NOT NULL AND start_time >= NOW();
+				UPDATE blackouts
+				SET end_time = NOW()
+				WHERE scope = 'server' AND connection_id IS NULL
+				  AND database_name IS NOT NULL AND end_time > NOW();
+
 				UPDATE blackouts
 				SET scope = CASE WHEN connection_id IS NULL THEN 'estate' ELSE 'server' END,
 				    group_id = NULL,
@@ -4149,6 +4163,11 @@ func (sm *SchemaManager) registerMigrations() {
 					'Each scope names exactly the ID it targets: none for estate, group_id for group, cluster_id for cluster and connection_id for server';
 				COMMENT ON COLUMN blackouts.connection_id IS
 					'Connection targeted when scope is server; NULL for every other scope';
+
+				UPDATE blackout_schedules
+				SET enabled = FALSE, updated_at = NOW()
+				WHERE scope = 'server' AND connection_id IS NULL
+				  AND database_name IS NOT NULL;
 
 				UPDATE blackout_schedules
 				SET scope = CASE WHEN connection_id IS NULL THEN 'estate' ELSE 'server' END,

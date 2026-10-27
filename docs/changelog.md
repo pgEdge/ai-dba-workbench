@@ -2759,7 +2759,11 @@ project adheres to
   schema migration 30 converts any server-scope row stored
   without a connection to an estate row, which is how the
   alerter already treated it, and clears any group or cluster
-  stored on a server-scope row, which the alerter ignored.
+  stored on a server-scope row, which the alerter ignored. A
+  row without a connection that names a database matched only
+  that database, so before it becomes an estate row the
+  migration deletes such a blackout if it has not started,
+  ends it now if it is active, and disables such a schedule.
 
 - Reset the session on each pooled connection to a monitored
   database when a tool call releases it (#709). A tool call could

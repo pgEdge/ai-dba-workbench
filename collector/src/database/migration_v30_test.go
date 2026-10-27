@@ -133,6 +133,29 @@ func assertV30Constraint(t *testing.T, tx pgx.Tx, groupID, clusterID, connection
 	}
 }
 
+// restoreV29Check puts back the check migration 30 replaces, which let a
+// server row name any IDs or none.
+func restoreV29Check(t *testing.T, tx pgx.Tx) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := tx.Exec(ctx, `
+		ALTER TABLE blackouts DROP CONSTRAINT blackouts_scope_ids_check;
+		ALTER TABLE blackouts ADD CONSTRAINT blackouts_scope_ids_check CHECK (
+			(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
+			OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+			OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+			OR (scope = 'server'));
+		ALTER TABLE blackout_schedules DROP CONSTRAINT blackout_schedules_scope_ids_check;
+		ALTER TABLE blackout_schedules ADD CONSTRAINT blackout_schedules_scope_ids_check CHECK (
+			(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
+			OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+			OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+			OR (scope = 'server'));
+	`); err != nil {
+		t.Fatalf("failed to restore the earlier check: %v", err)
+	}
+}
+
 // TestMigrationV30_Registered verifies the migration is wired into the
 // schema manager with a description.
 func TestMigrationV30_Registered(t *testing.T) {
@@ -167,22 +190,7 @@ func TestMigrationV30_UpgradeAndRerun(t *testing.T) {
 	}
 	ctx := context.Background()
 	groupID, clusterID, connectionID := seedV30Targets(t, tx)
-	if _, err := tx.Exec(ctx, `
-		ALTER TABLE blackouts DROP CONSTRAINT blackouts_scope_ids_check;
-		ALTER TABLE blackouts ADD CONSTRAINT blackouts_scope_ids_check CHECK (
-			(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
-			OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
-			OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
-			OR (scope = 'server'));
-		ALTER TABLE blackout_schedules DROP CONSTRAINT blackout_schedules_scope_ids_check;
-		ALTER TABLE blackout_schedules ADD CONSTRAINT blackout_schedules_scope_ids_check CHECK (
-			(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
-			OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
-			OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
-			OR (scope = 'server'));
-	`); err != nil {
-		t.Fatalf("failed to restore the earlier check: %v", err)
-	}
+	restoreV29Check(t, tx)
 
 	// Each legacy row and the scope and IDs the alerter already treats it
 	// as having.
@@ -237,6 +245,103 @@ func TestMigrationV30_UpgradeAndRerun(t *testing.T) {
 		}
 	}
 	assertV30Constraint(t, tx, groupID, clusterID, connectionID)
+}
+
+// TestMigrationV30_DatabaseSpecificRows verifies that a server row with
+// no connection but a database_name, which matched that database on
+// every connection, stops suppressing anything before it becomes
+// estate, which ignores database_name.
+func TestMigrationV30_DatabaseSpecificRows(t *testing.T) {
+	tx, cleanup := beginV23Tx(t)
+	defer cleanup()
+	if tx == nil {
+		return
+	}
+	ctx := context.Background()
+	_, _, connectionID := seedV30Targets(t, tx)
+	restoreV29Check(t, tx)
+
+	insertBlackout := func(connection *int, start, end string) int64 {
+		t.Helper()
+		var id int64
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO blackouts
+				(scope, connection_id, database_name, reason, start_time, end_time, created_by)
+			VALUES ('server', $1, 'appdb', 'v30', NOW() + $2::interval, NOW() + $3::interval, 'v30')
+			RETURNING id`, connection, start, end).Scan(&id); err != nil {
+			t.Fatalf("insert blackout: %v", err)
+		}
+		return id
+	}
+	past := insertBlackout(nil, "-2 hours", "-1 hour")
+	active := insertBlackout(nil, "-1 hour", "1 hour")
+	future := insertBlackout(nil, "1 hour", "2 hours")
+	server := insertBlackout(&connectionID, "-1 hour", "1 hour")
+
+	var schedule, serverSchedule int64
+	for _, s := range []struct {
+		connection *int
+		id         *int64
+	}{{nil, &schedule}, {&connectionID, &serverSchedule}} {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO blackout_schedules
+				(scope, connection_id, database_name, name, cron_expression, duration_minutes, reason, created_by)
+			VALUES ('server', $1, 'appdb', 'v30', '0 * * * *', 30, 'v30', 'v30')
+			RETURNING id`, s.connection).Scan(s.id); err != nil {
+			t.Fatalf("insert schedule: %v", err)
+		}
+	}
+
+	if err := migrationV30(t).Up(tx); err != nil {
+		t.Fatalf("migration 30 failed: %v", err)
+	}
+
+	var gone bool
+	if err := tx.QueryRow(ctx, `SELECT NOT EXISTS (SELECT 1 FROM blackouts WHERE id = $1)`,
+		future).Scan(&gone); err != nil || !gone {
+		t.Errorf("future database-specific blackout: deleted %v (err %v), want deleted", gone, err)
+	}
+	for _, b := range []struct {
+		name      string
+		id        int64
+		wantScope string
+		wantEnded string
+	}{
+		{"past", past, "estate", "NOW() - INTERVAL '1 hour'"},
+		{"active", active, "estate", "NOW()"},
+		{"connection", server, "server", "NOW() + INTERVAL '1 hour'"},
+	} {
+		var scope string
+		var endMatches bool
+		if err := tx.QueryRow(ctx, `SELECT scope, end_time = `+b.wantEnded+` FROM blackouts WHERE id = $1`,
+			b.id).Scan(&scope, &endMatches); err != nil {
+			t.Fatalf("%s blackout: read back: %v", b.name, err)
+		}
+		if scope != b.wantScope || !endMatches {
+			t.Errorf("%s blackout: scope %s, end_time = %s %v; want scope %s and true",
+				b.name, scope, b.wantEnded, endMatches, b.wantScope)
+		}
+	}
+	for _, s := range []struct {
+		name        string
+		id          int64
+		wantScope   string
+		wantEnabled bool
+	}{
+		{"database-specific", schedule, "estate", false},
+		{"connection", serverSchedule, "server", true},
+	} {
+		var scope string
+		var enabled bool
+		if err := tx.QueryRow(ctx, `SELECT scope, enabled FROM blackout_schedules WHERE id = $1`,
+			s.id).Scan(&scope, &enabled); err != nil {
+			t.Fatalf("%s schedule: read back: %v", s.name, err)
+		}
+		if scope != s.wantScope || enabled != s.wantEnabled {
+			t.Errorf("%s schedule: scope %s enabled %v, want %s %v",
+				s.name, scope, enabled, s.wantScope, s.wantEnabled)
+		}
+	}
 }
 
 // TestMigrationV30_ReportsFailure verifies a failed statement is

@@ -57,6 +57,33 @@ func TestProbeToolsAcceptViewsIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("describe_probe without an injected context", func(t *testing.T) {
+		text, isErr := toolText(t, DescribeProbeTool(f.pool), map[string]any{"probe_name": "cf_probe"})
+		if isErr || !strings.Contains(text, "Probe: cf_probe") {
+			t.Errorf("describe_probe = %q (error %v)", text, isErr)
+		}
+	})
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	for _, tt := range []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"missing probe_name", map[string]any{"__context": ctx}, "Missing or invalid 'probe_name'"},
+		{"invalid probe_name", map[string]any{"__context": ctx, "probe_name": "cf-probe"}, "Invalid probe name"},
+		{"unknown probe", map[string]any{"__context": ctx, "probe_name": "no_such_probe"}, "not found"},
+		{"existence check fails", map[string]any{"__context": canceled, "probe_name": "cf_probe"}, "Failed to check probe existence"},
+	} {
+		t.Run("describe_probe "+tt.name, func(t *testing.T) {
+			text, isErr := toolText(t, DescribeProbeTool(f.pool), tt.args)
+			if !isErr || !strings.Contains(text, tt.want) {
+				t.Errorf("describe_probe = %q (error %v), want an error containing %q", text, isErr, tt.want)
+			}
+		})
+	}
+
 	t.Run("query_metrics", func(t *testing.T) {
 		text, isErr := toolText(t, asSuperuser(QueryMetricsTool(f.pool, testRBACChecker(t), nil)),
 			map[string]any{"connection_id": float64(f.live), "probe_name": "cf_probe"})

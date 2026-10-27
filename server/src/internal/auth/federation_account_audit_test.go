@@ -380,6 +380,8 @@ func TestUnlinkFederatedIdentityRollsBackAnUnauditedUnlink(t *testing.T) {
 	defer cleanup()
 
 	linkedLocalUser(t, store, "alice")
+	_, token := mustCreateToken(t, store, "alice", "kept")
+	hashBefore := passwordHashOf(t, store, "alice")
 	dropAuditLog(t, store)
 
 	if _, _, err := store.AsActor(testCLIActor()).UnlinkFederatedIdentity("alice",
@@ -388,6 +390,24 @@ func TestUnlinkFederatedIdentityRollsBackAnUnauditedUnlink(t *testing.T) {
 	}
 	assertLinkColumns(t, store, "alice", AuthSourceOIDC, sql.NullString{
 		String: ExternalSubjectKey(linkTestIssuer, linkTestSubject), Valid: true})
+	if got := passwordHashOf(t, store, "alice"); got != hashBefore {
+		t.Error("the unaudited unlink replaced the password hash")
+	}
+	if kept, err := store.GetTokenByID(token.ID); err != nil || kept == nil {
+		t.Errorf("the unaudited unlink removed the account's token (err %v)", err)
+	}
+}
+
+// passwordHashOf reads an account's stored password hash directly.
+func passwordHashOf(t *testing.T, store *AuthStore, username string) string {
+	t.Helper()
+
+	var hash string
+	if err := store.db.QueryRow("SELECT password_hash FROM users WHERE username = ?",
+		username).Scan(&hash); err != nil {
+		t.Fatalf("reading the password hash of %s: %v", username, err)
+	}
+	return hash
 }
 
 func TestUnlinkFederatedIdentityRecordsRefusals(t *testing.T) {

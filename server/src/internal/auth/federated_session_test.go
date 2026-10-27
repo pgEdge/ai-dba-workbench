@@ -213,6 +213,55 @@ func TestFederatedSessionRefreshCapsExpiry(t *testing.T) {
 	}
 }
 
+// A federated session ends DefaultSessionExpiry after its login however
+// often the provider refreshes it: a refresh is capped at that deadline,
+// and a session that has reached it is ended without being offered to
+// the provider. A provider that leaves the groups claim out of every
+// refresh would otherwise let a session keep groups removed at the
+// provider for ever.
+func TestFederatedSessionEndsAtItsAbsoluteLifetime(t *testing.T) {
+	store := newFederatedSessionStore(t)
+	refresher := &fakeRefresher{respond: func(_ context.Context, _, refreshToken string) (FederatedRefresh, error) {
+		return FederatedRefresh{RefreshToken: refreshToken, ExpiresAt: time.Now().Add(30 * 24 * time.Hour)}, nil
+	}}
+	store.SetFederatedSessionRefresher(refresher)
+
+	before := time.Now()
+	token, _, err := store.CreateFederatedSession("alice", "rt", time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("CreateFederatedSession: %v", err)
+	}
+	fs := sessionFor(t, store, token).federated
+	if fs.deadline.Before(before.Add(DefaultSessionExpiry)) || fs.deadline.After(time.Now().Add(DefaultSessionExpiry)) {
+		t.Fatalf("deadline = %v, want DefaultSessionExpiry after the login", fs.deadline)
+	}
+
+	// Two hours before the deadline, a refresh runs only to the deadline,
+	// not to the provider's expiry or a full DefaultSessionExpiry on.
+	fs.deadline = time.Now().Add(2 * time.Hour)
+	setSessionExpiry(t, store, token, time.Now().Add(-time.Minute))
+	if _, err := store.ValidateSessionToken(token); err != nil {
+		t.Fatalf("refresh before the deadline: %v", err)
+	}
+	if got := sessionFor(t, store, token).ExpiresAt; !got.Equal(fs.deadline) {
+		t.Fatalf("refreshed expiry = %v, want the deadline %v", got, fs.deadline)
+	}
+
+	// Once the deadline has passed the session ends, and the provider is
+	// not asked again.
+	fs.deadline = time.Now().Add(-time.Second)
+	setSessionExpiry(t, store, token, time.Now().Add(-time.Minute))
+	if _, err := store.ValidateSessionToken(token); !errors.Is(err, errSessionEnded) {
+		t.Fatalf("ValidateSessionToken error = %v, want the session ended", err)
+	}
+	if sessionFor(t, store, token) != nil {
+		t.Fatal("a session past its absolute lifetime is still stored")
+	}
+	if got := refresher.calls.Load(); got != 1 {
+		t.Fatalf("refresher called %d times, want once", got)
+	}
+}
+
 // Every way an expired federated session can fail to be refreshed ends
 // it, and answers as an ordinary invalid session does.
 func TestFederatedSessionEndsWhenNotRefreshed(t *testing.T) {
@@ -414,19 +463,22 @@ func TestSweepExpiredSessions(t *testing.T) {
 	now := time.Now()
 
 	put := func(key string, info *SessionInfo) { store.sessions.Store(key, info) }
-	busy := &federatedSession{refreshToken: "rt"}
+	deadline := now.Add(time.Hour)
+	busy := &federatedSession{refreshToken: "rt", deadline: deadline}
 	busy.mu.Lock()
 	defer busy.mu.Unlock()
 
 	put("live-local", &SessionInfo{Username: "alice", ExpiresAt: now.Add(time.Hour)})
 	put("expired-local", &SessionInfo{Username: "alice", ExpiresAt: now.Add(-time.Hour)})
 	put("refreshable", &SessionInfo{Username: "alice", ExpiresAt: now.Add(-time.Hour),
-		federated: &federatedSession{refreshToken: "rt"}})
+		federated: &federatedSession{refreshToken: "rt", deadline: deadline}})
 	put("no-refresh-token", &SessionInfo{Username: "alice", ExpiresAt: now.Add(-time.Hour),
-		federated: &federatedSession{}})
+		federated: &federatedSession{deadline: deadline}})
 	put("past-window", &SessionInfo{Username: "alice",
 		ExpiresAt: now.Add(-federatedRefreshWindow - time.Hour),
-		federated: &federatedSession{refreshToken: "rt"}})
+		federated: &federatedSession{refreshToken: "rt", deadline: deadline}})
+	put("past-deadline", &SessionInfo{Username: "alice", ExpiresAt: now.Add(-time.Minute),
+		federated: &federatedSession{refreshToken: "rt", deadline: now.Add(-time.Second)}})
 	put("refreshing", &SessionInfo{Username: "alice",
 		ExpiresAt: now.Add(-federatedRefreshWindow - time.Hour), federated: busy})
 	store.sessions.Store("not-a-session", "unexpected")
@@ -439,6 +491,7 @@ func TestSweepExpiredSessions(t *testing.T) {
 		"refreshable":      true,
 		"no-refresh-token": false,
 		"past-window":      false,
+		"past-deadline":    false,
 		"refreshing":       true,
 		"not-a-session":    true,
 	}

@@ -524,7 +524,14 @@ moved.
   and email domain, and reconciles groups only when the refreshed ID
   token carries the groups claim (`Identity.GroupsClaimPresent`; an
   absent claim or no ID token keeps memberships and the superuser
-  flag). The refresh token must never
+  flag). Because of that, every federated session also has an absolute
+  lifetime: `federatedSession.deadline` is set at login to
+  `DefaultSessionExpiry` on, refreshes are capped at it, and
+  `unrefreshableReason` and the sweeper end a session past it, so a
+  group removal reaches the user at the next login at the latest; a
+  change that lets a refresh run past the deadline reopens that hole.
+  Any refresh failure ends the session (fail-closed, deliberately,
+  including a provider outage). The refresh token must never
   reach disk, logs or errors. Whilst `allow_api_tokens` is off,
   `createToken` and `validateToken` (`auth/federated_tokens.go`) refuse
   tokens whose OWNER is federated, whoever the caller is; the use

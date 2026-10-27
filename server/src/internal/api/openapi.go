@@ -229,7 +229,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"username":           {Type: "string", Description: "Username of the authenticated user"},
 				"is_superuser":       {Type: "boolean", Description: "Whether the caller may pass a superuser-only gate: true for a superuser's session, and for a superuser's API token only when the token's admin scope is empty or holds the wildcard"},
 				"admin_permissions":  {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Admin permissions the caller holds"},
-				"api_tokens_allowed": {Type: "boolean", Description: "Whether the authenticated user's account may own API tokens. False for an account that signs in through an identity provider while http.auth.oidc.allow_api_tokens is off; it does not say whether the caller may manage tokens, which admin_permissions answers"},
+				"api_tokens_allowed": {Type: "boolean", Description: "Whether the authenticated user's account may own API tokens. False for an account that signs in through an identity provider while http.auth.oidc.allow_api_tokens is off, and omitted when the account cannot be read; it does not say whether the caller may manage tokens, which admin_permissions answers"},
 				"error":              {Type: "string", Description: "Error message if authentication failed"},
 			},
 		},

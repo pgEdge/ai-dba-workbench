@@ -31,6 +31,14 @@ import (
 // and the federated login handler reconciles the user's groups and
 // superuser status from the new ID token on the way.
 //
+// However often it is refreshed, a federated session ends
+// DefaultSessionExpiry after its login, as a local session does. A
+// provider may leave the groups claim, or the ID token itself, out of a
+// refresh, and the session's groups and superuser status are then kept
+// unchanged; the next login is what reconciles them, so without that
+// absolute lifetime a group removal at the provider might never reach a
+// user who keeps the session in use.
+//
 // The refresh token is a long-lived credential, so it is held here, in
 // memory, with the session it belongs to, and nowhere else: it is never
 // written to auth.db, never logged, and never put into an error.
@@ -118,13 +126,25 @@ type federatedSession struct {
 	// refreshToken is the token to redeem next, or empty when the
 	// provider issued none. Guarded by mu.
 	refreshToken string
+
+	// deadline is when the session ends however often it is refreshed:
+	// DefaultSessionExpiry after the login that created it. It is set
+	// once, at creation, and never changes, so it needs no lock.
+	deadline time.Time
+}
+
+// pastDeadline reports whether the session has reached the absolute
+// lifetime that bounds every refresh of it.
+func (fs *federatedSession) pastDeadline(now time.Time) bool {
+	return !now.Before(fs.deadline)
 }
 
 // CreateFederatedSession creates a session for a user who has just
 // completed a federated login. The session expires at expiresAt, the ID
 // token's expiry, capped at DefaultSessionExpiry from now; refreshToken,
 // which may be empty, is kept in memory with it so that a request after
-// that expiry can extend it.
+// that expiry can extend it, but never past DefaultSessionExpiry from
+// now, which is the session's absolute lifetime.
 //
 // It applies every check CreateSessionForUser does, and its errors need
 // the same care: they are for the server log only.
@@ -135,8 +155,9 @@ func (s *AuthStore) CreateFederatedSession(username, refreshToken string,
 	if !expiresAt.After(now) {
 		return "", time.Time{}, fmt.Errorf("federated session would already have expired")
 	}
-	if ceiling := now.Add(DefaultSessionExpiry); expiresAt.After(ceiling) {
-		expiresAt = ceiling
+	deadline := now.Add(DefaultSessionExpiry)
+	if expiresAt.After(deadline) {
+		expiresAt = deadline
 	}
 
 	token, _, err := s.CreateSessionForUser(username)
@@ -152,7 +173,7 @@ func (s *AuthStore) CreateFederatedSession(username, refreshToken string,
 	if !ok || !s.sessions.CompareAndSwap(tokenHash, minted, &SessionInfo{
 		Username:  username,
 		ExpiresAt: expiresAt,
-		federated: &federatedSession{refreshToken: refreshToken},
+		federated: &federatedSession{refreshToken: refreshToken, deadline: deadline},
 	}) {
 		return "", time.Time{}, fmt.Errorf("session for %s was invalidated whilst it was being created", username)
 	}
@@ -213,7 +234,7 @@ func (s *AuthStore) refreshFederatedSession(tokenHash string,
 		fs.refreshToken = refreshed.RefreshToken
 	}
 
-	expiresAt, ok := cappedRefreshExpiry(refreshed.ExpiresAt, time.Now())
+	expiresAt, ok := cappedRefreshExpiry(refreshed.ExpiresAt, time.Now(), fs.deadline)
 	if !ok {
 		return nil, s.endFederatedSession(tokenHash, current,
 			"the identity provider refreshed it with an expiry already past")
@@ -255,6 +276,8 @@ func unrefreshableReason(session *SessionInfo, refresher FederatedSessionRefresh
 	now time.Time) string {
 
 	switch {
+	case session.federated.pastDeadline(now):
+		return "it reached the absolute lifetime of a federated session"
 	case session.federated.refreshToken == "":
 		return "it reached its ID token's expiry and the identity provider issued no refresh token"
 	case now.After(session.ExpiresAt.Add(federatedRefreshWindow)):
@@ -265,15 +288,15 @@ func unrefreshableReason(session *SessionInfo, refresher FederatedSessionRefresh
 	return ""
 }
 
-// cappedRefreshExpiry caps a refreshed session's expiry at a local
-// session's lifetime from now, and reports false when the provider gave
-// an expiry that has already passed.
-func cappedRefreshExpiry(expiresAt, now time.Time) (time.Time, bool) {
+// cappedRefreshExpiry caps a refreshed session's expiry at its deadline,
+// the absolute lifetime set at login, and reports false when the
+// provider gave an expiry that has already passed.
+func cappedRefreshExpiry(expiresAt, now, deadline time.Time) (time.Time, bool) {
 	if !expiresAt.After(now) {
 		return time.Time{}, false
 	}
-	if ceiling := now.Add(DefaultSessionExpiry); expiresAt.After(ceiling) {
-		return ceiling, true
+	if expiresAt.After(deadline) {
+		return deadline, true
 	}
 	return expiresAt, true
 }
@@ -294,7 +317,8 @@ func (s *AuthStore) endFederatedSession(tokenHash string, session *SessionInfo,
 // sweepExpiredSessions removes the sessions that have expired as of now.
 // A federated session holding a refresh token is kept until its refresh
 // window has passed too, since a request may yet arrive to refresh it,
-// and so is one whose refresh is in flight.
+// unless it has reached its absolute lifetime; one whose refresh is in
+// flight is always kept.
 func (s *AuthStore) sweepExpiredSessions(now time.Time) {
 	s.sessions.Range(func(key, value any) bool {
 		session, ok := value.(*SessionInfo)
@@ -305,7 +329,7 @@ func (s *AuthStore) sweepExpiredSessions(now time.Time) {
 			if !fs.mu.TryLock() {
 				return true
 			}
-			refreshable := fs.refreshToken != "" &&
+			refreshable := fs.refreshToken != "" && !fs.pastDeadline(now) &&
 				now.Before(session.ExpiresAt.Add(federatedRefreshWindow))
 			fs.mu.Unlock()
 			if refreshable {

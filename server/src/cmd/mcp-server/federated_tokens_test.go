@@ -84,6 +84,24 @@ func TestCreateUserInfoHandlerReportsAPITokensAllowed(t *testing.T) {
 	}
 }
 
+// TestAddAPITokensAllowedOmitsTheFieldOnError proves an account that
+// cannot be read is not reported as unable to own tokens, which the
+// client would show a local user as the federated-login message.
+func TestAddAPITokensAllowedOmitsTheFieldOnError(t *testing.T) {
+	info := map[string]any{}
+	addAPITokensAllowed(info, func(string) (bool, error) {
+		return false, errors.New("auth store unavailable")
+	}, "jane.doe")
+	if value, present := info["api_tokens_allowed"]; present {
+		t.Fatalf("api_tokens_allowed = %v, want it left out", value)
+	}
+
+	addAPITokensAllowed(info, func(string) (bool, error) { return false, nil }, "jane.doe")
+	if info["api_tokens_allowed"] != false {
+		t.Fatalf("api_tokens_allowed = %v, want false", info["api_tokens_allowed"])
+	}
+}
+
 func TestLoadCLITokenPolicy(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, content string) string {

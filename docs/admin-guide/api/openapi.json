@@ -14805,7 +14805,7 @@
           },
           "api_tokens_allowed": {
             "type": "boolean",
-            "description": "Whether the authenticated user's account may own API tokens. False for an account that signs in through an identity provider while http.auth.oidc.allow_api_tokens is off; it does not say whether the caller may manage tokens, which admin_permissions answers"
+            "description": "Whether the authenticated user's account may own API tokens. False for an account that signs in through an identity provider while http.auth.oidc.allow_api_tokens is off, and omitted when the account cannot be read; it does not say whether the caller may manage tokens, which admin_permissions answers"
           },
           "authenticated": {
             "type": "boolean",

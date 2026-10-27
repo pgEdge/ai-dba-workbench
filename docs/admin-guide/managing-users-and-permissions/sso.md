@@ -779,7 +779,9 @@ groups the map does not name.
 A federated session lasts only as long as the identity provider keeps
 vouching for the person. It expires when the ID token from the login
 expires, which for most providers is an hour or less, rather than after
-the 24 hours a local session gets.
+the 24 hours a local session gets. Refreshes can extend it, but never
+beyond 24 hours after the login, at which point the session ends and
+the person signs in again, as they would with a local session.
 
 The first request after that expiry asks the provider to redeem the
 refresh token it issued at login. The provider refuses once the person
@@ -799,8 +801,10 @@ A refreshed ID token that carries the claim is authoritative, so an
 empty list revokes the account's mapped groups and superuser flag in
 the same way an empty claim at login would. With a provider that never
 repeats the claim on refresh, a change to someone's groups at the
-provider takes effect at their next login, whilst removing or disabling
-them there still ends the session at the next refresh.
+provider takes effect at their next login, which is at most 24 hours
+after the last one because that is as long as a federated session can
+run; removing or disabling them there still ends the session at the
+next refresh.
 
 The server also ends a federated session without asking the provider
 when federated login has been switched off, or the account has been
@@ -814,6 +818,15 @@ is never written to disk or to the log. Only one refresh runs for a
 session at a time, so a browser with several tabs open does not present
 the same refresh token twice; a refresh that takes longer than 15
 seconds fails and ends the session.
+
+Any refresh that fails ends the session, whatever the reason, because
+the server cannot tell an unreachable provider from one that has
+stopped vouching for the person. During a provider outage, every
+federated user is therefore signed out within one ID token lifetime,
+typically an hour, and cannot sign back in until the provider
+recovers. A local superuser is the way in for that period, as
+described in
+[Keeping a Local Break-Glass Administrator](#keeping-a-local-break-glass-administrator).
 
 ## API Tokens and Federated Users
 
@@ -836,7 +849,10 @@ the identity provider:
   records a denied `token.use` event naming the token.
 - `GET /api/v1/user/info` reports `api_tokens_allowed` as `false` for
   the account, so that the console can explain that API tokens are
-  disabled for federated logins in this installation.
+  disabled for federated logins in this installation; the console's
+  Tokens panel reads the setting again each time it opens. When the
+  server cannot read the account, it leaves the field out rather than
+  report `false`.
 
 Local accounts and service accounts are unaffected, and automation
 should use a local service account, as described in
@@ -867,8 +883,9 @@ person's session next needs refreshing or the person next logs in.
 
 A user removed from a mapped group at the provider therefore keeps
 whatever that group confers until their session's ID token next
-expires, or until their next login where the provider leaves the
-groups claim out of refreshed ID tokens. API tokens never trigger a refresh, so where
+expires, or, where the provider leaves the groups claim out of
+refreshed ID tokens, until their next login, which is at most 24 hours
+after the last. API tokens never trigger a refresh, so where
 `allow_api_tokens` is on, the holder of a long-lived token keeps that
 group's privileges until the token expires. The same applies to the
 superuser flag when it comes from `superuser_group`.
@@ -916,7 +933,8 @@ federated logins alike, and it is pre-existing behaviour rather than
 something federated login introduced.
 
 A local session lasts 24 hours, and a federated session lasts as long
-as its ID token, extended by refreshes as described in
+as its ID token, extended by refreshes for at most 24 hours after the
+login, as described in
 [Federated Sessions Follow the Provider](#federated-sessions-follow-the-provider).
 Each user may hold at most ten simultaneous sessions; an eleventh login
 evicts that user's oldest session.

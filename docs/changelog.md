@@ -248,10 +248,10 @@ project adheres to
   `offline_access` scope, unless the provider's discovery
   document lists its supported scopes without it, and the
   session expires with its ID token rather than after 24
-  hours; the first request after
-  that redeems the provider's refresh token, which is held in
-  the server's memory only, and the session ends if the
-  provider refuses. A successful refresh reconciles the
+  hours; the first request after that redeems the provider's
+  refresh token, which is held in the server's memory only,
+  and the session ends if the provider refuses, or in any case
+  24 hours after the login. A successful refresh reconciles the
   account's mapped groups and superuser flag from the new ID
   token when that token carries the groups claim, and leaves
   them unchanged when it does not. The new

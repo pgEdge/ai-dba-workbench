@@ -90,6 +90,21 @@ describe('CreateTokenDialog', () => {
         expect(screen.getByLabelText(/^Owner/)).toBeInTheDocument();
     });
 
+    it('shows the owner helper text when the owner is not locked', () => {
+        renderComponent({ ownerHelperText: 'You are not listed' });
+        expect(screen.getByText('You are not listed')).toBeInTheDocument();
+    });
+
+    it('prefers the locked-owner explanation to the owner helper text', () => {
+        renderComponent({
+            ownerLocked: true,
+            ownerHelperText: 'You are not listed',
+        });
+        expect(screen.queryByText('You are not listed')).not.toBeInTheDocument();
+        expect(screen.getByText(/only a superuser can create a token/i))
+            .toBeInTheDocument();
+    });
+
     it('renders Expiry select', () => {
         renderComponent();
         expect(screen.getByLabelText(/^Expiry/)).toBeInTheDocument();

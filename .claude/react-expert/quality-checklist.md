@@ -667,6 +667,16 @@ else's token, passes the editor the choices from `narrowScopeChoices`
 a restriction with `narrowOnlyLiftError`. Keep the two in step when
 the server rules change; any other refusal shows the server's message.
 
+Since issue #742 a federated login may not own a token while
+`http.auth.oidc.allow_api_tokens` is off. `AuthContext.tsx` maps
+`/api/v1/user/info`'s `api_tokens_allowed` to `user.apiTokensAllowed`,
+and only an explicit `false` counts, so an older server that omits the
+field allows tokens. With it false, `AdminTokenScopes.tsx` hides
+`Create Token` from a non-superuser, drops the current user from a
+superuser's owner list, and shows `FEDERATED_TOKENS_DISABLED_TEXT` (in
+`tokens/tokenTypes.ts`) as an info `Alert`, rather than waiting for the
+403; the 403 still reaches the create dialog's error as before.
+
 ## Messaging Channel Field Descriptors
 
 `AdminMessagingChannels.tsx` is shared by the Slack, Mattermost and

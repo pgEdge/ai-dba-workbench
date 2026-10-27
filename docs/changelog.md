@@ -258,7 +258,10 @@ project adheres to
   on every route and audited, existing tokens such an account
   owns are refused on use and audited as `token.use`, and
   `GET /api/v1/user/info` reports the new `api_tokens_allowed`
-  field as `false`. Switching it on lets a federated user's
+  field as `false`. The console's Tokens page then offers such a
+  user no `Create Token` button and explains why, and a
+  superuser in that position can still create tokens for other
+  users. Switching it on lets a federated user's
   tokens outlive their removal at the provider until each one
   expires or is revoked; use a local service account for
   automation instead. (#742)

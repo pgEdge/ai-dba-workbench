@@ -80,6 +80,11 @@ export interface CreateTokenDialogProps {
      * token for another user.
      */
     ownerLocked?: boolean;
+    /**
+     * Helper text for an owner field that is not locked, such as why
+     * the current user is missing from the list.
+     */
+    ownerHelperText?: string;
     /** The selected expiry duration. */
     expiry: string;
     /** Handler for expiry changes. */
@@ -127,6 +132,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
     onOwnerChange,
     users,
     ownerLocked = false,
+    ownerHelperText,
     expiry,
     onExpiryChange,
     availableConnections,
@@ -202,7 +208,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                                     ? 'Tokens you create are owned by you; ' +
                                       'only a superuser can create a ' +
                                       'token for another user'
-                                    : undefined
+                                    : ownerHelperText
                             }
                             InputLabelProps={{
                                 ...params.InputLabelProps,

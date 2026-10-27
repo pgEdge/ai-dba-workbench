@@ -190,6 +190,17 @@ Provide the following information in the `Create token` dialog:
 The `Create` button is disabled until both the `Name` and `Owner` fields are
 completed; select `Create` to create the described token.
 
+!!! note
+
+    While `allow_api_tokens` is off, a user who signs in through an
+    identity provider cannot own a token. For such a user, the Tokens
+    page hides the `+ Create Token` button and displays the message
+    "API tokens are disabled for federated logins in this installation.
+    Contact your system administrator." A superuser who signs in through
+    the provider keeps the button, but the `Owner` drop-down omits their
+    own account. See
+    [API Tokens and Federated Users](sso.md#api-tokens-and-federated-users).
+
 ![A newly generated token](../../images/new_token.png)
 
 You can also create a token at the command line. In the following example, the

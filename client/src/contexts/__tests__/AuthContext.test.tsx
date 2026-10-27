@@ -100,6 +100,7 @@ describe('AuthContext', () => {
         username?: string;
         is_superuser?: boolean;
         admin_permissions?: string[];
+        api_tokens_allowed?: boolean;
     }) => {
         mockFetch.mockResolvedValueOnce(
             mockResponse({
@@ -107,6 +108,9 @@ describe('AuthContext', () => {
                 username: options?.username ?? 'testuser',
                 is_superuser: options?.is_superuser ?? false,
                 admin_permissions: options?.admin_permissions ?? [],
+                ...(options?.api_tokens_allowed === undefined
+                    ? {}
+                    : { api_tokens_allowed: options.api_tokens_allowed }),
             })
         );
     };
@@ -219,8 +223,24 @@ describe('AuthContext', () => {
                 authenticated: true,
                 username: 'sessionuser',
                 isSuperuser: false,
+                apiTokensAllowed: true,
             });
             expect(result.current.adminPermissions).toEqual(['manage_users']);
+        });
+
+        it('reports a federated user who may not own API tokens', async () => {
+            mockCheckAuthAuthenticated({
+                username: 'federated',
+                api_tokens_allowed: false,
+            });
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+
+            expect(result.current.user?.apiTokensAllowed).toBe(false);
         });
 
         it('restores superuser state from an existing session', async () => {
@@ -326,9 +346,42 @@ describe('AuthContext', () => {
                 authenticated: true,
                 username: 'testuser',
                 isSuperuser: false,
+                apiTokensAllowed: true,
                 expiresAt: '2026-03-01T00:00:00Z',
             });
             expect(result.current.adminPermissions).toEqual(['manage_probes']);
+        });
+
+        it('records api_tokens_allowed from user/info after login', async () => {
+            mockCheckAuthUnauthenticated();
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({
+                    success: true,
+                    expires_at: '2026-03-01T00:00:00Z',
+                })
+            );
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({
+                    authenticated: true,
+                    username: 'federated',
+                    is_superuser: false,
+                    admin_permissions: [],
+                    api_tokens_allowed: false,
+                })
+            );
+
+            await act(async () => {
+                await result.current.login('federated', 'password123');
+            });
+
+            expect(result.current.user?.apiTokensAllowed).toBe(false);
         });
 
         it('sends correct login request', async () => {

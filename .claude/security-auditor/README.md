@@ -223,9 +223,10 @@ moved.
 - The store refuses to demote, disable or delete the last enabled
   superuser (`ErrLastSuperuser`, 409 over HTTP, counted inside the
   change's transaction), for sessions, tokens and the CLI alike.
-  Known exceptions, not yet ruled on: the lockout disable in
-  `disableForLockout` and the federated login's `is_superuser` sync in
-  `federation.go` both bypass the guard (raised on PR #528).
+  The lockout disable in `disableForLockout` and the federated login's
+  `is_superuser` sync in `federation.go` bypass the guard by ruling on
+  #595, and each logs a warning when it leaves no enabled superuser; do
+  not report the bypass as a finding.
   `query_datastore` no longer runs SQL (#566): it builds each query
   from the source catalog in `internal/tools/datastore_catalog.go`,
   limited to the caller's visible connections and to columns that

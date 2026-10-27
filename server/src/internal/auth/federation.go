@@ -501,25 +501,36 @@ func (s *AuthStore) revokeFederatedSuperuserLocked(userID int64, username string
 		return nil
 	}
 
+	s.warnIfNoEnabledSuperuserLocked(
+		"the identity provider revoked superuser from "+logging.SanitizeForLog(username),
+		"grant the superuser group to another account at the provider, "+
+			"or add a local superuser with -add-user and -set-superuser")
+	return nil
+}
+
+// warnIfNoEnabledSuperuserLocked logs a warning, naming remedy, when no
+// enabled superuser remains after change, a committed change that skipped
+// guardLastSuperuserTx by ruling on issue #595 (the federated superuser
+// revocation and the lockout disable). change describes it in a form safe
+// to log, so any username in it must already have been through
+// logging.SanitizeForLog. The check is best effort: a failure to count is
+// logged rather than returned, because the change it reports on already
+// stands. s.mu must be held.
+func (s *AuthStore) warnIfNoEnabledSuperuserLocked(change, remedy string) {
 	query := "SELECT COUNT(*) FROM users WHERE is_superuser AND enabled"
 	if s.superuserCountSQL != "" {
 		query = s.superuserCountSQL
 	}
 	var remaining int
 	if err := s.db.QueryRow(query).Scan(&remaining); err != nil {
-		//nolint:gosec // G706: username passed through logging.SanitizeForLog
-		log.Printf("[AUTH] Revoked federated superuser from %s but could not count the remaining superusers: %v",
-			logging.SanitizeForLog(username), err)
-		return nil
+		//nolint:gosec // G706: callers build change with logging.SanitizeForLog
+		log.Printf("[AUTH] %s, but could not count the remaining superusers: %v", change, err)
+		return
 	}
 	if remaining == 0 {
-		//nolint:gosec // G706: username passed through logging.SanitizeForLog
-		log.Printf("[AUTH] WARNING: the identity provider revoked superuser from %s, leaving no "+
-			"enabled superuser; grant the superuser group to another account at the provider, "+
-			"or add a local superuser with -add-user and -set-superuser",
-			logging.SanitizeForLog(username))
+		//nolint:gosec // G706: callers build change with logging.SanitizeForLog
+		log.Printf("[AUTH] WARNING: %s, leaving no enabled superuser; %s", change, remedy)
 	}
-	return nil
 }
 
 // mappedGroupTarget is one Workbench group named by the operator's map,

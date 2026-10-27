@@ -16,6 +16,8 @@ import (
 	"log"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
 // userSnapshot is the audited view of a user row. It deliberately omits
@@ -791,6 +793,17 @@ func (s *AuthStore) disableForLockout(userID int64, username string) bool {
 		})); err != nil {
 		log.Printf("[AUTH] Failed to record lockout audit event for user %s: %v",
 			username, err)
+	}
+
+	// The lockout does not go through guardLastSuperuserTx (ruled on issue
+	// #595): refusing it would let an attacker go on guessing the last
+	// superuser's password without ever being locked out. It warns instead.
+	if before.IsSuperuser {
+		s.warnIfNoEnabledSuperuserLocked(
+			"locking out superuser "+logging.SanitizeForLog(username)+
+				" after failed sign-in attempts",
+			"re-enable the account with -enable-user, "+
+				"or add a local superuser with -add-user and -set-superuser")
 	}
 
 	return true

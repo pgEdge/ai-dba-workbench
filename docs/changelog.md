@@ -2706,7 +2706,8 @@ project adheres to
   login, so a group mapped by a reload could be created, renamed
   or deleted by a token that does not hold everything a superuser
   does until the server restarted. A federated login that removes
-  the last enabled superuser now also logs a warning.
+  the last enabled superuser, and an account lockout that disables
+  it, now also log a warning.
 
 - Mask statement text returned by `query_datastore` in the same way
   as the metrics routes (#724). The tool masked the `query` column

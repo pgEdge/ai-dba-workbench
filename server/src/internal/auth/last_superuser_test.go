@@ -12,8 +12,11 @@ package auth
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // addSpareSuperuser creates a second enabled superuser, so that a test
@@ -175,5 +178,69 @@ func TestLastSuperuserGuardCountFails(t *testing.T) {
 	err = guardLastSuperuserTx(tx, before, before, true)
 	if err == nil || errors.Is(err, ErrLastSuperuser) {
 		t.Errorf("Expected a count failure, got %v", err)
+	}
+}
+
+// TestLockoutWarnsWhenNoSuperuserRemains covers the ruling on issue #595:
+// the lockout disable is not refused by the last-superuser guard, but
+// locking out the last enabled superuser is logged as a warning. Locking
+// out anyone else logs nothing, and does not even count the superusers.
+func TestLockoutWarnsWhenNoSuperuserRemains(t *testing.T) {
+	const (
+		warning     = "leaving no enabled superuser"
+		countFailed = "could not count the remaining superusers"
+	)
+	tests := []struct {
+		name      string
+		superuser bool
+		spare     bool
+		want      string
+	}{
+		{name: "last superuser locked out", superuser: true, want: warning},
+		{name: "another superuser remains", superuser: true, spare: true},
+		{name: "a user who is not a superuser", spare: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, err := NewAuthStore(t.TempDir(), 0, 2, AuditKeyForTesting())
+			if err != nil {
+				t.Fatalf("NewAuthStore failed: %v", err)
+			}
+			t.Cleanup(func() { store.Close() })
+			store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+
+			if err := store.CreateUser("bob", "Str0ngPassphrase!", "", "", ""); err != nil {
+				t.Fatalf("CreateUser failed: %v", err)
+			}
+			if tt.superuser {
+				if err := store.SetUserSuperuser("bob", true); err != nil {
+					t.Fatalf("SetUserSuperuser failed: %v", err)
+				}
+			}
+			if tt.spare {
+				addSpareSuperuser(t, store)
+			}
+			if !tt.superuser {
+				// Counting would fail and be logged, so a clean log
+				// shows that no count was made.
+				store.superuserCountSQL = "SELECT COUNT(*) FROM no_such_table"
+			}
+
+			logged := captureLog(t)
+			for i := 0; i < 2; i++ {
+				if _, _, err := store.AuthenticateUser("bob", "wrong-passphrase"); err == nil {
+					t.Fatal("Expected authentication with the wrong password to fail")
+				}
+			}
+			if user, err := store.GetUser("bob"); err != nil || user == nil || user.Enabled {
+				t.Fatalf("Expected bob to be locked out, got %+v (%v)", user, err)
+			}
+			for _, message := range []string{warning, countFailed} {
+				if got := strings.Contains(logged.String(), message); got != (message == tt.want) {
+					t.Errorf("%q logged = %v, want %v; log: %q", message, got, !got, logged.String())
+				}
+			}
+		})
 	}
 }

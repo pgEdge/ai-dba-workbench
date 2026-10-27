@@ -243,11 +243,13 @@ still administer the server. Re-enabling a disabled superuser is always
 allowed; to demote or remove the last superuser, first promote or enable
 another account.
 
-The server does not apply this rule in two cases:
+The server does not apply this rule in two cases, and logs a warning instead
+when either leaves no enabled superuser:
 
 - an account lockout after repeated failed sign-ins can disable the last
-  enabled superuser; use `-enable-user` to recover a locked superuser
-  account.
+  enabled superuser, because refusing the lockout would let anyone keep
+  guessing that account's password; use `-enable-user` to recover a locked
+  superuser account.
 - a federated sign-in removes superuser status from an account that the
   identity provider no longer places in the `oidc.superuser_group` group,
   even when the account is the last enabled superuser; see

@@ -1117,8 +1117,10 @@ const (
 	linkRelinkUpdateSQL = `UPDATE users SET auth_source = ?, external_subject = ?
         WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
           AND (external_subject IS NOT ? OR auth_source <> ?)`
-	linkUpdateSQL = linkRelinkUpdateSQL +
-		" AND (external_subject IS NULL OR external_subject = ?)"
+	linkUpdateSQL = `UPDATE users SET auth_source = ?, external_subject = ?
+        WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
+          AND (external_subject IS NOT ? OR auth_source <> ?)
+          AND (external_subject IS NULL OR external_subject = ?)`
 )
 
 // linkUpdateStatement returns the UPDATE that links username to key, and its

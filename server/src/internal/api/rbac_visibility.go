@@ -226,7 +226,8 @@ func checkScopeMembersVisible(w http.ResponseWriter, r *http.Request,
 // to all of them: an estate blackout, an alert rule's defaults, a global
 // probe config or a notification channel (issues #732 and #744). A
 // superuser or all-connections grant passes at once; anyone else passes
-// only when grants cover every connection listConnections returns. The
+// only when they can see every connection listConnections returns,
+// whether through grants, ownership or sharing. The
 // refusal is the audited missing-permission refusal for permission, as
 // for overrides (issue #716); the object stays readable, so it is not a
 // 404. It writes the response and returns false when the caller may not

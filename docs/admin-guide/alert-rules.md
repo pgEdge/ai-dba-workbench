@@ -298,8 +298,10 @@ A rule's defaults apply to every server without an
 override, so changing them requires the
 `manage_alert_rules` permission and the ability to see
 every server; anyone else receives a 403, as though
-they lacked the permission. Superusers, and users
-granted access to all connections, see every server.
+they lacked the permission. A server counts when the
+caller can see it in any way, including one they own or
+one shared with them; superusers, and users granted
+access to all connections, always see every server.
 
 ## Creating Custom Rules
 

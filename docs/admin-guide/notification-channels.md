@@ -51,8 +51,10 @@ every server, so creating, editing, enabling,
 disabling or deleting a channel, or changing its email
 recipients, also requires the administrator to see
 every server; anyone else receives a 403, as though
-they lacked the permission. Superusers, and users
-granted access to all connections, see every server.
+they lacked the permission. A server counts when the
+caller can see it in any way, including one they own or
+one shared with them; superusers, and users granted
+access to all connections, always see every server.
 
 ## Delivery Behaviour
 

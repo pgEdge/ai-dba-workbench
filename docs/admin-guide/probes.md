@@ -403,8 +403,10 @@ configuration also receives a 404. A global
 configuration applies to every server, so updating one
 also requires the caller to see every server; anyone
 else receives a 403, as though they lacked the
-permission. Superusers, and users granted access to
-all connections, see every server.
+permission. A server counts when the caller can see
+it in any way, including one they own or one shared
+with them; superusers, and users granted access to all
+connections, always see every server.
 
 The following table lists the available endpoints:
 

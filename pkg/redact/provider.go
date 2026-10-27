@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // ProviderMarker replaces each credential removed from an LLM provider's
@@ -50,27 +51,116 @@ var providerPatterns = []struct {
 
 // ProviderLogError prepares an LLM provider's error message for a log
 // line. It deletes control and formatting characters, removes the
-// secrets given verbatim and anything that looks like a credential,
-// replacing each with ProviderMarker, and keeps endpoint details. The
-// alerter and the server pass the API keys they hold and the
-// BaseURLSecrets of each configured base URL.
+// secrets given, whether or not the secret or the message holds such a
+// character where the other does not, and anything that looks like a
+// credential, replacing each with ProviderMarker, and keeps endpoint
+// details. The alerter and the server pass the API keys they hold and
+// the BaseURLSecrets of each configured base URL.
 func ProviderLogError(msg string, secrets []string) string {
-	msg = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
-			r == '\u2028' || r == '\u2029' {
-			return -1
-		}
-		return r
-	}, strings.ToValidUTF8(msg, "\uFFFD"))
+	// Each secret is matched with the same characters deleted from it
+	// against the message with them deleted, which catches it whether
+	// the message repeats it with such a character, splits it with one
+	// or repeats it without the one it holds. A deleted form is used
+	// only when it is as long as a derived secret must be, or is the
+	// secret unchanged, so that deletion cannot leave a short form that
+	// matches ordinary text; any other secret is matched verbatim
+	// against the message as given instead. Every match is recorded as a
+	// span of the message, and overlapping or touching spans are
+	// replaced as one, so that no secret's match can cut another's
+	// apart, whatever the order of the secrets.
+	msg = strings.ToValidUTF8(msg, "\uFFFD")
+	deleted, offsets := deleteFormatCharsMapped(msg)
+	var spans [][2]int
 	for _, secret := range secrets {
-		if secret != "" {
-			msg = strings.ReplaceAll(msg, secret, ProviderMarker)
+		form := deleteFormatChars(secret)
+		if form != "" && (len(form) >= minDerivedSecretLen || form == secret) {
+			// Map each match in the deleted text back to the message,
+			// ending just after the last byte the match kept.
+			for _, s := range matchSpans(deleted, form) {
+				spans = append(spans, [2]int{offsets[s[0]], offsets[s[1]-1] + 1})
+			}
+		} else if secret != "" {
+			spans = append(spans, matchSpans(msg, secret)...)
 		}
 	}
+	msg = deleteFormatChars(replaceSpans(msg, spans))
 	for _, p := range providerPatterns {
 		msg = p.re.ReplaceAllString(msg, p.repl)
 	}
 	return msg
+}
+
+// isFormatChar reports whether r is a control or formatting character,
+// or a line or paragraph separator, which ProviderLogError keeps out of
+// a log line.
+func isFormatChar(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
+		r == '\u2028' || r == '\u2029'
+}
+
+// deleteFormatChars deletes each character isFormatChar reports from s.
+func deleteFormatChars(s string) string {
+	return strings.Map(func(r rune) rune {
+		if isFormatChar(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// deleteFormatCharsMapped deletes each character isFormatChar reports
+// from s, which must be valid UTF-8, and returns for each byte of the
+// result its offset in s.
+func deleteFormatCharsMapped(s string) (string, []int) {
+	var b strings.Builder
+	offsets := make([]int, 0, len(s))
+	for i, r := range s {
+		if isFormatChar(r) {
+			continue
+		}
+		size := utf8.RuneLen(r)
+		for j := 0; j < size; j++ {
+			offsets = append(offsets, i+j)
+		}
+		b.WriteString(s[i : i+size])
+	}
+	return b.String(), offsets
+}
+
+// matchSpans returns the byte span of every occurrence of sub in s,
+// overlapping occurrences included.
+func matchSpans(s, sub string) [][2]int {
+	var spans [][2]int
+	for start := 0; start < len(s); {
+		i := strings.Index(s[start:], sub)
+		if i < 0 {
+			break
+		}
+		start += i
+		spans = append(spans, [2]int{start, start + len(sub)})
+		_, size := utf8.DecodeRuneInString(s[start:])
+		start += size
+	}
+	return spans
+}
+
+// replaceSpans replaces each run of overlapping or touching spans of s
+// with a single ProviderMarker.
+func replaceSpans(s string, spans [][2]int) string {
+	sort.Slice(spans, func(i, j int) bool { return spans[i][0] < spans[j][0] })
+	var b strings.Builder
+	pos := 0
+	for i := 0; i < len(spans); {
+		start, end := spans[i][0], spans[i][1]
+		for i++; i < len(spans) && spans[i][0] <= end; i++ {
+			end = max(end, spans[i][1])
+		}
+		b.WriteString(s[pos:start])
+		b.WriteString(ProviderMarker)
+		pos = end
+	}
+	b.WriteString(s[pos:])
+	return b.String()
 }
 
 // minDerivedSecretLen is the shortest base_url userinfo or query value

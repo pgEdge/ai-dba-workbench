@@ -72,6 +72,82 @@ func TestBaseURLSecrets_MalformedQuery(t *testing.T) {
 	}
 }
 
+// TestProviderLogError_SecretWithFormatCharacter covers a supplied
+// secret holding a character the message has deleted, whether or not
+// the message repeats that character, a clean secret the message splits
+// with one, and a secret of nothing but such characters.
+func TestProviderLogError_SecretWithFormatCharacter(t *testing.T) {
+	held := "zw\u200bsecret9876"
+	if msg := redact.ProviderLogError("rejected "+held, []string{held}); strings.Contains(msg, "secret9876") {
+		t.Errorf("secret holding a format character left in %q", msg)
+	}
+	if msg := redact.ProviderLogError("rejected split\u200bsecret5432", []string{"splitsecret5432"}); strings.Contains(msg, "secret5432") {
+		t.Errorf("secret split by a format character left in %q", msg)
+	}
+	if msg := redact.ProviderLogError("rejected zwsecret1234", []string{"zw\u200bsecret1234"}); strings.Contains(msg, "secret1234") {
+		t.Errorf("secret echoed without its format character left in %q", msg)
+	}
+	if msg := redact.ProviderLogError("rejected \u200bkey", []string{"\u200b"}); msg != "rejected [REDACTED]key" {
+		t.Errorf("secret of format characters only gave %q", msg)
+	}
+}
+
+// TestProviderLogError_OverlappingMatches checks that secrets whose
+// matches overlap are removed as one, so that neither cuts the other
+// apart: a format character matched verbatim inside a longer secret,
+// and two secrets sharing part of the message.
+func TestProviderLogError_OverlappingMatches(t *testing.T) {
+	tests := []struct {
+		name, in string
+		secrets  []string
+	}{
+		{"format character inside a secret", "rejected prefix\u200bVerySensitivePassword",
+			[]string{"prefixVerySensitivePassword", "\u200b"}},
+		{"partly overlapping secrets", "rejected abcdefghi", []string{"abcdef", "defghi"}},
+		{"touching secrets", "rejected abcdwxyz", []string{"wxyz", "abcd"}},
+		{"overlapping occurrences", "rejected aaaaaa", []string{"aaaa"}},
+		{"multi-byte secret split", "rejected k\u00e9\u200by\u00e9", []string{"k\u00e9y\u00e9"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if msg := redact.ProviderLogError(tt.in, tt.secrets); msg != "rejected [REDACTED]" {
+				t.Errorf("got %q", msg)
+			}
+		})
+	}
+}
+
+// TestProviderLogError_PrefixSecretBeforeFormatCharacter checks that a
+// shorter secret does not replace the start of a longer one the message
+// splits with a format character, leaving the rest of it behind, and
+// that a shorter secret matched verbatim does not cut a longer one.
+func TestProviderLogError_PrefixSecretBeforeFormatCharacter(t *testing.T) {
+	msg := redact.ProviderLogError("rejected prefix\u200bVerySensitivePassword",
+		[]string{"prefixVerySensitivePassword", "prefix"})
+	if msg != "rejected [REDACTED]" {
+		t.Errorf("longer secret split after a shorter one gave %q", msg)
+	}
+	msg = redact.ProviderLogError("rejected x\u200babc", []string{"\u200bab", "\u200babc"})
+	if msg != "rejected x[REDACTED]" {
+		t.Errorf("verbatim secrets out of order gave %q", msg)
+	}
+}
+
+// TestProviderLogError_DeletedFormsShortAndOrdered checks that a secret
+// left shorter than a derived secret by the deletion is not used, so it
+// neither removes ordinary text nor cuts a longer secret apart, and that
+// a shorter deleted form does not cut a longer one.
+func TestProviderLogError_DeletedFormsShortAndOrdered(t *testing.T) {
+	msg := redact.ProviderLogError("grab ab\u200bcd", []string{"\u200b\u200bab", "abcd"})
+	if msg != "grab [REDACTED]" {
+		t.Errorf("short deleted form gave %q", msg)
+	}
+	msg = redact.ProviderLogError("rejected abcdef", []string{"ab\u200bcd", "abcd\u200bef"})
+	if msg != "rejected [REDACTED]" {
+		t.Errorf("deleted forms out of order gave %q", msg)
+	}
+}
+
 func TestProviderLogError_RemovesCredentials(t *testing.T) {
 	tests := []struct {
 		name, in, leak string

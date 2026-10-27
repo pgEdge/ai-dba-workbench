@@ -80,6 +80,52 @@ func captureLog() (func(string, ...any), func() []string) {
 		}
 }
 
+// TestSplitMetricsViews checks that views are set aside, in order, and
+// that the tables keep their foreign-key flags.
+func TestSplitMetricsViews(t *testing.T) {
+	relations := []metricsTable{
+		{name: "a_part", hasFK: true},
+		{name: "b_view", isView: true},
+		{name: "c_nofk"},
+		{name: "d_view", isView: true},
+	}
+	tables, views := splitMetricsViews(relations)
+	wantTables := []metricsTable{{name: "a_part", hasFK: true}, {name: "c_nofk"}}
+	if !slices.Equal(tables, wantTables) {
+		t.Errorf("tables = %v, want %v", tables, wantTables)
+	}
+	if !slices.Equal(views, []string{"b_view", "d_view"}) {
+		t.Errorf("views = %v, want [b_view d_view]", views)
+	}
+
+	tables, views = splitMetricsViews([]metricsTable{{name: "only_table"}})
+	if len(tables) != 1 || views != nil {
+		t.Errorf("a plain datastore: tables = %v, views = %v; want one table, no views", tables, views)
+	}
+}
+
+// TestLogSkippedMetricsViews checks the note is written once, naming
+// every view, and not at all on a plain PostgreSQL datastore.
+func TestLogSkippedMetricsViews(t *testing.T) {
+	logf, lines := captureLog()
+	prev := purgeLogf
+	purgeLogf = logf
+	defer func() { purgeLogf = prev }()
+
+	logSkippedMetricsViews(7, nil)
+	if got := lines(); len(got) != 0 {
+		t.Fatalf("logged %q with no views, want nothing", got)
+	}
+
+	logSkippedMetricsViews(7, []string{"pg_stat_wal", "pg_stat_database"})
+	got := lines()
+	want := "[INFO] Connection purge: left connection 7's metrics rows in place in 2 view(s), " +
+		"because pgEdge ColdFront manages that data's lifecycle: metrics.pg_stat_wal, metrics.pg_stat_database"
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("logged %q, want [%q]", got, want)
+	}
+}
+
 func TestConnectionPurger_RunOnce(t *testing.T) {
 	tests := []struct {
 		name       string

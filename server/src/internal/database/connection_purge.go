@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -79,15 +80,24 @@ const connectionMarkedQuery = `
     )
 `
 
-// metricsLeafTablesQuery lists the tables that hold rows in the metrics
-// schema and carry a connection_id column: the partitions of every
-// partitioned metrics table, and any unpartitioned one. Partitioned
+// metricsLeafTablesQuery lists the relations in the metrics schema that
+// carry a connection_id column: the partitions of every partitioned
+// metrics table, any unpartitioned one, and any view. Partitioned
 // parents (relkind 'p') hold no rows and are skipped. Discovering the
 // tables, rather than listing the foreign keys, also reaches the
 // metrics tables that have no foreign key to connections at all; the
 // second column reports whether the table has one (a foreign key on a
 // partitioned table is cloned onto each partition, so checking the
 // leaf itself is enough).
+//
+// The third column marks a view. On a pgEdge ColdFront datastore every
+// metrics relation is a view over Apache Iceberg storage (issue #755),
+// and ColdFront, not the Workbench, manages that data's lifecycle, so
+// the purge leaves those rows in place and says so in the log. A view
+// is never purged, whether or not ColdFront created it: the batch
+// DELETE locates rows by ctid, which a view does not have. On a plain
+// PostgreSQL datastore no metrics relation is a view, so this changes
+// nothing there.
 const metricsLeafTablesQuery = `
     SELECT c.relname,
            EXISTS (
@@ -95,16 +105,21 @@ const metricsLeafTablesQuery = `
                WHERE con.conrelid = c.oid
                  AND con.contype = 'f'
                  AND con.confrelid = 'connections'::regclass
-           )
+           ),
+           c.relkind = 'v'
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     JOIN pg_attribute a ON a.attrelid = c.oid
     WHERE n.nspname = 'metrics'
-      AND c.relkind = 'r'
+      AND c.relkind IN ('r', 'v')
       AND a.attname = 'connection_id'
       AND NOT a.attisdropped
     ORDER BY c.relname
 `
+
+// purgeLogf logs the purge's notes about rows it leaves in place. Tests
+// replace it to capture them.
+var purgeLogf = log.Printf
 
 // connectionDependentsQuery lists the single-column foreign keys
 // outside the metrics schema that cascade from a connections row. The
@@ -183,10 +198,36 @@ func (d *Datastore) PurgeConnection(ctx context.Context, id int, batchSize int) 
 	return d.purgeConnection(ctx, id, batchSize, nil)
 }
 
-// metricsTable is one metrics leaf table the purge works through.
+// metricsTable is one metrics leaf table the purge works through, or a
+// view it leaves alone.
 type metricsTable struct {
-	name  string
-	hasFK bool
+	name   string
+	hasFK  bool
+	isView bool
+}
+
+// splitMetricsViews separates the views among relations, which the purge
+// leaves in place, from the tables it purges, keeping their order.
+func splitMetricsViews(relations []metricsTable) (tables []metricsTable, views []string) {
+	for _, r := range relations {
+		if r.isView {
+			views = append(views, r.name)
+			continue
+		}
+		tables = append(tables, r)
+	}
+	return tables, views
+}
+
+// logSkippedMetricsViews notes, once per purge, that connection id's rows
+// in views were left in place because ColdFront manages their data.
+func logSkippedMetricsViews(id int, views []string) {
+	if len(views) == 0 {
+		return
+	}
+	purgeLogf("[INFO] Connection purge: left connection %d's metrics rows in place "+
+		"in %d view(s), because pgEdge ColdFront manages that data's lifecycle: metrics.%s",
+		id, len(views), strings.Join(views, ", metrics."))
 }
 
 // purgeConnection is PurgeConnection with a hook that runs between the
@@ -210,12 +251,14 @@ func (d *Datastore) purgeConnection(ctx context.Context, id int, batchSize int,
 	if err != nil {
 		return fmt.Errorf("failed to list metrics tables: %w", err)
 	}
-	tables, err := scanAll(rows, func(r pgx.Rows, t *metricsTable) error {
-		return r.Scan(&t.name, &t.hasFK)
+	relations, err := scanAll(rows, func(r pgx.Rows, t *metricsTable) error {
+		return r.Scan(&t.name, &t.hasFK, &t.isView)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to read metrics tables: %w", err)
 	}
+	tables, views := splitMetricsViews(relations)
+	logSkippedMetricsViews(id, views)
 
 	if err := d.purgeMetricsTables(ctx, tables, id, batchSize, false); err != nil {
 		return err

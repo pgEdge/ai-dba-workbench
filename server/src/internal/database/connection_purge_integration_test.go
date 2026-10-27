@@ -631,3 +631,70 @@ func TestPurgeConnection_HookAndFinalSweepFailures(t *testing.T) {
 		t.Fatalf("connection rows after the final sweep failed = %d, want 0", rows)
 	}
 }
+
+// TestPurgeConnection_LeavesColdFrontViewsInPlace stands a view in for a
+// pgEdge ColdFront metrics relation (issue #755). Its rows live outside
+// the metrics schema, as ColdFront's do in Iceberg storage, so the
+// purge must leave them in place, log once that it did, and still purge
+// the plain metrics tables and remove the connection row.
+func TestPurgeConnection_LeavesColdFrontViewsInPlace(t *testing.T) {
+	ds, pool, cleanup := newConnPurgeTestDatastore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `
+        CREATE TABLE purge_test_cf_store (connection_id INTEGER NOT NULL, n INTEGER NOT NULL);
+        CREATE VIEW metrics.purge_test_cf AS SELECT * FROM purge_test_cf_store;`); err != nil {
+		t.Fatalf("create the ColdFront stand-in view: %v", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(context.Background(),
+			`DROP TABLE IF EXISTS purge_test_cf_store CASCADE`); err != nil {
+			t.Logf("drop the ColdFront stand-in: %v", err)
+		}
+	}()
+
+	logf, lines := captureLog()
+	prev := purgeLogf
+	purgeLogf = logf
+	defer func() { purgeLogf = prev }()
+
+	victim := seedPurgeConnection(t, pool, "victim", 6)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO purge_test_cf_store SELECT $1, g FROM generate_series(1, 4) g`,
+		victim); err != nil {
+		t.Fatalf("seed the ColdFront stand-in: %v", err)
+	}
+	if err := ds.DeleteConnection(ctx, victim); err != nil {
+		t.Fatalf("DeleteConnection: %v", err)
+	}
+	if err := ds.PurgeConnection(ctx, victim, 5); err != nil {
+		t.Fatalf("PurgeConnection: %v", err)
+	}
+
+	if got := countPurgeRows(t, pool, "metrics.purge_test_cf", victim); got != 4 {
+		t.Errorf("ColdFront view rows after the purge = %d, want 4 left in place", got)
+	}
+	for _, table := range []string{"metrics.purge_test_part", "metrics.purge_test_nofk"} {
+		if got := countPurgeRows(t, pool, table, victim); got != 0 {
+			t.Errorf("%s rows after the purge = %d, want 0", table, got)
+		}
+	}
+	var rows int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM connections WHERE id = $1`, victim).Scan(&rows); err != nil {
+		t.Fatalf("count connection rows: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("purged connection still has %d rows", rows)
+	}
+
+	logged := lines()
+	if len(logged) != 1 {
+		t.Fatalf("logged %d notes, want exactly one: %q", len(logged), logged)
+	}
+	if !strings.Contains(logged[0], "metrics.purge_test_cf") ||
+		!strings.Contains(logged[0], "ColdFront") {
+		t.Errorf("the note should name the view and ColdFront: %q", logged[0])
+	}
+}

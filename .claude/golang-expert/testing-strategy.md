@@ -349,7 +349,12 @@ version, `collector/src/probes/version_branch_test.go` shadows system
 views with temporary views (an unqualified name resolves to `pg_temp`
 before `pg_catalog`) and seeds `featureCache` entries;
 `statement_redaction_test.go` uses the same trick to make probe queries
-fail.
+fail. Always go through its `shadowViews` helper: it calls
+`conn.Conn().DeallocateAll` first, because pgx caches prepared
+statements per pooled connection and PostgreSQL does not replan one
+that already resolved the system view once the session's temporary
+schema exists, so the probe silently keeps reading the real view under
+`-count>1` (issue #728).
 
 `make test-e2e` at the repository root runs the Playwright smoke suite
 in `e2e/` against a Dockerised Postgres; it is intentionally not part

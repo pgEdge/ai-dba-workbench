@@ -26,14 +26,24 @@ import (
 // and without this the coverage measured on the oldest version fell
 // below the floor.
 
-// shadowViews acquires a connection and creates the given temporary
-// views on it. The views are discarded before the connection goes back
-// to the pool.
+// shadowViews acquires a connection, drops its cached prepared
+// statements and creates the given temporary views on it. The views are
+// discarded before the connection goes back to the pool.
 func shadowViews(t *testing.T, views ...string) *pgxpool.Conn {
 	t.Helper()
 	pool := requireIntegrationPool(t)
 	conn := acquireConn(t, pool)
 	ctx := context.Background()
+	// pgx prepares and caches each statement per connection, and
+	// PostgreSQL does not replan a cached statement when a new temporary
+	// view shadows a view it already resolved (it only revalidates when
+	// the session's temporary schema is first created). A pooled
+	// connection that has already run the probe's query against the
+	// system view would keep reading it, so drop every cached statement,
+	// on the server and in pgx, before shadowing anything.
+	if err := conn.Conn().DeallocateAll(ctx); err != nil {
+		t.Fatalf("failed to deallocate cached statements: %v", err)
+	}
 	t.Cleanup(func() {
 		if _, err := conn.Exec(context.Background(), "DISCARD TEMP"); err != nil {
 			t.Errorf("failed to discard temporary views: %v", err)

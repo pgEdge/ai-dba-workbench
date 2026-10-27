@@ -245,8 +245,10 @@ project adheres to
 
 - End a federated session when the identity provider stops
   vouching for the user. A federated login now requests the
-  `offline_access` scope, and the session expires with its ID
-  token rather than after 24 hours; the first request after
+  `offline_access` scope, unless the provider's discovery
+  document lists its supported scopes without it, and the
+  session expires with its ID token rather than after 24
+  hours; the first request after
   that redeems the provider's refresh token, which is held in
   the server's memory only, and the session ends if the
   provider refuses. A successful refresh reconciles the

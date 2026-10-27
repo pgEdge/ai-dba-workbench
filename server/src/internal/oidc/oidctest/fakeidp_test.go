@@ -84,6 +84,20 @@ func TestDiscoveryDocumentDescribesTheFakeProvider(t *testing.T) {
 	if response.StatusCode != http.StatusNoContent {
 		t.Errorf("authorize status = %d, want 204", response.StatusCode)
 	}
+	if _, present := document["scopes_supported"]; present {
+		t.Errorf("scopes_supported = %v, want it left out by default", document["scopes_supported"])
+	}
+}
+
+func TestDiscoveryDocumentPublishesScopesSupported(t *testing.T) {
+	idp := NewFakeIDP(t)
+	idp.SetScopesSupported([]string{"openid", "email"})
+
+	document := getJSON(t, idp.Issuer()+"/.well-known/openid-configuration")
+	scopes, ok := document["scopes_supported"].([]any)
+	if !ok || len(scopes) != 2 || scopes[0] != "openid" || scopes[1] != "email" {
+		t.Errorf("scopes_supported = %v, want [openid email]", document["scopes_supported"])
+	}
 }
 
 func TestJWKSPublishesTheSigningKey(t *testing.T) {

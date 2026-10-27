@@ -174,7 +174,7 @@ func NewProvider(ctx context.Context, cfg config.OIDCConfig) (*Provider, error) 
 			ClientSecret: cfg.EffectiveClientSecret(),
 			RedirectURL:  cfg.RedirectURL,
 			Endpoint:     discovered.Endpoint(),
-			Scopes:       requestedScopes(cfg.Scopes),
+			Scopes:       requestedScopes(cfg.Scopes, offlineAccessAdvertised(discovered)),
 		},
 		verifier: discovered.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
 
@@ -185,7 +185,9 @@ func NewProvider(ctx context.Context, cfg config.OIDCConfig) (*Provider, error) 
 }
 
 // requestedScopes returns the configured scopes with "openid" prepended
-// and "offline_access" appended, each only if the operator left it out.
+// and, when offlineAccess is true, "offline_access" appended, each only
+// if the operator left it out. A configured "offline_access" is always
+// kept.
 //
 // Without "openid" the provider is under no obligation to return an ID
 // token at all, and the whole flow depends on one. "offline_access" asks
@@ -195,15 +197,41 @@ func NewProvider(ctx context.Context, cfg config.OIDCConfig) (*Provider, error) 
 // refuses once the user has been removed or disabled there (issue #742).
 // A provider that will not issue one simply returns none, and the
 // session then ends at the ID token's expiry.
-func requestedScopes(configured []string) []string {
+func requestedScopes(configured []string, offlineAccess bool) []string {
 	scopes := slices.Clone(configured)
 	if !slices.Contains(scopes, oidc.ScopeOpenID) {
 		scopes = append([]string{oidc.ScopeOpenID}, scopes...)
 	}
-	if !slices.Contains(scopes, oidc.ScopeOfflineAccess) {
+	if offlineAccess && !slices.Contains(scopes, oidc.ScopeOfflineAccess) {
 		scopes = append(scopes, oidc.ScopeOfflineAccess)
 	}
 	return scopes
+}
+
+// discoveryClaims is the part of *oidc.Provider that reads the raw
+// discovery document, so that a malformed document can be tested.
+type discoveryClaims interface {
+	Claims(v any) error
+}
+
+// offlineAccessAdvertised reports whether "offline_access" should be
+// requested by default: true when the discovery document lists it in
+// scopes_supported, or does not publish a usable scopes_supported at
+// all, and false when it publishes a list without it.
+//
+// scopes_supported is only recommended by OpenID Connect Discovery, so
+// its absence says nothing. A list that leaves the scope out is another
+// matter: Google publishes one, does not support the scope, and issues
+// refresh tokens through access_type=offline instead, which the
+// operator configures through auth_params.
+func offlineAccessAdvertised(discovered discoveryClaims) bool {
+	var metadata struct {
+		ScopesSupported []string `json:"scopes_supported"`
+	}
+	if err := discovered.Claims(&metadata); err != nil || len(metadata.ScopesSupported) == 0 {
+		return true
+	}
+	return slices.Contains(metadata.ScopesSupported, oidc.ScopeOfflineAccess)
 }
 
 // Tokens is what a code exchange or a refresh yields: the verified

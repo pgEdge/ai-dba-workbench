@@ -103,6 +103,10 @@ type FakeIDP struct {
 	// refreshCount counts refresh grant requests, successful or not.
 	refresh      RefreshResponse
 	refreshCount int
+
+	// scopesSupported is published as scopes_supported in the discovery
+	// document, which leaves the field out when it is nil.
+	scopesSupported []string
 }
 
 // RefreshResponse is what the fake provider answers a refresh grant
@@ -156,6 +160,15 @@ func NewFakeIDP(t *testing.T) *FakeIDP {
 // its HTTP endpoints.
 func (f *FakeIDP) Issuer() string {
 	return f.server.URL
+}
+
+// SetScopesSupported sets the scopes_supported list the discovery
+// document publishes; nil leaves the field out. Call it before the
+// provider under test runs discovery.
+func (f *FakeIDP) SetScopesSupported(scopes []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.scopesSupported = scopes
 }
 
 // ClientID returns the client identifier the provider expects.
@@ -280,7 +293,7 @@ func encodeSegment(t *testing.T, value map[string]any) string {
 }
 
 func (f *FakeIDP) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	document := map[string]any{
 		"issuer":                                f.Issuer(),
 		"authorization_endpoint":                f.Issuer() + "/authorize",
 		"token_endpoint":                        f.Issuer() + "/token",
@@ -288,7 +301,13 @@ func (f *FakeIDP) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
-	})
+	}
+	f.mu.Lock()
+	if f.scopesSupported != nil {
+		document["scopes_supported"] = f.scopesSupported
+	}
+	f.mu.Unlock()
+	writeJSON(w, http.StatusOK, document)
 }
 
 func (f *FakeIDP) handleJWKS(w http.ResponseWriter, _ *http.Request) {

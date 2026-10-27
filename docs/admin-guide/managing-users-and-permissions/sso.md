@@ -188,7 +188,7 @@ The following table describes the federated authentication options:
 | `oidc.client_secret` | string | | Client secret supplied inline in the configuration file. |
 | `oidc.client_secret_file` | string | | Path to a file holding the client secret, used when `client_secret` is empty. |
 | `oidc.redirect_url` | string | | Absolute URL the provider returns the browser to; its path must end with `/api/v1/auth/oidc/callback`. Required. |
-| `oidc.scopes` | list | `[openid, email, profile]` | Scopes requested at the provider; `openid` and `offline_access` are added when absent. |
+| `oidc.scopes` | list | `[openid, email, profile]` | Scopes requested at the provider; `openid` is added when absent, and so is `offline_access` unless the provider's discovery document lists its supported scopes without it. |
 | `oidc.username_claim` | string | `email` | Claim whose value becomes the Workbench username. |
 | `oidc.display_name_claim` | string | `name` | Claim whose value becomes the account's display name. |
 | `oidc.groups_claim` | string | `groups` | Claim carrying the user's provider group names. |
@@ -305,7 +305,9 @@ The provider needs the following from the Workbench:
 - the scopes the Workbench requests, which are `openid`, `email` and
   `profile` by default, plus whatever scope the provider requires
   before it releases group membership, and `offline_access`, which the
-  Workbench always adds to ask for a refresh token.
+  Workbench adds to ask for a refresh token unless the provider's
+  discovery document publishes a `scopes_supported` list that leaves
+  it out.
 - permission to issue refresh tokens to the client, which some
   providers grant only when it is switched on in the client's
   registration; without a refresh token every federated session ends
@@ -342,8 +344,9 @@ map of parameter names to values, and the Workbench appends each one
 to the URL it sends the browser to when a login starts.
 
 Google is the common case: it does not support the `offline_access`
-scope, and issues a refresh token only to a request that carries
-`access_type=offline`. It also issues one only when the user grants
+scope, which its discovery document does not list, so the Workbench
+does not request it. Google issues a refresh token only to a request
+that carries `access_type=offline`, and only when the user grants
 consent, which it skips after the first login unless the request
 carries `prompt=consent`. Without both, a federated session ends when
 its first ID token expires, typically after an hour. The following

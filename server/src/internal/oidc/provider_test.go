@@ -12,6 +12,7 @@ package oidc
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -755,31 +756,84 @@ func TestNewProviderKeepsExplicitOpenIDScope(t *testing.T) {
 }
 
 // TestRequestedScopes covers the scopes the provider is asked for:
-// "openid" and "offline_access" are each added once, never twice, and
-// the operator's own list is never modified in place.
+// "openid" and "offline_access" are each added once, never twice, the
+// latter only when the provider supports it, a configured
+// "offline_access" is always kept, and the operator's own list is never
+// modified in place.
 func TestRequestedScopes(t *testing.T) {
 	tests := []struct {
 		name       string
 		configured []string
+		offline    bool
 		want       []string
 	}{
-		{"nil", nil, []string{"openid", "offline_access"}},
-		{"neither", []string{"email"}, []string{"openid", "email", "offline_access"}},
-		{"openid only", []string{"openid", "email"}, []string{"openid", "email", "offline_access"}},
-		{"offline only", []string{"offline_access", "email"}, []string{"openid", "offline_access", "email"}},
-		{"both", []string{"email", "offline_access", "openid"}, []string{"email", "offline_access", "openid"}},
+		{"nil", nil, true, []string{"openid", "offline_access"}},
+		{"neither", []string{"email"}, true, []string{"openid", "email", "offline_access"}},
+		{"openid only", []string{"openid", "email"}, true, []string{"openid", "email", "offline_access"}},
+		{"offline only", []string{"offline_access", "email"}, true, []string{"openid", "offline_access", "email"}},
+		{"both", []string{"email", "offline_access", "openid"}, true, []string{"email", "offline_access", "openid"}},
+		{"unsupported", []string{"email"}, false, []string{"openid", "email"}},
+		{"unsupported but configured", []string{"offline_access"}, false, []string{"openid", "offline_access"}},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			configured := slices.Clone(testCase.configured)
-			got := requestedScopes(configured)
+			got := requestedScopes(configured, testCase.offline)
 			if !slices.Equal(got, testCase.want) {
-				t.Errorf("requestedScopes(%v) = %v, want %v", testCase.configured, got, testCase.want)
+				t.Errorf("requestedScopes(%v, %v) = %v, want %v",
+					testCase.configured, testCase.offline, got, testCase.want)
 			}
 			if !slices.Equal(configured, testCase.configured) {
 				t.Errorf("configured scopes modified to %v", configured)
 			}
 		})
+	}
+}
+
+// TestNewProviderFollowsScopesSupported proves "offline_access" is
+// requested by default only when the discovery document lists it, or
+// publishes no scopes_supported at all, so that a provider such as
+// Google, which publishes a list without it, is not sent a scope it
+// does not support.
+func TestNewProviderFollowsScopesSupported(t *testing.T) {
+	tests := []struct {
+		name      string
+		supported []string
+		want      []string
+	}{
+		{"not published", nil, []string{"openid", "email", "offline_access"}},
+		{"listed", []string{"openid", "email", "offline_access"}, []string{"openid", "email", "offline_access"}},
+		{"not listed", []string{"openid", "email", "profile"}, []string{"openid", "email"}},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			idp := oidctest.NewFakeIDP(t)
+			idp.SetScopesSupported(testCase.supported)
+			provider := newTestProvider(t, idp, config.OIDCConfig{
+				UsernameClaim: "email",
+				Scopes:        []string{"openid", "email"},
+			})
+			if !slices.Equal(provider.oauth2Config.Scopes, testCase.want) {
+				t.Errorf("scopes = %v, want %v", provider.oauth2Config.Scopes, testCase.want)
+			}
+		})
+	}
+}
+
+// fakeDiscovery stands in for *oidc.Provider when reading the raw
+// discovery document, so that a document that does not decode can be
+// tested.
+type fakeDiscovery struct{ err error }
+
+func (f fakeDiscovery) Claims(any) error { return f.err }
+
+// TestOfflineAccessAdvertisedOnAnUnreadableDocument proves a discovery
+// document whose scopes_supported cannot be decoded is treated as one
+// that does not publish it, so the default still asks for a refresh
+// token.
+func TestOfflineAccessAdvertisedOnAnUnreadableDocument(t *testing.T) {
+	if !offlineAccessAdvertised(fakeDiscovery{err: errors.New("malformed scopes_supported")}) {
+		t.Error("offlineAccessAdvertised = false on an unreadable document, want true")
 	}
 }
 

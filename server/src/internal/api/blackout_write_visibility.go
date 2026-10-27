@@ -143,16 +143,32 @@ func (h *BlackoutHandler) requireBlackoutTargetVisible(w http.ResponseWriter,
 // requireBlackoutMembersVisible refuses a blackout write unless the
 // caller can see every connection the target reaches (issue #732), since
 // the blackout silences alerting on all of them: every member of a
-// cluster or group, and every connection for an estate target, which
-// only a caller who sees all connections passes. The refusal is the
-// missing-permission refusal, audited, so that it says nothing about
-// which members are hidden or how many, as for overrides (issue #716).
-// It runs after the token-scope check, so a narrowed token keeps the
-// token-scope refusal.
+// cluster or group, and every connection for an estate target. Seeing
+// every connection through a superuser or wildcard grant passes at once;
+// anyone else passes an estate target only when every connection listed
+// now is in the visible set resolved earlier, so a connection added
+// between the two reads is refused rather than let through. The refusal
+// is the missing-permission refusal, audited, so that it says nothing
+// about which members are hidden or how many, as for overrides (issue
+// #716). It runs after the token-scope check, so a narrowed token keeps
+// the token-scope refusal.
 func (h *BlackoutHandler) requireBlackoutMembersVisible(w http.ResponseWriter,
 	r *http.Request, a blackoutWriteAccess, t blackoutTarget) bool {
 
-	if a.all || (!t.estate() && allMembersVisible(a.members, a.visible)) {
+	if a.all {
+		return true
+	}
+	members := a.members
+	if t.estate() {
+		ids, err := h.allConnectionIDs(r.Context())
+		if err != nil {
+			log.Printf("[ERROR] Failed to list connections for an estate blackout: %v", err)
+			RespondError(w, http.StatusInternalServerError, "Failed to check access")
+			return false
+		}
+		members = ids
+	}
+	if allMembersVisible(members, a.visible) {
 		return true
 	}
 	h.denialRecorder.refuse(w, r, adminPermissionRefusal(auth.PermManageBlackouts))

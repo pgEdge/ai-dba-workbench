@@ -362,6 +362,80 @@ func TestBlackoutWritesNeedEveryMemberVisible(t *testing.T) {
 		}
 	}
 
+	// Seeing every connection need not come from a wildcard: a user
+	// granted each connection by ID may write estate blackouts, whilst
+	// one missing a single grant may not.
+	liveIDs, err := f.ds.GetAllConnectionIDs(context.Background())
+	if err != nil || len(liveIDs) < 2 {
+		t.Fatalf("GetAllConnectionIDs: %v %v", liveIDs, err)
+	}
+	grantedUser := func(name string, ids []int) func(*http.Request) *http.Request {
+		id := setupUserWithPermissions(t, store, name, []string{auth.PermManageBlackouts})
+		groups, err := store.GetUserGroups(id)
+		if err != nil || len(groups) == 0 {
+			t.Fatalf("GetUserGroups: %v %v", groups, err)
+		}
+		for _, connID := range ids {
+			if err := store.GrantConnectionPrivilege(groups[0], connID, auth.AccessLevelReadWrite); err != nil {
+				t.Fatalf("GrantConnectionPrivilege: %v", err)
+			}
+		}
+		return func(r *http.Request) *http.Request { return withUsername(withUser(r, id), name) }
+	}
+	everyByID := grantedUser("every_by_id", liveIDs)
+	allButOne := grantedUser("all_but_one", liveIDs[1:])
+	estateSchedule := func() int64 { _, s := seedBlackoutRows(t, f, full); return s }
+	for _, wr := range writes {
+		blackoutID, scheduleID := seedBlackoutRows(t, f, estate)
+		before := blackoutRowState(t, f, blackoutID, scheduleID)
+		audited = nil
+		rec := wr.doCall(allButOne, estate, blackoutID, scheduleID)
+		if rec.Code != http.StatusForbidden || rec.Body.String() != noPermRec.Body.String() || len(audited) != 1 {
+			t.Errorf("all but one %s estate: status %d body %q audited %v, want the missing-permission 403",
+				wr.name, rec.Code, rec.Body.String(), audited)
+		}
+		if after := blackoutRowState(t, f, blackoutID, scheduleID); after != before {
+			t.Errorf("all but one %s estate: rows changed from %s to %s", wr.name, before, after)
+		}
+		if rec := wr.doCall(everyByID, estate, blackoutID, scheduleID); rec.Code != wr.ok {
+			t.Errorf("every by ID %s estate: status %d, want %d; body=%s", wr.name, rec.Code, wr.ok, rec.Body.String())
+		}
+	}
+	for name, caller := range map[string]func(*http.Request) *http.Request{"every by ID": everyByID, "all but one": allButOne} {
+		want := http.StatusOK
+		if name == "all but one" {
+			want = http.StatusForbidden
+		}
+		rec := covDo(h.handleBlackoutScheduleSubpath, http.MethodPut,
+			byID("/api/v1/blackout-schedules/", estateSchedule()), memberScheduleBody(estate), caller)
+		if rec.Code != want {
+			t.Errorf("%s: move onto the estate: status %d, want %d; body=%s", name, rec.Code, want, rec.Body.String())
+		}
+	}
+
+	// The connections are listed after the visible set is resolved, so a
+	// connection added in between is one the caller cannot see, and the
+	// write is refused rather than let through.
+	realLister := h.allConnectionIDs
+	h.allConnectionIDs = func(ctx context.Context) ([]int, error) {
+		if _, err := f.pool.Exec(ctx, `INSERT INTO connections (name, owner_username, is_shared)
+            VALUES ('estate-late', 'late-owner', FALSE)`); err != nil {
+			return nil, err
+		}
+		return realLister(ctx)
+	}
+	audited = nil
+	rec = covDo(h.handleBlackouts, http.MethodPost, "/api/v1/blackouts", memberBlackoutBody(estate), everyByID)
+	if rec.Code != http.StatusForbidden || len(audited) != 1 {
+		t.Errorf("connection added mid-check: status %d audited %v, want an audited 403", rec.Code, audited)
+	}
+
+	// A connection list that cannot be read fails closed.
+	h.allConnectionIDs = func(context.Context) ([]int, error) { return nil, errors.New("boom") }
+	assertError(t, covDo(h.handleBlackouts, http.MethodPost, "/api/v1/blackouts", memberBlackoutBody(estate), everyByID),
+		http.StatusInternalServerError, "Failed to check access")
+	h.allConnectionIDs = realLister
+
 	// Reads are unchanged: a blackout on a mixed cluster stays readable.
 	blackoutID, _ := seedBlackoutRows(t, f, mixed)
 	covExpect(t, covDo(h.handleBlackoutSubpath, http.MethodGet, byID("/api/v1/blackouts/", blackoutID), "", session),

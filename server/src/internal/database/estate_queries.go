@@ -498,6 +498,24 @@ func (d *Datastore) GetConnectionIDsForGroup(ctx context.Context, groupID int) (
 	return d.getConnectionIDsForGroup(ctx, groupID)
 }
 
+// GetAllConnectionIDs returns the ID of every connection that has not
+// been deleted, so that a write reaching every connection, such as an
+// estate-wide blackout, can check that the caller sees each of them.
+func (d *Datastore) GetAllConnectionIDs(ctx context.Context) ([]int, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.pool.Query(ctx, `SELECT id FROM connections WHERE deleted_at IS NULL ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query connection ids: %w", err)
+	}
+	ids, err := scanAll(rows, func(r pgx.Rows, id *int) error { return r.Scan(id) })
+	if err != nil {
+		return nil, fmt.Errorf("failed to read connection ids: %w", err)
+	}
+	return ids, nil
+}
+
 // GetConnectionIDsForAutoClusterKey returns the IDs of the connections
 // assigned to the cluster with the given auto_cluster_key, so that the
 // API handlers can check a caller's visibility of an auto-detected

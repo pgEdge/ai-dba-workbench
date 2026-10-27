@@ -405,8 +405,11 @@ moved.
   write time only, so a connection added later to a cluster or group
   is silenced by a blackout or schedule already on it, and there is no
   transaction between the check and the write; both are accepted, so
-  do not report them as findings. Making estate mean "every server
-  this caller can see" is deferred to a follow-up issue.
+  do not report them as findings. For an estate target the member
+  check compares the visible set, resolved first, with every live
+  connection, listed second (`GetAllConnectionIDs`), so a user granted
+  every connection by ID passes and a connection added between the two
+  reads is refused; a superuser or `*` grant (`a.all`) skips the list.
 - `CanAccessConnection` admits a connection's owner at `read_write`
   even when a group restricts the connection (`connectionAccessRule` in
   `internal/auth/access.go`), and `updateConnection` and

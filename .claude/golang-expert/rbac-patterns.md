@@ -1821,8 +1821,11 @@ visible (`adminPermissionRefusal(auth.PermManageBlackouts)`, audited). A
 schedule update checks the stored target and then the body target, so a
 schedule can be moved neither off nor onto a target with a hidden
 member. An estate target is visible to everyone but passes the member
-check only when the caller sees every connection (`a.all`), so a
-restricted caller gets the audited 403 on any estate write. Build
+check only when the caller sees every connection: `a.all` passes at
+once, and anyone else passes only when every ID from
+`GetAllConnectionIDs` (through the `allConnectionIDs` field, which
+tests replace) is in the visible set. The list is read after the
+visible set, so a connection added in between fails closed. Build
 targets with `scopedBlackoutTarget`, `targetOfBlackout` or
 `targetOfSchedule`, which keep only the ID the scope names and read a
 server row without a connection as estate, as the alerter does

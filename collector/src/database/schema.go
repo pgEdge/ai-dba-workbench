@@ -4118,11 +4118,13 @@ func (sm *SchemaManager) registerMigrations() {
 	// who cannot see every connection. Existing server rows are first
 	// rewritten to what the alerter already does with them: group_id and
 	// cluster_id, which it ignores on a server row, are cleared, and a
-	// row with no connection_id becomes estate. database_name is kept;
-	// the alerter ignores it on an estate row, which it would have
-	// matched on every connection's database of that name, but the
-	// server has refused a server row without a connection since scopes
-	// were introduced, so no such row is expected.
+	// row with no connection_id becomes estate. A row with no
+	// connection_id that names a database matched only that database on
+	// every connection, and the alerter ignores database_name on an
+	// estate row, so such a row is first made to suppress nothing, as
+	// the comment inside the migration describes. The server has refused
+	// a server row without a connection since scopes were introduced, so
+	// only a row written by hand can be affected.
 	sm.migrations = append(sm.migrations, Migration{
 		Version:     30,
 		Description: "Require a connection on server-scope blackouts and schedules",

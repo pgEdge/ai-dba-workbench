@@ -63,3 +63,33 @@ func TestGetConnectionIDsForScope_MissingID_Integration(t *testing.T) {
 		})
 	}
 }
+
+// TestGetAllConnectionIDs_Integration verifies that every connection is
+// listed except a deleted one, which an estate-wide write must not wait
+// on, and that a failed query is reported (issue #732).
+func TestGetAllConnectionIDs_Integration(t *testing.T) {
+	ds, pool, cleanup := newClusterQueriesTestDatastore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	first := insertClusterQueriesConnection(t, pool, "all-first", nil, nil)
+	second := insertClusterQueriesConnection(t, pool, "all-second", nil, nil)
+	deleted := insertClusterQueriesConnection(t, pool, "all-deleted", nil, nil)
+	if _, err := pool.Exec(ctx, `UPDATE connections SET deleted_at = NOW() WHERE id = $1`, deleted); err != nil {
+		t.Fatalf("Delete connection: %v", err)
+	}
+
+	got, err := ds.GetAllConnectionIDs(ctx)
+	if err != nil {
+		t.Fatalf("GetAllConnectionIDs: %v", err)
+	}
+	if want := []int{first, second}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Got %v, want %v", got, want)
+	}
+
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := ds.GetAllConnectionIDs(stopped); err == nil {
+		t.Error("Expected an error from a stopped query")
+	}
+}

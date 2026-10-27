@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -965,5 +966,50 @@ func TestDeleteBlackoutScheduleError(t *testing.T) {
 	}
 	if err := ds.DeleteBlackoutSchedule(ctx, 1); err == nil {
 		t.Error("expected error when blackout_schedules table missing")
+	}
+}
+
+// TestBlackoutWritesMissingTarget verifies that a blackout or schedule
+// naming a connection that does not exist returns
+// ErrBlackoutTargetNotFound, and that any other failure keeps its
+// context.
+func TestBlackoutWritesMissingTarget(t *testing.T) {
+	ds, _, fx, cleanup := newBlackoutTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	missing := 987654321
+	if err := ds.CreateBlackout(ctx, makeServerBlackout(missing, "missing target")); !errors.Is(err, ErrBlackoutTargetNotFound) {
+		t.Errorf("CreateBlackout: %v, want ErrBlackoutTargetNotFound", err)
+	}
+
+	schedule := func(connID int) *BlackoutSchedule {
+		return &BlackoutSchedule{
+			Scope: string(BlackoutScopeServer), ConnectionID: &connID,
+			Name: "missing", CronExpression: "0 0 * * *", DurationMinutes: 60,
+			Timezone: "UTC", Reason: "missing", Enabled: true, CreatedBy: "tester",
+		}
+	}
+	if err := ds.CreateBlackoutSchedule(ctx, schedule(missing)); !errors.Is(err, ErrBlackoutTargetNotFound) {
+		t.Errorf("CreateBlackoutSchedule: %v, want ErrBlackoutTargetNotFound", err)
+	}
+	s := schedule(fx.ConnID)
+	if err := ds.CreateBlackoutSchedule(ctx, s); err != nil {
+		t.Fatalf("CreateBlackoutSchedule: %v", err)
+	}
+	moved := schedule(missing)
+	moved.ID = s.ID
+	if err := ds.UpdateBlackoutSchedule(ctx, moved); !errors.Is(err, ErrBlackoutTargetNotFound) {
+		t.Errorf("UpdateBlackoutSchedule: %v, want ErrBlackoutTargetNotFound", err)
+	}
+
+	// A row that breaks a check constraint, not the foreign key, is
+	// reported as a failure rather than a missing target.
+	bogus := makeServerBlackout(fx.ConnID, "bogus scope")
+	bogus.Scope = "bogus"
+	err := ds.CreateBlackout(ctx, bogus)
+	if err == nil || errors.Is(err, ErrBlackoutTargetNotFound) ||
+		!strings.Contains(err.Error(), "failed to create blackout") {
+		t.Errorf("CreateBlackout with a bogus scope: %v", err)
 	}
 }

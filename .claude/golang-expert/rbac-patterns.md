@@ -698,8 +698,10 @@ admits API tokens (issue #668), making the scope gate reachable there.
 A write addressed by id (blackout or
 schedule update and delete) checks the stored record, and a schedule
 update checks the body as well, so a token cannot move a record into
-or out of its scope; `requireBlackoutInTokenScope` skips the database
-read when the token's scope covers everything. Blackouts and blackout
+or out of its scope; `requireBlackoutWritable` and
+`requireBlackoutScheduleWritable` (`blackout_write_visibility.go`) skip
+the database read when the caller sees every connection and the
+token's scope covers everything. Blackouts and blackout
 schedules are the exception to `read_write`: they go through
 `requireBlackoutTargetInTokenScope` / `blackoutTargetInTokenScope`,
 which use `RBACChecker.ConnectionReadableInTokenScope`, so a `read`
@@ -1171,8 +1173,9 @@ add a 403 for a missing permission that bypasses the recorder.
 `manage_connections` 403 on the cluster and relationship routes
 record through `h.denialRecorder.refuse` (a group the caller cannot
 see answers 404 first and records nothing, issue #649), and
-`BlackoutHandler.refuseOutOfScope` records its 403 but not its 404
-for a record the token cannot see (issue #589).
+the blackout write gates in `blackout_write_visibility.go` record
+their 403s but not their 404 for a target or record the caller cannot
+see (issues #589, #732).
 `deniedConnectionAction` names the `connection.create` (POST
 `/connections`, target `connections`), `connection.update`,
 `connection.delete` and `connection.cluster.update` actions, and
@@ -1817,6 +1820,34 @@ hidden and mixed members, a group split across a visible and a hidden
 cluster, sessions, unscoped, wildcard-scope and narrowed tokens,
 superusers and all-connections grants, and asserts the refusal is
 byte-identical to the missing-permission one and audited once.
+
+Blackouts and blackout schedules follow the same rule and order
+(#732): every create, update, stop and delete goes through
+`requireBlackoutTargetWritable` in `blackout_write_visibility.go`
+(directly, or via `requireRequestedBlackoutTargetWritable`,
+`requireBlackoutWritable`, `fetchWritableBlackout` or
+`requireBlackoutScheduleWritable`), which checks the target is visible
+(404 `Connection not found`, `Cluster not found` or `Cluster group not
+found` for a body target, the record's own not-found message for a
+stored one), then `requireBlackoutTargetInTokenScope`, then every member
+visible (`adminPermissionRefusal(auth.PermManageBlackouts)`, audited). A
+schedule update checks the stored target and then the body target, so a
+schedule can be moved neither off nor onto a target with a hidden
+member. An estate target is visible to everyone but passes the member
+check only when the caller sees every connection: `a.all` passes at
+once, and anyone else passes only when every ID from
+`GetAllConnectionIDs` (through the `allConnectionIDs` field, which
+tests replace) is in the visible set. The list is read after the
+visible set, so a connection added in between fails closed. Build
+targets with `scopedBlackoutTarget`, `targetOfBlackout` or
+`targetOfSchedule`, which keep only the ID the scope names and read a
+server row without a connection as estate, as the alerter does
+(migration 30 now forbids such rows). Each route resolves access
+before loading the stored record, so a missing ID and a hidden one run
+the same queries up to the 404. A create or schedule move onto a
+missing target answers 404 via `database.ErrBlackoutTargetNotFound`
+(the foreign key violation) for unrestricted callers too. Tests:
+`blackout_members_visibility_test.go`.
 
 The rule also covers writes that change hidden members' effective
 overrides by cascade, each as the last check after permission, token

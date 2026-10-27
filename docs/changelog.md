@@ -2751,6 +2751,38 @@ project adheres to
   are unaffected, and reading cluster and group overrides is
   unchanged.
 
+- Refuse a blackout or blackout schedule created, updated,
+  stopped or deleted at cluster or group scope unless the caller
+  can see every connection in that cluster or group (#732). A
+  user with `manage_blackouts` could previously silence alerts on
+  connections they cannot see, by naming a cluster or group that
+  holds them. Such a write now answers 403 with the same message
+  and audit record as a caller without the permission, as for
+  overrides (#716). A blackout or schedule whose connection,
+  cluster or group the caller cannot see at all now answers 404
+  as though it did not exist; for an API token, that includes
+  creating one on a server outside the token's connection scope,
+  or moving a schedule onto one, which previously answered 403.
+  Creating, updating, stopping or deleting an estate-wide
+  blackout or schedule, or moving a schedule onto or off the
+  estate, now needs the caller to see every connection, and
+  answers the same 403 otherwise. Creating a blackout or
+  schedule, or moving a schedule, onto a connection, cluster or
+  group that does not exist now answers 404 rather than 500.
+  Superusers and users with a grant on all connections are
+  unaffected, and reading blackouts is unchanged.
+
+- Require a connection on every server-scope blackout and
+  blackout schedule in the datastore (#732). The collector's
+  schema migration 30 converts any server-scope row stored
+  without a connection to an estate row, which is how the
+  alerter already treated it, and clears any group or cluster
+  stored on a server-scope row, which the alerter ignored. A
+  row without a connection that names a database matched only
+  that database, so before it becomes an estate row the
+  migration deletes such a blackout if it has not started,
+  ends it now if it is active, and disables such a schedule.
+
 - Reset the session on each pooled connection to a monitored
   database when a tool call releases it (#709). A tool call could
   previously leave settings such as `search_path`, temporary

@@ -29,6 +29,9 @@ type BlackoutHandler struct {
 	authStore       *auth.AuthStore
 	rbacChecker     *auth.RBACChecker
 	checkPermission func(http.ResponseWriter, *http.Request) bool
+	// allConnectionIDs lists every connection, which an estate-wide
+	// blackout reaches; tests replace it to make the lookup fail.
+	allConnectionIDs func(context.Context) ([]int, error)
 	// denialAuditor audits this handler's token-scope and
 	// permission refusals.
 	denialAuditor
@@ -41,6 +44,7 @@ func NewBlackoutHandler(datastore *database.Datastore, authStore *auth.AuthStore
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
+	h.allConnectionIDs = datastore.GetAllConnectionIDs
 	h.checkPermission = requireAdminPermission(rbacChecker, &h.denialAuditor, auth.PermManageBlackouts)
 	return h
 }
@@ -388,19 +392,8 @@ func (h *BlackoutHandler) blackoutVisible(ctx context.Context, b *database.Black
 	if b == nil {
 		return false, nil
 	}
-	if b.ConnectionID == nil && b.ClusterID == nil && b.GroupID == nil {
-		return true, nil
-	}
-	if b.ConnectionID != nil {
-		return visible[*b.ConnectionID], nil
-	}
-	if b.ClusterID != nil {
-		return clusterHasVisibleConnectionFn(ctx, h.datastore, *b.ClusterID, visible)
-	}
-	if b.GroupID != nil {
-		return groupHasVisibleConnectionFn(ctx, h.datastore, *b.GroupID, visible)
-	}
-	return false, nil
+	_, seen, err := blackoutTargetReach(ctx, h.datastore, targetOfBlackout(b), visible)
+	return seen, err
 }
 
 // createBlackout handles POST /api/v1/blackouts
@@ -420,7 +413,7 @@ func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request)
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !requireBlackoutTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, req.Scope, req.ConnectionID) {
+	if !h.requireRequestedBlackoutTargetWritable(w, r, req.Scope, req.GroupID, req.ClusterID, req.ConnectionID) {
 		return
 	}
 
@@ -458,7 +451,8 @@ func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request)
 		CreatedBy:    username,
 	}
 
-	if err := h.datastore.CreateBlackout(r.Context(), blackout); respondDBError(w, err, "create blackout") {
+	if err := h.datastore.CreateBlackout(r.Context(), blackout); respondDBError(w, err, "create blackout",
+		notFound(database.ErrBlackoutTargetNotFound, scopedBlackoutTarget(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID).notFoundMessage())) {
 		return
 	}
 
@@ -480,13 +474,8 @@ func (h *BlackoutHandler) updateBlackout(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Fetch existing blackout
-	existing, err := h.datastore.GetBlackout(r.Context(), id)
-	if respondDBError(w, err, "fetch blackout",
-		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
-		return
-	}
-	if !h.requireFetchedBlackoutInTokenScope(w, r, existing) {
+	existing, ok := h.fetchWritableBlackout(w, r, id)
+	if !ok {
 		return
 	}
 
@@ -528,7 +517,7 @@ func (h *BlackoutHandler) deleteBlackout(w http.ResponseWriter, r *http.Request,
 	if !h.checkPermission(w, r) {
 		return
 	}
-	if !h.requireBlackoutInTokenScope(w, r, id) {
+	if !h.requireBlackoutWritable(w, r, id) {
 		return
 	}
 
@@ -545,7 +534,7 @@ func (h *BlackoutHandler) stopBlackout(w http.ResponseWriter, r *http.Request, i
 	if !h.checkPermission(w, r) {
 		return
 	}
-	if !h.requireBlackoutInTokenScope(w, r, id) {
+	if !h.requireBlackoutWritable(w, r, id) {
 		return
 	}
 
@@ -678,19 +667,8 @@ func (h *BlackoutHandler) blackoutScheduleVisible(ctx context.Context, s *databa
 	if s == nil {
 		return false, nil
 	}
-	if s.ConnectionID == nil && s.ClusterID == nil && s.GroupID == nil {
-		return true, nil
-	}
-	if s.ConnectionID != nil {
-		return visible[*s.ConnectionID], nil
-	}
-	if s.ClusterID != nil {
-		return clusterHasVisibleConnectionFn(ctx, h.datastore, *s.ClusterID, visible)
-	}
-	if s.GroupID != nil {
-		return groupHasVisibleConnectionFn(ctx, h.datastore, *s.GroupID, visible)
-	}
-	return false, nil
+	_, seen, err := blackoutTargetReach(ctx, h.datastore, targetOfSchedule(s), visible)
+	return seen, err
 }
 
 // createBlackoutSchedule handles POST /api/v1/blackout-schedules
@@ -710,7 +688,7 @@ func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !requireBlackoutTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, req.Scope, req.ConnectionID) {
+	if !h.requireRequestedBlackoutTargetWritable(w, r, req.Scope, req.GroupID, req.ClusterID, req.ConnectionID) {
 		return
 	}
 
@@ -759,7 +737,8 @@ func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.
 		CreatedBy:       username,
 	}
 
-	if err := h.datastore.CreateBlackoutSchedule(r.Context(), schedule); respondDBError(w, err, "create blackout schedule") {
+	if err := h.datastore.CreateBlackoutSchedule(r.Context(), schedule); respondDBError(w, err, "create blackout schedule",
+		notFound(database.ErrBlackoutTargetNotFound, scopedBlackoutTarget(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID).notFoundMessage())) {
 		return
 	}
 
@@ -778,11 +757,12 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 	}
 
 	// Moving a schedule is a change to both where it was and where it
-	// goes, so the token must cover the existing target as well. The
-	// stored record is checked first, as updateBlackout does, so that a
-	// schedule the token cannot see answers 404 without an audit row
-	// whatever the body names.
-	if !h.requireBlackoutScheduleInTokenScope(w, r, id) {
+	// goes, so the caller must be able to write the existing target as
+	// well. The stored record is checked first, as updateBlackout does,
+	// so that a schedule the caller cannot see answers 404 without an
+	// audit row whatever the body names.
+	access, ok := h.requireBlackoutScheduleWritable(w, r, id)
+	if !ok {
 		return
 	}
 
@@ -792,7 +772,7 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !requireBlackoutTargetInTokenScope(w, r, h.rbacChecker, h.denialRecorder, req.Scope, req.ConnectionID) {
+	if !h.requireBlackoutTargetWritable(w, r, access, req.Scope, scopedBlackoutTarget(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID), "") {
 		return
 	}
 
@@ -836,7 +816,8 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 	}
 
 	if err := h.datastore.UpdateBlackoutSchedule(r.Context(), schedule); respondDBError(w, err, "update blackout schedule",
-		notFound(database.ErrBlackoutScheduleNotFound, "Blackout schedule not found")) {
+		notFound(database.ErrBlackoutScheduleNotFound, "Blackout schedule not found"),
+		notFound(database.ErrBlackoutTargetNotFound, scopedBlackoutTarget(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID).notFoundMessage())) {
 		return
 	}
 
@@ -848,7 +829,7 @@ func (h *BlackoutHandler) deleteBlackoutSchedule(w http.ResponseWriter, r *http.
 	if !h.checkPermission(w, r) {
 		return
 	}
-	if !h.requireBlackoutScheduleInTokenScope(w, r, id) {
+	if _, ok := h.requireBlackoutScheduleWritable(w, r, id); !ok {
 		return
 	}
 
@@ -858,97 +839,4 @@ func (h *BlackoutHandler) deleteBlackoutSchedule(w http.ResponseWriter, r *http.
 	}
 
 	RespondJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-}
-
-// requireBlackoutInTokenScope looks up a blackout and applies
-// requireFetchedBlackoutInTokenScope to it, answering 404 when it does
-// not exist. A caller whose token covers every connection needs no
-// lookup, so sessions and unscoped tokens take the same path as before.
-func (h *BlackoutHandler) requireBlackoutInTokenScope(w http.ResponseWriter,
-	r *http.Request, id int64) bool {
-
-	if h.rbacChecker.ConnectionReadableInTokenScope(r.Context(), auth.ConnectionIDAll) {
-		return true
-	}
-	existing, err := h.datastore.GetBlackout(r.Context(), id)
-	if respondDBError(w, err, "fetch blackout",
-		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
-		return false
-	}
-	return h.requireFetchedBlackoutInTokenScope(w, r, existing)
-}
-
-// requireFetchedBlackoutInTokenScope applies blackoutTargetInTokenScope to a
-// stored blackout. When the target is out of scope it answers 404 if
-// the caller could not see the blackout, as GET /blackouts/{id} does,
-// so that a refusal does not reveal which ids exist, and 403 otherwise.
-func (h *BlackoutHandler) requireFetchedBlackoutInTokenScope(
-	w http.ResponseWriter, r *http.Request, b *database.Blackout) bool {
-
-	if blackoutTargetInTokenScope(r.Context(), h.rbacChecker, b.Scope, b.ConnectionID) {
-		return true
-	}
-	h.refuseOutOfScope(w, r, "Blackout not found",
-		func(ctx context.Context, visible map[int]bool) (bool, error) {
-			return h.blackoutVisible(ctx, b, visible)
-		})
-	return false
-}
-
-// requireBlackoutScheduleInTokenScope is requireBlackoutInTokenScope for
-// a blackout schedule.
-func (h *BlackoutHandler) requireBlackoutScheduleInTokenScope(
-	w http.ResponseWriter, r *http.Request, id int64) bool {
-
-	if h.rbacChecker.ConnectionReadableInTokenScope(r.Context(),
-		auth.ConnectionIDAll) {
-		return true
-	}
-	existing, err := h.datastore.GetBlackoutSchedule(r.Context(), id)
-	if respondDBError(w, err, "fetch blackout schedule",
-		notFound(database.ErrBlackoutScheduleNotFound,
-			"Blackout schedule not found")) {
-		return false
-	}
-	if blackoutTargetInTokenScope(r.Context(), h.rbacChecker, existing.Scope,
-		existing.ConnectionID) {
-		return true
-	}
-	h.refuseOutOfScope(w, r, "Blackout schedule not found",
-		func(ctx context.Context, visible map[int]bool) (bool, error) {
-			return h.blackoutScheduleVisible(ctx, existing, visible)
-		})
-	return false
-}
-
-// refuseOutOfScope answers a write to a stored blackout or schedule
-// whose target the acting token's connection scope does not cover: 404
-// with notFoundMsg when visibleFn says the caller could not see the
-// record, matching the GET for the same id, and 403 when it could. The
-// 403 is audited; the 404 is not, as for a connection the token cannot
-// see, since it answers as though the record did not exist.
-func (h *BlackoutHandler) refuseOutOfScope(w http.ResponseWriter,
-	r *http.Request, notFoundMsg string,
-	visibleFn func(context.Context, map[int]bool) (bool, error)) {
-
-	visible, allConnections, err := resolveVisibleConnectionSet(r.Context(),
-		h.rbacChecker, h.datastore)
-	if err != nil {
-		log.Printf("[ERROR] Failed to resolve visible connections: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to check access")
-		return
-	}
-	if !allConnections {
-		ok, err := visibleFn(r.Context(), visible)
-		if err != nil {
-			log.Printf("[ERROR] Failed to check visibility: %v", err)
-			RespondError(w, http.StatusInternalServerError, "Failed to check access")
-			return
-		}
-		if !ok {
-			RespondError(w, http.StatusNotFound, notFoundMsg)
-			return
-		}
-	}
-	h.denialRecorder.refuse(w, r, targetOutOfTokenScope)
 }

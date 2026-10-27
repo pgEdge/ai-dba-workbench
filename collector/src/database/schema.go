@@ -4108,6 +4108,97 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #30: a server-scope blackout or blackout schedule must
+	// name its connection (issue #732). The scope check let a server row
+	// carry any IDs, and the alerter matches a server row on
+	// connection_id alone, treating a NULL connection_id as every
+	// connection, which is an estate blackout under another name; the
+	// server now has to tell estate rows apart to refuse them to callers
+	// who cannot see every connection. Existing server rows are first
+	// rewritten to what the alerter already does with them: group_id and
+	// cluster_id, which it ignores on a server row, are cleared, and a
+	// row with no connection_id becomes estate. A row with no
+	// connection_id that names a database matched only that database on
+	// every connection, and the alerter ignores database_name on an
+	// estate row, so such a row is first made to suppress nothing, as
+	// the comment inside the migration describes. The server has refused
+	// a server row without a connection since scopes were introduced, so
+	// only a row written by hand can be affected.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     30,
+		Description: "Require a connection on server-scope blackouts and schedules",
+		Up: func(tx pgx.Tx) error {
+			// A server row with no connection but a database_name matches
+			// that database on every connection. Estate ignores
+			// database_name, so before such a row becomes estate it must
+			// stop suppressing anything: a future blackout is deleted, an
+			// active one ends now, one already over is kept as history,
+			// and a schedule is disabled for an administrator to review.
+			_, err := tx.Exec(context.Background(), `
+				DELETE FROM blackouts
+				WHERE scope = 'server' AND connection_id IS NULL
+				  AND database_name IS NOT NULL AND start_time >= NOW();
+				UPDATE blackouts
+				SET end_time = NOW()
+				WHERE scope = 'server' AND connection_id IS NULL
+				  AND database_name IS NOT NULL AND end_time > NOW();
+
+				UPDATE blackouts
+				SET scope = CASE WHEN connection_id IS NULL THEN 'estate' ELSE 'server' END,
+				    group_id = NULL,
+				    cluster_id = NULL
+				WHERE scope = 'server'
+				  AND (connection_id IS NULL OR group_id IS NOT NULL OR cluster_id IS NOT NULL);
+
+				ALTER TABLE blackouts
+					DROP CONSTRAINT IF EXISTS blackouts_scope_ids_check;
+				ALTER TABLE blackouts
+					ADD CONSTRAINT blackouts_scope_ids_check CHECK (
+						(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+						OR (scope = 'server' AND connection_id IS NOT NULL AND group_id IS NULL AND cluster_id IS NULL)
+					);
+
+				COMMENT ON CONSTRAINT blackouts_scope_ids_check ON blackouts IS
+					'Each scope names exactly the ID it targets: none for estate, group_id for group, cluster_id for cluster and connection_id for server';
+				COMMENT ON COLUMN blackouts.connection_id IS
+					'Connection targeted when scope is server; NULL for every other scope';
+
+				UPDATE blackout_schedules
+				SET enabled = FALSE, updated_at = NOW()
+				WHERE scope = 'server' AND connection_id IS NULL
+				  AND database_name IS NOT NULL;
+
+				UPDATE blackout_schedules
+				SET scope = CASE WHEN connection_id IS NULL THEN 'estate' ELSE 'server' END,
+				    group_id = NULL,
+				    cluster_id = NULL
+				WHERE scope = 'server'
+				  AND (connection_id IS NULL OR group_id IS NOT NULL OR cluster_id IS NOT NULL);
+
+				ALTER TABLE blackout_schedules
+					DROP CONSTRAINT IF EXISTS blackout_schedules_scope_ids_check;
+				ALTER TABLE blackout_schedules
+					ADD CONSTRAINT blackout_schedules_scope_ids_check CHECK (
+						(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+						OR (scope = 'server' AND connection_id IS NOT NULL AND group_id IS NULL AND cluster_id IS NULL)
+					);
+
+				COMMENT ON CONSTRAINT blackout_schedules_scope_ids_check ON blackout_schedules IS
+					'Each scope names exactly the ID it targets: none for estate, group_id for group, cluster_id for cluster and connection_id for server';
+				COMMENT ON COLUMN blackout_schedules.connection_id IS
+					'Connection targeted when scope is server; NULL for every other scope';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to require a connection on server-scope blackouts: %w", err)
+			}
+			return nil
+		},
+	})
 }
 
 // statementTextUpdates holds, for each column that stores statement text,

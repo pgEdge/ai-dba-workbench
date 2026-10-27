@@ -250,12 +250,22 @@ group applies to every connection in it, so changing or deleting one requires
 the holder to see every one of those connections, whilst viewing one needs
 only one of them to be visible. The same applies to deleting a cluster or a
 cluster group, and to moving a cluster to another group, since each of those
-changes which overrides reach the cluster's connections. A change refused
-because a member connection is hidden answers in the same way as a missing
-permission, so it does not reveal which connections are hidden or how many.
-A connection the holder cannot see cannot be removed from a cluster either;
-the attempt is answered as though the connection were not a member.
-Superusers, and users granted access to all connections, see every
+changes which overrides reach the cluster's connections.
+
+A blackout or a blackout schedule on a cluster or a cluster group silences
+alerts on every connection in it, so creating, changing, stopping or deleting
+one likewise requires the holder to see every one of those connections. An
+estate-wide blackout or schedule silences alerts on every connection, so
+creating, changing, stopping or deleting one requires the holder to see every
+connection, although every user can view it. A blackout on a connection,
+cluster or group the holder cannot see at all is answered as though it did
+not exist.
+
+A change refused because a member connection is hidden answers in the same
+way as a missing permission, so it does not reveal which connections are
+hidden or how many. A connection the holder cannot see cannot be removed from
+a cluster either; the attempt is answered as though the connection were not a
+member. Superusers, and users granted access to all connections, see every
 connection and are not affected.
 
 For detailed instructions about assigning permissions to a group, see

@@ -277,11 +277,13 @@ func TestOverrideWritesRespectTokenScope(t *testing.T) {
 // TestBlackoutCreateRespectsTokenScope covers creating a blackout and a
 // blackout schedule, which name their target in the request body.
 func TestBlackoutCreateRespectsTokenScope(t *testing.T) {
-	_, store, cleanup := createTestRBACHandler(t)
-	defer cleanup()
-	session, unscoped, wildcard, narrowed, readOnly := scopedCallers(t, store)
-	wildcardRead := wildcardReadCaller(t, store)
-	h := NewBlackoutHandler(nil, store, auth.NewRBACChecker(store))
+	// The creates resolve the caller's view of the target through the
+	// datastore before the token scope is checked (issue #732), so these
+	// run over the seeded blackout schema: connections 5, 6 and 7 in
+	// cluster 1, group 1.
+	h, _, callers := newTokenScopeBlackoutHandler(t)
+	session, unscoped, wildcard := callers["session"], callers["unscoped"], callers["wildcard"]
+	narrowed, readOnly, wildcardRead := callers["narrowed"], callers["readOnly"], callers["wildcardRead"]
 
 	blackout := func(target string) func(http.ResponseWriter, scopeCaller) {
 		body := `{` + target + `,"reason":"r",` +
@@ -308,8 +310,10 @@ func TestBlackoutCreateRespectsTokenScope(t *testing.T) {
 		{name: "blackout server in scope", call: blackout(server5),
 			allowed: []scopeCaller{session, unscoped, wildcard, narrowed,
 				readOnly}},
+		// A connection outside the token's scope is hidden from it, so it
+		// is answered as missing (issue #732).
 		{name: "blackout server out of scope", call: blackout(server6),
-			refused: []scopeCaller{narrowed, readOnly}},
+			hidden: []scopeCaller{narrowed, readOnly}},
 		{name: "blackout cluster", call: blackout(cluster),
 			allowed: []scopeCaller{wildcard, wildcardRead},
 			refused: []scopeCaller{narrowed, readOnly}},
@@ -319,7 +323,7 @@ func TestBlackoutCreateRespectsTokenScope(t *testing.T) {
 		{name: "schedule server in scope", call: schedule(server5),
 			allowed: []scopeCaller{unscoped, narrowed, readOnly}},
 		{name: "schedule server out of scope", call: schedule(server6),
-			refused: []scopeCaller{narrowed, readOnly}},
+			hidden: []scopeCaller{narrowed, readOnly}},
 		{name: "schedule estate", call: schedule(estate),
 			allowed: []scopeCaller{wildcard, wildcardRead},
 			refused: []scopeCaller{narrowed, readOnly}},

@@ -1098,6 +1098,60 @@ func (st federatedLinkState) auditView() map[string]any {
 	return view
 }
 
+// The UPDATE statements that link an account. Sessions are not for service
+// accounts: CreateSessionForUser refuses one outright, so a linked service
+// account could never complete a login and the link would be a trap rather
+// than a configuration. The auth_source condition is the converse of the
+// belt-and-braces check lookupFederatedUserLocked makes, and keeps this from
+// quietly converting an account whose identity some future source owns.
+//
+// The last condition of linkRelinkUpdateSQL excludes a row that already says
+// exactly what the UPDATE would say. SQLite's changes() counts matched rows
+// rather than modified ones, so without it the documented idempotent re-link
+// would report a row affected and log the user out; a
+// configuration-management run that reasserts links every pass would then log
+// every federated user out every pass. IS NOT is used rather than <> because
+// external_subject is nullable. linkUpdateSQL adds the condition that refuses
+// to move an account already holding a different identity without -relink.
+const (
+	linkRelinkUpdateSQL = `UPDATE users SET auth_source = ?, external_subject = ?
+        WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
+          AND (external_subject IS NOT ? OR auth_source <> ?)`
+	linkUpdateSQL = linkRelinkUpdateSQL +
+		" AND (external_subject IS NULL OR external_subject = ?)"
+)
+
+// linkUpdateStatement returns the UPDATE that links username to key, and its
+// arguments.
+func linkUpdateStatement(username, key string, relink bool) (string, []any) {
+	args := []any{AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC, key, AuthSourceOIDC}
+	if relink {
+		return linkRelinkUpdateSQL, args
+	}
+	return linkUpdateSQL, append(args, key)
+}
+
+// explainLinkFailureLocked turns a failed link UPDATE into the error the
+// operator sees. There is no pre-flight check that some other account already
+// holds the subject: the partial unique index on external_subject is what
+// actually decides that, including against a second server sharing the
+// auth.db, so the collision is read off the constraint rather than off a racy
+// SELECT that ran beforehand. The account holding the subject is then looked
+// up so the operator is told who it is, instead of being handed a raw SQLite
+// constraint error. s.mu must be held.
+func (s *AuthStore) explainLinkFailureLocked(execErr error, username, issuer,
+	subject string) error {
+
+	if isUniqueViolation(execErr, "users.external_subject") {
+		holder, lookupErr := s.subjectHolderLocked(ExternalSubjectKey(issuer, subject))
+		if lookupErr == nil && holder != "" {
+			return fmt.Errorf("issuer %q, subject %q is already linked to account %s",
+				issuer, subject, holder)
+		}
+	}
+	return fmt.Errorf("failed to link %s to the identity provider: %w", username, execErr)
+}
+
 // applyLinkLocked writes the link and its user.link_identity event in one
 // transaction, reporting whether the row changed. An UPDATE that matched no
 // row is either the idempotent re-link, which returns false and no error, or
@@ -1133,51 +1187,14 @@ func (s *AuthStore) applyLinkLocked(actor Actor, username, issuer, subject strin
 	}
 	target.targetID = &before.id
 
-	// Sessions are not for service accounts: CreateSessionForUser refuses
-	// one outright, so a linked service account could never complete a
-	// login and the link would be a trap rather than a configuration. The
-	// auth_source condition is the converse of the belt-and-braces check
-	// lookupFederatedUserLocked makes, and keeps this from quietly
-	// converting an account whose identity some future source owns.
-	//
-	// The last condition excludes a row that already says exactly what this
-	// UPDATE would say. SQLite's changes() counts matched rows rather than
-	// modified ones, so without it the documented idempotent re-link would
-	// report a row affected and log the user out; a configuration-management
-	// run that reasserts links every pass would then log every federated
-	// user out every pass. IS NOT is used rather than <> because
-	// external_subject is nullable.
-	query := `UPDATE users SET auth_source = ?, external_subject = ?
-        WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
-          AND (external_subject IS NOT ? OR auth_source <> ?)`
-	args := []any{AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC, key, AuthSourceOIDC}
-	if !relink {
-		query += " AND (external_subject IS NULL OR external_subject = ?)"
-		args = append(args, key)
-	}
-
-	// No pre-flight check that some other account already holds this
-	// subject: the partial unique index on external_subject is what
-	// actually decides that, including against a second server sharing the
-	// auth.db, so the collision is read off the constraint rather than off
-	// a racy SELECT that ran beforehand. The account holding the subject is
-	// then looked up so the operator is told who it is, instead of being
-	// handed a raw SQLite constraint error.
-	//
-	// Both lookups below read outside the transaction, so it is rolled
-	// back first; failAudit's own rollback is then a no-op.
+	query, args := linkUpdateStatement(username, key, relink)
 	result, err := tx.Exec(query, args...)
 	if err != nil {
+		// The explanation reads outside the transaction, so it is rolled
+		// back first; failAudit's own rollback is then a no-op.
 		//nolint:errcheck // Rollback error is not critical; see above.
 		tx.Rollback()
-		if isUniqueViolation(err, "users.external_subject") {
-			holder, lookupErr := s.subjectHolderLocked(key)
-			if lookupErr == nil && holder != "" {
-				return false, fmt.Errorf("issuer %q, subject %q is already linked to account %s",
-					issuer, subject, holder)
-			}
-		}
-		return false, fmt.Errorf("failed to link %s to the identity provider: %w", username, err)
+		return false, s.explainLinkFailureLocked(err, username, issuer, subject)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {

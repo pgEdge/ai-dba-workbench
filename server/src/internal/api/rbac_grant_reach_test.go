@@ -624,8 +624,16 @@ func TestFederatedGroupProtectionFollowsReload(t *testing.T) {
 	assertStatus(t, f.do(f.narrowed, http.MethodPut, path(plain), named("plain-2")),
 		http.StatusOK)
 
-	// The reload maps wb-ops and drops wb-admins.
-	live = map[string]string{"idp-ops": "wb-ops"}
+	// The reload maps wb-ops and a group that does not exist yet, and
+	// drops wb-admins.
+	live = map[string]string{"idp-ops": "wb-ops", "idp-new": "wb-new"}
+
+	assertGrantRefused(t, f.do(f.narrowed, http.MethodPost, "/api/v1/rbac/groups",
+		named("wb-new")))
+	assertDenialRecorded(t, f.store, "group.create", refuseFederated)
+	if group, err := f.store.GetGroupByName("wb-new"); err != nil || group != nil {
+		t.Fatalf("Expected wb-new not to be created, got %v (%v)", group, err)
+	}
 
 	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, path(plain), named("wb-ops")))
 	assertGrantRefused(t, f.do(f.narrowed, http.MethodPut, path(ops), named("wb-other")))

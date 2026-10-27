@@ -501,9 +501,12 @@ func (s *AuthStore) revokeFederatedSuperuserLocked(userID int64, username string
 		return nil
 	}
 
+	query := "SELECT COUNT(*) FROM users WHERE is_superuser AND enabled"
+	if s.superuserCountSQL != "" {
+		query = s.superuserCountSQL
+	}
 	var remaining int
-	if err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM users WHERE is_superuser AND enabled").Scan(&remaining); err != nil {
+	if err := s.db.QueryRow(query).Scan(&remaining); err != nil {
 		//nolint:gosec // G706: username passed through logging.SanitizeForLog
 		log.Printf("[AUTH] Revoked federated superuser from %s but could not count the remaining superusers: %v",
 			logging.SanitizeForLog(username), err)

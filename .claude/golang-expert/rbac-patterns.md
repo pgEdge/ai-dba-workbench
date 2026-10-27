@@ -1402,7 +1402,7 @@ message (#485). Put a new store-level validation rule in the store and
 mark it there rather than duplicating it in a handler; the federated
 account password refusal in `writePasswordHashLocked` is the model.
 
-## Audit Writes Are Fail-Closed, With One Exception
+## Audit Writes Are Fail-Closed, With Two Exceptions
 
 Every audited mutation in `server/src/internal/auth` writes its event
 in the same transaction as the change, so a failure to record leaves
@@ -1411,7 +1411,7 @@ group, token and privilege mutations all call `recordAudit(tx, ev)`
 before their `tx.Commit()`, and roll back through `failAudit` when
 anything on the way fails. Keep new mutations on that shape.
 
-The sole exception is `disableForLockout` in `actor_store_users.go`.
+The first exception is `disableForLockout` in `actor_store_users.go`.
 That change is the server locking an account against repeated failed
 sign-ins rather than a change an operator asked for, so refusing it on
 an audit failure would hand the attacker a working account. It calls
@@ -1421,6 +1421,25 @@ on its own, and only then writes the `user.disable` event through
 `TestLockoutSurvivesAuditFailure` in `audit_users_test.go` and the
 `NoAuditTable` case of `TestAuditTokensLockoutHelperErrorPaths` pin
 both halves. Do not "fix" this back into one transaction.
+
+The second exception is the revocations in `ReconcileFederatedGroups`
+(`federation.go`), the system actor applying what the identity
+provider has withdrawn. `revokeFederatedSuperuserLocked` commits the
+demotion and then records `user.update` through
+`recordFederatedSuperuserRevocationLocked`, and `revokeFederatedLocked`
+commits the membership deletions and then records each
+`group.member.remove` through `recordFederatedRevocationLocked`
+(`recordAuditInOwnTx`); both log a failure rather than return it, so
+an audit failure never keeps a withdrawn privilege in place.
+`TestReconcileFederatedGroupsKeepsAnUnauditedRevocation` in
+`federation_audit_test.go` pins this, including the logged failure.
+The grants in the same login stay fail-closed: `grantFederatedLocked`
+and `grantFederatedSuperuserTx` call `recordAudit(tx, ev)` inside the
+grant transaction, so a failure rolls the grant back and refuses the
+login (`TestReconcileFederatedGroupsRollsBackAnUnauditedGrant`). Every
+federated event uses the system actor with `details.reason` set to
+`identity_provider` and `details.issuer` to the token issuer, and is
+written only when a row actually changed.
 
 Two schema-level invariants back the chain, both in `auditSchemaDDL`
 in `audit.go`. `idx_audit_prev_hash` is a unique index, so no two

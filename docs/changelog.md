@@ -2707,6 +2707,18 @@ project adheres to
 
 ### Security
 
+- Record audit events for the group and superuser changes a federated
+  login makes (#743). Reconciliation granted and revoked the superuser
+  flag and mapped group memberships at every OIDC sign-in without
+  writing to the audit log, so the log could not show when, or why, a
+  federated user gained or lost a privilege. Each change is now
+  recorded as `user.update`, `group.member.add` or
+  `group.member.remove`, attributed to the `system` actor with a
+  `details.reason` of `identity_provider` and the issuer in
+  `details.issuer`. A grant whose event cannot be written is rolled
+  back and the login refused; a revocation stands and the failure is
+  logged.
+
 - Apply the API token protections on groups named in the OIDC
   `group_map` to the map as it stands after a configuration
   reload (#595). The protections read the map once at start-up,

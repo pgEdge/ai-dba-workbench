@@ -767,10 +767,11 @@ func (s *AuthStore) setUserEnabled(actor Actor, username string,
 // hold s.mu, which AuthenticateUser does.
 //
 // The lockout is committed first and the event written afterwards, in a
-// transaction of its own. This is the one audited change that is not
-// fail-closed, and deliberately so: everywhere else an audit failure
-// rolls the change back, because those are changes an operator asked
-// for and refusing them is the safe answer. Here the server is
+// transaction of its own. This is not fail-closed, and deliberately so,
+// as with the federated revocations in ReconcileFederatedGroups: almost
+// everywhere else an audit failure rolls the change back, because those
+// are changes an operator asked for and refusing them is the safe
+// answer. Here the server is
 // defending itself against a password-guessing attack, so an audit
 // failure, a full disk, a corrupt audit_events or another writer
 // holding the lock past the busy timeout, must not hand the attacker

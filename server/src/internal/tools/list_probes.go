@@ -12,6 +12,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,8 +23,10 @@ import (
 type ProbeInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	RowCount    int64  `json:"row_count"`
-	Scope       string `json:"scope"` // "server" or "database"
+	// RowCount is nil when the count is unknown: a probe stored as a
+	// view, as on a pgEdge ColdFront datastore, is not counted.
+	RowCount *int64 `json:"row_count"`
+	Scope    string `json:"scope"` // "server" or "database"
 }
 
 // ListProbesTool creates the list_probes tool for listing available metrics probes
@@ -49,7 +52,9 @@ Use this tool to:
 Returns a TSV table with:
 - name: Probe name (use with describe_probe and query_metrics)
 - description: Human-readable description of what the probe collects
-- row_count: Approximate number of metric rows collected
+- row_count: Approximate number of metric rows collected, or "unknown" for a
+  probe stored in pgEdge ColdFront (a view over Apache Iceberg storage), whose
+  rows are not counted because counting them would scan the whole history
 - scope: "server" for server-wide metrics, "database" for per-database metrics
 </provided_info>
 
@@ -88,11 +93,20 @@ Returns a TSV table with:
 			// out of the list, as information_schema.tables did. A
 			// partitioned table holds no rows itself, so its row count is the
 			// sum over the leaf partitions at every level of its tree.
+			//
+			// On a pgEdge ColdFront datastore every probe is instead a view
+			// (relkind 'v') over Apache Iceberg storage (issue #755). A view
+			// is listed when it carries the connection_id and collected_at
+			// bookkeeping columns every probe has, so an unrelated view in
+			// the schema is not mistaken for one. A view has no statistics,
+			// and count(*) would scan the probe's whole history in object
+			// storage, so its row count is NULL and reported as unknown.
 			query := `
 				SELECT
 					c.relname::text AS table_name,
 					COALESCE(obj_description(c.oid, 'pg_class'), '') AS description,
-					CASE WHEN c.relkind = 'p' THEN (
+					CASE WHEN c.relkind = 'v' THEN NULL
+					WHEN c.relkind = 'p' THEN (
 						SELECT COALESCE(SUM(ps.n_live_tup), 0)
 						FROM pg_partition_tree(c.oid) pt
 						JOIN pg_stat_user_tables ps ON ps.relid = pt.relid
@@ -104,8 +118,15 @@ Returns a TSV table with:
 				JOIN pg_namespace n ON n.oid = c.relnamespace
 				LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
 				WHERE n.nspname = 'metrics'
-					AND c.relkind IN ('r', 'p')
 					AND NOT c.relispartition
+					AND (c.relkind IN ('r', 'p')
+						OR (c.relkind = 'v'
+							AND EXISTS (SELECT 1 FROM pg_attribute a
+								WHERE a.attrelid = c.oid AND a.attname = 'connection_id'
+									AND a.attnum > 0 AND NOT a.attisdropped)
+							AND EXISTS (SELECT 1 FROM pg_attribute a
+								WHERE a.attrelid = c.oid AND a.attname = 'collected_at'
+									AND a.attnum > 0 AND NOT a.attisdropped)))
 					AND has_table_privilege(c.oid, 'SELECT')
 				ORDER BY c.relname
 			`
@@ -140,16 +161,29 @@ Returns a TSV table with:
 			fmt.Fprintf(&sb, "Found %d metrics probes:\n\n", len(probes))
 			sb.WriteString("name\tdescription\trow_count\tscope\n")
 			for _, probe := range probes {
-				fmt.Fprintf(&sb, "%s\t%s\t%d\t%s\n",
+				fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\n",
 					sanitizeTSVField(probe.Name),
 					sanitizeTSVField(probe.Description),
-					probe.RowCount,
+					formatProbeRowCount(probe.RowCount),
 					sanitizeTSVField(probe.Scope))
 			}
 
 			return mcp.NewToolSuccess(sb.String())
 		},
 	}
+}
+
+// unknownRowCount is what list_probes reports as the row count of a probe
+// it does not count.
+const unknownRowCount = "unknown"
+
+// formatProbeRowCount renders a probe's row count for the TSV output:
+// the number, or unknownRowCount when count is nil.
+func formatProbeRowCount(count *int64) string {
+	if count == nil {
+		return unknownRowCount
+	}
+	return strconv.FormatInt(*count, 10)
 }
 
 // determineProbeScope determines if a probe is server-wide or database-scoped

@@ -198,6 +198,52 @@ func TestListProbes_ExcludesPartitionsNotProbes(t *testing.T) {
 	}
 }
 
+// TestListProbes_ListsColdFrontViews checks that on a pgEdge ColdFront
+// datastore, where every probe is a view (issue #755), a view carrying
+// the probe bookkeeping columns is listed with an unknown row count,
+// whilst a view without them is still left out.
+func TestListProbes_ListsColdFrontViews(t *testing.T) {
+	pool, _, cleanup := newToolsTestPool(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		CREATE VIEW metrics.pg_stat_wal AS
+		    SELECT 1::integer AS connection_id,
+		           now() AS collected_at,
+		           42::bigint AS wal_records;
+		COMMENT ON VIEW metrics.pg_stat_wal IS 'WAL statistics';
+
+		CREATE VIEW metrics.pg_helper_view AS
+		    SELECT 1::integer AS connection_id;`); err != nil {
+		t.Fatalf("failed to create probe views: %v", err)
+	}
+
+	text := mustSuccess(t, ListProbesTool(pool), map[string]any{"__context": ctx})
+	probes := listProbesNames(t, text)
+
+	want := map[string][]string{
+		"pg_connectivity": {"", "0", "server"},
+		"pg_stat_wal":     {"WAL statistics", unknownRowCount, "server"},
+	}
+	for name, fields := range want {
+		got, ok := probes[name]
+		if !ok {
+			t.Errorf("probe %q missing from list_probes output:\n%s", name, text)
+			continue
+		}
+		if strings.Join(got, "\t") != strings.Join(fields, "\t") {
+			t.Errorf("probe %q = %q, want %q", name, got, fields)
+		}
+	}
+	if _, ok := probes["pg_helper_view"]; ok {
+		t.Errorf("a view without collected_at should not be listed:\n%s", text)
+	}
+	if len(probes) != len(want) {
+		t.Errorf("got %d probes, want %d:\n%s", len(probes), len(want), text)
+	}
+}
+
 // TestListProbes_OmitsUnreadableTables checks that a table the datastore
 // role cannot SELECT from is left out of the list.
 func TestListProbes_OmitsUnreadableTables(t *testing.T) {

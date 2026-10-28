@@ -319,6 +319,7 @@ func TestUnlinkFederatedIdentityRecordsTheOperator(t *testing.T) {
 	defer cleanup()
 
 	linkedLocalUser(t, store, "alice")
+	store.SetFederatedAPITokenPolicy(func() bool { return true })
 	mustCreateToken(t, store, "alice", "to be revoked")
 	key := ExternalSubjectKey(linkTestIssuer, linkTestSubject)
 
@@ -358,6 +359,7 @@ func TestUnlinkFederatedIdentityRestorePasswordRecordsNoPasswordChange(t *testin
 	defer cleanup()
 
 	linkedLocalUser(t, store, "alice")
+	store.SetFederatedAPITokenPolicy(func() bool { return true })
 	mustCreateToken(t, store, "alice", "kept")
 
 	if _, _, err := store.AsActor(testCLIActor()).UnlinkFederatedIdentity("alice",
@@ -380,6 +382,7 @@ func TestUnlinkFederatedIdentityRollsBackAnUnauditedUnlink(t *testing.T) {
 	defer cleanup()
 
 	linkedLocalUser(t, store, "alice")
+	store.SetFederatedAPITokenPolicy(func() bool { return true })
 	_, token := mustCreateToken(t, store, "alice", "kept")
 	hashBefore := passwordHashOf(t, store, "alice")
 	dropAuditLog(t, store)

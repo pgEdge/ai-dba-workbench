@@ -1540,7 +1540,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"period_type": {Type: "string", Description: "Period of the baseline row applied; null when no row applies", Enum: []string{"all", "hourly", "daily"}, Nullable: true},
 				"mean":        {Type: "number", Description: "Baseline mean; null when no row applies", Nullable: true},
 				"stddev":      {Type: "number", Description: "Effective standard deviation, after the variance and metric floors, used as the z-score divisor; null when no row applies", Nullable: true},
-				"cold":        {Type: "boolean", Description: "True when the row shown has not passed the warmup gate (explicit models), or when no row is warm (as_scored)"},
+				"cold":        {Type: "boolean", Description: "True when the row shown has not passed the warmup gate (explicit models), or when rows apply to the sample but none is warm (as_scored); false when no row applies"},
 				"z_score":     {Type: "number", Description: "Clamped z-score; null when no row applies or the divisor is zero", Nullable: true},
 				"outside":     {Type: "boolean", Description: "True when the sample is scored, not cold, and outside the band; never true for a cold or unscored sample"},
 			},

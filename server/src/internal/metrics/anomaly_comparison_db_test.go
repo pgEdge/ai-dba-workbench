@@ -66,8 +66,8 @@ func TestLoadComparison_Integration(t *testing.T) {
 			t.Fatalf("comparison = %+v, want defaults, no baselines, two points", got)
 		}
 		for _, p := range got.Points {
-			if !p.Cold || p.Outside || p.Mean != nil {
-				t.Errorf("point %+v, want cold with no band", p)
+			if p.Cold || p.Outside || p.Mean != nil {
+				t.Errorf("point %+v, want no band and not cold", p)
 			}
 		}
 	})

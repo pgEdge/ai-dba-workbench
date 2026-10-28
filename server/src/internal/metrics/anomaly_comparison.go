@@ -239,9 +239,11 @@ func scoreComparisonPoint(
 		row = chosen
 		if chosen == nil {
 			// Nothing is warm, so the alerter would not score the
-			// value; show the most preferred cold row, if any.
+			// value; show the most preferred cold row, if any. With
+			// no row at all there is nothing to call cold, matching
+			// the explicit models.
 			row = skippedCold
-			p.Cold = true
+			p.Cold = skippedCold != nil
 		}
 	} else {
 		row = anomaly.Candidates(baselines, s.Time)[candidateIndex[model]]

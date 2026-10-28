@@ -12202,7 +12202,7 @@
         "properties": {
           "cold": {
             "type": "boolean",
-            "description": "True when the row shown has not passed the warmup gate (explicit models), or when no row is warm (as_scored)"
+            "description": "True when the row shown has not passed the warmup gate (explicit models), or when rows apply to the sample but none is warm (as_scored); false when no row applies"
           },
           "mean": {
             "type": "number",

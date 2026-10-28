@@ -274,8 +274,8 @@ func (c *Config) EffectiveLookbackDays() int {
 
 // UnreachableWarmupPeriods lists the warmup period types ("all",
 // "hourly", "daily") whose min_span_hours exceeds the lookback window
-// in hours. A baseline row of such a type can never pass isBaselineWarm
-// because its earliest_sample_at is never older than the lookback, so
+// in hours. A baseline row of such a type can never pass anomaly.IsWarm
+// (pkg/anomaly) because its earliest_sample_at is never older than the lookback, so
 // the selector silently falls through to the next tier. Callers log the
 // result rather than rejecting the configuration, because the shipped
 // example files once carried exactly this combination.

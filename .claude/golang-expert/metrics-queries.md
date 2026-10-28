@@ -1331,7 +1331,7 @@ conventions from that change hold across both:
   `calculateBaselines` and `detectAnomalies` both skip on it; there is no
   fallback path that builds a baseline from the latest sample, because
   such a row (one sample, zero stddev, NULL `earliest_sample_at`) can
-  never pass `isBaselineWarm`. `DeleteBaselinesForUnsupportedMetrics`
+  never pass `anomaly.IsWarm`. `DeleteBaselinesForUnsupportedMetrics`
   runs once per `calculateBaselines` cycle, binding
   `BaselineSupportedMetrics()` as a `text[]` and deleting
   `metric_name <> ALL($1)`, so rows the old fallback wrote disappear.
@@ -1409,10 +1409,11 @@ conventions from that change hold across both:
   (built-in floors with `metric_floors` overrides applied).
   `TestDefaultScoringSettingsMatchConfigDefaults` pins
   `DefaultScoringSettings()` to `config.NewConfig()`, so change a Tier 1
-  default in both places. The engine's `selectBaseline`,
-  `isBaselineWarm`, `effectiveStdDev` and `baselinePeriodKeys` are thin
-  adapters over the pkg functions (`toAnomalyBaseline` converts a
-  `database.MetricBaseline`); change the rule in `pkg/anomaly`, never in
+  default in both places. The engine's `selectBaseline` and
+  `baselinePeriodKeys` are thin adapters over the pkg functions
+  (`toAnomalyBaseline` converts a `database.MetricBaseline`), and it
+  calls `anomaly.EffectiveStdDev` directly; warmth is `anomaly.IsWarm`
+  inside `anomaly.Select`. Change the rule in `pkg/anomaly`, never in
   an adapter.
 
 - The alerter publishes `Tier1Config.ScoringSettings()` as JSON to
@@ -1677,7 +1678,9 @@ once filtered `period_type = 'overall'`, a value nothing writes, and
 fell back to averaging every period). `BaselineQueryOptions.PeriodType`
 is `all` (default), `hourly` or `daily`; `DatabaseName` nil returns
 every database's rows plus the server-level ones, each tagged with its
-`database_name`, and a name returns only that database's rows. The probe filter is a literal
+`database_name`, and a name returns only that database's rows. A row
+with a non-finite mean, stddev, min or max is skipped (`allFinite`), as
+the REAL columns can hold NaN/Inf. The probe filter is a literal
 `starts_with(metric_name, probe || '.')`, not `LIKE`. `p50`/`p95`/`p99`
 are mean, mean + 2 stddev and mean + 3 stddev. The test is
 `baselines_db_test.go`, against a scratch database migrated by the
@@ -1711,7 +1714,17 @@ the band the alerter scores it with; the code is
 - Settings come from `alerter_settings.tier1_scoring`;
   `ParseScoringSettings` falls back to `DefaultScoringSettings()` with
   `scoring_source: "defaults"` for NULL, malformed JSON or a non-positive
-  `default_sensitivity`.
+  `default_sensitivity`, and `LoadScoringSettings` does the same for no
+  row or a 42703/42P01 error (server upgraded before the collector ran
+  migration 31).
+- Non-finite values never reach the response: `QueryComparisonSeries`
+  drops NaN/Inf samples and `QueryComparisonBaselines` skips rows whose
+  mean or stddev is non-finite (they also do not count towards
+  `baselines_as_of`). `TestLoadComparison_NonFinite` seeds them through
+  the load average, as the CPU query clamps NaN to 0-100.
+- `as_scored` marks a point `cold` only when some row applies to it and
+  none is warm; with no applicable row the point has no band and is not
+  cold, as with the explicit models.
 - The handler has a `loadComparisonFn` test hook, and returns a generic
   500 on load failure, never the database error.
 

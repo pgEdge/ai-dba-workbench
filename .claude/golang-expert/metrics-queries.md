@@ -1081,7 +1081,18 @@ so several affected probes on one connection raise one alert each.
 ## Alerter Metric Registry (alerter)
 
 `alerter/src/internal/database/metric_registry.go` maps each alert rule's
-metric name to the SQL that produces its value. A query error there is
+metric name to the SQL that produces its value. Since #348 every
+historical query lives in `pkg/anomaly/metrics.go` (`metricDefs`, read
+through `anomaly.Metric` and `anomaly.BaselineMetrics`) so the server can
+run the same statement; `withBaselineQueries` copies each one onto its
+registry entry's `historicalSQL` and `historicalScan` at package init, so
+never set those fields on an entry. Adding a baselined metric means a
+`metricDefs` entry plus the registry entry, and
+`TestRegistryMatchesSharedBaselineDefinitions` fails if either side is
+missing or the probe names differ. The registry entry's comment still
+explains both queries. `historicalScanType` and its constants are
+aliases of `anomaly.HistoricalScan`, whose `PerDatabase()` is the only
+source of a definition's `PerDatabase`. A query error there is
 swallowed by `evaluateRuleForAllConnections` in
 `alerter/src/internal/engine/thresholds.go`, which logs at debug level and
 moves on, so a broken metric looks exactly like an idle one. The rules
@@ -1272,9 +1283,11 @@ that follow from that, most learned the hard way in #406 and #407:
   mount, which is the right threshold semantics, but a squashfs image is
   by construction 100% used, so on any host with a snap installed the
   metric was pinned at 100% and the disk alert fired permanently (#428).
-  The `pseudoFilesystemExclusion` constant in `metric_registry.go` holds
-  the predicate and both the `latestSQL` and the `historicalSQL` embed
-  it, so the two cannot drift. It is
+  The `anomaly.PseudoFilesystemExclusion` constant in
+  `pkg/anomaly/metrics.go` (aliased as `pseudoFilesystemExclusion` in
+  `metric_registry.go`) holds the predicate and both the `latestSQL` and
+  the `historicalSQL` embed it, so the two cannot drift;
+  `anomaly.CPUBusyPercentExpr` is shared the same way. It is
   `COALESCE(file_system_type, '') NOT IN (...)` and the COALESCE is
   load-bearing: the column is nullable and a bare `NOT IN` against NULL
   yields NULL rather than true, which would drop every mount whose type

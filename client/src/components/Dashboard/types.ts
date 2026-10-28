@@ -128,6 +128,14 @@ export interface MetricsQueryResult {
 /** Baseline data from get_metric_baselines */
 export interface MetricBaseline {
     metric: string;
+    /** Null for a server-level metric. */
+    database_name: string | null;
+    /** 'all', 'hourly' or 'daily'. */
+    period_type: string;
+    /** 0-23 in UTC for an hourly baseline, else null. */
+    hour_of_day: number | null;
+    /** 0-6 (Sunday is 0) in UTC for a daily baseline, else null. */
+    day_of_week: number | null;
     mean: number;
     stddev: number;
     min: number;
@@ -135,6 +143,9 @@ export interface MetricBaseline {
     p50: number;
     p95: number;
     p99: number;
+    sample_count: number;
+    /** ISO timestamp of the oldest sample, or null when unknown. */
+    earliest_sample_at: string | null;
 }
 
 /** Sparkline props for embedding in tiles */

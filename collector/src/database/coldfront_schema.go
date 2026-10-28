@@ -12,6 +12,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -126,6 +127,107 @@ func createColdFrontTable(ctx context.Context, tx ddlExecer, spec coldfront.Tabl
 		return fmt.Errorf("coldfront.create_iceberg_table for metrics.%s: %w", spec.Name, err)
 	}
 	return nil
+}
+
+// metricsAlterTarget captures the metrics relation an ALTER TABLE
+// statement changes.
+var metricsAlterTarget = regexp.MustCompile(`(?is)^ALTER\s+TABLE\s+metrics\.(\w+)\s`)
+
+// metricsCommentsQuery reads the comment of a metrics relation and of
+// each of its columns, in attribute order.
+const metricsCommentsQuery = `
+    SELECT obj_description(c.oid, 'pg_class'),
+           COALESCE(array_agg(a.attname ORDER BY a.attnum)
+                    FILTER (WHERE d.description IS NOT NULL), '{}'),
+           COALESCE(array_agg(d.description ORDER BY a.attnum)
+                    FILTER (WHERE d.description IS NOT NULL), '{}')
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    LEFT JOIN pg_attribute a
+           ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+    LEFT JOIN pg_description d
+           ON d.objoid = c.oid AND d.classoid = 'pg_class'::regclass
+          AND d.objsubid = a.attnum
+    WHERE n.nspname = 'metrics' AND c.relname = $1
+    GROUP BY c.oid
+`
+
+// migrationTx is what execMetricsAlter needs from a migration
+// transaction.
+type migrationTx interface {
+	ddlExecer
+	rowQuerier
+}
+
+// execMetricsAlter runs a block of SQL that alters metrics relations,
+// as migrations 7, 10, 12 and 13 do with ALTER TABLE ... ADD COLUMN. In
+// the default mode the block runs exactly as written.
+//
+// Under ColdFront each statement runs on its own, and around each ALTER
+// TABLE of a metrics relation the relation's comments are read before
+// and written back after. ColdFront applies an ALTER TABLE to one of its
+// views by dropping the view and creating it again
+// (coldfront._rebuild_iceberg_view), which keeps the owner and grants
+// but loses the view comment and every column comment; on a live
+// datastore the five views these migrations alter were left without
+// their comments.
+func (sm *SchemaManager) execMetricsAlter(ctx context.Context, tx migrationTx, sql string) error {
+	if !sm.useColdFrontForMetrics {
+		_, err := tx.Exec(ctx, sql)
+		return err
+	}
+	for _, stmt := range splitSQLStatements(sql) {
+		m := metricsAlterTarget.FindStringSubmatch(stmt)
+		if m == nil {
+			if _, err := tx.Exec(ctx, stmt); err != nil {
+				return err
+			}
+			continue
+		}
+		restore, err := metricsCommentStatements(ctx, tx, m[1])
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			return err
+		}
+		for _, c := range restore {
+			if _, err := tx.Exec(ctx, c); err != nil {
+				return fmt.Errorf("failed to restore a comment on metrics.%s: %w", m[1], err)
+			}
+		}
+	}
+	return nil
+}
+
+// metricsCommentStatements returns the COMMENT statements that set the
+// metrics view's current comment and column comments again.
+func metricsCommentStatements(ctx context.Context, q rowQuerier, view string) ([]string, error) {
+	var (
+		viewComment *string
+		cols, texts []string
+	)
+	err := q.QueryRow(ctx, metricsCommentsQuery, view).Scan(&viewComment, &cols, &texts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the comments on metrics.%s: %w", view, err)
+	}
+
+	var stmts []string
+	if viewComment != nil {
+		stmts = append(stmts, fmt.Sprintf("COMMENT ON VIEW %s IS %s",
+			pgx.Identifier{"metrics", view}.Sanitize(), quoteSQLLiteral(*viewComment)))
+	}
+	for i := range cols {
+		if i >= len(texts) {
+			break
+		}
+		stmts = append(stmts, fmt.Sprintf("COMMENT ON COLUMN %s IS %s",
+			pgx.Identifier{"metrics", view, cols[i]}.Sanitize(), quoteSQLLiteral(texts[i])))
+	}
+	return stmts, nil
 }
 
 // addMetricsConstraint adds a constraint to a metrics table in the

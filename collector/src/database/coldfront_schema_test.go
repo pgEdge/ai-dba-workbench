@@ -42,6 +42,8 @@ type recordingTx struct {
 	migration int
 	stmts     []recordedStatement
 	execErr   func(sql string) error
+	// queryRow, when set, answers QueryRow instead of falseRow.
+	queryRow func(sql string) pgx.Row
 }
 
 func (r *recordingTx) record(sql string, args []any) {
@@ -60,6 +62,9 @@ func (r *recordingTx) Exec(_ context.Context, sql string, args ...any) (pgconn.C
 
 func (r *recordingTx) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	r.record(sql, args)
+	if r.queryRow != nil {
+		return r.queryRow(sql)
+	}
 	return falseRow{}
 }
 

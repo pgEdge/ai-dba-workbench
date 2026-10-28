@@ -49,7 +49,8 @@ type storageConn interface {
 // PrepareMetricsStorage readies the datastore for the configured metrics
 // storage mode before any migration runs: it runs CheckMetricsStorage
 // and, under ColdFront, then creates the Iceberg namespace with
-// EnsureColdFrontNamespace. In the default mode it only checks.
+// EnsureColdFrontNamespace and the insert helper with
+// EnsureColdFrontInsertHelper. In the default mode it only checks.
 func PrepareMetricsStorage(ctx context.Context, conn storageConn, useColdFront bool) error {
 	if err := CheckMetricsStorage(ctx, conn, useColdFront); err != nil {
 		return err
@@ -57,7 +58,10 @@ func PrepareMetricsStorage(ctx context.Context, conn storageConn, useColdFront b
 	if !useColdFront {
 		return nil
 	}
-	return EnsureColdFrontNamespace(ctx, conn)
+	if err := EnsureColdFrontNamespace(ctx, conn); err != nil {
+		return err
+	}
+	return EnsureColdFrontInsertHelper(ctx, conn)
 }
 
 // EnsureColdFrontNamespace creates the Iceberg namespace the metrics

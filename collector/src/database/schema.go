@@ -3137,7 +3137,7 @@ func (sm *SchemaManager) registerMigrations() {
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
 
-			_, err := tx.Exec(ctx, `
+			err := sm.execMetricsAlter(ctx, tx, `
 				ALTER TABLE metrics.pg_stat_all_tables
 					ADD COLUMN IF NOT EXISTS table_size BIGINT;
 
@@ -3253,7 +3253,7 @@ func (sm *SchemaManager) registerMigrations() {
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
 
-			_, err := tx.Exec(ctx, `
+			err := sm.execMetricsAlter(ctx, tx, `
 				ALTER TABLE metrics.pg_stat_statements
 					ADD COLUMN IF NOT EXISTS stats_reset TIMESTAMPTZ;
 
@@ -3334,7 +3334,7 @@ func (sm *SchemaManager) registerMigrations() {
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
 
-			_, err := tx.Exec(ctx, `
+			err := sm.execMetricsAlter(ctx, tx, `
 				ALTER TABLE metrics.pg_stat_activity
 					ADD COLUMN IF NOT EXISTS query_id BIGINT;
 
@@ -3373,7 +3373,7 @@ func (sm *SchemaManager) registerMigrations() {
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
 
-			_, err := tx.Exec(ctx, `
+			err := sm.execMetricsAlter(ctx, tx, `
 				ALTER TABLE metrics.pg_sys_memory_info
 					ADD COLUMN IF NOT EXISTS available_memory BIGINT;
 

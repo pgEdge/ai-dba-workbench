@@ -34,10 +34,10 @@ exactly the default ones; keep it that way.
 - `convert.go`: per-type value conversions for `StoreMetrics`. Only
   `inet` (pgx gives `netip.Prefix`; rendered as PostgreSQL's inet
   output, so a host has no `/32`) and `"char"` (pgx gives a `rune`)
-  need one. pgx encodes `uint32` (oid, xid) into `bigint`, `string`
-  (name) into `text` and `pgtype.Numeric` into `numeric(38,0)`
-  directly; `TestColdFrontMigrationsAgainstStub` proves this against
-  a real server.
+  need one. `uint32` (oid, xid), `string` (name) and `pgtype.Numeric`
+  marshal to JSON that the insert helper reads back exactly (see
+  "Writing Rows Under ColdFront"); `exerciseInsertHelper` proves this
+  against a real server.
 
 Two guards keep the specification and `schema.go` from drifting:
 `checkCreateTableMatchesSpec` parses each metrics `CREATE TABLE` under
@@ -74,13 +74,65 @@ Iceberg write in the same transaction), v4's metrics `DROP INDEX`, v6
 (embedding widening, SAVEPOINT), v15 (index), v24 entirely, and the
 row rewrites of v25 and v26 (their comments still run). The rewrites
 are safe to skip because a datastore cannot be switched to ColdFront,
-so its metrics tables were created empty in the same startup. v7, v10,
-v12 and v13 run unchanged: their `ALTER TABLE ... ADD COLUMN` relies on
-ColdFront intercepting that form on its views (a plain view rejects it
-with 42809), and their `COMMENT ON COLUMN` works on views. Later
-migrations only `COMMENT ON COLUMN` metrics relations; never add a
-`COMMENT ON TABLE`, `ALTER TABLE` of another form, `GRANT`, `TRUNCATE`
-or DML on a metrics relation without handling the ColdFront case.
+so its metrics tables were created empty in the same startup.
+
+v7, v10, v12 and v13 run their SQL through `sm.execMetricsAlter`. In
+the default mode that is the block verbatim. Under ColdFront each
+statement runs on its own, and around each `ALTER TABLE metrics.<v>`
+the view's comment and column comments are read (`metricsCommentsQuery`)
+and written back after the ALTER. ColdFront applies `ALTER TABLE ... ADD
+COLUMN` to one of its views by dropping and recreating the view
+(`coldfront._rebuild_iceberg_view`), which keeps owner and grants but
+loses every comment; live, the four commented views these migrations
+alter were left bare. (`pg_sys_memory_info`, `pg_sys_cpu_info` and
+`pg_sys_io_analysis_info` have no view comment in either mode.) A
+plain view rejects that ALTER with 42809, so the form itself relies on
+ColdFront's interception. Any new `ALTER TABLE` on a metrics relation
+must go through `execMetricsAlter`; never add `COMMENT ON TABLE`,
+`GRANT`, `TRUNCATE` or DML on a metrics relation without handling the
+ColdFront case.
+
+## Writing Rows Under ColdFront
+
+ColdFront rewrites a cold-tier INSERT with bound parameters into
+`format(<template>, $1, ...)` passed to `duckdb.raw_query`, so one
+statement can carry at most 99 parameters (never more than 1,024); a
+100-row batch of a wide probe failed every cycle live. Reading rows
+inside DuckDB (`jsonb_populate_recordset`, multi-array `unnest`) does
+not work either. So `StoreMetrics` under ColdFront
+(`probes.storeColdFrontMetrics`) marshals each batch to a JSON array of
+objects keyed by column (`coldFrontRowsJSON`) and calls
+`SELECT public.workbench_coldfront_insert($1, $2::jsonb)`.
+
+- The helper is created by `database.EnsureColdFrontInsertHelper` with
+  `CREATE OR REPLACE` at every ColdFront startup, after the namespace
+  step, not in a migration: it always matches the collector calling it,
+  and the default-mode schema and `schema_version` stay untouched.
+- It accepts only a relation registered in `coldfront.tiered_views`
+  with `schema_name = 'metrics'`, takes the column list and types from
+  `pg_attribute`/`format_type` in attnum order (never from the JSON
+  keys), types the values with `jsonb_populate_recordset(NULL::<view>,
+  ...)`, renders each with `quote_nullable(...) || '::<type>'` (one call
+  per column, so a wide table stays under the 100-argument limit), and
+  EXECUTEs one literal multi-row INSERT, which ColdFront turns into one
+  Iceberg commit. `SECURITY INVOKER`, `search_path = pg_catalog,
+  pg_temp`. It must not read the view: ColdFront refuses DuckDB reads
+  inside a function.
+- `jsonValue` makes the JSON faithful: `time.Time` as RFC 3339 with
+  nanoseconds, integers and `pgtype.Numeric` as exact JSON numbers
+  (jsonb keeps them exactly), `pgtype.Interval` as "N months N days N
+  microseconds", and a string or `[]byte` for a json/jsonb column
+  embedded as the document (`pg_node_role.role_details` is a string),
+  with invalid JSON an error. Every column must be in the spec, since
+  the helper would silently ignore an unknown key.
+- NaN and infinite floats cannot be JSON: they are stored as NULL, with
+  one log line per batch and column. Failing or dropping the row would
+  lose the rest of a sample for one undefined gauge.
+- `coldFrontBatchRows` is 5,000 (100 in the default mode): each
+  statement is one Iceberg commit, so a probe run should be one
+  statement, and 5,000 covers the largest normal run (pg_stat_statements
+  keeps 5,000 statements by default) while bounding the JSON and the
+  literal INSERT to a few megabytes.
 
 ## Startup and Runtime
 
@@ -130,7 +182,13 @@ view with the specification's columns and comments, and shows a second
 run is a no-op. Removing either the namespace step or the `COMMENT ON
 VIEW` rewrite makes it fail with the live error. `coldFrontAlterTx`
 replaces only the five v7/v10/v12/v13 `ADD COLUMN` statements with the
-stub's emulation, because no stub can intercept DDL on a view the way
-ColdFront does; the test also asserts a plain view rejects that
-statement. None of this verifies ColdFront's own behaviour (its
+stub's emulation, which drops and recreates the view as ColdFront does
+(so lost comments show up), because no stub can intercept DDL on a
+view; the test also asserts a plain view rejects that statement. The
+stub registers each view in `coldfront.tiered_views`, and
+`exerciseInsertHelper` (`database/coldfront_insert_test.go`) writes
+every column type of every table through `StoreMetrics` and the helper,
+with a NULL row, awkward quoting, a NaN and refused relations.
+`TestColdFrontAltersRestoreComments` asserts the restore statements
+without a database. None of this verifies ColdFront's own behaviour (its
 `ALTER TABLE` interception, insert rewriting, Iceberg partitioning).

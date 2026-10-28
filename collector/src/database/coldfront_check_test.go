@@ -238,8 +238,8 @@ func TestPrepareMetricsStorage(t *testing.T) {
 	if err := PrepareMetricsStorage(ctx, c, true); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.execs) != 2 {
-		t.Errorf("ColdFront mode issued %q, want the two namespace statements", c.execs)
+	if len(c.execs) != 3 {
+		t.Errorf("ColdFront mode issued %q, want the two namespace statements and the insert helper", c.execs)
 	}
 
 	// A failed check stops before the namespace is created.

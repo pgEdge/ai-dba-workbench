@@ -74,15 +74,10 @@ func StoreMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, col
 		return nil // Nothing to store
 	}
 
-	// ColdFront declares some columns with a wider type than the
-	// PostgreSQL schema (inet as text, for one), so values pgx would
-	// encode only into the original type are converted first.
+	// ColdFront caps a cold-tier INSERT at 99 bound parameters, so its
+	// rows are written through the datastore's insert helper instead.
 	if ColdFrontMetricsEnabled() {
-		converted, err := convertForColdFront(tableName, columns, values)
-		if err != nil {
-			return err
-		}
-		values = converted
+		return storeColdFrontMetrics(ctx, conn, tableName, columns, values)
 	}
 
 	fullTableName := pgx.Identifier{"metrics", tableName}.Sanitize()

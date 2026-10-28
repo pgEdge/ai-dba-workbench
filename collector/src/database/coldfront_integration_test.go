@@ -128,7 +128,11 @@ func TestColdFrontSpecMatchesMigratedSchema(t *testing.T) {
 //     that StoreMetrics can insert through it as it does through
 //     ColdFront's insert hook.
 //   - It rejects the types ColdFront rejects and any partition spec but
-//     day(collected_at), and records each call.
+//     day(collected_at), and records each call and registers the view in
+//     coldfront.tiered_views, which the insert helper requires.
+//   - Its ADD COLUMN emulation drops and recreates the view, as
+//     coldfront._rebuild_iceberg_view does, so the view and column
+//     comments are lost as they are live and must be restored.
 //
 // ensure_attached and _partition_clause are no-ops that exist so the
 // startup check finds them.
@@ -145,6 +149,7 @@ const coldFrontStub = `
     $f$;
 
     CREATE SCHEMA coldfront;
+    CREATE TABLE coldfront.tiered_views (schema_name text, relname text);
     CREATE FUNCTION coldfront.ensure_attached() RETURNS void
     LANGUAGE plpgsql AS $f$ BEGIN NULL; END $f$;
     CREATE FUNCTION coldfront._partition_clause(p_columns jsonb, p_partition_cols text[])
@@ -180,6 +185,7 @@ const coldFrontStub = `
         END LOOP;
         INSERT INTO coldfront_stub.calls
             VALUES (p_schema, p_table, p_columns, p_partition_cols);
+        INSERT INTO coldfront.tiered_views VALUES (p_schema, p_table);
         EXECUTE format('CREATE TABLE coldfront_stub.%I (%s)', p_table, cols);
         EXECUTE format('CREATE VIEW %I.%I AS SELECT * FROM coldfront_stub.%I',
                        p_schema, p_table, p_table);
@@ -193,7 +199,8 @@ const coldFrontStub = `
     BEGIN
         EXECUTE format('ALTER TABLE coldfront_stub.%I ADD COLUMN %I %s',
                        p_table, p_column, p_type);
-        EXECUTE format('CREATE OR REPLACE VIEW metrics.%I AS SELECT * FROM coldfront_stub.%I',
+        EXECUTE format('DROP VIEW metrics.%I', p_table);
+        EXECUTE format('CREATE VIEW metrics.%I AS SELECT * FROM coldfront_stub.%I',
                        p_table, p_table);
     END
     $f$;
@@ -422,6 +429,7 @@ func TestColdFrontMigrationsAgainstStub(t *testing.T) {
 		t.Errorf("second run changed create calls %d -> %d and versions %d -> %d", calls, calls2, versions, versions2)
 	}
 
+	exerciseInsertHelper(t, conn)
 	storeConvertedValues(t, conn)
 }
 
@@ -477,11 +485,11 @@ func storeConvertedValues(t *testing.T, conn *pgxpool.Conn) {
 	if err := conn.QueryRow(ctx, `
         SELECT (SELECT client_addr FROM metrics.pg_stat_activity WHERE pid = 10),
                (SELECT client_addr FROM metrics.pg_stat_activity WHERE pid = 11),
-               (SELECT datlocprovider FROM metrics.pg_database),
-               (SELECT datfrozenxid::text FROM metrics.pg_database),
-               (SELECT datdba::text FROM metrics.pg_database),
-               (SELECT node_name FROM metrics.spock_resolutions),
-               (SELECT wal_bytes::text FROM metrics.pg_stat_wal)
+               (SELECT datlocprovider FROM metrics.pg_database WHERE connection_id = 1),
+               (SELECT datfrozenxid::text FROM metrics.pg_database WHERE connection_id = 1),
+               (SELECT datdba::text FROM metrics.pg_database WHERE connection_id = 1),
+               (SELECT node_name FROM metrics.spock_resolutions WHERE connection_id = 1),
+               (SELECT wal_bytes::text FROM metrics.pg_stat_wal WHERE connection_id = 1)
     `).Scan(&got[0], &got[1], &got[2], &got[3], &got[4], &got[5], &got[6]); err != nil {
 		t.Fatal(err)
 	}

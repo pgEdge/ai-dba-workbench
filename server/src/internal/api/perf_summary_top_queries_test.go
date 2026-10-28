@@ -339,21 +339,21 @@ func TestTopQueries_DefaultsAndTotalCount(t *testing.T) {
 // handler's statement timeout takes effect inside the read-only
 // transaction it uses and matches the Go deadline, and that setting it
 // does not leak to the pooled session once the transaction ends. The
-// pool is capped at one connection so that the session readings before
-// and after the handler come from the backend the transaction ran on.
+// pool is capped at one connection so that the session value set before
+// the handler and read after it belong to the backend the transaction
+// ran on.
 func TestTopQueries_StatementTimeoutIsTransactionLocal(t *testing.T) {
 	h, pool, cleanup := newTopQueriesTestHandlerWithMaxConns(t, 1)
 	defer cleanup()
 	seedTopQueriesFixture(t, pool)
 
 	ctx := context.Background()
-	var before string
-	if err := pool.QueryRow(ctx, `SHOW statement_timeout`).Scan(&before); err != nil {
-		t.Fatalf("Failed to read session statement_timeout: %v", err)
-	}
-	if before == "30s" {
-		t.Fatalf("session statement_timeout is already %q before the handler, "+
-			"so a leak could not be detected", before)
+	// Pin the session default to a value distinct from the handler's, so
+	// a leak is detectable whatever the pool's configured default is.
+	const sessionTimeout = "17s"
+	if _, err := pool.Exec(ctx,
+		`SELECT set_config('statement_timeout', $1, false)`, sessionTimeout); err != nil {
+		t.Fatalf("Failed to set session statement_timeout: %v", err)
 	}
 
 	var inTx string
@@ -376,9 +376,9 @@ func TestTopQueries_StatementTimeoutIsTransactionLocal(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SHOW statement_timeout`).Scan(&after); err != nil {
 		t.Fatalf("Failed to read session statement_timeout: %v", err)
 	}
-	if after != before {
+	if after != sessionTimeout {
 		t.Errorf("session statement_timeout = %q after the handler, want %q",
-			after, before)
+			after, sessionTimeout)
 	}
 }
 

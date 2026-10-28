@@ -10967,19 +10967,25 @@
         "properties": {
           "ack_message": {
             "type": "string",
-            "description": "Acknowledgement message",
-            "nullable": true
+            "description": "Acknowledgement message"
           },
           "acknowledged_at": {
             "type": "string",
             "format": "date-time",
-            "description": "When the alert was acknowledged",
-            "nullable": true
+            "description": "When the alert was acknowledged"
           },
           "acknowledged_by": {
             "type": "string",
-            "description": "Who acknowledged the alert",
-            "nullable": true
+            "description": "Who acknowledged the alert"
+          },
+          "ai_analysis": {
+            "type": "string",
+            "description": "Cached AI analysis report, with any password masked"
+          },
+          "ai_analysis_metric_value": {
+            "type": "number",
+            "format": "double",
+            "description": "Metric value the cached AI analysis was produced for"
           },
           "alert_type": {
             "type": "string",
@@ -10991,25 +10997,40 @@
               "system"
             ]
           },
+          "anomaly_details": {
+            "type": "string",
+            "description": "JSON-encoded detail of how an anomaly alert was scored"
+          },
+          "anomaly_score": {
+            "type": "number",
+            "format": "double",
+            "description": "Anomaly score of an anomaly alert"
+          },
           "cleared_at": {
             "type": "string",
             "format": "date-time",
-            "description": "When the alert was cleared",
-            "nullable": true
+            "description": "When the alert was cleared"
           },
           "connection_id": {
             "type": "integer",
             "description": "Associated connection ID; null for a system alert",
             "nullable": true
           },
+          "correlation_id": {
+            "type": "string",
+            "description": "Correlation identifier set by the alerter"
+          },
+          "database_name": {
+            "type": "string",
+            "description": "Database the alert concerns"
+          },
+          "description": {
+            "type": "string",
+            "description": "Alert description, with any password masked"
+          },
           "false_positive": {
             "type": "boolean",
-            "description": "Whether marked as false positive"
-          },
-          "fired_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "When the alert fired"
+            "description": "Whether the acknowledgement marked the alert a false positive"
           },
           "id": {
             "type": "integer",
@@ -11019,26 +11040,41 @@
           "last_updated": {
             "type": "string",
             "format": "date-time",
-            "description": "When the alert state was last updated by the alerter (severity changes, metric value updates, reactivation)",
-            "nullable": true
-          },
-          "message": {
-            "type": "string",
-            "description": "Alert message"
+            "description": "When the alert state was last updated by the alerter (severity changes, metric value updates, reactivation)"
           },
           "metric_name": {
             "type": "string",
-            "description": "Metric that triggered the alert",
-            "nullable": true
+            "description": "Metric that triggered the alert"
+          },
+          "metric_unit": {
+            "type": "string",
+            "description": "Unit of the metric value, taken from the alert rule"
           },
           "metric_value": {
             "type": "number",
-            "description": "Metric value when alert was triggered",
-            "nullable": true
+            "format": "double",
+            "description": "Metric value when the alert was triggered or last updated"
+          },
+          "object_name": {
+            "type": "string",
+            "description": "Database object the alert concerns"
+          },
+          "operator": {
+            "type": "string",
+            "description": "Comparison operator applied to the threshold"
+          },
+          "probe_name": {
+            "type": "string",
+            "description": "Probe whose data raised the alert"
+          },
+          "rule_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Alert rule that raised the alert"
           },
           "server_name": {
             "type": "string",
-            "description": "Server name; empty for a system alert"
+            "description": "Server name; absent for a system alert"
           },
           "severity": {
             "type": "string",
@@ -11060,14 +11096,29 @@
           },
           "threshold_value": {
             "type": "number",
-            "description": "Threshold that was exceeded",
-            "nullable": true
+            "format": "double",
+            "description": "Threshold that was exceeded"
           },
           "title": {
             "type": "string",
             "description": "Alert title"
+          },
+          "triggered_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the alert was triggered"
           }
-        }
+        },
+        "required": [
+          "id",
+          "alert_type",
+          "connection_id",
+          "severity",
+          "title",
+          "description",
+          "status",
+          "triggered_at"
+        ]
       },
       "AlertCountsResult": {
         "type": "object",

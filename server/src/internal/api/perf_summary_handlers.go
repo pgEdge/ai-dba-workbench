@@ -2615,15 +2615,6 @@ func (h *PerfSummaryHandler) handleQueryStats(
 	// is the name the top-queries list reports for the statement.
 	databaseName := ParseQueryString(r, "database_name")
 
-	// Parse optional query_text filter, bound as a parameter like
-	// database_name; buildTopQueriesSQL describes how it matches. It is
-	// used exactly as given, untrimmed, and an empty value applies no
-	// filter.
-	queryText := ParseQueryString(r, "query_text")
-	if !validateTopQueryText(w, queryText) {
-		return // error already sent
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 

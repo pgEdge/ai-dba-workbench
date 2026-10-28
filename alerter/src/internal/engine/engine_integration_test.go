@@ -62,6 +62,7 @@ CREATE TABLE alerter_settings (
     default_anomaly_sensitivity REAL NOT NULL DEFAULT 3.0,
     baseline_refresh_interval_mins INTEGER NOT NULL DEFAULT 60,
     correlation_window_seconds INTEGER NOT NULL DEFAULT 300,
+    tier1_scoring JSONB,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

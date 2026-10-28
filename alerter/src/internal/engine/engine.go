@@ -26,6 +26,7 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/alerter/internal/llm"
 	"github.com/pgedge/ai-workbench/alerter/internal/notifications"
+	"github.com/pgedge/ai-workbench/pkg/anomaly"
 	"github.com/pgedge/ai-workbench/pkg/worker"
 )
 
@@ -123,6 +124,10 @@ type Engine struct {
 	// completed pass. See anomaly_recovery.go (issue #611).
 	anomalyStreakMu sync.Mutex
 	anomalyStreaks  map[int64]anomalyStreak
+
+	// publishScoring, when set, replaces the datastore as the place the
+	// effective Tier 1 scoring settings are published; tests use it.
+	publishScoring func(context.Context, anomaly.ScoringSettings) error
 
 	// Synchronization
 	mu sync.RWMutex
@@ -243,8 +248,12 @@ func (e *Engine) tier3Available(cfg *config.Config) bool {
 
 // Run starts the engine and runs until the context is canceled
 func (e *Engine) Run(ctx context.Context) error {
+	e.mu.Lock()
 	e.ctx = ctx
+	e.mu.Unlock()
 	e.log("Engine starting...")
+
+	e.publishScoringSettings(ctx, e.getConfig())
 
 	// Start all background workers
 	var wg sync.WaitGroup
@@ -353,7 +362,6 @@ func (e *Engine) Run(ctx context.Context) error {
 // ReloadConfig updates the engine configuration
 func (e *Engine) ReloadConfig(cfg *config.Config) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	// Apply the startup rule in initLLMProviders to the new config, so a
 	// reload that leaves no usable tier after Tier 1 disables anomaly
@@ -369,7 +377,45 @@ func (e *Engine) ReloadConfig(cfg *config.Config) {
 	}
 
 	e.config = cfg
+	e.mu.Unlock()
 	e.log("Configuration reloaded")
+
+	// Publish outside the lock: it is a database write, and readers of
+	// the configuration must not wait for it.
+	e.mu.RLock()
+	ctx := e.ctx
+	e.mu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	e.publishScoringSettings(ctx, cfg)
+}
+
+// scoringPublishTimeout bounds one publication of the scoring settings,
+// so a slow datastore cannot stall start-up or a configuration reload.
+const scoringPublishTimeout = 10 * time.Second
+
+// publishScoringSettings writes the effective Tier 1 scoring settings of
+// cfg to alerter_settings, where the server reads them to score the
+// anomaly comparison view the same way (issue #348). A failure is logged
+// and otherwise ignored: the server falls back to the last published
+// settings, or to the defaults when there are none.
+func (e *Engine) publishScoringSettings(ctx context.Context, cfg *config.Config) {
+	publish := e.publishScoring
+	if publish == nil {
+		if e.datastore == nil {
+			return
+		}
+		publish = e.datastore.PublishScoringSettings
+	}
+	if cfg == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, scoringPublishTimeout)
+	defer cancel()
+	if err := publish(ctx, cfg.Anomaly.Tier1.ScoringSettings()); err != nil {
+		e.log("WARNING: failed to publish Tier 1 scoring settings: %v", err)
+	}
 }
 
 // unknownMetricFloorNames returns, sorted, the anomaly.tier1.metric_floors

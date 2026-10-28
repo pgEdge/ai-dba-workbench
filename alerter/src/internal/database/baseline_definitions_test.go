@@ -67,3 +67,35 @@ func TestSharedSQLFragments(t *testing.T) {
 		t.Error("pseudoFilesystemExclusion differs from anomaly.PseudoFilesystemExclusion")
 	}
 }
+
+// TestWithBaselineQueries checks that withBaselineQueries copies the
+// shared query onto a baselined metric's entry, leaves an entry without
+// a shared definition unbaselined, and skips a shared definition that
+// has no entry rather than adding one.
+func TestWithBaselineQueries(t *testing.T) {
+	defs := anomaly.BaselineMetrics()
+	if len(defs) < 2 {
+		t.Fatalf("pkg/anomaly defines %d baselined metrics, want at least 2", len(defs))
+	}
+	kept, missing := defs[0], defs[1]
+	const plain = "test.not_baselined"
+
+	got := withBaselineQueries(map[string]metricQueryConfig{
+		kept.Name: {probeName: kept.ProbeName},
+		plain:     {probeName: "test"},
+	})
+
+	if len(got) != 2 {
+		t.Errorf("registry has %d entries, want 2", len(got))
+	}
+	if cfg := got[kept.Name]; cfg.historicalSQL != kept.HistoricalSQL ||
+		cfg.historicalScan != kept.HistoricalScan || cfg.probeName != kept.ProbeName {
+		t.Errorf("%s = %+v, want the shared query copied in", kept.Name, cfg)
+	}
+	if cfg := got[plain]; cfg.historicalSQL != "" {
+		t.Errorf("%s gained a historical query: %q", plain, cfg.historicalSQL)
+	}
+	if _, ok := got[missing.Name]; ok {
+		t.Errorf("%s was added, want a definition without an entry skipped", missing.Name)
+	}
+}

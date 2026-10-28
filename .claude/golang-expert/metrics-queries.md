@@ -1087,9 +1087,12 @@ through `anomaly.Metric` and `anomaly.BaselineMetrics`) so the server can
 run the same statement; `withBaselineQueries` copies each one onto its
 registry entry's `historicalSQL` and `historicalScan` at package init, so
 never set those fields on an entry. Adding a baselined metric means a
-`metricDefs` entry plus the registry entry, and
-`TestRegistryMatchesSharedBaselineDefinitions` fails if either side is
-missing or the probe names differ. The registry entry's comment still
+`metricDefs` entry plus the registry entry.
+`TestRegistryMatchesSharedBaselineDefinitions` fails when a `metricDefs`
+entry has no registry entry (the baselined lists differ in length), or
+when a baselined metric's SQL, scan kind or probe name differs; a
+registry entry with no `metricDefs` entry is simply not baselined, and
+is allowed (several exist). The registry entry's comment still
 explains both queries. `historicalScanType` and its constants are
 aliases of `anomaly.HistoricalScan`, whose `PerDatabase()` is the only
 source of a definition's `PerDatabase`. A query error there is

@@ -184,6 +184,31 @@ export const NO_MCP_RESTRICTION_TEXT =
 export const NO_ADMIN_RESTRICTION_TEXT =
     'No restriction: the token may use every admin permission its owner holds';
 
+/**
+ * Shown in place of token creation to a user who signs in through an
+ * identity provider while the installation keeps API tokens off for
+ * federated logins (issue #742). The server refuses such a token with a
+ * 403 carrying the same sentence.
+ */
+export const FEDERATED_TOKENS_DISABLED_TEXT =
+    'API tokens are disabled for federated logins in this installation. ' +
+    'Contact your system administrator.';
+
+/**
+ * Added beneath FEDERATED_TOKENS_DISABLED_TEXT when the user already owns
+ * tokens, since the server refuses those when they are used.
+ */
+export const FEDERATED_OWN_TOKENS_REFUSED_TEXT =
+    'Tokens you already own are refused when used.';
+
+/**
+ * Helper text for the owner field when a superuser cannot own a token
+ * themselves, so is missing from the owner list.
+ */
+export const FEDERATED_OWNER_EXCLUDED_TEXT =
+    'You are not listed, as API tokens are disabled for federated logins ' +
+    'in this installation';
+
 // ---------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------

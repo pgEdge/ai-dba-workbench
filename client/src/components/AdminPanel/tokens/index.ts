@@ -42,6 +42,9 @@ export {
     filterAdminPermissions,
     narrowScopeChoices,
     narrowOnlyLiftError,
+    FEDERATED_TOKENS_DISABLED_TEXT,
+    FEDERATED_OWN_TOKENS_REFUSED_TEXT,
+    FEDERATED_OWNER_EXCLUDED_TEXT,
 } from './tokenTypes';
 
 // Components

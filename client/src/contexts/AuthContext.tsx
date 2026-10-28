@@ -29,6 +29,14 @@ export interface User {
     username: string;
     isSuperuser?: boolean;
     expiresAt?: string;
+    /**
+     * Whether the account may own API tokens. False for an account that
+     * signs in through an identity provider while the installation keeps
+     * API tokens off for federated logins (issue #742); it says nothing
+     * about whether the user may manage tokens, which adminPermissions
+     * answers. Left undefined when unknown, which counts as allowed.
+     */
+    apiTokensAllowed?: boolean;
 }
 
 export interface AuthContextValue {
@@ -51,6 +59,8 @@ interface UserInfoResponse {
     username: string;
     is_superuser?: boolean;
     admin_permissions?: string[];
+    // Absent from servers that predate issue #742, which allow tokens.
+    api_tokens_allowed?: boolean;
 }
 
 interface LoginResponse {
@@ -95,7 +105,8 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
                 setUser({
                     authenticated: true,
                     username: userInfo.username,
-                    isSuperuser: userInfo.is_superuser ?? false
+                    isSuperuser: userInfo.is_superuser ?? false,
+                    apiTokensAllowed: userInfo.api_tokens_allowed ?? true
                 });
                 setAdminPermissions(userInfo.admin_permissions ?? []);
             } else {
@@ -131,6 +142,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
                     authenticated: true,
                     username: userInfo.username,
                     isSuperuser: userInfo.is_superuser ?? false,
+                    apiTokensAllowed: userInfo.api_tokens_allowed ?? true,
                     expiresAt: result.expires_at
                 });
                 setAdminPermissions(userInfo.admin_permissions ?? []);

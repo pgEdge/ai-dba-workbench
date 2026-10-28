@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/conversations"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/memory"
 	"github.com/pgedge/ai-workbench/server/internal/oidc"
 	"github.com/pgedge/ai-workbench/server/internal/overview"
@@ -99,6 +101,16 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// Helper to wrap handlers with authentication
 		authWrapper := createAuthWrapper(deps.AuthStore, deps.IPExtractor)
 
+		// Whether federated accounts may own API tokens follows a
+		// reload, and applies whether or not federated login is enabled,
+		// since accounts linked to a provider stay federated.
+		if deps.AuthStore != nil {
+			deps.AuthStore.SetFederatedAPITokenPolicy(func() bool {
+				cfg := deps.liveConfig()
+				return cfg != nil && cfg.HTTP.Auth.OIDC.APITokensAllowed()
+			})
+		}
+
 		// NOTE: These endpoints are intentionally unauthenticated to allow
 		// API tooling (e.g. RESTish) to discover the API schema without
 		// requiring credentials.
@@ -157,6 +169,11 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			oidcHandler.SetConfigSource(func() config.OIDCConfig {
 				return deps.liveConfig().HTTP.Auth.OIDC
 			})
+			// Expired federated sessions are offered to the handler to
+			// refresh with the identity provider.
+			if deps.AuthStore != nil {
+				deps.AuthStore.SetFederatedSessionRefresher(oidcHandler)
+			}
 			// NewOIDCHandler owns a rate limiter whose cleanup goroutine
 			// only Close stops; hand that back to the server.
 			if deps.RegisterCloser != nil {
@@ -435,14 +452,42 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 		// page the server then refuses.
 		isSuperuser := auth.NewRBACChecker(authStore).IsSuperuser(ctx)
 
-		// Return user info as JSON
-		api.RespondJSON(w, http.StatusOK, map[string]any{
+		info := map[string]any{
 			"authenticated":     true,
 			"username":          username,
 			"is_superuser":      isSuperuser,
 			"admin_permissions": adminPermissions,
-		})
+		}
+		addAPITokensAllowed(info, authStore.UserMayOwnAPITokens, username)
+
+		// Return user info as JSON
+		api.RespondJSON(w, http.StatusOK, info)
 	}
+}
+
+// addAPITokensAllowed sets api_tokens_allowed in a user/info response:
+// whether the account may own API tokens, which is false for an account
+// that signs in through an identity provider while
+// http.auth.oidc.allow_api_tokens is off (issue #742), so that the
+// client can say why rather than offer a form the server refuses. It
+// says nothing about whether the caller may manage tokens, which
+// admin_permissions answers.
+//
+// When the account cannot be read the field is left out rather than
+// reported false, since false would tell the client the account is a
+// federated one and have it show a local user the federated message.
+// The server still refuses a token the account may not own.
+func addAPITokensAllowed(info map[string]any,
+	mayOwn func(username string) (bool, error), username string) {
+
+	allowed, err := mayOwn(username)
+	if err != nil {
+		//nolint:gosec // G706: both values passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Could not tell whether user %s may own API tokens: %s",
+			logging.SanitizeForLog(username), logging.SanitizeForLog(err.Error()))
+		return
+	}
+	info["api_tokens_allowed"] = allowed
 }
 
 // handleOpenAPISpec serves the OpenAPI specification

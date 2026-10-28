@@ -211,3 +211,32 @@ func TestCallbackRefusesALoginWhenOIDCIsSwitchedOffDuringTheExchange(t *testing.
 		t.Fatal("an account was provisioned after federated login was switched off")
 	}
 }
+
+// auth_params is read on every login start (issue #742), so a reload
+// that adds Google's access_type=offline reaches the very next
+// authorization URL without a restart.
+func TestReloadAppliesAuthParamsToTheNextLogin(t *testing.T) {
+	env := newTestOIDCEnv(t)
+	start := func() url.Values {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		env.handler.handleStart(rec, httptest.NewRequest(http.MethodGet, OIDCStartPath, nil))
+		authURL, err := url.Parse(rec.Header().Get("Location"))
+		if err != nil {
+			t.Fatalf("parsing the Location header: %v", err)
+		}
+		return authURL.Query()
+	}
+
+	if query := start(); query.Has("access_type") {
+		t.Fatalf("access_type = %q before any was configured", query.Get("access_type"))
+	}
+
+	env.reloadTo(func(cfg *config.OIDCConfig) {
+		cfg.AuthParams = map[string]string{"access_type": "offline", "prompt": "consent"}
+	})
+	query := start()
+	if query.Get("access_type") != "offline" || query.Get("prompt") != "consent" {
+		t.Fatalf("query = %v, want access_type=offline and prompt=consent", query)
+	}
+}

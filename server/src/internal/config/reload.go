@@ -205,10 +205,11 @@ func (rc *ReloadableConfig) checkALoginMethodSurvives(newConfig *Config) error {
 // against the start-up configuration, which the provider was built from,
 // so the warning persists across reloads until a restart. The policy
 // settings (provision_users, allowed_email_domains, superuser_group,
-// group_map, button_label and switching federated login off) are read
-// on every request by the federated login handler and the capabilities
-// endpoint, through the accessor the server wires to Get, so a reload
-// applies them at once and each gets a note saying so.
+// group_map, button_label, allow_api_tokens and switching federated
+// login off) are read on every request by the federated login handler,
+// the capabilities endpoint and the auth store's token checks, through
+// the accessor the server wires to Get, so a reload applies them at
+// once and each gets a note saying so.
 func (rc *ReloadableConfig) logOIDCChanges(newConfig *Config) {
 	old := rc.config.HTTP.Auth.OIDC
 	cur := newConfig.HTTP.Auth.OIDC
@@ -281,7 +282,9 @@ func oidcPolicySettings(old, cur OIDCConfig) []oidcSettingChange {
 		{"allowed_email_domains", !reflect.DeepEqual(old.AllowedEmailDomains, cur.AllowedEmailDomains)},
 		{"superuser_group", old.SuperuserGroup != cur.SuperuserGroup},
 		{"group_map", !reflect.DeepEqual(old.GroupMap, cur.GroupMap)},
+		{"auth_params", !reflect.DeepEqual(old.AuthParams, cur.AuthParams)},
 		{"button_label", old.ButtonLabel != cur.ButtonLabel},
+		{"allow_api_tokens", old.APITokensAllowed() != cur.APITokensAllowed()},
 	}
 }
 
@@ -312,6 +315,11 @@ func oidcAccessWarnings(old, cur OIDCConfig) []string {
 	if !old.ProvisionUsersEnabled() && cur.ProvisionUsersEnabled() {
 		warnings = append(warnings, "provision_users switched on: any identity "+
 			"the provider vouches for may now create an account")
+	}
+	if !old.APITokensAllowed() && cur.APITokensAllowed() {
+		warnings = append(warnings, "allow_api_tokens switched on: API tokens "+
+			"owned by federated users are now accepted, and keep working after "+
+			"the identity provider removes the user, until they expire or are revoked")
 	}
 	if len(old.AllowedEmailDomains) > 0 && len(cur.AllowedEmailDomains) == 0 {
 		warnings = append(warnings, "allowed_email_domains emptied: identities "+

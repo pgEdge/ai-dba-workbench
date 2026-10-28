@@ -430,6 +430,13 @@ func (h *RBACHandler) respondTokenWriteError(w http.ResponseWriter,
 		RespondError(w, http.StatusConflict, refuseTokenScopeChanged)
 		return
 	}
+	// The owner signs in through an identity provider and
+	// http.auth.oidc.allow_api_tokens is off (issue #742).
+	if errors.Is(err, auth.ErrFederatedAPITokensDisabled) {
+		h.recordDenial(r, auth.FederatedAPITokenRefusalReason)
+		RespondError(w, http.StatusForbidden, auth.FederatedAPITokenRefusalReason)
+		return
+	}
 	log.Printf("[ERROR] %s: %v", logContext, err)
 	RespondError(w, http.StatusInternalServerError, failure)
 }

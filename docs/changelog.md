@@ -220,10 +220,11 @@ project adheres to
   spells out the command, and links the pre-created account.
   Moving an account that is already linked requires the
   `-relink` flag, and a service account cannot be linked at
-  all. Linking leaves the account's existing API tokens
-  working at full privilege, so an operator tightening an
-  account's authentication has to remove them with
-  `-remove-token` themselves. Unlinking returns the account to
+  all. Where `http.auth.oidc.allow_api_tokens` is on, linking
+  leaves the account's existing API tokens working at full
+  privilege, so an operator tightening an account's
+  authentication has to remove them with `-remove-token`
+  themselves. Unlinking returns the account to
   local authentication, replaces its password hash with an
   unusable one and revokes its API tokens, so the account is
   reachable by nothing until a password is set with
@@ -241,6 +242,37 @@ project adheres to
   from the next federated login onward,
   which is why the local break-glass administrator should not
   be linked. (#261)
+
+- End a federated session when the identity provider stops
+  vouching for the user. A federated login now requests the
+  `offline_access` scope, unless the provider's discovery
+  document lists its supported scopes without it, and the
+  session expires with its ID token rather than after 24
+  hours; the first request after that redeems the provider's
+  refresh token, which is held in the server's memory only,
+  and the session ends if the provider refuses, or in any case
+  24 hours after the login. A successful refresh reconciles the
+  account's mapped groups and superuser flag from the new ID
+  token when that token carries the groups claim, and leaves
+  them unchanged when it does not. The new
+  `http.auth.oidc.auth_params` option appends extra parameters
+  to the authorisation request, such as the
+  `access_type: offline` Google needs before it issues a
+  refresh token, and refuses any the Workbench sets itself.
+  The new `http.auth.oidc.allow_api_tokens` option,
+  `false` by default and applied on reload, decides whether an
+  account that signs in through the provider may own API
+  tokens: whilst it is off, creating one is refused with `403`
+  on every route and audited, existing tokens such an account
+  owns are refused on use and audited as `token.use`, and
+  `GET /api/v1/user/info` reports the new `api_tokens_allowed`
+  field as `false`. The console's Tokens page then offers such a
+  user no `Create Token` button and explains why, and a
+  superuser in that position can still create tokens for other
+  users. Switching it on lets a federated user's
+  tokens outlive their removal at the provider until each one
+  expires or is revoked; use a local service account for
+  automation instead. (#742)
 
 - Add a `-group-description` CLI flag that sets a group's
   description when creating it with `-add-group`, matching the

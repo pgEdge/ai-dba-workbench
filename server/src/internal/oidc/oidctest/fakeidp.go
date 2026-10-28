@@ -88,6 +88,47 @@ type FakeIDP struct {
 	nextIDToken string
 	omitIDToken bool
 	lastForm    url.Values
+
+	// issuedRefreshToken is what a code exchange returns as its
+	// refresh_token, and is empty when the exchange should return none.
+	issuedRefreshToken string
+
+	// validRefreshToken is the one refresh token the provider will
+	// currently redeem. A rotation replaces it and a revocation empties
+	// it, so that presenting an old one is refused as reuse is by a
+	// real provider.
+	validRefreshToken string
+
+	// refresh is the response every successful refresh grant gives, and
+	// refreshCount counts refresh grant requests, successful or not.
+	refresh      RefreshResponse
+	refreshCount int
+
+	// scopesSupported is published as scopes_supported in the discovery
+	// document, which leaves the field out when it is nil.
+	scopesSupported []string
+}
+
+// RefreshResponse is what the fake provider answers a refresh grant
+// with.
+type RefreshResponse struct {
+	// IDToken is returned as id_token, and is omitted when empty, as a
+	// provider is entitled to do on a refresh.
+	IDToken string
+
+	// RotatedRefreshToken, when set, is returned as the new
+	// refresh_token and becomes the only one the provider will redeem.
+	// When empty the response carries no refresh_token and the redeemed
+	// one stays valid.
+	RotatedRefreshToken string
+
+	// ExpiresIn is the access token's lifetime in seconds. Zero means an
+	// hour; a negative value omits expires_in altogether.
+	ExpiresIn int
+
+	// Delay holds the response back, so that a test can make concurrent
+	// requests overlap a refresh in flight.
+	Delay time.Duration
 }
 
 // NewFakeIDP starts a fake identity provider and registers its shutdown
@@ -121,6 +162,15 @@ func (f *FakeIDP) Issuer() string {
 	return f.server.URL
 }
 
+// SetScopesSupported sets the scopes_supported list the discovery
+// document publishes; nil leaves the field out. Call it before the
+// provider under test runs discovery.
+func (f *FakeIDP) SetScopesSupported(scopes []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.scopesSupported = scopes
+}
+
 // ClientID returns the client identifier the provider expects.
 func (f *FakeIDP) ClientID() string {
 	return DefaultClientID
@@ -143,6 +193,40 @@ func (f *FakeIDP) SetNextResponseOmitsIDToken() {
 	defer f.mu.Unlock()
 	f.nextIDToken = ""
 	f.omitIDToken = true
+}
+
+// IssueRefreshToken makes every later code exchange return token as its
+// refresh_token, and makes token the one refresh token the provider will
+// redeem.
+func (f *FakeIDP) IssueRefreshToken(token string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.issuedRefreshToken = token
+	f.validRefreshToken = token
+}
+
+// SetRefreshResponse sets what every later successful refresh grant
+// answers with.
+func (f *FakeIDP) SetRefreshResponse(response RefreshResponse) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refresh = response
+}
+
+// RevokeRefreshTokens makes the provider refuse every refresh token, as
+// a real one does once the user has been removed or disabled there.
+func (f *FakeIDP) RevokeRefreshTokens() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.validRefreshToken = ""
+}
+
+// RefreshCount returns how many refresh grant requests the token
+// endpoint has received.
+func (f *FakeIDP) RefreshCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.refreshCount
 }
 
 // LastTokenRequestForm returns the form values of the most recent request
@@ -209,7 +293,7 @@ func encodeSegment(t *testing.T, value map[string]any) string {
 }
 
 func (f *FakeIDP) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	document := map[string]any{
 		"issuer":                                f.Issuer(),
 		"authorization_endpoint":                f.Issuer() + "/authorize",
 		"token_endpoint":                        f.Issuer() + "/token",
@@ -217,7 +301,13 @@ func (f *FakeIDP) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
-	})
+	}
+	f.mu.Lock()
+	if f.scopesSupported != nil {
+		document["scopes_supported"] = f.scopesSupported
+	}
+	f.mu.Unlock()
+	writeJSON(w, http.StatusOK, document)
 }
 
 func (f *FakeIDP) handleJWKS(w http.ResponseWriter, _ *http.Request) {
@@ -240,10 +330,16 @@ func (f *FakeIDP) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.PostForm.Get("grant_type") == "refresh_token" {
+		f.handleRefresh(w, r.PostForm)
+		return
+	}
+
 	f.mu.Lock()
 	f.lastForm = r.PostForm
 	idToken := f.nextIDToken
 	omitIDToken := f.omitIDToken
+	refreshToken := f.issuedRefreshToken
 	f.mu.Unlock()
 
 	if omitIDToken {
@@ -262,12 +358,59 @@ func (f *FakeIDP) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"access_token": "fake-access-token",
 		"token_type":   "Bearer",
 		"expires_in":   3600,
 		"id_token":     idToken,
-	})
+	}
+	if refreshToken != "" {
+		body["refresh_token"] = refreshToken
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// handleRefresh answers a refresh grant: invalid_grant for any token but
+// the one currently valid, and otherwise the staged RefreshResponse,
+// rotating the valid token when that response says to.
+func (f *FakeIDP) handleRefresh(w http.ResponseWriter, form url.Values) {
+	f.mu.Lock()
+	f.lastForm = form
+	f.refreshCount++
+	response := f.refresh
+	valid := f.validRefreshToken != "" &&
+		form.Get("refresh_token") == f.validRefreshToken
+	if valid && response.RotatedRefreshToken != "" {
+		f.validRefreshToken = response.RotatedRefreshToken
+	}
+	f.mu.Unlock()
+
+	if response.Delay > 0 {
+		time.Sleep(response.Delay)
+	}
+
+	if !valid {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_grant"})
+		return
+	}
+
+	body := map[string]any{
+		"access_token": "fake-refreshed-access-token",
+		"token_type":   "Bearer",
+	}
+	switch {
+	case response.ExpiresIn == 0:
+		body["expires_in"] = 3600
+	case response.ExpiresIn > 0:
+		body["expires_in"] = response.ExpiresIn
+	}
+	if response.IDToken != "" {
+		body["id_token"] = response.IDToken
+	}
+	if response.RotatedRefreshToken != "" {
+		body["refresh_token"] = response.RotatedRefreshToken
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body map[string]any) {

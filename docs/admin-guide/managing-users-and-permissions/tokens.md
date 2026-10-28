@@ -9,6 +9,10 @@ The Workbench uses two kinds of tokens:
   the Workbench console; used for machine-to-machine access by service accounts
   or regular users. A service account may only authenticate with a token.
 
+A user who signs in through an identity provider gets a session that lasts as
+long as the provider's ID token instead, and by default cannot own API tokens
+at all; see [API Tokens and Federated Users](sso.md#api-tokens-and-federated-users).
+
 A token's scope restricts it to a subset of the owning user's permissions. A
 token without scope restrictions inherits the full access of the owner. A
 token that a superuser owns is restricted by its scope in the same way as
@@ -185,6 +189,17 @@ Provide the following information in the `Create token` dialog:
 
 The `Create` button is disabled until both the `Name` and `Owner` fields are
 completed; select `Create` to create the described token.
+
+!!! note
+
+    While `allow_api_tokens` is off, a user who signs in through an
+    identity provider cannot own a token. For such a user, the Tokens
+    page hides the `+ Create Token` button and displays the message
+    "API tokens are disabled for federated logins in this installation.
+    Contact your system administrator." A superuser who signs in through
+    the provider keeps the button, but the `Owner` drop-down omits their
+    own account. See
+    [API Tokens and Federated Users](sso.md#api-tokens-and-federated-users).
 
 ![A newly generated token](../../images/new_token.png)
 

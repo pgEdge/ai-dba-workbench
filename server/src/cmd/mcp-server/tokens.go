@@ -11,10 +11,13 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 // addTokenCommand handles the add-token command
@@ -75,6 +78,17 @@ func addTokenCommand(dataDir, username, annotation string, expiresIn time.Durati
 	// and may mint a token for any account.
 	rawToken, storedToken, err := cliStore(store).CreateToken(username,
 		annotation, expiresAt, true)
+	if errors.Is(err, auth.ErrFederatedAPITokensDisabled) {
+		// The store leaves this refusal to its caller to audit, as the
+		// REST handler does (issue #742).
+		if auditErr := store.RecordCoalescedDenial(cliActor(), "token.create",
+			"tokens", auth.FederatedAPITokenRefusalReason); auditErr != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: failed to audit the refusal: %v\n", auditErr)
+		}
+		return fmt.Errorf("failed to create token: %s is a federated account and %w; "+
+			"set http.auth.oidc.allow_api_tokens to allow it, or use a local "+
+			"service account", username, err)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create token: %w", err)
 	}

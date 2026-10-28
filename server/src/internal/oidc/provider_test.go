@@ -12,6 +12,7 @@ package oidc
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -63,13 +64,23 @@ func newTestLoginState(t *testing.T) *LoginState {
 	return state
 }
 
+// exchangeIdentity runs a code exchange and returns only the identity,
+// which is all most of these tests look at.
+func exchangeIdentity(provider *Provider, code string, state *LoginState) (*Identity, error) {
+	tokens, err := provider.Exchange(context.Background(), code, state)
+	if err != nil {
+		return nil, err
+	}
+	return tokens.Identity, nil
+}
+
 // exchangeMustFail runs an exchange that is expected to fail and asserts
 // on what the error says, so that a test named for one rejection cannot
 // quietly pass because a different thing broke.
 func exchangeMustFail(t *testing.T, provider *Provider, state *LoginState, want string) {
 	t.Helper()
 
-	identity, err := provider.Exchange(context.Background(), "code", state)
+	identity, err := exchangeIdentity(provider, "code", state)
 	if err == nil {
 		t.Fatalf("expected an error mentioning %q, got identity %+v", want, identity)
 	}
@@ -93,7 +104,7 @@ func TestExchangeReturnsIdentityFromClaims(t *testing.T) {
 		"nonce":  state.Nonce,
 	}))
 
-	identity, err := provider.Exchange(context.Background(), "code", state)
+	identity, err := exchangeIdentity(provider, "code", state)
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
@@ -339,7 +350,7 @@ func TestExchangeDropsUnsafeDisplayNames(t *testing.T) {
 				"nonce": state.Nonce,
 			}))
 
-			identity, err := provider.Exchange(context.Background(), "code", state)
+			identity, err := exchangeIdentity(provider, "code", state)
 			if err != nil {
 				t.Fatalf("Exchange: %v", err)
 			}
@@ -386,7 +397,7 @@ func TestExchangeKeepsDisplayNamesWithFormatCharacters(t *testing.T) {
 				"nonce": state.Nonce,
 			}))
 
-			identity, err := provider.Exchange(context.Background(), "code", state)
+			identity, err := exchangeIdentity(provider, "code", state)
 			if err != nil {
 				t.Fatalf("Exchange: %v", err)
 			}
@@ -425,7 +436,7 @@ func TestAuthCodeURLCarriesStateNonceAndPKCE(t *testing.T) {
 	provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
 
 	state := newTestLoginState(t)
-	parsed, err := url.Parse(provider.AuthCodeURL(state))
+	parsed, err := url.Parse(provider.AuthCodeURL(state, nil))
 	if err != nil {
 		t.Fatalf("AuthCodeURL: %v", err)
 	}
@@ -450,6 +461,42 @@ func TestAuthCodeURLCarriesStateNonceAndPKCE(t *testing.T) {
 	}
 	if query.Get("response_type") != "code" {
 		t.Errorf("response_type = %q, want code", query.Get("response_type"))
+	}
+}
+
+// TestAuthCodeURLAppendsAuthParams proves that the operator's extra
+// parameters reach the provider, and that one naming a parameter the
+// Workbench sets itself is dropped rather than allowed to replace it,
+// even though configuration validation should have refused it first.
+func TestAuthCodeURLAppendsAuthParams(t *testing.T) {
+	idp := oidctest.NewFakeIDP(t)
+	provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
+
+	state := newTestLoginState(t)
+	parsed, err := url.Parse(provider.AuthCodeURL(state, map[string]string{
+		"access_type":    "offline",
+		"prompt":         "consent",
+		"State":          "attacker-chosen",
+		"code_challenge": "attacker-chosen",
+		"scope":          "everything",
+	}))
+	if err != nil {
+		t.Fatalf("AuthCodeURL: %v", err)
+	}
+
+	query := parsed.Query()
+	if query.Get("access_type") != "offline" || query.Get("prompt") != "consent" {
+		t.Errorf("query = %v, want access_type=offline and prompt=consent", query)
+	}
+	if query.Get("state") != state.State || query.Has("State") {
+		t.Errorf("state = %q (State present: %v), want only %q",
+			query.Get("state"), query.Has("State"), state.State)
+	}
+	if query.Get("code_challenge") != state.CodeChallenge() {
+		t.Errorf("code_challenge = %q, want the state's own", query.Get("code_challenge"))
+	}
+	if strings.Contains(query.Get("scope"), "everything") {
+		t.Errorf("scope = %q, want the configured scopes only", query.Get("scope"))
 	}
 }
 
@@ -493,7 +540,7 @@ func TestGroupsClaimAcceptsTheShapesProvidersActuallySend(t *testing.T) {
 			}
 			idp.SetNextIDToken(idp.MintIDToken(t, claims))
 
-			identity, err := provider.Exchange(context.Background(), "code", state)
+			identity, err := exchangeIdentity(provider, "code", state)
 			if err != nil {
 				t.Fatalf("Exchange: %v", err)
 			}
@@ -529,7 +576,7 @@ func TestGroupsClaimNotConfigured(t *testing.T) {
 		"nonce":  state.Nonce,
 	}))
 
-	identity, err := provider.Exchange(context.Background(), "code", state)
+	identity, err := exchangeIdentity(provider, "code", state)
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
@@ -538,6 +585,36 @@ func TestGroupsClaimNotConfigured(t *testing.T) {
 	}
 	if identity.SkippedGroups != 0 {
 		t.Errorf("skipped = %d, want 0", identity.SkippedGroups)
+	}
+	if identity.GroupsClaimPresent {
+		t.Error("GroupsClaimPresent = true with no groups claim configured")
+	}
+}
+
+// TestGroupsClaimPresent proves that the presence flag tells an empty or
+// unreadable groups claim apart from one the provider left out, which is
+// the distinction a session refresh depends on.
+func TestGroupsClaimPresent(t *testing.T) {
+	testCases := []struct {
+		name   string
+		claims map[string]any
+		want   bool
+	}{
+		{"populated", map[string]any{"groups": []string{"a"}}, true},
+		{"empty list", map[string]any{"groups": []any{}}, true},
+		{"unexpected shape", map[string]any{"groups": 42}, true},
+		{"null", map[string]any{"groups": nil}, false},
+		{"absent", map[string]any{}, false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := groupsClaimPresent(testCase.claims, "groups"); got != testCase.want {
+				t.Errorf("groupsClaimPresent = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+	if groupsClaimPresent(map[string]any{"groups": []string{"a"}}, "") {
+		t.Error("groupsClaimPresent = true with no claim name configured")
 	}
 }
 
@@ -657,8 +734,9 @@ func TestNewProviderDefaultsTheUsernameClaim(t *testing.T) {
 	if provider.usernameClaim != defaultUsernameClaim {
 		t.Errorf("usernameClaim = %q, want %q", provider.usernameClaim, defaultUsernameClaim)
 	}
-	if !slices.Equal(provider.oauth2Config.Scopes, []string{"openid", "profile"}) {
-		t.Errorf("scopes = %#v, want [openid profile]", provider.oauth2Config.Scopes)
+	want := []string{"openid", "profile", "offline_access"}
+	if !slices.Equal(provider.oauth2Config.Scopes, want) {
+		t.Errorf("scopes = %#v, want %v", provider.oauth2Config.Scopes, want)
 	}
 }
 
@@ -671,8 +749,263 @@ func TestNewProviderKeepsExplicitOpenIDScope(t *testing.T) {
 		UsernameClaim: "email",
 		Scopes:        []string{"openid", "email"},
 	})
-	if !slices.Equal(provider.oauth2Config.Scopes, []string{"openid", "email"}) {
-		t.Errorf("scopes = %#v, want [openid email]", provider.oauth2Config.Scopes)
+	want := []string{"openid", "email", "offline_access"}
+	if !slices.Equal(provider.oauth2Config.Scopes, want) {
+		t.Errorf("scopes = %#v, want %v", provider.oauth2Config.Scopes, want)
+	}
+}
+
+// TestRequestedScopes covers the scopes the provider is asked for:
+// "openid" and "offline_access" are each added once, never twice, the
+// latter only when the provider supports it, a configured
+// "offline_access" is always kept, and the operator's own list is never
+// modified in place.
+func TestRequestedScopes(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured []string
+		offline    bool
+		want       []string
+	}{
+		{"nil", nil, true, []string{"openid", "offline_access"}},
+		{"neither", []string{"email"}, true, []string{"openid", "email", "offline_access"}},
+		{"openid only", []string{"openid", "email"}, true, []string{"openid", "email", "offline_access"}},
+		{"offline only", []string{"offline_access", "email"}, true, []string{"openid", "offline_access", "email"}},
+		{"both", []string{"email", "offline_access", "openid"}, true, []string{"email", "offline_access", "openid"}},
+		{"unsupported", []string{"email"}, false, []string{"openid", "email"}},
+		{"unsupported but configured", []string{"offline_access"}, false, []string{"openid", "offline_access"}},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			configured := slices.Clone(testCase.configured)
+			got := requestedScopes(configured, testCase.offline)
+			if !slices.Equal(got, testCase.want) {
+				t.Errorf("requestedScopes(%v, %v) = %v, want %v",
+					testCase.configured, testCase.offline, got, testCase.want)
+			}
+			if !slices.Equal(configured, testCase.configured) {
+				t.Errorf("configured scopes modified to %v", configured)
+			}
+		})
+	}
+}
+
+// TestNewProviderFollowsScopesSupported proves "offline_access" is
+// requested by default only when the discovery document lists it, or
+// publishes no scopes_supported at all, so that a provider such as
+// Google, which publishes a list without it, is not sent a scope it
+// does not support.
+func TestNewProviderFollowsScopesSupported(t *testing.T) {
+	tests := []struct {
+		name      string
+		supported []string
+		want      []string
+	}{
+		{"not published", nil, []string{"openid", "email", "offline_access"}},
+		{"listed", []string{"openid", "email", "offline_access"}, []string{"openid", "email", "offline_access"}},
+		{"not listed", []string{"openid", "email", "profile"}, []string{"openid", "email"}},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			idp := oidctest.NewFakeIDP(t)
+			idp.SetScopesSupported(testCase.supported)
+			provider := newTestProvider(t, idp, config.OIDCConfig{
+				UsernameClaim: "email",
+				Scopes:        []string{"openid", "email"},
+			})
+			if !slices.Equal(provider.oauth2Config.Scopes, testCase.want) {
+				t.Errorf("scopes = %v, want %v", provider.oauth2Config.Scopes, testCase.want)
+			}
+		})
+	}
+}
+
+// fakeDiscovery stands in for *oidc.Provider when reading the raw
+// discovery document, so that a document that does not decode can be
+// tested.
+type fakeDiscovery struct{ err error }
+
+func (f fakeDiscovery) Claims(any) error { return f.err }
+
+// TestOfflineAccessAdvertisedOnAnUnreadableDocument proves a discovery
+// document whose scopes_supported cannot be decoded is treated as one
+// that does not publish it, so the default still asks for a refresh
+// token.
+func TestOfflineAccessAdvertisedOnAnUnreadableDocument(t *testing.T) {
+	if !offlineAccessAdvertised(fakeDiscovery{err: errors.New("malformed scopes_supported")}) {
+		t.Error("offlineAccessAdvertised = false on an unreadable document, want true")
+	}
+}
+
+// TestExchangeReturnsRefreshTokenAndExpiry proves the exchange hands
+// back the refresh token the provider issued and the ID token's expiry,
+// which is when a federated session ends (issue #742).
+func TestExchangeReturnsRefreshTokenAndExpiry(t *testing.T) {
+	idp := oidctest.NewFakeIDP(t)
+	provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
+
+	state := newTestLoginState(t)
+	expiry := time.Now().Add(10 * time.Minute).Truncate(time.Second)
+	idp.IssueRefreshToken("refresh-1")
+	idp.SetNextIDToken(idp.MintIDToken(t, map[string]any{
+		"email": "jane.doe@example.com",
+		"nonce": state.Nonce,
+		"exp":   expiry.Unix(),
+	}))
+
+	tokens, err := provider.Exchange(context.Background(), "code", state)
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if tokens.RefreshToken != "refresh-1" {
+		t.Errorf("refresh token = %q, want refresh-1", tokens.RefreshToken)
+	}
+	if !tokens.Expiry.Equal(expiry) {
+		t.Errorf("expiry = %v, want %v", tokens.Expiry, expiry)
+	}
+	if tokens.Identity == nil || tokens.Identity.Username != "jane.doe@example.com" {
+		t.Errorf("identity = %+v", tokens.Identity)
+	}
+}
+
+// TestRefresh covers the refresh grant: a returned ID token is verified
+// and decoded and sets the expiry, a rotated refresh token is returned,
+// an unrotated one is carried over, a response without an ID token
+// falls back to the access token's expiry, and a refused or unusable
+// response is an error.
+func TestRefresh(t *testing.T) {
+	t.Run("ID token and rotation", func(t *testing.T) {
+		idp := oidctest.NewFakeIDP(t)
+		provider := newTestProvider(t, idp, config.OIDCConfig{
+			UsernameClaim: "email", GroupsClaim: "groups",
+		})
+		idp.IssueRefreshToken("refresh-1")
+		expiry := time.Now().Add(20 * time.Minute).Truncate(time.Second)
+		idp.SetRefreshResponse(oidctest.RefreshResponse{
+			IDToken: idp.MintIDToken(t, map[string]any{
+				"email":  "jane.doe@example.com",
+				"groups": []string{"idp-dbas"},
+				"exp":    expiry.Unix(),
+			}),
+			RotatedRefreshToken: "refresh-2",
+		})
+
+		tokens, err := provider.Refresh(context.Background(), "refresh-1")
+		if err != nil {
+			t.Fatalf("Refresh: %v", err)
+		}
+		if tokens.RefreshToken != "refresh-2" {
+			t.Errorf("refresh token = %q, want refresh-2", tokens.RefreshToken)
+		}
+		if !tokens.Expiry.Equal(expiry) {
+			t.Errorf("expiry = %v, want %v", tokens.Expiry, expiry)
+		}
+		if tokens.Identity == nil || tokens.Identity.Subject != "subject-1" ||
+			!slices.Equal(tokens.Identity.Groups, []string{"idp-dbas"}) {
+			t.Errorf("identity = %+v", tokens.Identity)
+		}
+		form := idp.LastTokenRequestForm()
+		if form.Get("grant_type") != "refresh_token" || form.Get("refresh_token") != "refresh-1" {
+			t.Errorf("token request form = %v", form)
+		}
+
+		// The rotated-out token is refused, as reuse is by a real
+		// provider.
+		if _, err := provider.Refresh(context.Background(), "refresh-1"); err == nil {
+			t.Error("expected the rotated-out refresh token to be refused")
+		}
+	})
+
+	t.Run("no ID token and no rotation", func(t *testing.T) {
+		idp := oidctest.NewFakeIDP(t)
+		provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
+		idp.IssueRefreshToken("refresh-1")
+		idp.SetRefreshResponse(oidctest.RefreshResponse{ExpiresIn: 600})
+
+		before := time.Now()
+		tokens, err := provider.Refresh(context.Background(), "refresh-1")
+		if err != nil {
+			t.Fatalf("Refresh: %v", err)
+		}
+		if tokens.Identity != nil {
+			t.Errorf("identity = %+v, want none", tokens.Identity)
+		}
+		if tokens.RefreshToken != "refresh-1" {
+			t.Errorf("refresh token = %q, want the redeemed one carried over", tokens.RefreshToken)
+		}
+		if tokens.Expiry.Before(before.Add(9*time.Minute)) ||
+			tokens.Expiry.After(time.Now().Add(11*time.Minute)) {
+			t.Errorf("expiry = %v, want about ten minutes from now", tokens.Expiry)
+		}
+	})
+
+	failures := []struct {
+		name     string
+		token    string
+		setup    func(t *testing.T, idp *oidctest.FakeIDP)
+		wantText string
+	}{
+		{
+			name:     "empty token",
+			token:    "",
+			setup:    func(*testing.T, *oidctest.FakeIDP) {},
+			wantText: "no refresh token",
+		},
+		{
+			name:  "revoked",
+			token: "refresh-1",
+			setup: func(_ *testing.T, idp *oidctest.FakeIDP) {
+				idp.RevokeRefreshTokens()
+			},
+			wantText: "failed to redeem refresh token",
+		},
+		{
+			name:  "ID token with a foreign signature",
+			token: "refresh-1",
+			setup: func(t *testing.T, idp *oidctest.FakeIDP) {
+				idp.SetRefreshResponse(oidctest.RefreshResponse{
+					IDToken: idp.SignWithForeignKey(t, map[string]any{"email": "jane.doe@example.com"}),
+				})
+			},
+			wantText: "failed to verify refreshed ID token",
+		},
+		{
+			name:  "ID token without a username",
+			token: "refresh-1",
+			setup: func(t *testing.T, idp *oidctest.FakeIDP) {
+				idp.SetRefreshResponse(oidctest.RefreshResponse{
+					IDToken: idp.MintIDToken(t, map[string]any{}),
+				})
+			},
+			wantText: "email",
+		},
+		{
+			name:  "no expiry at all",
+			token: "refresh-1",
+			setup: func(_ *testing.T, idp *oidctest.FakeIDP) {
+				idp.SetRefreshResponse(oidctest.RefreshResponse{ExpiresIn: -1})
+			},
+			wantText: "carried no expiry",
+		},
+	}
+	for _, testCase := range failures {
+		t.Run(testCase.name, func(t *testing.T) {
+			idp := oidctest.NewFakeIDP(t)
+			provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
+			idp.IssueRefreshToken("refresh-1")
+			testCase.setup(t, idp)
+
+			tokens, err := provider.Refresh(context.Background(), testCase.token)
+			if err == nil {
+				t.Fatalf("expected an error, got %+v", tokens)
+			}
+			if !strings.Contains(err.Error(), testCase.wantText) {
+				t.Errorf("error = %q, want it to mention %q", err, testCase.wantText)
+			}
+			if strings.Contains(err.Error(), "refresh-1") {
+				t.Errorf("error %q carries the refresh token", err)
+			}
+		})
 	}
 }
 
@@ -781,7 +1114,7 @@ func TestExchangeDistinguishesARejectedEmailFromAnAbsentOne(t *testing.T) {
 			}
 			idp.SetNextIDToken(idp.MintIDToken(t, claims))
 
-			identity, err := provider.Exchange(context.Background(), "code", state)
+			identity, err := exchangeIdentity(provider, "code", state)
 			if err != nil {
 				t.Fatalf("Exchange: %v", err)
 			}
@@ -829,7 +1162,7 @@ func TestUsernameRejectionNamesTheClaimAndTheCharacterClass(t *testing.T) {
 				"nonce":              state.Nonce,
 			}))
 
-			identity, err := provider.Exchange(context.Background(), "code", state)
+			identity, err := exchangeIdentity(provider, "code", state)
 			if testCase.want == "" {
 				// A leading digit is permitted, so this one succeeds.
 				if err != nil {
@@ -910,7 +1243,7 @@ func TestIdentityReportsWhetherTheEmailAddressWasVerified(t *testing.T) {
 			}
 			idp.SetNextIDToken(idp.MintIDToken(t, claims))
 
-			identity, err := provider.Exchange(context.Background(), "code", state)
+			identity, err := exchangeIdentity(provider, "code", state)
 			if err != nil {
 				t.Fatalf("Exchange: %v", err)
 			}

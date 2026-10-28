@@ -15,6 +15,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -71,6 +72,17 @@ type Identity struct {
 	// Groups holds the configured groups claim, normalized to a slice of
 	// strings. It is nil when the claim is absent or not configured.
 	Groups []string
+
+	// GroupsClaimPresent reports whether the token carried the configured
+	// groups claim at all, with a non-null value of any shape. It is what
+	// tells "the provider sent an empty list" (the user is in no groups)
+	// apart from "the provider left the claim out" (it said nothing about
+	// groups), which Groups alone cannot: both leave Groups nil. A session
+	// refresh relies on the distinction, because many providers omit the
+	// groups claim from a refreshed ID token, and that silence must not
+	// be read as the user having left every group. It is always false
+	// when no groups claim is configured.
+	GroupsClaimPresent bool
 
 	// SkippedGroups counts the values in the groups claim that could not
 	// be used: elements that were not strings, and strings that were too
@@ -162,7 +174,7 @@ func NewProvider(ctx context.Context, cfg config.OIDCConfig) (*Provider, error) 
 			ClientSecret: cfg.EffectiveClientSecret(),
 			RedirectURL:  cfg.RedirectURL,
 			Endpoint:     discovered.Endpoint(),
-			Scopes:       requestedScopes(cfg.Scopes),
+			Scopes:       requestedScopes(cfg.Scopes, offlineAccessAdvertised(discovered)),
 		},
 		verifier: discovered.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
 
@@ -173,30 +185,112 @@ func NewProvider(ctx context.Context, cfg config.OIDCConfig) (*Provider, error) 
 }
 
 // requestedScopes returns the configured scopes with "openid" prepended
-// if the operator left it out. Without that scope the provider is under
-// no obligation to return an ID token at all, and the whole flow depends
-// on one.
-func requestedScopes(configured []string) []string {
-	if slices.Contains(configured, oidc.ScopeOpenID) {
-		return slices.Clone(configured)
+// and, when offlineAccess is true, "offline_access" appended, each only
+// if the operator left it out. A configured "offline_access" is always
+// kept.
+//
+// Without "openid" the provider is under no obligation to return an ID
+// token at all, and the whole flow depends on one. "offline_access" asks
+// for a refresh token, which is what lets a federated session outlive
+// its first ID token: the session ends when that ID token expires, and
+// is extended only by redeeming the refresh token, which the provider
+// refuses once the user has been removed or disabled there (issue #742).
+// A provider that will not issue one simply returns none, and the
+// session then ends at the ID token's expiry.
+func requestedScopes(configured []string, offlineAccess bool) []string {
+	scopes := slices.Clone(configured)
+	if !slices.Contains(scopes, oidc.ScopeOpenID) {
+		scopes = append([]string{oidc.ScopeOpenID}, scopes...)
 	}
-	return append([]string{oidc.ScopeOpenID}, configured...)
+	if offlineAccess && !slices.Contains(scopes, oidc.ScopeOfflineAccess) {
+		scopes = append(scopes, oidc.ScopeOfflineAccess)
+	}
+	return scopes
+}
+
+// discoveryClaims is the part of *oidc.Provider that reads the raw
+// discovery document, so that a malformed document can be tested.
+type discoveryClaims interface {
+	Claims(v any) error
+}
+
+// offlineAccessAdvertised reports whether "offline_access" should be
+// requested by default: true when the discovery document lists it in
+// scopes_supported, or does not publish a usable scopes_supported at
+// all, and false when it publishes a list without it.
+//
+// scopes_supported is only recommended by OpenID Connect Discovery, so
+// its absence says nothing. A list that leaves the scope out is another
+// matter: Google publishes one, does not support the scope, and issues
+// refresh tokens through access_type=offline instead, which the
+// operator configures through auth_params.
+func offlineAccessAdvertised(discovered discoveryClaims) bool {
+	var metadata struct {
+		ScopesSupported []string `json:"scopes_supported"`
+	}
+	if err := discovered.Claims(&metadata); err != nil || len(metadata.ScopesSupported) == 0 {
+		return true
+	}
+	return slices.Contains(metadata.ScopesSupported, oidc.ScopeOfflineAccess)
+}
+
+// Tokens is what a code exchange or a refresh yields: the verified
+// identity, if the provider sent an ID token, the refresh token to
+// redeem next, and when the session they support expires.
+//
+// RefreshToken is a long-lived credential. It must be held in memory
+// only, never written to disk, and never logged; nothing in this package
+// formats it into an error.
+type Tokens struct {
+	// Identity is the verified end user. Exchange always sets it; Refresh
+	// sets it only when the provider returned an ID token, which it is
+	// not obliged to do on a refresh.
+	Identity *Identity
+
+	// RefreshToken is empty when the provider issued none. After a
+	// refresh that did not rotate it, it holds the token that was
+	// redeemed, which remains valid.
+	RefreshToken string
+
+	// Expiry is the ID token's expiry when the response carried one, and
+	// otherwise the access token's. It is never zero on success.
+	Expiry time.Time
 }
 
 // AuthCodeURL returns the URL to send the browser to in order to start a
 // login, carrying the state's opaque state value, its nonce, and the
 // PKCE S256 code challenge derived from its code verifier.
-func (p *Provider) AuthCodeURL(state *LoginState) string {
-	return p.oauth2Config.AuthCodeURL(
-		state.State,
+//
+// extra holds the operator's http.auth.oidc.auth_params, passed per call
+// rather than fixed at construction so that a reload applies them.
+// Configuration validation already refuses a parameter the Workbench
+// sets itself; any that arrives here regardless is dropped, so that no
+// path through the configuration can replace the state, nonce or PKCE
+// challenge. They are added in sorted order, so the URL is stable.
+func (p *Provider) AuthCodeURL(state *LoginState, extra map[string]string) string {
+	names := make([]string, 0, len(extra))
+	for name := range extra {
+		if !config.IsReservedOIDCAuthParam(name) {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+
+	opts := make([]oauth2.AuthCodeOption, 0, len(names)+3)
+	for _, name := range names {
+		opts = append(opts, oauth2.SetAuthURLParam(name, extra[name]))
+	}
+	opts = append(opts,
 		oidc.Nonce(state.Nonce),
 		oauth2.SetAuthURLParam("code_challenge", state.CodeChallenge()),
 		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
 	)
+	return p.oauth2Config.AuthCodeURL(state.State, opts...)
 }
 
 // Exchange redeems an authorization code for tokens and returns the
-// verified Identity it describes.
+// verified Identity it describes, together with any refresh token the
+// provider issued and the ID token's expiry.
 //
 // It proves four separate things before returning: that the provider
 // will redeem the code against the PKCE code verifier held in state (so
@@ -226,7 +320,7 @@ func (p *Provider) AuthCodeURL(state *LoginState) string {
 // than cosmetic: an error message carrying provider-influenced text goes
 // into the server log, and a value with an interior newline in it would
 // write what looks like a second log record.
-func (p *Provider) Exchange(ctx context.Context, code string, state *LoginState) (*Identity, error) {
+func (p *Provider) Exchange(ctx context.Context, code string, state *LoginState) (*Tokens, error) {
 	token, err := p.oauth2Config.Exchange(ctx, code,
 		oauth2.SetAuthURLParam("code_verifier", state.CodeVerifier))
 	if err != nil {
@@ -261,6 +355,77 @@ func (p *Provider) Exchange(ctx context.Context, code string, state *LoginState)
 		return nil, fmt.Errorf("ID token nonce does not match the login request")
 	}
 
+	identity, err := p.identityFromIDToken(idToken)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Tokens{
+		Identity:     identity,
+		RefreshToken: token.RefreshToken,
+		Expiry:       idToken.Expiry,
+	}, nil
+}
+
+// Refresh redeems a refresh token and returns what the provider sent
+// back: the refresh token to use next (rotated or not), the new expiry,
+// and the verified identity when the response carried an ID token.
+//
+// An ID token returned by a refresh is verified exactly as one from a
+// code exchange is (signature, issuer, audience, expiry) except for the
+// nonce, which a refresh request does not carry. The caller must still
+// check that its issuer and subject are the ones the session belongs to,
+// as OpenID Connect Core 1.0 section 12.2 requires; Refresh has no
+// session to compare against.
+//
+// A provider that answers without an ID token leaves the session's
+// expiry to the access token's, and a response carrying neither expiry
+// is refused, because a session must end at some point the provider
+// chose.
+//
+// As with Exchange, the caller must pass a context carrying a timeout,
+// and no error returned here may reach a browser: a token endpoint
+// failure embeds the provider's response body. None of them carries the
+// refresh token.
+func (p *Provider) Refresh(ctx context.Context, refreshToken string) (*Tokens, error) {
+	if refreshToken == "" {
+		return nil, fmt.Errorf("no refresh token to redeem")
+	}
+
+	// A token with no access token is never valid, so the token source
+	// goes straight to the refresh grant. When the provider does not
+	// rotate the refresh token, oauth2 carries the redeemed one over
+	// into the result.
+	token, err := p.oauth2Config.TokenSource(ctx,
+		&oauth2.Token{RefreshToken: refreshToken}).Token()
+	if err != nil {
+		return nil, fmt.Errorf("failed to redeem refresh token: %w", err)
+	}
+
+	result := &Tokens{RefreshToken: token.RefreshToken, Expiry: token.Expiry}
+
+	if rawIDToken, ok := token.Extra("id_token").(string); ok && rawIDToken != "" {
+		idToken, err := p.verifier.Verify(ctx, rawIDToken)
+		if err != nil {
+			return nil, fmt.Errorf("failed to verify refreshed ID token: %w", err)
+		}
+		identity, err := p.identityFromIDToken(idToken)
+		if err != nil {
+			return nil, err
+		}
+		result.Identity = identity
+		result.Expiry = idToken.Expiry
+	}
+
+	if result.Expiry.IsZero() {
+		return nil, fmt.Errorf("identity provider refresh response carried no expiry")
+	}
+	return result, nil
+}
+
+// identityFromIDToken decodes a verified ID token's claims into an
+// Identity.
+func (p *Provider) identityFromIDToken(idToken *oidc.IDToken) (*Identity, error) {
 	var claims map[string]any
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, fmt.Errorf("failed to decode ID token claims: %w", err)

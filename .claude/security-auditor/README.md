@@ -512,6 +512,39 @@ moved.
   widening change (provisioning on, a domain added or the list emptied,
   `superuser_group` set or retargeted, a new `group_map` mapping);
   `logOIDCChanges` itself warns when `enabled` is switched back on.
+  `allow_api_tokens` (#742) is live too: `SetupHandlers` registers
+  `AuthStore.SetFederatedAPITokenPolicy` reading `LiveConfig`, and
+  `oidcAccessWarnings` warns when it is switched on. The CLI reads it
+  from the configuration file only (`loadCLITokenPolicy`).
+- Federated sessions (#742, `auth/federated_session.go`) expire with
+  the ID token; `ValidateSessionToken` hands an expired one to
+  `OIDCHandler.RefreshFederatedSession` (`api/oidc_refresh.go`),
+  single-flighted per session by `federatedSession.mu`, which checks
+  the account, redeems the in-memory refresh token, re-checks subject
+  and email domain when the refresh returns an ID token (a refresh
+  without one skips them, as `applyRefreshedIdentity` runs only on
+  `tokens.Identity != nil`), and reconciles groups only when the refreshed ID
+  token carries the groups claim (`Identity.GroupsClaimPresent`; an
+  absent claim or no ID token keeps memberships and the superuser
+  flag). Because of that, every federated session also has an absolute
+  lifetime: `federatedSession.deadline` is set at login to
+  `DefaultSessionExpiry` on, refreshes are capped at it, and
+  `unrefreshableReason` and the sweeper end a session past it, so a
+  group removal reaches the user at the next login at the latest; a
+  change that lets a refresh run past the deadline reopens that hole.
+  Any refresh failure ends the session (fail-closed, deliberately,
+  including a provider outage). The refresh token must never
+  reach disk, logs or errors. Whilst `allow_api_tokens` is off,
+  `createToken` and `validateToken` (`auth/federated_tokens.go`) refuse
+  tokens whose OWNER is federated, whoever the caller is; the use
+  refusal is audited as a coalesced `token.use` denial.
+  `http.auth.oidc.auth_params` (operator-supplied authorisation request
+  parameters, read per login so a reload applies them) is validated in
+  `config/oidc_auth_params.go`, which refuses the reserved names
+  (state, nonce, PKCE, redirect_uri, client_id, response_type, scope,
+  response_mode, request, request_uri) case-insensitively;
+  `oidc.Provider.AuthCodeURL` drops any reserved name again, and
+  appends the server's own nonce and PKCE options after the extras.
   Removing a group from `group_map` revokes nothing because only mapped
   Workbench groups are reconciled; clearing `superuser_group` revokes
   nothing because `ReconcileFederatedGroups` leaves `is_superuser`

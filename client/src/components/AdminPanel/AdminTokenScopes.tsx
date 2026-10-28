@@ -35,6 +35,9 @@ import {
     filterAdminPermissions,
     narrowScopeChoices,
     narrowOnlyLiftError,
+    FEDERATED_TOKENS_DISABLED_TEXT,
+    FEDERATED_OWN_TOKENS_REFUSED_TEXT,
+    FEDERATED_OWNER_EXCLUDED_TEXT,
 } from './tokens';
 import type {
     Token,
@@ -124,6 +127,37 @@ const AdminTokenScopes: React.FC = () => {
     const { user: currentUser, adminPermissions: currentAdminPermissions } =
         useAuth();
     const isSuperuser = !!currentUser?.isSuperuser;
+    // A federated login may not own API tokens while the installation
+    // keeps them off (issue #742). Such a user who is not a superuser can
+    // create a token for nobody, so creation is not offered at all; a
+    // superuser may still create one for another user. A server that
+    // predates the field leaves it undefined, which counts as allowed.
+    //
+    // The setting applies on a server reload, so the panel reads it again
+    // when it opens rather than relying on the value fetched at login;
+    // until that read returns, or if it fails or omits the field, the
+    // login-time value stands.
+    const [liveTokensAllowed, setLiveTokensAllowed] = useState<boolean | undefined>(undefined);
+    useEffect(() => {
+        let cancelled = false;
+        const readSetting = async () => {
+            try {
+                const info = await apiGet<{ api_tokens_allowed?: boolean }>('/api/v1/user/info');
+                if (!cancelled && typeof info?.api_tokens_allowed === 'boolean') {
+                    setLiveTokensAllowed(info.api_tokens_allowed);
+                }
+            } catch {
+                // Keep the login-time value; the server still refuses a
+                // token the account may not own.
+            }
+        };
+        void readSetting();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+    const ownTokensAllowed = (liveTokensAllowed ?? currentUser?.apiTokensAllowed) !== false;
+    const canCreateTokens = isSuperuser || ownTokensAllowed;
     const [tokens, setTokens] = useState<Token[]>([]);
     const [connections, setConnections] = useState<Connection[]>([]);
     const [mcpPrivileges, setMcpPrivileges] = useState<McpPrivilege[]>([]);
@@ -641,6 +675,14 @@ const AdminTokenScopes: React.FC = () => {
 
     const containedButtonSx = getContainedButtonSx(theme);
 
+    // The server would refuse the current user as an owner, so a
+    // superuser is not offered themselves.
+    const ownerOptions = ownTokensAllowed
+        ? users
+        : users.filter((u) => u.username !== currentUser?.username);
+    const ownsRefusedTokens = !ownTokensAllowed &&
+        tokens.some((t) => t.username === currentUser?.username);
+
     // What the edit dialog may offer: the owner's privileges, cut down
     // to narrowing choices when the token is someone else's.
     const ownerEditChoices: ScopeChoices = {
@@ -662,15 +704,30 @@ const AdminTokenScopes: React.FC = () => {
                 <Typography variant="h6" sx={pageHeadingSx}>
                     Tokens
                 </Typography>
-                <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={handleOpenCreate}
-                    sx={containedButtonSx}
-                >
-                    Create Token
-                </Button>
+                {canCreateTokens && (
+                    <Button
+                        variant="contained"
+                        startIcon={<AddIcon />}
+                        onClick={handleOpenCreate}
+                        sx={containedButtonSx}
+                    >
+                        Create Token
+                    </Button>
+                )}
             </Box>
+
+            {!ownTokensAllowed && (
+                <Alert severity="info" sx={{ mb: 2, borderRadius: 1 }}>
+                    <Typography variant="body2">
+                        {FEDERATED_TOKENS_DISABLED_TEXT}
+                    </Typography>
+                    {ownsRefusedTokens && (
+                        <Typography variant="body2" sx={{ mt: 0.5 }}>
+                            {FEDERATED_OWN_TOKENS_REFUSED_TEXT}
+                        </Typography>
+                    )}
+                </Alert>
+            )}
 
             {error && (
                 <Alert
@@ -705,8 +762,11 @@ const AdminTokenScopes: React.FC = () => {
                 onAnnotationChange={setCreateAnnotation}
                 owner={createOwner}
                 onOwnerChange={handleOwnerChange}
-                users={users}
+                users={ownerOptions}
                 ownerLocked={!isSuperuser}
+                ownerHelperText={
+                    ownTokensAllowed ? undefined : FEDERATED_OWNER_EXCLUDED_TEXT
+                }
                 expiry={createExpiry}
                 onExpiryChange={setCreateExpiry}
                 availableConnections={ownerConnections}

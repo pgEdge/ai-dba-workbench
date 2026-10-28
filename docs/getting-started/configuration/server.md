@@ -371,6 +371,8 @@ as they are and appends an anchor event:
 | `auth.oidc.superuser_group` | string | | Provider group granting superuser |
 | `auth.oidc.group_map` | map | `{}` | Provider group to Workbench group map |
 | `auth.oidc.allow_unprefixed_state_cookie` | bool | `false` | Accept an unprefixed login state cookie behind a proxy |
+| `auth.oidc.allow_api_tokens` | bool | `false` | Let federated users own API tokens |
+| `auth.oidc.auth_params` | map | `{}` | Extra authorisation request parameters |
 
 #### Authentication (`auth`)
 
@@ -381,8 +383,10 @@ login is off unless `auth.oidc.enabled` is set to
 `true`. The server refuses to start when neither
 method is available.
 
-Every `auth.oidc.*` option is ignored while federated
-login is disabled. The
+While federated login is disabled, the server ignores
+every `auth.oidc.*` option except `auth_params`, which
+it still validates, and `allow_api_tokens`, which still
+applies to accounts linked to a provider earlier. The
 [Single Sign-On guide](../../admin-guide/managing-users-and-permissions/sso.md)
 describes each option in full, along with registering
 the Workbench at an identity provider and mapping
@@ -398,7 +402,28 @@ as an attacker. Set `trusted_proxies` to the reverse
 proxy's address, or set
 `auth.oidc.allow_unprefixed_state_cookie` to `true` to
 accept the risk.
+
+The server likewise refuses to start, whether or not
+federated login is enabled, when
+`auth.oidc.auth_params` names a parameter the Workbench
+sets itself, such as `state` or `redirect_uri`; the
+Single Sign-On guide lists them, and gives the Google
+example that needs `access_type: offline`.
+
 | `auth.audit_retention_days` | int | `90` | Days to keep RBAC audit events (0 keeps forever) |
+
+!!! warning
+
+    While `auth.oidc.allow_api_tokens` is `false`, the
+    default, an account that signs in through the
+    identity provider cannot create API tokens, and any
+    token such an account already owns is refused on use.
+    Switching it on lets those tokens keep working after
+    the person is removed at the identity provider,
+    until each token expires or is revoked, or the
+    Workbench account is disabled or deleted, because the
+    provider is never consulted when a token is used.
+    Use a local service account for automation instead.
 
 #### CORS Origin (`cors_origin`)
 

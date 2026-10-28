@@ -381,6 +381,12 @@ moved.
   unless its function calls `ReturnableColumns` or `MaskedProbeColumn`
   or is reviewed. A function that masks one value and returns another
   raw still passes, so review what each helper-using function returns.
+  The guard scans only `internal/metrics`, so it misses the registry SQL
+  in `pkg/anomaly/metrics.go` that `/metrics/anomaly-comparison` splices
+  in (`comparisonSeriesQuery`); several of those queries read
+  `pg_stat_activity` and `pg_stat_statements`, so check by hand that each
+  still projects only the numeric `value` and `collected_at` (plus the
+  `connection_id` and `database_name` keys).
   Scope predicates must be applied before any caller predicate can be
   evaluated: the builder puts the scope and time
   window in an inner `OFFSET 0` subquery the planner cannot merge, and

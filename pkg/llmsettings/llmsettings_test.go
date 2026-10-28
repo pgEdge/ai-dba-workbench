@@ -12,6 +12,7 @@ package llmsettings
 
 import (
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -65,6 +66,20 @@ func TestValidate(t *testing.T) {
 			wantErr: "llm.extra_body.options cannot be encoded as JSON",
 		},
 		{
+			name:    "non-string key in a list refused",
+			yaml:    "extra_body:\n  options:\n    - name: a\n    - 2: secret-value",
+			wantErr: "llm.extra_body.options cannot be encoded as JSON",
+		},
+		{
+			name:    "non-string deeply nested key refused",
+			yaml:    "extra_body:\n  options:\n    inner:\n      deeper:\n        true: secret-value",
+			wantErr: "llm.extra_body.options cannot be encoded as JSON",
+		},
+		{
+			name: "nested lists and null accepted",
+			yaml: "extra_body:\n  options:\n    - [1, 2]\n    - ~\n    - {k: v}",
+		},
+		{
 			name:    "NaN refused",
 			yaml:    "extra_body:\n  weight: .nan",
 			wantErr: "llm.extra_body.weight cannot be encoded as JSON",
@@ -88,6 +103,34 @@ func TestValidate(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "secret-value") {
 				t.Fatalf("Validate() error quotes an extra_body value: %v", err)
+			}
+		})
+	}
+}
+
+// TestHasNonStringKey covers value shapes YAML never produces but a
+// caller building Settings in code could: pointers, arrays and typed maps.
+func TestHasNonStringKey(t *testing.T) {
+	inner := map[int]string{1: "x"}
+	var nilMap *map[string]any
+	tests := []struct {
+		name string
+		v    any
+		want bool
+	}{
+		{name: "nil", v: nil},
+		{name: "scalar", v: 3},
+		{name: "string-keyed map", v: map[string]int{"a": 1}},
+		{name: "int-keyed map", v: map[int]int{1: 1}, want: true},
+		{name: "pointer to bad map", v: &inner, want: true},
+		{name: "nil pointer", v: nilMap},
+		{name: "array holding bad map", v: [1]any{inner}, want: true},
+		{name: "array of scalars", v: [2]int{1, 2}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasNonStringKey(reflect.ValueOf(tt.v)); got != tt.want {
+				t.Fatalf("hasNonStringKey() = %v, want %v", got, tt.want)
 			}
 		})
 	}

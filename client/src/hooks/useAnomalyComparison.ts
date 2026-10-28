@@ -21,10 +21,7 @@ import type {
 } from '../components/Dashboard/ServerDashboard/baselineComparison';
 import { apiGet } from '../utils/apiClient';
 import { logger } from '../utils/logger';
-import {
-    appendTimeRangeParams,
-    isTimeRangeQueryable,
-} from '../utils/timeRangeParams';
+import { isTimeRangeQueryable } from '../utils/timeRangeParams';
 import { resolveTimeRangeBounds } from '../utils/timelineRange';
 import { useRequestSequence } from './useRequestSequence';
 
@@ -51,10 +48,15 @@ export interface AnomalyComparisonQuery {
     sensitivity: number | null;
 }
 
-/** Build the comparison request URL for a query and time range. */
+/**
+ * Build the comparison request URL for a query and a resolved window.
+ * The window is sent as absolute bounds, so that the server buckets
+ * exactly the window the client matches alerts against rather than
+ * resolving a preset on its own clock.
+ */
 export const buildComparisonUrl = (
     query: AnomalyComparisonQuery,
-    timeRange: TimeRangeState,
+    window: ComparisonWindow
 ): string => {
     const params = new URLSearchParams({
         connection_id: query.connectionId.toString(),
@@ -68,26 +70,27 @@ export const buildComparisonUrl = (
     if (query.sensitivity !== null) {
         params.set('sensitivity', query.sensitivity.toString());
     }
-    appendTimeRangeParams(params, timeRange);
+    params.set('time_range', 'custom');
+    params.set('time_start', new Date(window.startMs).toISOString());
+    params.set('time_end', new Date(window.endMs).toISOString());
     return `/api/v1/metrics/anomaly-comparison?${params.toString()}`;
 };
 
 /**
  * Resolve the dashboard's time range into absolute bounds, split into
- * the buckets the comparison was requested with. The server resolves
- * a preset against its own clock, so the two can differ by the request
- * latency; that is far below a bucket for every range offered.
+ * the buckets the comparison is requested with. The comparison request
+ * sends these bounds, so the server and the client bucket the same
+ * window.
  */
-export const resolveComparisonWindow = (
-    timeRange: TimeRangeState,
-): ComparisonWindow => {
+export const resolveComparisonWindow = (timeRange: TimeRangeState): ComparisonWindow => {
     const { range, customStart, customEnd } = timeRange;
-    const bounds = range === 'custom'
-        ? resolveTimeRangeBounds({
-            start: new Date(customStart ?? ''),
-            end: new Date(customEnd ?? ''),
-        })
-        : resolveTimeRangeBounds(range);
+    const bounds =
+        range === 'custom'
+            ? resolveTimeRangeBounds({
+                  start: new Date(customStart ?? ''),
+                  end: new Date(customEnd ?? ''),
+              })
+            : resolveTimeRangeBounds(range);
     return {
         startMs: bounds.startTime.getTime(),
         endMs: bounds.endTime.getTime(),
@@ -96,10 +99,7 @@ export const resolveComparisonWindow = (
 };
 
 /** Build the request for a connection's anomaly alerts in a window. */
-export const buildAnomalyAlertsUrl = (
-    connectionId: number,
-    window: ComparisonWindow,
-): string => {
+export const buildAnomalyAlertsUrl = (connectionId: number, window: ComparisonWindow): string => {
     const params = new URLSearchParams({
         alert_type: 'anomaly',
         connection_id: connectionId.toString(),
@@ -140,7 +140,9 @@ export const useComparisonMetrics = (): UseComparisonMetricsReturn => {
     } | null>(null);
 
     useEffect(() => {
-        if (!isLoggedIn) { return undefined; }
+        if (!isLoggedIn) {
+            return undefined;
+        }
         let active = true;
         apiGet<ComparisonMetric[] | null>(METRICS_URL)
             .then((metrics) => {
@@ -157,7 +159,9 @@ export const useComparisonMetrics = (): UseComparisonMetricsReturn => {
                     });
                 }
             });
-        return () => { active = false; };
+        return () => {
+            active = false;
+        };
     }, [isLoggedIn]);
 
     return {
@@ -165,6 +169,25 @@ export const useComparisonMetrics = (): UseComparisonMetricsReturn => {
         loading: isLoggedIn && result === null,
         error: result?.error ?? null,
     };
+};
+
+/**
+ * Where a capped alert list stops being complete. The alerts arrive
+ * newest first, so when fewer were returned than `total`, every alert
+ * at or after the oldest one returned was loaded and older ones may
+ * not have been. Null means the list is complete; with no usable
+ * time, nothing in the window is known to be complete.
+ */
+export const alertsCompleteFrom = (
+    alerts: AnomalyAlert[],
+    total: number | undefined,
+    window: ComparisonWindow
+): number | null => {
+    if (total === undefined || alerts.length >= total) {
+        return null;
+    }
+    const times = alerts.map((a) => Date.parse(a.triggered_at)).filter((t) => !Number.isNaN(t));
+    return times.length > 0 ? Math.min(...times) : window.endMs;
 };
 
 // ---------------------------------------------------------------------------
@@ -180,6 +203,11 @@ export interface UseAnomalyComparisonReturn {
     error: string | null;
     /** Set when the alerts failed to load; the chart is still shown. */
     alertsError: string | null;
+    /**
+     * Set when the alerts were capped: the time from which every
+     * alert in the window was loaded. Null when all were loaded.
+     */
+    alertsCompleteFromMs: number | null;
 }
 
 /** The settled outcome of a request, and the selection it was for. */
@@ -190,6 +218,7 @@ interface ComparisonResult {
     window: ComparisonWindow;
     error: string | null;
     alertsError: string | null;
+    alertsCompleteFromMs: number | null;
 }
 
 const NO_ALERTS: AnomalyAlert[] = [];
@@ -206,7 +235,7 @@ const NO_ALERTS: AnomalyAlert[] = [];
  * on screen until the new one lands.
  */
 export const useAnomalyComparison = (
-    query: AnomalyComparisonQuery | null,
+    query: AnomalyComparisonQuery | null
 ): UseAnomalyComparisonReturn => {
     const { user } = useAuth();
     const { refreshTrigger, timeRange } = useDashboard();
@@ -216,9 +245,7 @@ export const useAnomalyComparison = (
     const isLoggedIn = !!user;
     const { range, customStart, customEnd } = timeRange;
     const queryable = isTimeRangeQueryable({ range, customStart, customEnd });
-    const key = query
-        ? JSON.stringify([query, range, customStart, customEnd])
-        : null;
+    const key = query ? JSON.stringify([query, range, customStart, customEnd]) : null;
     // Read through a ref so that the fetch depends on the query's
     // values, which `key` encodes, rather than on the identity of the
     // object the caller passes on each render.
@@ -227,7 +254,9 @@ export const useAnomalyComparison = (
 
     const fetchData = useCallback(async (): Promise<void> => {
         const query = queryRef.current;
-        if (!query || key === null) { return; }
+        if (!query || key === null) {
+            return;
+        }
         const selectedRange: TimeRangeState = { range, customStart, customEnd };
         if (!isTimeRangeQueryable(selectedRange)) {
             supersedeRequest();
@@ -238,14 +267,14 @@ export const useAnomalyComparison = (
         const isCurrent = beginRequest();
 
         const [comparison, alerts] = await Promise.allSettled([
-            apiGet<AnomalyComparisonResponse>(
-                buildComparisonUrl(query, selectedRange),
-            ),
-            apiGet<{ alerts?: AnomalyAlert[] | null }>(
-                buildAnomalyAlertsUrl(query.connectionId, window),
+            apiGet<AnomalyComparisonResponse>(buildComparisonUrl(query, window)),
+            apiGet<{ alerts?: AnomalyAlert[] | null; total?: number }>(
+                buildAnomalyAlertsUrl(query.connectionId, window)
             ),
         ]);
-        if (!isCurrent()) { return; }
+        if (!isCurrent()) {
+            return;
+        }
 
         if (comparison.status === 'rejected') {
             logger.error('Error fetching baseline comparison:', comparison.reason);
@@ -254,19 +283,25 @@ export const useAnomalyComparison = (
             logger.error('Error fetching anomaly alerts:', alerts.reason);
         }
 
+        const loadedAlerts =
+            alerts.status === 'fulfilled' ? (alerts.value.alerts ?? NO_ALERTS) : NO_ALERTS;
         setResult({
             key,
             window,
             data: comparison.status === 'fulfilled' ? comparison.value : null,
-            error: comparison.status === 'rejected'
-                ? messageOf(comparison.reason, 'Failed to load the baseline comparison')
-                : null,
-            alerts: alerts.status === 'fulfilled'
-                ? alerts.value.alerts ?? NO_ALERTS
-                : NO_ALERTS,
-            alertsError: alerts.status === 'rejected'
-                ? messageOf(alerts.reason, 'Failed to load anomaly alerts')
-                : null,
+            error:
+                comparison.status === 'rejected'
+                    ? messageOf(comparison.reason, 'Failed to load the baseline comparison')
+                    : null,
+            alerts: loadedAlerts,
+            alertsError:
+                alerts.status === 'rejected'
+                    ? messageOf(alerts.reason, 'Failed to load anomaly alerts')
+                    : null,
+            alertsCompleteFromMs:
+                alerts.status === 'fulfilled'
+                    ? alertsCompleteFrom(loadedAlerts, alerts.value.total, window)
+                    : null,
         });
     }, [key, range, customStart, customEnd, beginRequest, supersedeRequest]);
 
@@ -285,6 +320,7 @@ export const useAnomalyComparison = (
         loading: isLoggedIn && key !== null && queryable && current === null,
         error: current?.error ?? null,
         alertsError: current?.alertsError ?? null,
+        alertsCompleteFromMs: current?.alertsCompleteFromMs ?? null,
     };
 };
 

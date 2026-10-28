@@ -13,6 +13,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import {
     COMPARISON_BUCKETS,
     buildAnomalyAlertsUrl,
+    alertsCompleteFrom,
     buildComparisonUrl,
     resolveComparisonWindow,
     useAnomalyComparison,
@@ -78,9 +79,7 @@ const ALERTS = {
 };
 
 /** Answer each URL by its path, failing any the test did not expect. */
-const routeApi = (
-    routes: Record<string, () => Promise<unknown>>,
-): void => {
+const routeApi = (routes: Record<string, () => Promise<unknown>>): void => {
     mockApiGet.mockImplementation((url: string) => {
         const path = url.split('?')[0];
         const route = routes[path] as (() => Promise<unknown>) | undefined;
@@ -100,8 +99,14 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('buildComparisonUrl', () => {
+    const WINDOW = {
+        startMs: Date.parse('2026-10-28T10:00:00Z'),
+        endMs: Date.parse('2026-10-28T11:00:00Z'),
+        buckets: COMPARISON_BUCKETS,
+    };
+
     it('includes every parameter for a per-database query', () => {
-        const url = buildComparisonUrl(QUERY, { range: '24h' });
+        const url = buildComparisonUrl(QUERY, WINDOW);
         const params = new URL(url, 'http://x').searchParams;
         expect(url.startsWith('/api/v1/metrics/anomaly-comparison?')).toBe(true);
         expect(params.get('connection_id')).toBe('7');
@@ -110,19 +115,50 @@ describe('buildComparisonUrl', () => {
         expect(params.get('model')).toBe('hourly');
         expect(params.get('sensitivity')).toBe('3');
         expect(params.get('buckets')).toBe(String(COMPARISON_BUCKETS));
-        expect(params.get('time_range')).toBe('24h');
+    });
+
+    it('sends the absolute window rather than a preset', () => {
+        const url = buildComparisonUrl(QUERY, WINDOW);
+        const params = new URL(url, 'http://x').searchParams;
+        expect(params.get('time_range')).toBe('custom');
+        expect(params.get('time_start')).toBe('2026-10-28T10:00:00.000Z');
+        expect(params.get('time_end')).toBe('2026-10-28T11:00:00.000Z');
     });
 
     it('omits the database and sensitivity when they are not set', () => {
-        const url = buildComparisonUrl(
-            { ...QUERY, databaseName: null, sensitivity: null },
-            { range: 'custom', customStart: 'a', customEnd: 'b' },
-        );
+        const url = buildComparisonUrl({ ...QUERY, databaseName: null, sensitivity: null }, WINDOW);
         const params = new URL(url, 'http://x').searchParams;
         expect(params.has('database_name')).toBe(false);
         expect(params.has('sensitivity')).toBe(false);
-        expect(params.get('time_start')).toBe('a');
-        expect(params.get('time_end')).toBe('b');
+    });
+});
+
+describe('alertsCompleteFrom', () => {
+    const WINDOW = { startMs: 0, endMs: 1000, buckets: 10 };
+
+    it('is null when every alert was loaded', () => {
+        expect(
+            alertsCompleteFrom([{ id: 1, triggered_at: '1970-01-01T00:00:00.500Z' }], 1, WINDOW)
+        ).toBeNull();
+        expect(alertsCompleteFrom([], undefined, WINDOW)).toBeNull();
+    });
+
+    it('is the oldest loaded alert when the list was capped', () => {
+        expect(
+            alertsCompleteFrom(
+                [
+                    { id: 2, triggered_at: '1970-01-01T00:00:00.800Z' },
+                    { id: 1, triggered_at: '1970-01-01T00:00:00.300Z' },
+                    { id: 3, triggered_at: 'not a time' },
+                ],
+                5,
+                WINDOW
+            )
+        ).toBe(300);
+    });
+
+    it('is the end of the window when no capped alert has a usable time', () => {
+        expect(alertsCompleteFrom([], 4, WINDOW)).toBe(1000);
     });
 });
 
@@ -143,11 +179,13 @@ describe('resolveComparisonWindow', () => {
     });
 
     it('uses the bounds of a custom range', () => {
-        expect(resolveComparisonWindow({
-            range: 'custom',
-            customStart: '2026-10-01T00:00:00Z',
-            customEnd: '2026-10-02T00:00:00Z',
-        })).toEqual({
+        expect(
+            resolveComparisonWindow({
+                range: 'custom',
+                customStart: '2026-10-01T00:00:00Z',
+                customEnd: '2026-10-02T00:00:00Z',
+            })
+        ).toEqual({
             startMs: Date.parse('2026-10-01T00:00:00Z'),
             endMs: Date.parse('2026-10-02T00:00:00Z'),
             buckets: COMPARISON_BUCKETS,
@@ -156,7 +194,7 @@ describe('resolveComparisonWindow', () => {
 });
 
 describe('buildAnomalyAlertsUrl', () => {
-    it('asks for the connection\'s anomaly alerts within the window', () => {
+    it("asks for the connection's anomaly alerts within the window", () => {
         const url = buildAnomalyAlertsUrl(7, {
             startMs: Date.parse('2026-10-28T00:00:00Z'),
             endMs: Date.parse('2026-10-28T01:00:00Z'),
@@ -180,40 +218,42 @@ describe('useComparisonMetrics', () => {
     it('loads the metric list', async () => {
         const metrics = [{ name: 'm', probe_name: 'p', per_database: false }];
         routeApi({
-            '/api/v1/metrics/anomaly-comparison/metrics':
-                () => Promise.resolve(metrics),
+            '/api/v1/metrics/anomaly-comparison/metrics': () => Promise.resolve(metrics),
         });
         const { result } = renderHook(() => useComparisonMetrics());
         expect(result.current.loading).toBe(true);
-        await waitFor(() => { expect(result.current.loading).toBe(false); });
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
         expect(result.current.metrics).toEqual(metrics);
         expect(result.current.error).toBeNull();
     });
 
     it('treats a null body as no metrics', async () => {
         routeApi({
-            '/api/v1/metrics/anomaly-comparison/metrics':
-                () => Promise.resolve(null),
+            '/api/v1/metrics/anomaly-comparison/metrics': () => Promise.resolve(null),
         });
         const { result } = renderHook(() => useComparisonMetrics());
-        await waitFor(() => { expect(result.current.loading).toBe(false); });
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
         expect(result.current.metrics).toEqual([]);
     });
 
     it('reports a failure', async () => {
         routeApi({
-            '/api/v1/metrics/anomaly-comparison/metrics':
-                () => Promise.reject(new Error('boom')),
+            '/api/v1/metrics/anomaly-comparison/metrics': () => Promise.reject(new Error('boom')),
         });
         const { result } = renderHook(() => useComparisonMetrics());
-        await waitFor(() => { expect(result.current.error).toBe('boom'); });
+        await waitFor(() => {
+            expect(result.current.error).toBe('boom');
+        });
         expect(result.current.loading).toBe(false);
     });
 
     it('falls back to a generic message for an empty error', async () => {
         routeApi({
-            '/api/v1/metrics/anomaly-comparison/metrics':
-                () => Promise.reject(new Error('')),
+            '/api/v1/metrics/anomaly-comparison/metrics': () => Promise.reject(new Error('')),
         });
         const { result } = renderHook(() => useComparisonMetrics());
         await waitFor(() => {
@@ -241,12 +281,37 @@ describe('useAnomalyComparison', () => {
         });
         const { result } = renderHook(() => useAnomalyComparison(QUERY));
         expect(result.current.loading).toBe(true);
-        await waitFor(() => { expect(result.current.loading).toBe(false); });
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
         expect(result.current.data).toEqual(RESPONSE);
         expect(result.current.alerts).toEqual(ALERTS.alerts);
         expect(result.current.window?.buckets).toBe(COMPARISON_BUCKETS);
         expect(result.current.error).toBeNull();
         expect(result.current.alertsError).toBeNull();
+        expect(result.current.alertsCompleteFromMs).toBeNull();
+        const comparisonUrl = mockApiGet.mock.calls
+            .map(([url]) => url as string)
+            .find((url) => url.startsWith('/api/v1/metrics/anomaly-comparison'));
+        const params = new URL(comparisonUrl ?? '', 'http://x').searchParams;
+        expect(params.get('time_start')).toBe(
+            new Date(result.current.window?.startMs ?? 0).toISOString()
+        );
+        expect(params.get('time_end')).toBe(
+            new Date(result.current.window?.endMs ?? 0).toISOString()
+        );
+    });
+
+    it('reports where a capped alert list stops being complete', async () => {
+        routeApi({
+            '/api/v1/metrics/anomaly-comparison': () => Promise.resolve(RESPONSE),
+            '/api/v1/alerts': () => Promise.resolve({ ...ALERTS, total: 1500 }),
+        });
+        const { result } = renderHook(() => useAnomalyComparison(QUERY));
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+        expect(result.current.alertsCompleteFromMs).toBe(Date.parse('2026-10-28T11:00:00Z'));
     });
 
     it('still charts the comparison when the alerts fail', async () => {
@@ -255,7 +320,9 @@ describe('useAnomalyComparison', () => {
             '/api/v1/alerts': () => Promise.reject(new Error('')),
         });
         const { result } = renderHook(() => useAnomalyComparison(QUERY));
-        await waitFor(() => { expect(result.current.loading).toBe(false); });
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
         expect(result.current.data).toEqual(RESPONSE);
         expect(result.current.alerts).toEqual([]);
         expect(result.current.alertsError).toBe('Failed to load anomaly alerts');
@@ -267,14 +334,15 @@ describe('useAnomalyComparison', () => {
             '/api/v1/alerts': () => Promise.resolve({}),
         });
         const { result } = renderHook(() => useAnomalyComparison(QUERY));
-        await waitFor(() => { expect(result.current.loading).toBe(false); });
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
         expect(result.current.alerts).toEqual([]);
     });
 
     it('reports a failed comparison', async () => {
         routeApi({
-            '/api/v1/metrics/anomaly-comparison':
-                () => Promise.reject(new Error('unknown metric')),
+            '/api/v1/metrics/anomaly-comparison': () => Promise.reject(new Error('unknown metric')),
             '/api/v1/alerts': () => Promise.resolve(ALERTS),
         });
         const { result } = renderHook(() => useAnomalyComparison(QUERY));
@@ -287,15 +355,12 @@ describe('useAnomalyComparison', () => {
 
     it('falls back to a generic message for an empty comparison error', async () => {
         routeApi({
-            '/api/v1/metrics/anomaly-comparison':
-                () => Promise.reject(new Error('')),
+            '/api/v1/metrics/anomaly-comparison': () => Promise.reject(new Error('')),
             '/api/v1/alerts': () => Promise.resolve(ALERTS),
         });
         const { result } = renderHook(() => useAnomalyComparison(QUERY));
         await waitFor(() => {
-            expect(result.current.error).toBe(
-                'Failed to load the baseline comparison',
-            );
+            expect(result.current.error).toBe('Failed to load the baseline comparison');
         });
     });
 
@@ -321,20 +386,23 @@ describe('useAnomalyComparison', () => {
             '/api/v1/metrics/anomaly-comparison': () => {
                 call += 1;
                 if (call === 1) {
-                    return new Promise((resolve) => { resolveFirst = resolve; });
+                    return new Promise((resolve) => {
+                        resolveFirst = resolve;
+                    });
                 }
                 return Promise.resolve({ ...RESPONSE, model: 'all' });
             },
             '/api/v1/alerts': () => Promise.resolve(ALERTS),
         });
-        const { result, rerender } = renderHook(
-            ({ q }) => useAnomalyComparison(q),
-            { initialProps: { q: QUERY } },
-        );
+        const { result, rerender } = renderHook(({ q }) => useAnomalyComparison(q), {
+            initialProps: { q: QUERY },
+        });
         rerender({ q: { ...QUERY, model: 'all' } });
-        await waitFor(() => { expect(result.current.data?.model).toBe('all'); });
+        await waitFor(() => {
+            expect(result.current.data?.model).toBe('all');
+        });
         resolveFirst({ ...RESPONSE, model: 'hourly' });
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
         expect(result.current.data?.model).toBe('all');
     });
 
@@ -344,11 +412,15 @@ describe('useAnomalyComparison', () => {
             '/api/v1/alerts': () => Promise.resolve(ALERTS),
         });
         const { result, rerender } = renderHook(() => useAnomalyComparison(QUERY));
-        await waitFor(() => { expect(result.current.loading).toBe(false); });
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
         mockRefreshTrigger = 1;
         rerender();
         expect(result.current.loading).toBe(false);
         expect(result.current.data).toEqual(RESPONSE);
-        await waitFor(() => { expect(mockApiGet).toHaveBeenCalledTimes(4); });
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(4);
+        });
     });
 });

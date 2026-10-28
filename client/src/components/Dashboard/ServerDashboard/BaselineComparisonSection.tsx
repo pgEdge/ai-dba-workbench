@@ -87,7 +87,7 @@ const ControlSelect: React.FC<{
             value={value}
             onChange={(event: SelectChangeEvent) => onChange(event.target.value)}
         >
-            {options.map(option => (
+            {options.map((option) => (
                 <MenuItem key={option.value} value={option.value}>
                     {option.label}
                 </MenuItem>
@@ -103,9 +103,7 @@ const ControlSelect: React.FC<{
  * the band that raised none, which shows how a different model or
  * sensitivity would have behaved.
  */
-const BaselineComparisonSection: React.FC<ServerSectionProps> = ({
-    connectionId,
-}) => {
+const BaselineComparisonSection: React.FC<ServerSectionProps> = ({ connectionId }) => {
     const theme = useTheme();
     const metricsState = useComparisonMetrics();
     const { metrics } = metricsState;
@@ -117,28 +115,27 @@ const BaselineComparisonSection: React.FC<ServerSectionProps> = ({
     const [sensitivity, setSensitivity] = useState<number | null>(null);
 
     const metric = useMemo(() => {
-        const chosen = metrics.find(m => m.name === metricChoice);
-        return chosen
-            ?? metrics.find(m => m.name === DEFAULT_METRIC)
-            ?? metrics[0]
-            ?? null;
+        const chosen = metrics.find((m) => m.name === metricChoice);
+        return chosen ?? metrics.find((m) => m.name === DEFAULT_METRIC) ?? metrics[0] ?? null;
     }, [metrics, metricChoice]);
     const perDatabase = metric?.per_database ?? false;
 
     const { databases } = useDatabaseSummaries(
-        connectionId, 0, DATABASE_LIST_TIME_RANGE, perDatabase,
+        connectionId,
+        0,
+        DATABASE_LIST_TIME_RANGE,
+        perDatabase
     );
     const databaseNames = useMemo(
-        () => databases
-            .map(db => db.database_name)
-            .filter(Boolean)
-            .sort((a, b) => a.localeCompare(b)),
-        [databases],
+        () =>
+            databases
+                .map((db) => db.database_name)
+                .filter(Boolean)
+                .sort((a, b) => a.localeCompare(b)),
+        [databases]
     );
     const databaseName = perDatabase
-        ? (databaseNames.find(name => name === databaseChoice)
-            ?? databaseNames[0]
-            ?? null)
+        ? (databaseNames.find((name) => name === databaseChoice) ?? databaseNames[0] ?? null)
         : null;
 
     const query = useMemo<AnomalyComparisonQuery | null>(() => {
@@ -154,50 +151,48 @@ const BaselineComparisonSection: React.FC<ServerSectionProps> = ({
         };
     }, [connectionId, metric, perDatabase, databaseName, model, sensitivity]);
 
-    const { data, alerts, window, loading, error, alertsError } =
+    const { data, alerts, window, loading, error, alertsError, alertsCompleteFromMs } =
         useAnomalyComparison(query);
 
     // Adopt the server's default once it is known. A default the
     // selector does not offer is rounded and asked for explicitly, so
     // that the band drawn matches the sensitivity shown.
-    const defaultSensitivity = data
-        ? nearestSensitivity(data.default_sensitivity)
-        : null;
+    const defaultSensitivity = data ? nearestSensitivity(data.default_sensitivity) : null;
     const usedSensitivity = data?.sensitivity;
     useEffect(() => {
         if (
-            sensitivity === null
-            && defaultSensitivity !== null
-            && defaultSensitivity !== usedSensitivity
+            sensitivity === null &&
+            defaultSensitivity !== null &&
+            defaultSensitivity !== usedSensitivity
         ) {
             setSensitivity(defaultSensitivity);
         }
     }, [sensitivity, defaultSensitivity, usedSensitivity]);
-    const shownSensitivity = sensitivity
-        ?? defaultSensitivity
-        ?? nearestSensitivity(undefined);
+    const shownSensitivity = sensitivity ?? defaultSensitivity ?? nearestSensitivity(undefined);
 
     const valueLabel = metric ? friendlyMetricLabel(metric.name) : '';
     const title = `${valueLabel} against its baseline`;
     const points = useMemo(() => data?.points ?? [], [data]);
 
     const chartData = useMemo(() => {
-        if (!data || !window || points.length === 0) { return null; }
-        const engineAlerts = filterEngineAlerts(
-            alerts, data.metric, data.database_name,
-        );
+        if (!data || !window || points.length === 0) {
+            return null;
+        }
+        const engineAlerts = filterEngineAlerts(alerts, data.metric, data.database_name);
         const chart = buildComparisonChart(
-            points, engineAlerts, data.sensitivity, window,
+            points,
+            engineAlerts,
+            data.sensitivity,
+            window,
+            alertsCompleteFromMs
         );
-        const options = buildComparisonOptions(
-            chart, valueLabel, data.sensitivity, {
-                value: theme.palette.primary.main,
-                band: theme.palette.info.main,
-                engine: theme.palette.error.main,
-                outside: theme.palette.warning.main,
-                background: theme.palette.background.paper,
-            },
-        );
+        const options = buildComparisonOptions(chart, valueLabel, data.sensitivity, {
+            value: theme.palette.primary.main,
+            band: theme.palette.info.main,
+            engine: theme.palette.error.main,
+            outside: theme.palette.warning.main,
+            background: theme.palette.background.paper,
+        });
         return {
             options,
             // Sizes the y axis and supplies the categories; the series
@@ -205,30 +200,28 @@ const BaselineComparisonSection: React.FC<ServerSectionProps> = ({
             data: {
                 categories: chart.categories,
                 series: [
-                    { name: valueLabel, data: points.map(p => p.value) },
+                    { name: valueLabel, data: points.map((p) => p.value) },
                     { name: 'upper', data: chart.upper },
                     { name: 'lower', data: chart.lower },
                 ],
             },
         };
-    }, [data, window, points, alerts, valueLabel, theme]);
+    }, [data, window, points, alerts, alertsCompleteFromMs, valueLabel, theme]);
 
     const metricOptions = useMemo(
-        () => metrics.map(m => ({
-            value: m.name,
-            label: friendlyMetricLabel(m.name),
-        })),
-        [metrics],
+        () =>
+            metrics.map((m) => ({
+                value: m.name,
+                label: friendlyMetricLabel(m.name),
+            })),
+        [metrics]
     );
 
     const renderBody = (): React.ReactNode => {
         if (metricsState.loading) {
             return (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
-                    <CircularProgress
-                        size={24}
-                        aria-label="Loading baselined metrics"
-                    />
+                    <CircularProgress size={24} aria-label="Loading baselined metrics" />
                 </Box>
             );
         }
@@ -241,11 +234,7 @@ const BaselineComparisonSection: React.FC<ServerSectionProps> = ({
         }
         if (!metric) {
             return (
-                <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={MESSAGE_SX}
-                >
+                <Typography variant="body2" color="text.secondary" sx={MESSAGE_SX}>
                     No baselined metrics are available.
                 </Typography>
             );
@@ -268,8 +257,9 @@ const BaselineComparisonSection: React.FC<ServerSectionProps> = ({
                             label="Database"
                             value={databaseName}
                             onChange={setDatabaseChoice}
-                            options={databaseNames.map(name => ({
-                                value: name, label: name,
+                            options={databaseNames.map((name) => ({
+                                value: name,
+                                label: name,
                             }))}
                         />
                     )}
@@ -277,35 +267,31 @@ const BaselineComparisonSection: React.FC<ServerSectionProps> = ({
                         id="baseline-comparison-model"
                         label="Baseline model"
                         value={model}
-                        onChange={value => setModel(value as ComparisonModel)}
+                        onChange={(value) => setModel(value as ComparisonModel)}
                         options={MODEL_OPTIONS}
                     />
                     <ControlSelect
                         id="baseline-comparison-sensitivity"
                         label="Sensitivity"
                         value={shownSensitivity.toString()}
-                        onChange={value => setSensitivity(Number(value))}
-                        options={SENSITIVITY_OPTIONS.map(k => ({
-                            value: k.toString(), label: `${k}σ`,
+                        onChange={(value) => setSensitivity(Number(value))}
+                        options={SENSITIVITY_OPTIONS.map((k) => ({
+                            value: k.toString(),
+                            label: `${k}σ`,
                         }))}
                     />
                 </Box>
 
                 {perDatabase && databaseName === null ? (
-                    <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={MESSAGE_SX}
-                    >
+                    <Typography variant="body2" color="text.secondary" sx={MESSAGE_SX}>
                         No databases are known for this server.
                     </Typography>
                 ) : (
                     <>
                         {data?.scoring_source === 'defaults' && (
                             <Alert severity="info" sx={{ mb: 1.5 }}>
-                                Scoring settings: defaults. The alerter has
-                                not published its anomaly settings, so the
-                                band uses the default sensitivity.
+                                Scoring settings: defaults. The alerter has not published its
+                                anomaly settings, so the band uses the default sensitivity.
                             </Alert>
                         )}
                         <ChartPanel
@@ -329,17 +315,15 @@ const BaselineComparisonSection: React.FC<ServerSectionProps> = ({
                                 />
                             )}
                         </ChartPanel>
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ mt: 1 }}
-                        >
-                            Bands are the current baselines applied across
-                            the window.
-                            {alertsError && (
-                                ' The anomaly alerts could not be loaded, so'
-                                + ' engine alerts are not marked.'
-                            )}
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                            Bands are the current baselines applied across the window.
+                            {alertsError &&
+                                ' The anomaly alerts could not be loaded, so' +
+                                    ' engine alerts are not marked.'}
+                            {alertsCompleteFromMs !== null &&
+                                ' Not every engine alert could be loaded, so' +
+                                    ' older points are not marked as outside' +
+                                    ' with no engine alert.'}
                         </Typography>
                     </>
                 )}

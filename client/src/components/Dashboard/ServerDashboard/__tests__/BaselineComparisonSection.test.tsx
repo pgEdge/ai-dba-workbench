@@ -18,14 +18,8 @@ import type {
     UseComparisonMetricsReturn,
 } from '../../../../hooks/useAnomalyComparison';
 import type { UseDatabaseSummariesResult } from '../../../../hooks/useDatabaseSummaries';
-import type {
-    AnomalyComparisonResponse,
-    ComparisonPoint,
-} from '../baselineComparison';
-import {
-    ENGINE_ANOMALY_LABEL,
-    OUTSIDE_LABEL,
-} from '../baselineComparison';
+import type { AnomalyComparisonResponse, ComparisonPoint } from '../baselineComparison';
+import { ENGINE_ANOMALY_LABEL, OUTSIDE_LABEL } from '../baselineComparison';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -46,9 +40,7 @@ vi.mock('../../../../hooks/useAnomalyComparison', () => ({
 }));
 
 vi.mock('../../../../hooks/useDatabaseSummaries', () => ({
-    useDatabaseSummaries: (
-        _id: number, _key: number, _range: unknown, enabled: boolean,
-    ) => {
+    useDatabaseSummaries: (_id: number, _key: number, _range: unknown, enabled: boolean) => {
         databaseCalls.push(enabled);
         return databasesResult;
     },
@@ -100,7 +92,7 @@ const point = (time: string, overrides: Partial<ComparisonPoint> = {}): Comparis
 });
 
 const response = (
-    overrides: Partial<AnomalyComparisonResponse> = {},
+    overrides: Partial<AnomalyComparisonResponse> = {}
 ): AnomalyComparisonResponse => ({
     metric: CPU,
     connection_id: 1,
@@ -119,17 +111,19 @@ const response = (
 });
 
 const loadedComparison = (
-    overrides: Partial<UseAnomalyComparisonReturn> = {},
+    overrides: Partial<UseAnomalyComparisonReturn> = {}
 ): UseAnomalyComparisonReturn => ({
     data: response(),
-    alerts: [{
-        id: 1,
-        metric_name: CPU,
-        metric_value: 70,
-        anomaly_score: 10,
-        anomaly_details: '{"baseline_context":{"period_type":"hourly"}}',
-        triggered_at: '2026-10-28T11:10:00Z',
-    }],
+    alerts: [
+        {
+            id: 1,
+            metric_name: CPU,
+            metric_value: 70,
+            anomaly_score: 10,
+            anomaly_details: '{"baseline_context":{"period_type":"hourly"}}',
+            triggered_at: '2026-10-28T11:10:00Z',
+        },
+    ],
     window: {
         startMs: Date.parse('2026-10-28T11:00:00Z'),
         endMs: Date.parse('2026-10-28T12:00:00Z'),
@@ -138,11 +132,11 @@ const loadedComparison = (
     loading: false,
     error: null,
     alertsError: null,
+    alertsCompleteFromMs: null,
     ...overrides,
 });
 
-const lastQuery = (): AnomalyComparisonQuery | null =>
-    queries[queries.length - 1];
+const lastQuery = (): AnomalyComparisonQuery | null => queries[queries.length - 1];
 
 /** Open an MUI select by its accessible name and pick an option. */
 const choose = (selectName: string, optionName: string): void => {
@@ -151,8 +145,7 @@ const choose = (selectName: string, optionName: string): void => {
     fireEvent.click(within(listbox).getByRole('option', { name: optionName }));
 };
 
-const renderSection = () =>
-    renderWithTheme(<BaselineComparisonSection connectionId={1} />);
+const renderSection = () => renderWithTheme(<BaselineComparisonSection connectionId={1} />);
 
 beforeEach(() => {
     queries.length = 0;
@@ -185,9 +178,8 @@ describe('BaselineComparisonSection', () => {
             model: 'as_scored',
             sensitivity: null,
         });
-        expect(screen.queryByRole('combobox', { name: 'Database' }))
-            .not.toBeInTheDocument();
-        expect(databaseCalls.every(enabled => !enabled)).toBe(true);
+        expect(screen.queryByRole('combobox', { name: 'Database' })).not.toBeInTheDocument();
+        expect(databaseCalls.every((enabled) => !enabled)).toBe(true);
     });
 
     it('charts the series with both deviation kinds in the legend', () => {
@@ -198,9 +190,9 @@ describe('BaselineComparisonSection', () => {
         const legend = chart.dataset.legend?.split('|') ?? [];
         expect(legend).toContain(ENGINE_ANOMALY_LABEL);
         expect(legend).toContain(OUTSIDE_LABEL);
-        expect(screen.getByText(
-            /Bands are the current baselines applied across the window\./,
-        )).toBeInTheDocument();
+        expect(
+            screen.getByText(/Bands are the current baselines applied across the window\./)
+        ).toBeInTheDocument();
     });
 
     it('shows the database selector for a per-database metric', () => {
@@ -218,8 +210,7 @@ describe('BaselineComparisonSection', () => {
         renderSection();
         choose('Metric', 'Cache hit ratio (%)');
         expect(lastQuery()).toBeNull();
-        expect(screen.getByText('No databases are known for this server.'))
-            .toBeInTheDocument();
+        expect(screen.getByText('No databases are known for this server.')).toBeInTheDocument();
     });
 
     it('changes the model and sensitivity', () => {
@@ -240,8 +231,7 @@ describe('BaselineComparisonSection', () => {
 
     it('shows the offered default without refetching', () => {
         renderSection();
-        expect(screen.getByRole('combobox', { name: 'Sensitivity' }))
-            .toHaveTextContent('3σ');
+        expect(screen.getByRole('combobox', { name: 'Sensitivity' })).toHaveTextContent('3σ');
         expect(lastQuery()?.sensitivity).toBeNull();
     });
 
@@ -250,15 +240,22 @@ describe('BaselineComparisonSection', () => {
             data: response({ scoring_source: 'defaults' }),
         });
         renderSection();
-        expect(screen.getByText(/Scoring settings: defaults/))
-            .toBeInTheDocument();
+        expect(screen.getByText(/Scoring settings: defaults/)).toBeInTheDocument();
     });
 
     it('notes when the anomaly alerts could not be loaded', () => {
         comparisonResult = loadedComparison({ alertsError: 'nope' });
         renderSection();
-        expect(screen.getByText(/anomaly alerts could not be loaded/))
-            .toBeInTheDocument();
+        expect(screen.getByText(/anomaly alerts could not be loaded/)).toBeInTheDocument();
+    });
+
+    it('notes when not every engine alert was loaded', () => {
+        comparisonResult = loadedComparison({
+            alertsCompleteFromMs: Date.parse('2026-10-28T11:05:00Z'),
+        });
+        renderSection();
+        expect(screen.getByText(/Not every engine alert could be loaded/)).toBeInTheDocument();
+        expect(screen.getByTestId('chart').dataset.legend?.split('|')).not.toContain(OUTSIDE_LABEL);
     });
 
     it('shows the empty state when there are no points', () => {
@@ -267,9 +264,9 @@ describe('BaselineComparisonSection', () => {
         });
         renderSection();
         expect(screen.queryByTestId('chart')).not.toBeInTheDocument();
-        expect(screen.getByText(
-            'No samples of this metric were collected in the selected period.',
-        )).toBeInTheDocument();
+        expect(
+            screen.getByText('No samples of this metric were collected in the selected period.')
+        ).toBeInTheDocument();
     });
 
     it('treats null points as empty', () => {
@@ -282,7 +279,9 @@ describe('BaselineComparisonSection', () => {
 
     it('shows the loading state', () => {
         comparisonResult = loadedComparison({
-            data: null, window: null, loading: true,
+            data: null,
+            window: null,
+            loading: true,
         });
         renderSection();
         expect(screen.getByLabelText('Loading chart')).toBeInTheDocument();
@@ -290,7 +289,8 @@ describe('BaselineComparisonSection', () => {
 
     it('reports a failed comparison', () => {
         comparisonResult = loadedComparison({
-            data: null, error: 'unknown metric',
+            data: null,
+            error: 'unknown metric',
         });
         renderSection();
         expect(screen.getByText('unknown metric')).toBeInTheDocument();
@@ -299,8 +299,7 @@ describe('BaselineComparisonSection', () => {
     it('reports the metric list loading, failing and being empty', () => {
         metricsResult = { metrics: [], loading: true, error: null };
         const { unmount } = renderSection();
-        expect(screen.getByLabelText('Loading baselined metrics'))
-            .toBeInTheDocument();
+        expect(screen.getByLabelText('Loading baselined metrics')).toBeInTheDocument();
         expect(lastQuery()).toBeNull();
         unmount();
 
@@ -311,8 +310,7 @@ describe('BaselineComparisonSection', () => {
 
         metricsResult = { metrics: [], loading: false, error: null };
         renderSection();
-        expect(screen.getByText('No baselined metrics are available.'))
-            .toBeInTheDocument();
+        expect(screen.getByText('No baselined metrics are available.')).toBeInTheDocument();
     });
 
     it('falls back to the first metric when CPU usage is not offered', () => {
@@ -323,7 +321,6 @@ describe('BaselineComparisonSection', () => {
         };
         renderSection();
         expect(lastQuery()).toMatchObject({ metric: 'custom.metric' });
-        expect(screen.getByRole('combobox', { name: 'Metric' }))
-            .toHaveTextContent('custom.metric');
+        expect(screen.getByRole('combobox', { name: 'Metric' })).toHaveTextContent('custom.metric');
     });
 });

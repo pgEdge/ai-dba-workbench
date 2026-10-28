@@ -124,21 +124,17 @@ const METRIC_LABELS: Record<string, string> = {
     connection_utilization_percent: 'Connection utilisation (%)',
     'pg_stat_activity.count': 'Backends',
     'pg_stat_activity.blocked_count': 'Blocked backends',
-    'pg_stat_activity.idle_in_transaction_seconds':
-        'Idle in transaction (s)',
+    'pg_stat_activity.idle_in_transaction_seconds': 'Idle in transaction (s)',
     'pg_stat_activity.max_lock_wait_seconds': 'Longest lock wait (s)',
-    'pg_stat_activity.max_query_duration_seconds':
-        'Longest running query (s)',
-    'pg_stat_activity.max_xact_duration_seconds':
-        'Longest transaction (s)',
+    'pg_stat_activity.max_query_duration_seconds': 'Longest running query (s)',
+    'pg_stat_activity.max_xact_duration_seconds': 'Longest transaction (s)',
     'pg_stat_replication.replay_lag_seconds': 'Replay lag (s)',
     'pg_stat_replication.lag_bytes': 'Replication lag (bytes)',
     'pg_stat_replication.standby_disconnected': 'Standbys disconnected',
     'pg_replication_slots.retained_bytes': 'Slot retained WAL (bytes)',
     'pg_replication_slots.inactive': 'Inactive slot',
     'pg_replication_slots.inactive_count': 'Inactive slots',
-    'pg_replication_slots.max_retained_bytes':
-        'Largest slot retained WAL (bytes)',
+    'pg_replication_slots.max_retained_bytes': 'Largest slot retained WAL (bytes)',
     'spock_exception_log.recent_count': 'Spock exceptions',
     'spock_resolutions.recent_count': 'Spock conflict resolutions',
     'pg_node_role.subscription_worker_down': 'Subscription workers down',
@@ -151,16 +147,14 @@ const METRIC_LABELS: Record<string, string> = {
     'pg_stat_statements.slow_query_count': 'Slow queries',
     'pg_sys_cpu_usage_info.processor_time_percent': 'CPU usage (%)',
     'pg_sys_disk_info.used_percent': 'Disk usage (%)',
-    'pg_sys_load_avg_info.load_avg_fifteen_minutes':
-        'Load average (15 min)',
+    'pg_sys_load_avg_info.load_avg_fifteen_minutes': 'Load average (15 min)',
     'pg_sys_memory_info.used_percent': 'Memory usage (%)',
     age_percent: 'Transaction ID age (%)',
     table_last_autovacuum_hours: 'Hours since autovacuum',
 };
 
 /** The friendly label for a metric, or its raw name when it has none. */
-export const friendlyMetricLabel = (name: string): string =>
-    METRIC_LABELS[name] ?? name;
+export const friendlyMetricLabel = (name: string): string => METRIC_LABELS[name] ?? name;
 
 /** The model selector's options, in display order. */
 export const MODEL_OPTIONS: { value: ComparisonModel; label: string }[] = [
@@ -185,7 +179,7 @@ export const nearestSensitivity = (value: number | undefined): number => {
         return FALLBACK_SENSITIVITY;
     }
     return SENSITIVITY_OPTIONS.reduce((best, option) =>
-        Math.abs(option - value) < Math.abs(best - value) ? option : best,
+        Math.abs(option - value) < Math.abs(best - value) ? option : best
     );
 };
 
@@ -198,29 +192,30 @@ const PERIOD_TYPE_LABELS: Record<string, string> = {
 
 /** A period type's display name, or the raw value when unknown. */
 export const periodTypeLabel = (periodType: string | null): string =>
-    periodType === null
-        ? 'unknown'
-        : PERIOD_TYPE_LABELS[periodType] ?? periodType;
+    periodType === null ? 'unknown' : (PERIOD_TYPE_LABELS[periodType] ?? periodType);
 
 /**
  * Read the baseline period type an anomaly alert was scored against
  * from its `anomaly_details` JSON. Older or malformed details yield
  * null rather than an error, since the marker is still worth showing.
  */
-export const parsePeriodType = (
-    details: string | null | undefined,
-): string | null => {
-    if (!details) { return null; }
+export const parsePeriodType = (details: string | null | undefined): string | null => {
+    if (!details) {
+        return null;
+    }
     let parsed: unknown;
     try {
         parsed = JSON.parse(details);
     } catch {
         return null;
     }
-    if (typeof parsed !== 'object' || parsed === null) { return null; }
-    const context = (parsed as { baseline_context?: unknown })
-        .baseline_context;
-    if (typeof context !== 'object' || context === null) { return null; }
+    if (typeof parsed !== 'object' || parsed === null) {
+        return null;
+    }
+    const context = (parsed as { baseline_context?: unknown }).baseline_context;
+    if (typeof context !== 'object' || context === null) {
+        return null;
+    }
     const periodType = (context as { period_type?: unknown }).period_type;
     return typeof periodType === 'string' ? periodType : null;
 };
@@ -239,12 +234,8 @@ const NUMBER_FORMAT = new Intl.NumberFormat('en-GB', {
 });
 
 /** Format a value for the tooltip, or a dash when there is none. */
-export const formatComparisonValue = (
-    value: number | null | undefined,
-): string =>
-    typeof value === 'number' && Number.isFinite(value)
-        ? NUMBER_FORMAT.format(value)
-        : '--';
+export const formatComparisonValue = (value: number | null | undefined): string =>
+    typeof value === 'number' && Number.isFinite(value) ? NUMBER_FORMAT.format(value) : '--';
 
 /**
  * Keep the anomaly alerts for the charted metric and database. A
@@ -254,12 +245,9 @@ export const formatComparisonValue = (
 export const filterEngineAlerts = (
     alerts: AnomalyAlert[],
     metric: string,
-    databaseName: string | null,
+    databaseName: string | null
 ): AnomalyAlert[] =>
-    alerts.filter(a =>
-        a.metric_name === metric
-        && (a.database_name ?? null) === databaseName,
-    );
+    alerts.filter((a) => a.metric_name === metric && (a.database_name ?? null) === databaseName);
 
 // ---------------------------------------------------------------------------
 // Chart model
@@ -284,21 +272,18 @@ const nearestIndex = (times: number[], time: number): number => {
  * null when the window cannot be divided into buckets, in which case
  * callers match on the nearest point instead.
  */
-const bucketer = (
-    window: ComparisonWindow,
-): ((time: number) => number) | null => {
+const bucketer = (window: ComparisonWindow): ((time: number) => number) | null => {
     const bucketMs = (window.endMs - window.startMs) / window.buckets;
-    if (!Number.isFinite(bucketMs) || bucketMs <= 0) { return null; }
+    if (!Number.isFinite(bucketMs) || bucketMs <= 0) {
+        return null;
+    }
     const last = window.buckets - 1;
-    return (time: number): number => Math.min(
-        Math.max(Math.floor((time - window.startMs) / bucketMs), 0),
-        last,
-    );
+    return (time: number): number =>
+        Math.min(Math.max(Math.floor((time - window.startMs) / bucketMs), 0), last);
 };
 
 /** The absolute z-score of an alert, treating a missing one as zero. */
-const alertStrength = (marker: EngineMarker): number =>
-    Math.abs(marker.zScore ?? 0);
+const alertStrength = (marker: EngineMarker): number => Math.abs(marker.zScore ?? 0);
 
 /**
  * Place each engine alert on a chart point: the point in the alert's
@@ -310,7 +295,7 @@ const placeEngineAlerts = (
     times: number[],
     pointBuckets: number[],
     bucketOf: ((time: number) => number) | null,
-    points: ComparisonPoint[],
+    points: ComparisonPoint[]
 ): { markers: (EngineMarker | null)[]; buckets: Set<number> } => {
     const markers: (EngineMarker | null)[] = points.map(() => null);
     const buckets = new Set<number>();
@@ -319,7 +304,9 @@ const placeEngineAlerts = (
 
     for (const a of alerts) {
         const time = Date.parse(a.triggered_at);
-        if (Number.isNaN(time) || points.length === 0) { continue; }
+        if (Number.isNaN(time) || points.length === 0) {
+            continue;
+        }
 
         const bucket = bucketOf ? bucketOf(time) : nearestIndex(times, time);
         const index = pointByBucket.get(bucket) ?? nearestIndex(times, time);
@@ -346,14 +333,12 @@ const placeEngineAlerts = (
  * that join the two are drawn faded and the line stays continuous.
  */
 const splitValues = (
-    points: ComparisonPoint[],
+    points: ComparisonPoint[]
 ): { warm: (number | null)[]; cold: (number | null)[] } => {
     const isCold = (i: number): boolean => points[i]?.cold === true;
     return {
-        warm: points.map(p => (p.cold ? null : p.value)),
-        cold: points.map((p, i) =>
-            isCold(i) || isCold(i - 1) || isCold(i + 1) ? p.value : null,
-        ),
+        warm: points.map((p) => (p.cold ? null : p.value)),
+        cold: points.map((p, i) => (isCold(i) || isCold(i - 1) || isCold(i + 1) ? p.value : null)),
     };
 };
 
@@ -362,14 +347,22 @@ const splitValues = (
  * alerts, which the caller has already filtered to the metric and
  * database. `sensitivity` is the k of the band mean ± k·σ, and should
  * be the one the server used, so that the band matches `outside`.
+ *
+ * An alert covers its own bucket and the one before it, because the
+ * engine stamps `triggered_at` when it evaluates, which lags the
+ * collection time of the value that tripped it. `alertsCompleteFromMs`
+ * is set when the alerts were capped: no alert older than it was
+ * loaded, so no point at or before it is marked as outside without an
+ * engine alert.
  */
 export const buildComparisonChart = (
     points: ComparisonPoint[],
     alerts: AnomalyAlert[],
     sensitivity: number,
     window: ComparisonWindow,
+    alertsCompleteFromMs: number | null = null
 ): ComparisonChartModel => {
-    const times = points.map(p => Date.parse(p.time));
+    const times = points.map((p) => Date.parse(p.time));
     const bucketOf = bucketer(window);
     const pointBuckets = times.map((t, i) => (bucketOf ? bucketOf(t) : i));
 
@@ -386,16 +379,24 @@ export const buildComparisonChart = (
         return lo === null || hi === null ? null : hi - lo;
     };
 
-    const { markers, buckets } = placeEngineAlerts(
-        alerts, times, pointBuckets, bucketOf, points,
-    );
+    const { markers, buckets } = placeEngineAlerts(alerts, times, pointBuckets, bucketOf, points);
+    const covered = (i: number): boolean =>
+        buckets.has(pointBuckets[i]) || buckets.has(pointBuckets[i] + 1);
+    const unloaded = (i: number): boolean => {
+        if (alertsCompleteFromMs === null) {
+            return false;
+        }
+        return bucketOf
+            ? pointBuckets[i] <= bucketOf(alertsCompleteFromMs)
+            : times[i] <= alertsCompleteFromMs;
+    };
     const outsideMarkers = points.map((p, i) =>
-        p.outside && !buckets.has(pointBuckets[i]) ? p.value : null,
+        p.outside && !covered(i) && !unloaded(i) ? p.value : null
     );
     const values = splitValues(points);
 
     return {
-        categories: points.map(p => p.time),
+        categories: points.map((p) => p.time),
         points,
         lower,
         upper,
@@ -407,10 +408,10 @@ export const buildComparisonChart = (
         coldValues: values.cold,
         engineMarkers: markers,
         outsideMarkers,
-        hasBand: lower.some(v => v !== null),
-        hasCold: points.some(p => p.cold),
-        hasEngine: markers.some(m => m !== null),
-        hasOutside: outsideMarkers.some(v => v !== null),
+        hasBand: lower.some((v) => v !== null),
+        hasCold: points.some((p) => p.cold),
+        hasEngine: markers.some((m) => m !== null),
+        hasOutside: outsideMarkers.some((v) => v !== null),
     };
 };
 
@@ -418,23 +419,21 @@ export const buildComparisonChart = (
 export const describeComparisonIndex = (
     chart: ComparisonChartModel,
     index: number,
-    sensitivity: number,
+    sensitivity: number
 ): string[] => {
     const p = chart.points[index] as ComparisonPoint | undefined;
-    if (!p) { return []; }
+    if (!p) {
+        return [];
+    }
 
     const lines = [`Value: ${formatComparisonValue(p.value)}`];
     const lo = chart.lower[index];
     const hi = chart.upper[index];
     if (lo !== null && hi !== null) {
         lines.push(
-            `Band (±${sensitivity}σ): ${formatComparisonValue(lo)} to `
-            + formatComparisonValue(hi),
+            `Band (±${sensitivity}σ): ${formatComparisonValue(lo)} to ` + formatComparisonValue(hi)
         );
-        lines.push(
-            `Baseline: ${periodTypeLabel(p.period_type)}`
-            + (p.cold ? ' (cold)' : ''),
-        );
+        lines.push(`Baseline: ${periodTypeLabel(p.period_type)}` + (p.cold ? ' (cold)' : ''));
     } else {
         lines.push('No baseline applies');
     }
@@ -445,9 +444,9 @@ export const describeComparisonIndex = (
     const marker = chart.engineMarkers[index];
     if (marker) {
         lines.push(
-            `Engine anomaly alert: value ${formatComparisonValue(marker.value)}`
-            + `, z-score ${formatComparisonValue(marker.zScore)}`
-            + `, baseline ${periodTypeLabel(marker.periodType)}`,
+            `Engine anomaly alert: value ${formatComparisonValue(marker.value)}` +
+                `, z-score ${formatComparisonValue(marker.zScore)}` +
+                `, baseline ${periodTypeLabel(marker.periodType)}`
         );
     }
     if (chart.outsideMarkers[index] !== null) {
@@ -509,9 +508,7 @@ const COLD_LINE_OPACITY = 0.4;
 /** Tooltip header for a category: its local time, or the raw value. */
 const formatTooltipTime = (axisValue: string): string => {
     const time = Date.parse(axisValue);
-    return Number.isNaN(time)
-        ? axisValue
-        : new Date(time).toLocaleString('en-GB');
+    return Number.isNaN(time) ? axisValue : new Date(time).toLocaleString('en-GB');
 };
 
 /**
@@ -526,7 +523,7 @@ const bandSeries = (
     lowerData: (number | null)[],
     widthData: (number | null)[],
     colour: string,
-    opacity: number,
+    opacity: number
 ): ComparisonSeries[] => {
     const shared = {
         type: 'line' as const,
@@ -556,7 +553,7 @@ const markerSeries = (
     name: string,
     data: (number | null)[],
     symbol: string,
-    itemStyle: Record<string, unknown>,
+    itemStyle: Record<string, unknown>
 ): ComparisonSeries => ({
     type: 'line',
     name,
@@ -579,7 +576,7 @@ export const buildComparisonOptions = (
     chart: ComparisonChartModel,
     valueLabel: string,
     sensitivity: number,
-    colours: ComparisonColours,
+    colours: ComparisonColours
 ): ComparisonOptions => {
     const bandLabel = `${BAND_LABEL_PREFIX} (±${sensitivity}σ)`;
     const lineBase = {
@@ -591,12 +588,20 @@ export const buildComparisonOptions = (
 
     const series: ComparisonSeries[] = [
         ...bandSeries(
-            'warm', bandLabel, chart.warmLower, chart.warmWidth,
-            colours.band, WARM_BAND_OPACITY,
+            'warm',
+            bandLabel,
+            chart.warmLower,
+            chart.warmWidth,
+            colours.band,
+            WARM_BAND_OPACITY
         ),
         ...bandSeries(
-            'cold', COLD_BAND_LABEL, chart.coldLower, chart.coldWidth,
-            colours.band, COLD_BAND_OPACITY,
+            'cold',
+            COLD_BAND_LABEL,
+            chart.coldLower,
+            chart.coldWidth,
+            colours.band,
+            COLD_BAND_OPACITY
         ),
         { ...lineBase, name: valueLabel, data: chart.warmValues },
         {
@@ -606,38 +611,46 @@ export const buildComparisonOptions = (
             lineStyle: { opacity: COLD_LINE_OPACITY, type: 'dashed' },
         },
         markerSeries(
-            ENGINE_ANOMALY_LABEL, chart.engineMarkers.map(m => m?.value ?? null),
-            'triangle', { color: colours.engine },
+            ENGINE_ANOMALY_LABEL,
+            chart.engineMarkers.map((m) => m?.value ?? null),
+            'triangle',
+            { color: colours.engine }
         ),
         markerSeries(
             // A circle filled with the background rather than ECharts'
             // 'emptyCircle', which a line series fills with a fixed white
             // and so shows as a white disc in the dark theme.
-            OUTSIDE_LABEL, chart.outsideMarkers, 'circle',
+            OUTSIDE_LABEL,
+            chart.outsideMarkers,
+            'circle',
             {
                 color: colours.background,
                 borderColor: colours.outside,
                 borderWidth: 2,
-            },
+            }
         ),
     ];
 
     const legend = [
         valueLabel,
         ...(chart.hasCold ? [COLD_VALUE_LABEL] : []),
-        ...(chart.warmWidth.some(v => v !== null) ? [bandLabel] : []),
-        ...(chart.coldWidth.some(v => v !== null) ? [COLD_BAND_LABEL] : []),
+        ...(chart.warmWidth.some((v) => v !== null) ? [bandLabel] : []),
+        ...(chart.coldWidth.some((v) => v !== null) ? [COLD_BAND_LABEL] : []),
         ...(chart.hasEngine ? [ENGINE_ANOMALY_LABEL] : []),
         ...(chart.hasOutside ? [OUTSIDE_LABEL] : []),
     ];
 
     const formatter = (params: TooltipParam | TooltipParam[]): string => {
         const list = Array.isArray(params) ? params : [params];
-        if (list.length === 0) { return ''; }
+        if (list.length === 0) {
+            return '';
+        }
         const { dataIndex, axisValue } = list[0];
         const lines = describeComparisonIndex(chart, dataIndex, sensitivity);
-        return `<strong>${escapeHtml(formatTooltipTime(axisValue))}</strong>`
-            + lines.map(line => `<br/>${escapeHtml(line)}`).join('');
+        return (
+            `<strong>${escapeHtml(formatTooltipTime(axisValue))}</strong>` +
+            lines.map((line) => `<br/>${escapeHtml(line)}`).join('')
+        );
     };
 
     return {

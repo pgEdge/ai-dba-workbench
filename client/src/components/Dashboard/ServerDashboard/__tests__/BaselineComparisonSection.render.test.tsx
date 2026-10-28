@@ -31,7 +31,10 @@ import BaselineComparisonSection from '../BaselineComparisonSection';
 vi.mock('echarts-for-react/esm/core', () => ({
     default: ({ option }: { option: Record<string, unknown> }) => {
         const chart = echarts.init(null, null, {
-            renderer: 'svg', ssr: true, width: 600, height: 320,
+            renderer: 'svg',
+            ssr: true,
+            width: 600,
+            height: 320,
         });
         chart.setOption({ ...option, animation: false });
         const svg = chart.renderToSVGString();
@@ -51,8 +54,7 @@ vi.mock('../../../../hooks/useDatabaseSummaries', () => ({
 const CPU = 'pg_sys_cpu_usage_info.processor_time_percent';
 const START = Date.parse('2026-10-28T11:00:00Z');
 const BUCKET_MS = 12_000;
-const at = (index: number): string =>
-    new Date(START + index * BUCKET_MS).toISOString();
+const at = (index: number): string => new Date(START + index * BUCKET_MS).toISOString();
 
 /** Point 4 is outside with no alert; point 7 is outside and alerted. */
 const OUTSIDE_INDEX = 4;
@@ -85,18 +87,21 @@ vi.mock('../../../../hooks/useAnomalyComparison', () => ({
                 outside: i === OUTSIDE_INDEX || i === ALERTED_INDEX,
             })),
         },
-        alerts: [{
-            id: 1,
-            metric_name: CPU,
-            metric_value: 70,
-            anomaly_score: 20,
-            anomaly_details: '{}',
-            triggered_at: at(ALERTED_INDEX),
-        }],
+        alerts: [
+            {
+                id: 1,
+                metric_name: CPU,
+                metric_value: 70,
+                anomaly_score: 20,
+                anomaly_details: '{}',
+                triggered_at: at(ALERTED_INDEX),
+            },
+        ],
         window: { startMs: START, endMs: START + 300 * BUCKET_MS, buckets: 300 },
         loading: false,
         error: null,
         alertsError: null,
+        alertsCompleteFromMs: null,
     }),
 }));
 
@@ -112,7 +117,7 @@ const paths = (theme: Theme): string[] => {
     render(
         <ThemeProvider theme={theme}>
             <BaselineComparisonSection connectionId={1} />
-        </ThemeProvider>,
+        </ThemeProvider>
     );
     const svg = screen.getByTestId('comparison-svg').textContent ?? '';
     return svg.replace(CLIP_PATH_SECTION_RE, '').match(PATH_RE) ?? [];
@@ -120,9 +125,9 @@ const paths = (theme: Theme): string[] => {
 
 /** The data symbols drawn in the plot area, by data index. */
 const symbolsAt = (painted: string[], index: number): string[] =>
-    painted.filter(p =>
-        p.includes('ecmeta_ssr_type="chart"')
-        && p.includes(`ecmeta_data_index="${index}"`));
+    painted.filter(
+        (p) => p.includes('ecmeta_ssr_type="chart"') && p.includes(`ecmeta_data_index="${index}"`)
+    );
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -136,10 +141,14 @@ describe('BaselineComparisonSection rendering', () => {
         const painted = paths(theme);
 
         // The warm band is a filled, shaded area.
-        expect(painted.some(p =>
-            p.includes(`fill="${theme.palette.info.main}"`)
-            && p.includes('fill-opacity="0.25"')
-            && /d="M[^"]*L/.test(p))).toBe(true);
+        expect(
+            painted.some(
+                (p) =>
+                    p.includes(`fill="${theme.palette.info.main}"`) &&
+                    p.includes('fill-opacity="0.25"') &&
+                    /d="M[^"]*L/.test(p)
+            )
+        ).toBe(true);
 
         // The alerted point carries the solid engine marker only.
         const alerted = symbolsAt(painted, ALERTED_INDEX);
@@ -150,9 +159,7 @@ describe('BaselineComparisonSection rendering', () => {
         // background and outlined in the warning colour.
         const outside = symbolsAt(painted, OUTSIDE_INDEX);
         expect(outside).toHaveLength(1);
-        expect(outside[0]).toContain(
-            `fill="${theme.palette.background.paper}"`,
-        );
+        expect(outside[0]).toContain(`fill="${theme.palette.background.paper}"`);
         expect(outside[0]).toContain(`stroke="${theme.palette.warning.main}"`);
 
         // Points inside the band carry no marker.

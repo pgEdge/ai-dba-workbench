@@ -1312,6 +1312,41 @@ describe('TopQueriesSection', () => {
         });
     });
 
+    describe('alongside another instance', () => {
+        it('gives each instance its own labelled controls', async () => {
+            setupFetch({ rows: makeRows(1), databases: ['app', 'analytics'] });
+
+            render(
+                <>
+                    <TopQueriesSection
+                        connectionId={1}
+                        connectionName="Test Server"
+                    />
+                    <TopQueriesSection
+                        connectionId={2}
+                        connectionName="Other Server"
+                    />
+                </>,
+            );
+
+            const filters = await screen.findAllByLabelText('Filter queries');
+            expect(filters).toHaveLength(2);
+            expect(filters[0].id).not.toBe(filters[1].id);
+            for (const filter of filters) {
+                expect(filter.tagName).toBe('INPUT');
+                expect(
+                    document.querySelectorAll(`[id="${filter.id}"]`),
+                ).toHaveLength(1);
+            }
+
+            const databases = await screen.findAllByRole(
+                'combobox', { name: 'Database' },
+            );
+            expect(databases).toHaveLength(2);
+            expect(databases[0].id).not.toBe(databases[1].id);
+        });
+    });
+
     describe('column sorting', () => {
         /** The header cell holding the named sort control. */
         const headerFor = (label: string): HTMLElement =>
@@ -1393,6 +1428,13 @@ describe('TopQueriesSection', () => {
             expect(headerFor('Total Time')).toHaveAttribute(
                 'aria-sort', 'ascending',
             );
+            // The visible arrow must follow the order too, not only the
+            // aria-sort attribute on the header cell.
+            expect(
+                sortControl('Total Time').querySelector(
+                    '.MuiTableSortLabel-iconDirectionAsc',
+                ),
+            ).not.toBeNull();
 
             fireEvent.click(sortControl('Total Time'));
 
@@ -1402,6 +1444,11 @@ describe('TopQueriesSection', () => {
             expect(headerFor('Total Time')).toHaveAttribute(
                 'aria-sort', 'descending',
             );
+            expect(
+                sortControl('Total Time').querySelector(
+                    '.MuiTableSortLabel-iconDirectionDesc',
+                ),
+            ).not.toBeNull();
         });
 
         it('starts a newly chosen column descending after an ascending sort',
@@ -1543,6 +1590,25 @@ describe('TopQueriesSection', () => {
 
                 await waitPastDebounce();
                 expect(filteredUrls()).toHaveLength(1);
+            });
+
+        it('sends nothing until the debounce delay has elapsed',
+            async () => {
+                setupFetch({ rows: makeRows(1) });
+
+                renderSection();
+
+                await screen.findByRole('table', { name: 'Top queries' });
+                typeFilter('users');
+
+                // Well inside the 300 ms delay, the term must still be
+                // held back; an immediate request would show up here.
+                await new Promise(resolve => { setTimeout(resolve, 150); });
+                expect(filteredUrls()).toHaveLength(0);
+
+                await waitFor(() => {
+                    expect(filteredUrls()).toHaveLength(1);
+                });
             });
 
         it('trims surrounding whitespace from the term', async () => {

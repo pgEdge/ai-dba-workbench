@@ -9,7 +9,9 @@
  */
 
 import type React from 'react';
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import {
+    useState, useCallback, useEffect, useRef, useMemo, useId,
+} from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -374,7 +376,15 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
     const customEnd = timeRange.customEnd;
     const theme = useTheme();
 
-    const [queries, setQueries] = useState<TopQueryRow[]>([]);
+    // The Database Dashboard opens as an overlay over the still-mounted
+    // Server Dashboard, so two instances of this section can coexist;
+    // element ids must be unique per instance for labels to resolve.
+    const idPrefix = useId();
+    const textFilterId = `${idPrefix}-text-filter`;
+    const databaseFilterId = `${idPrefix}-database-filter`;
+    const databaseFilterLabelId = `${databaseFilterId}-label`;
+
+    const [queries,setQueries] = useState<TopQueryRow[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [hideCollectorQueries, setHideCollectorQueries] = useState<boolean>(true);
@@ -684,7 +694,7 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
                 <Box sx={HEADER_CONTROLS_SX}>
                     <TextField
                         size="small"
-                        id="top-queries-text-filter"
+                        id={textFilterId}
                         label="Filter queries"
                         value={queryFilterInput}
                         onChange={handleQueryFilterChange}
@@ -712,12 +722,12 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
                     />
                     {showDatabaseFilter && (
                         <FormControl size="small" sx={DB_FILTER_SX}>
-                            <InputLabel id="top-queries-database-filter-label">
+                            <InputLabel id={databaseFilterLabelId}>
                                 Database
                             </InputLabel>
                             <Select
-                                labelId="top-queries-database-filter-label"
-                                id="top-queries-database-filter"
+                                labelId={databaseFilterLabelId}
+                                id={databaseFilterId}
                                 label="Database"
                                 value={databaseFilter}
                                 onChange={handleDatabaseChange}

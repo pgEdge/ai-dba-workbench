@@ -104,7 +104,7 @@ const MonitoringPage: React.FC<MonitoringPageProps> = ({ aiEnabled }) => (
             />
             <FeatureItem
                 title="Top Queries"
-                description="Leaderboards showing the most resource-intensive queries by total time, calls, mean time, or rows returned; the Database column shows the source database for each query. The panel follows the dashboard time range selector, including a custom window, and aggregates the cumulative pg_stat_statements counters over that window rather than reporting lifetime totals, so a query with no calls inside the window does not appear and changing the range returns the list to the first page. The Hide monitoring queries toggle filters out workbench monitoring queries by default."
+                description="Leaderboards showing the most resource-intensive queries by total time, calls, mean time, or rows returned; the Database column shows the source database for each query. The panel follows the dashboard time range selector, including a custom window, and aggregates the cumulative pg_stat_statements counters over that window rather than reporting lifetime totals, so a query with no calls inside the window does not appear and changing the range returns the list to the first page. Click the Total Time, Calls, Mean Time, or Rows column header to sort by that column, clicking again to reverse the order, and type in the Filter queries field to narrow the list to statements containing that text. The Hide monitoring queries toggle filters out workbench monitoring queries by default."
             />
         </Box>
 

@@ -17,11 +17,13 @@ import {
     alertsCompleteFrom,
     buildComparisonUrl,
     resolveComparisonWindow,
+    settleComparison,
     useAnomalyComparison,
     useComparisonMetrics,
     type AnomalyComparisonQuery,
 } from '../useAnomalyComparison';
 import type { TimeRangeState } from '../../components/Dashboard/types';
+import type { AnomalyComparisonResponse } from '../../components/Dashboard/ServerDashboard/baselineComparison';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -160,6 +162,76 @@ describe('alertsCompleteFrom', () => {
 
     it('is the end of the window when no capped alert has a usable time', () => {
         expect(alertsCompleteFrom([], 4, WINDOW)).toBe(1000);
+    });
+});
+
+describe('settleComparison', () => {
+    const WINDOW = { startMs: 0, endMs: 1000, buckets: 10 };
+    const ok = <T>(value: T): PromiseSettledResult<T> => ({ status: 'fulfilled', value });
+    const failed = (reason: unknown): PromiseRejectedResult => ({ status: 'rejected', reason });
+    const alert = (id: number, ms: number) => ({
+        id,
+        triggered_at: new Date(ms).toISOString(),
+    });
+
+    it('merges both alert lists and marks a capped list incomplete', () => {
+        const result = settleComparison(
+            'k',
+            WINDOW,
+            ok(RESPONSE as AnomalyComparisonResponse),
+            ok({ alerts: [alert(1, 500), alert(2, 300)], total: 5 }),
+            ok({ alerts: [alert(2, 300), alert(3, -100)] })
+        );
+        expect(result).toEqual({
+            key: 'k',
+            window: WINDOW,
+            data: RESPONSE,
+            error: null,
+            alerts: [alert(1, 500), alert(2, 300), alert(3, -100)],
+            alertsError: null,
+            alertsCompleteFromMs: 300,
+        });
+    });
+
+    it('treats null alert lists as empty', () => {
+        const result = settleComparison(
+            'k',
+            WINDOW,
+            ok(RESPONSE as AnomalyComparisonResponse),
+            ok({ alerts: null }),
+            ok({})
+        );
+        expect(result.alerts).toEqual([]);
+        expect(result.alertsCompleteFromMs).toBeNull();
+    });
+
+    it('reports the in-window alerts failure before the open alerts one', () => {
+        const result = settleComparison(
+            'k',
+            WINDOW,
+            failed(new Error('comparison down')),
+            failed(new Error('alerts down')),
+            failed(new Error('open down'))
+        );
+        expect(result.data).toBeNull();
+        expect(result.error).toBe('comparison down');
+        expect(result.alerts).toEqual([]);
+        expect(result.alertsError).toBe('alerts down');
+        expect(result.alertsCompleteFromMs).toBeNull();
+    });
+
+    it('reports an open alerts failure, falling back to a default message', () => {
+        const result = settleComparison(
+            'k',
+            WINDOW,
+            failed(null),
+            ok({ alerts: [alert(1, 500)], total: 1 }),
+            failed({})
+        );
+        expect(result.error).toBe('Failed to load the baseline comparison');
+        expect(result.alerts).toEqual([alert(1, 500)]);
+        expect(result.alertsError).toBe('Failed to load anomaly alerts');
+        expect(result.alertsCompleteFromMs).toBeNull();
     });
 });
 

@@ -280,6 +280,36 @@ const bucketer = (window: ComparisonWindow): ((time: number) => number) | null =
 const alertStrength = (marker: EngineMarker): number => Math.abs(marker.zScore ?? 0);
 
 /**
+ * The trigger time of an alert that is drawn as a marker, or null when
+ * it gets none: its time cannot be read, or the window is usable and
+ * the alert was triggered outside it.
+ */
+const markerTime = (
+    a: AnomalyAlert,
+    bucketOf: ((time: number) => number) | null,
+    window: ComparisonWindow
+): number | null => {
+    const time = Date.parse(a.triggered_at);
+    if (Number.isNaN(time)) {
+        return null;
+    }
+    const outsideWindow = time < window.startMs || time > window.endMs;
+    return bucketOf && outsideWindow ? null : time;
+};
+
+/** The marker for an engine alert drawn on a point with `pointValue`. */
+const engineMarker = (a: AnomalyAlert, pointValue: number | null): EngineMarker => ({
+    value: a.metric_value ?? pointValue,
+    zScore: a.anomaly_score ?? null,
+    periodType: parsePeriodType(a.anomaly_details),
+    triggeredAt: a.triggered_at,
+});
+
+/** The stronger of two markers on one point, keeping the first on a tie. */
+const strongerMarker = (existing: EngineMarker | null, marker: EngineMarker): EngineMarker =>
+    !existing || alertStrength(marker) > alertStrength(existing) ? marker : existing;
+
+/**
  * Place each engine alert on a chart point: the point in the alert's
  * bucket, or the nearest point when that bucket has none. Returns the
  * markers per point, the buckets that hold an engine alert and the
@@ -300,33 +330,22 @@ const placeEngineAlerts = (
     const markers: (EngineMarker | null)[] = points.map(() => null);
     const buckets = new Set<number>();
     const indices = new Set<number>();
+    if (points.length === 0) {
+        return { markers, buckets, indices };
+    }
     const pointByBucket = new Map<number, number>();
     pointBuckets.forEach((bucket, i) => pointByBucket.set(bucket, i));
 
     for (const a of alerts) {
-        const time = Date.parse(a.triggered_at);
-        if (Number.isNaN(time) || points.length === 0) {
+        const time = markerTime(a, bucketOf, window);
+        if (time === null) {
             continue;
         }
-        if (bucketOf && (time < window.startMs || time > window.endMs)) {
-            continue;
-        }
-
         const bucket = bucketOf ? bucketOf(time) : nearestIndex(times, time);
         const index = pointByBucket.get(bucket) ?? nearestIndex(times, time);
         buckets.add(bucket);
         indices.add(index);
-
-        const marker: EngineMarker = {
-            value: a.metric_value ?? points[index].value,
-            zScore: a.anomaly_score ?? null,
-            periodType: parsePeriodType(a.anomaly_details),
-            triggeredAt: a.triggered_at,
-        };
-        const existing = markers[index];
-        if (!existing || alertStrength(marker) > alertStrength(existing)) {
-            markers[index] = marker;
-        }
+        markers[index] = strongerMarker(markers[index], engineMarker(a, points[index].value));
     }
 
     return { markers, buckets, indices };
@@ -396,6 +415,79 @@ const splitValues = (
     };
 };
 
+/** The lower and upper edges of the band mean ± k·σ, null with no baseline. */
+const bandEdges = (
+    points: ComparisonPoint[],
+    sensitivity: number
+): { lower: (number | null)[]; upper: (number | null)[] } => {
+    const hasBand = (p: ComparisonPoint): boolean => p.mean !== null && p.stddev !== null;
+    return {
+        lower: points.map((p) =>
+            hasBand(p) ? (p.mean as number) - sensitivity * (p.stddev as number) : null
+        ),
+        upper: points.map((p) =>
+            hasBand(p) ? (p.mean as number) + sensitivity * (p.stddev as number) : null
+        ),
+    };
+};
+
+/** The band's width at each point, null where either edge is missing. */
+const bandWidths = (lower: (number | null)[], upper: (number | null)[]): (number | null)[] =>
+    lower.map((lo, i) => {
+        const hi = upper[i];
+        return lo === null || hi === null ? null : hi - lo;
+    });
+
+/** Split per-point values into the warm points' and the cold points'. */
+const splitByCold = (
+    points: ComparisonPoint[],
+    values: (number | null)[]
+): { warm: (number | null)[]; cold: (number | null)[] } => ({
+    warm: points.map((p, i) => (p.cold ? null : values[i])),
+    cold: points.map((p, i) => (p.cold ? values[i] : null)),
+});
+
+/**
+ * Build a predicate telling whether a point is covered by an engine
+ * alert: one in its bucket or the next, one whose marker is drawn on
+ * it or the next point, or one whose span it lies within.
+ */
+const alertCoverage = (
+    pointBuckets: number[],
+    buckets: Set<number>,
+    indices: Set<number>,
+    inSpan: (i: number) => boolean
+): ((i: number) => boolean) => {
+    return (i) =>
+        buckets.has(pointBuckets[i]) ||
+        buckets.has(pointBuckets[i] + 1) ||
+        indices.has(i) ||
+        indices.has(i + 1) ||
+        inSpan(i);
+};
+
+/**
+ * Build a predicate telling whether a point lies where the alerts may
+ * not all have loaded: at or before `alertsCompleteFromMs`, compared by
+ * bucket when the window can be divided. Always false when every alert
+ * was loaded.
+ */
+const alertsUnloaded = (
+    alertsCompleteFromMs: number | null,
+    times: number[],
+    pointBuckets: number[],
+    bucketOf: ((time: number) => number) | null
+): ((i: number) => boolean) => {
+    if (alertsCompleteFromMs === null) {
+        return () => false;
+    }
+    if (bucketOf) {
+        const completeBucket = bucketOf(alertsCompleteFromMs);
+        return (i) => pointBuckets[i] <= completeBucket;
+    }
+    return (i) => times[i] <= alertsCompleteFromMs;
+};
+
 /**
  * Build the chart model for a comparison response and the engine's
  * alerts, which the caller has already filtered to the metric and
@@ -426,18 +518,9 @@ export const buildComparisonChart = (
     const bucketOf = bucketer(window);
     const pointBuckets = times.map((t, i) => (bucketOf ? bucketOf(t) : i));
 
-    const lower: (number | null)[] = [];
-    const upper: (number | null)[] = [];
-    for (const p of points) {
-        const hasBand = p.mean !== null && p.stddev !== null;
-        lower.push(hasBand ? (p.mean as number) - sensitivity * (p.stddev as number) : null);
-        upper.push(hasBand ? (p.mean as number) + sensitivity * (p.stddev as number) : null);
-    }
-    const width = (i: number): number | null => {
-        const lo = lower[i];
-        const hi = upper[i];
-        return lo === null || hi === null ? null : hi - lo;
-    };
+    const { lower, upper } = bandEdges(points, sensitivity);
+    const edges = splitByCold(points, lower);
+    const widths = splitByCold(points, bandWidths(lower, upper));
 
     const { markers, buckets, indices } = placeEngineAlerts(
         alerts,
@@ -448,20 +531,8 @@ export const buildComparisonChart = (
         window
     );
     const inSpan = alertSpans(alerts, times, pointBuckets, bucketOf, window);
-    const covered = (i: number): boolean =>
-        buckets.has(pointBuckets[i]) ||
-        buckets.has(pointBuckets[i] + 1) ||
-        indices.has(i) ||
-        indices.has(i + 1) ||
-        inSpan(i);
-    const unloaded = (i: number): boolean => {
-        if (alertsCompleteFromMs === null) {
-            return false;
-        }
-        return bucketOf
-            ? pointBuckets[i] <= bucketOf(alertsCompleteFromMs)
-            : times[i] <= alertsCompleteFromMs;
-    };
+    const covered = alertCoverage(pointBuckets, buckets, indices, inSpan);
+    const unloaded = alertsUnloaded(alertsCompleteFromMs, times, pointBuckets, bucketOf);
     const outsideMarkers = points.map((p, i) =>
         p.outside && !covered(i) && !unloaded(i) ? p.value : null
     );
@@ -472,10 +543,10 @@ export const buildComparisonChart = (
         points,
         lower,
         upper,
-        warmLower: points.map((p, i) => (p.cold ? null : lower[i])),
-        warmWidth: points.map((p, i) => (p.cold ? null : width(i))),
-        coldLower: points.map((p, i) => (p.cold ? lower[i] : null)),
-        coldWidth: points.map((p, i) => (p.cold ? width(i) : null)),
+        warmLower: edges.warm,
+        warmWidth: widths.warm,
+        coldLower: edges.cold,
+        coldWidth: widths.cold,
         warmValues: values.warm,
         coldValues: values.cold,
         engineMarkers: markers,

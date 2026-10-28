@@ -253,6 +253,86 @@ interface ComparisonResult {
 
 const NO_ALERTS: AnomalyAlert[] = [];
 
+/** The body of an anomaly alerts response. */
+interface AlertsBody {
+    alerts?: AnomalyAlert[] | null;
+    total?: number;
+}
+
+/** The alerts a settled alerts request loaded; none when it failed. */
+const loadedAlertsOf = (settled: PromiseSettledResult<AlertsBody>): AnomalyAlert[] =>
+    settled.status === 'fulfilled' ? (settled.value.alerts ?? NO_ALERTS) : NO_ALERTS;
+
+/** The error message of a settled request, or null when it succeeded. */
+const failureOf = (settled: PromiseSettledResult<unknown>, fallback: string): string | null =>
+    settled.status === 'rejected' ? messageOf(settled.reason, fallback) : null;
+
+/** Log each of the comparison's requests that failed. */
+const logFailures = (requests: [PromiseSettledResult<unknown>, string][]): void => {
+    for (const [settled, description] of requests) {
+        if (settled.status === 'rejected') {
+            logger.error(`Error fetching ${description}:`, settled.reason);
+        }
+    }
+};
+
+/**
+ * Build the result of a comparison request from its three settled
+ * requests: the comparison, the alerts in the window and the alerts
+ * still open from before it. A failed alerts request leaves the
+ * comparison shown with an alerts error; the alerts are complete from
+ * the in-window request's cap only when that request succeeded.
+ */
+export const settleComparison = (
+    key: string,
+    window: ComparisonWindow,
+    comparison: PromiseSettledResult<AnomalyComparisonResponse>,
+    alerts: PromiseSettledResult<AlertsBody>,
+    openAlerts: PromiseSettledResult<AlertsBody>
+): ComparisonResult => {
+    const loadedAlerts = loadedAlertsOf(alerts);
+    const alertsFailure = alerts.status === 'rejected' ? alerts : openAlerts;
+    return {
+        key,
+        window,
+        data: comparison.status === 'fulfilled' ? comparison.value : null,
+        error: failureOf(comparison, 'Failed to load the baseline comparison'),
+        alerts: mergeAlerts(loadedAlerts, loadedAlertsOf(openAlerts)),
+        alertsError: failureOf(alertsFailure, 'Failed to load anomaly alerts'),
+        alertsCompleteFromMs:
+            alerts.status === 'fulfilled'
+                ? alertsCompleteFrom(loadedAlerts, alerts.value.total, window)
+                : null,
+    };
+};
+
+/** What the hook returns for the result of the current selection. */
+const toHookReturn = (
+    current: ComparisonResult | null,
+    loading: boolean
+): UseAnomalyComparisonReturn => {
+    if (current === null) {
+        return {
+            data: null,
+            alerts: NO_ALERTS,
+            window: null,
+            loading,
+            error: null,
+            alertsError: null,
+            alertsCompleteFromMs: null,
+        };
+    }
+    return {
+        data: current.data,
+        alerts: current.alerts,
+        window: current.window,
+        loading,
+        error: current.error,
+        alertsError: current.alertsError,
+        alertsCompleteFromMs: current.alertsCompleteFromMs,
+    };
+};
+
 /**
  * Fetch the baseline comparison for a metric, together with the
  * connection's anomaly alerts over the same window, following the
@@ -296,7 +376,6 @@ export const useAnomalyComparison = (
         const window = resolveComparisonWindow(selectedRange);
         const isCurrent = beginRequest();
 
-        type AlertsBody = { alerts?: AnomalyAlert[] | null; total?: number };
         const [comparison, alerts, openAlerts] = await Promise.allSettled([
             apiGet<AnomalyComparisonResponse>(buildComparisonUrl(query, window)),
             apiGet<AlertsBody>(buildAnomalyAlertsUrl(query.connectionId, window)),
@@ -306,43 +385,12 @@ export const useAnomalyComparison = (
             return;
         }
 
-        if (comparison.status === 'rejected') {
-            logger.error('Error fetching baseline comparison:', comparison.reason);
-        }
-        if (alerts.status === 'rejected') {
-            logger.error('Error fetching anomaly alerts:', alerts.reason);
-        }
-        if (openAlerts.status === 'rejected') {
-            logger.error('Error fetching open anomaly alerts:', openAlerts.reason);
-        }
-
-        const loadedAlerts =
-            alerts.status === 'fulfilled' ? (alerts.value.alerts ?? NO_ALERTS) : NO_ALERTS;
-        const loadedOpenAlerts =
-            openAlerts.status === 'fulfilled' ? (openAlerts.value.alerts ?? NO_ALERTS) : NO_ALERTS;
-        const alertsFailure =
-            alerts.status === 'rejected'
-                ? alerts
-                : openAlerts.status === 'rejected'
-                  ? openAlerts
-                  : null;
-        setResult({
-            key,
-            window,
-            data: comparison.status === 'fulfilled' ? comparison.value : null,
-            error:
-                comparison.status === 'rejected'
-                    ? messageOf(comparison.reason, 'Failed to load the baseline comparison')
-                    : null,
-            alerts: mergeAlerts(loadedAlerts, loadedOpenAlerts),
-            alertsError: alertsFailure
-                ? messageOf(alertsFailure.reason, 'Failed to load anomaly alerts')
-                : null,
-            alertsCompleteFromMs:
-                alerts.status === 'fulfilled'
-                    ? alertsCompleteFrom(loadedAlerts, alerts.value.total, window)
-                    : null,
-        });
+        logFailures([
+            [comparison, 'baseline comparison'],
+            [alerts, 'anomaly alerts'],
+            [openAlerts, 'open anomaly alerts'],
+        ]);
+        setResult(settleComparison(key, window, comparison, alerts, openAlerts));
     }, [key, range, customStart, customEnd, beginRequest, supersedeRequest]);
 
     useEffect(() => {
@@ -351,17 +399,8 @@ export const useAnomalyComparison = (
         }
     }, [isLoggedIn, fetchData, refreshTrigger]);
 
-    const current = result !== null && result.key === key ? result : null;
-
-    return {
-        data: current?.data ?? null,
-        alerts: current?.alerts ?? NO_ALERTS,
-        window: current?.window ?? null,
-        loading: isLoggedIn && key !== null && queryable && current === null,
-        error: current?.error ?? null,
-        alertsError: current?.alertsError ?? null,
-        alertsCompleteFromMs: current?.alertsCompleteFromMs ?? null,
-    };
+    const current = result?.key === key ? result : null;
+    return toHookReturn(current, isLoggedIn && key !== null && queryable && current === null);
 };
 
 export default useAnomalyComparison;

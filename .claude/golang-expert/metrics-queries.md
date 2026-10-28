@@ -1422,10 +1422,19 @@ conventions from that change hold across both:
 - The alerter publishes `Tier1Config.ScoringSettings()` as JSON to
   `alerter_settings.tier1_scoring` (collector migration 31) through
   `Datastore.PublishScoringSettings`, called by
-  `Engine.publishScoringSettings` at start and after each reload. A
-  failure is logged and ignored, so a new Tier 1 setting must be added
-  to `anomaly.ScoringSettings` for the server to see it; the server
-  falls back to `DefaultScoringSettings()` when the column is empty.
+  `Engine.publishScoringSettings` at start and after each reload (see
+  `alerter/src/internal/engine/scoring_publish.go`). A failure, such as the alerter
+  starting before the collector has applied migration 31, starts one
+  retry loop bound to the engine context that tries every 30 seconds
+  until a publication succeeds. Attempts hold `scoringMu` and read the
+  configuration current at that moment, so a reload during a pending
+  retry starts no second loop and is never overwritten by older
+  settings. A new Tier 1 setting must be added to
+  `anomaly.ScoringSettings` for the server to see it. The server's
+  `ParseScoringSettings` decodes the column over
+  `DefaultScoringSettings()`, so a missing key keeps its default, and
+  falls back to the defaults outright when the column is empty,
+  malformed or lacks a positive `default_sensitivity`.
 
 - Selection is in Go. `selectBaseline` prefers the `hourly` row for the
   current hour, then the `daily` row for the current weekday, then

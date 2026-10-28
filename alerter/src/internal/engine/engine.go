@@ -129,6 +129,18 @@ type Engine struct {
 	// effective Tier 1 scoring settings are published; tests use it.
 	publishScoring func(context.Context, anomaly.ScoringSettings) error
 
+	// scoringMu lets one publication of the scoring settings run at a
+	// time, and guards scoringPending and scoringRetryLoops, the number
+	// of retry loops running, which is never more than one; see
+	// scoring_publish.go.
+	scoringMu         sync.Mutex
+	scoringPending    bool
+	scoringRetryLoops int
+
+	// scoringRetryInterval, when positive, replaces
+	// scoringPublishRetryInterval; tests use it.
+	scoringRetryInterval time.Duration
+
 	// Synchronization
 	mu sync.RWMutex
 }
@@ -253,7 +265,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.mu.Unlock()
 	e.log("Engine starting...")
 
-	e.publishScoringSettings(ctx, e.getConfig())
+	e.publishScoringSettings(ctx, true)
 
 	// Start all background workers
 	var wg sync.WaitGroup
@@ -381,41 +393,16 @@ func (e *Engine) ReloadConfig(cfg *config.Config) {
 	e.log("Configuration reloaded")
 
 	// Publish outside the lock: it is a database write, and readers of
-	// the configuration must not wait for it.
+	// the configuration must not wait for it. Before Run there is no
+	// engine context to bound a retry loop, and Run publishes anyway.
 	e.mu.RLock()
 	ctx := e.ctx
 	e.mu.RUnlock()
+	retry := ctx != nil
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	e.publishScoringSettings(ctx, cfg)
-}
-
-// scoringPublishTimeout bounds one publication of the scoring settings,
-// so a slow datastore cannot stall start-up or a configuration reload.
-const scoringPublishTimeout = 10 * time.Second
-
-// publishScoringSettings writes the effective Tier 1 scoring settings of
-// cfg to alerter_settings, where the server reads them to score the
-// anomaly comparison view the same way (issue #348). A failure is logged
-// and otherwise ignored: the server falls back to the last published
-// settings, or to the defaults when there are none.
-func (e *Engine) publishScoringSettings(ctx context.Context, cfg *config.Config) {
-	publish := e.publishScoring
-	if publish == nil {
-		if e.datastore == nil {
-			return
-		}
-		publish = e.datastore.PublishScoringSettings
-	}
-	if cfg == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(ctx, scoringPublishTimeout)
-	defer cancel()
-	if err := publish(ctx, cfg.Anomaly.Tier1.ScoringSettings()); err != nil {
-		e.log("WARNING: failed to publish Tier 1 scoring settings: %v", err)
-	}
+	e.publishScoringSettings(ctx, retry)
 }
 
 // unknownMetricFloorNames returns, sorted, the anomaly.tier1.metric_floors

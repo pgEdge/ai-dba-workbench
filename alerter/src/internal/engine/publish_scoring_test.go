@@ -41,6 +41,150 @@ func (r *scoringRecorder) count() int {
 	return len(r.calls)
 }
 
+// setErr changes the error later publications return.
+func (r *scoringRecorder) setErr(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.err = err
+}
+
+// last returns the most recent publication.
+func (r *scoringRecorder) last() anomaly.ScoringSettings {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls[len(r.calls)-1]
+}
+
+// waitFor polls cond until it holds, failing the test after five seconds.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// retryLoops returns the number of scoring retry loops running on e.
+func (e *Engine) retryLoops() int {
+	e.scoringMu.Lock()
+	defer e.scoringMu.Unlock()
+	return e.scoringRetryLoops
+}
+
+// configWithMaxZ returns a default configuration with the given z cap,
+// which identifies it in a publication.
+func configWithMaxZ(z float64) *config.Config {
+	cfg := config.NewConfig()
+	cfg.Anomaly.Tier1.MaxZScore = z
+	return cfg
+}
+
+// TestPublishScoringSettingsRetriesUntilSuccess verifies a failed
+// publication is retried until one succeeds, and that the retry
+// publishes the configuration current at the time, not the one that
+// first failed.
+func TestPublishScoringSettingsRetriesUntilSuccess(t *testing.T) {
+	rec := &scoringRecorder{err: errors.New("column tier1_scoring does not exist")}
+	e := &Engine{config: configWithMaxZ(5), publishScoring: rec.publish,
+		scoringRetryInterval: 10 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	e.publishScoringSettings(ctx, true)
+	waitFor(t, "a retry", func() bool { return rec.count() >= 3 })
+
+	e.mu.Lock()
+	e.config = configWithMaxZ(9)
+	e.mu.Unlock()
+	rec.setErr(nil)
+
+	waitFor(t, "the retry loop to stop", func() bool { return e.retryLoops() == 0 })
+	n := rec.count()
+	if got := rec.last().MaxZScore; got != 9 {
+		t.Errorf("published MaxZScore = %v, want the current configuration's 9", got)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if rec.count() != n {
+		t.Errorf("published %d more times after a success", rec.count()-n)
+	}
+}
+
+// TestPublishScoringSettingsRetryStopsWithContext verifies the retry
+// loop ends when its context is canceled, even if every attempt fails.
+func TestPublishScoringSettingsRetryStopsWithContext(t *testing.T) {
+	rec := &scoringRecorder{err: errors.New("datastore down")}
+	e := &Engine{config: config.NewConfig(), publishScoring: rec.publish,
+		scoringRetryInterval: 10 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	e.publishScoringSettings(ctx, true)
+	waitFor(t, "a retry", func() bool { return rec.count() >= 2 })
+	cancel()
+
+	waitFor(t, "the retry loop to stop", func() bool { return e.retryLoops() == 0 })
+	n := rec.count()
+	time.Sleep(50 * time.Millisecond)
+	if rec.count() != n {
+		t.Errorf("published %d more times after cancellation", rec.count()-n)
+	}
+}
+
+// TestReloadDuringPendingRetry verifies a reload while a retry is
+// pending starts no second loop, and that the newest configuration is
+// what ends up published, whether the reload's own attempt succeeds or
+// fails.
+func TestReloadDuringPendingRetry(t *testing.T) {
+	for _, reloadSucceeds := range []bool{true, false} {
+		name := "reload fails"
+		if reloadSucceeds {
+			name = "reload succeeds"
+		}
+		t.Run(name, func(t *testing.T) {
+			rec := &scoringRecorder{err: errors.New("datastore down")}
+			// The interval keeps the loop waiting while the reload
+			// runs.
+			e := &Engine{config: configWithMaxZ(5), publishScoring: rec.publish,
+				scoringRetryInterval: 200 * time.Millisecond}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			e.ctx = ctx
+
+			e.publishScoringSettings(ctx, true)
+			if e.retryLoops() == 0 {
+				t.Fatal("no retry loop after a failed publication")
+			}
+			if reloadSucceeds {
+				rec.setErr(nil)
+			}
+			e.ReloadConfig(configWithMaxZ(9))
+			if rec.count() != 2 {
+				t.Fatalf("published %d times, want the start and the reload", rec.count())
+			}
+			if loops := e.retryLoops(); loops != 1 {
+				t.Errorf("%d retry loops running, want 1", loops)
+			}
+
+			rec.setErr(nil)
+			waitFor(t, "the retry loop to stop", func() bool { return e.retryLoops() == 0 })
+			if got := rec.last().MaxZScore; got != 9 {
+				t.Errorf("last published MaxZScore = %v, want the reloaded 9", got)
+			}
+			want := 3
+			if reloadSucceeds {
+				// Nothing was pending when the loop woke, so it
+				// published nothing.
+				want = 2
+			}
+			if rec.count() != want {
+				t.Errorf("published %d times, want %d", rec.count(), want)
+			}
+		})
+	}
+}
+
 // TestReloadConfigPublishesScoringSettings verifies a reload publishes
 // the settings of the new configuration, overrides included.
 func TestReloadConfigPublishesScoringSettings(t *testing.T) {

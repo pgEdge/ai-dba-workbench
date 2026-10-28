@@ -218,6 +218,8 @@ The API provides endpoints in the following categories.
 |--------|----------|-------------|
 | GET | `/api/v1/metrics/query` | Query metrics for preset or custom windows. |
 | GET | `/api/v1/metrics/baselines` | Get metric baseline values. |
+| GET | `/api/v1/metrics/anomaly-comparison` | Compare a metric with its anomaly baselines. |
+| GET | `/api/v1/metrics/anomaly-comparison/metrics` | List the metrics the anomaly comparison accepts. |
 | GET | `/api/v1/metrics/performance-summary` | Get a performance summary. |
 | GET | `/api/v1/metrics/database-summaries` | Get database-level summaries over a time window. |
 | GET | `/api/v1/metrics/top-queries` | Get the top queries by resource usage over a time window. |

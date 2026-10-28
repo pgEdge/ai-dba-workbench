@@ -114,7 +114,7 @@ func TestQueryBaselines_Integration(t *testing.T) {
 		},
 		{
 			name:  "probe underscore is not a wildcard",
-			probe: "pg_stat_activit_",
+			probe: "pg_stat_activ_ty",
 			want:  "",
 		},
 		{
@@ -165,7 +165,7 @@ func TestQueryBaselines_Integration(t *testing.T) {
 		cctx, cancel := context.WithCancel(ctx)
 		cancel()
 		if _, err := QueryBaselines(cctx, pool, conn, "", nil, BaselineQueryOptions{}); err == nil {
-			t.Fatal("QueryBaselines with a cancelled context succeeded")
+			t.Fatal("QueryBaselines with an already-done context succeeded")
 		}
 	})
 }

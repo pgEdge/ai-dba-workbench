@@ -12,12 +12,15 @@ package api
 import (
 	"context"
 	"fmt"
+	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/anomaly"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
@@ -39,6 +42,16 @@ type timeSeriesQueryFunc func(
 	requestedMetrics []string,
 ) (*metrics.MetricsQueryResult, error)
 
+// comparisonLoadFunc matches the signature of metrics.LoadComparison, so
+// tests can exercise the anomaly comparison handler's success and failure
+// paths without seeding the full collector schema.
+type comparisonLoadFunc func(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	req metrics.ComparisonRequest,
+	now time.Time,
+) (*metrics.AnomalyComparison, error)
+
 // MetricsHandler handles REST API endpoints for monitoring dashboard
 // metric queries and baselines.
 type MetricsHandler struct {
@@ -57,6 +70,10 @@ type MetricsHandler struct {
 	// owned by whom. When nil the handler asks the datastore, as in
 	// production; tests without a database substitute a fake.
 	sharingLookupFn auth.ConnectionSharingLookupFunc
+
+	// loadComparisonFn builds the anomaly comparison. When nil the
+	// handler falls back to metrics.LoadComparison.
+	loadComparisonFn comparisonLoadFunc
 }
 
 // accessChecker returns the RBAC checker for one request. It always
@@ -100,6 +117,10 @@ func (h *MetricsHandler) RegisterRoutes(
 			authWrapper(notConfigured))
 		mux.HandleFunc("/api/v1/metrics/baselines",
 			authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/metrics/anomaly-comparison",
+			authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/metrics/anomaly-comparison/metrics",
+			authWrapper(notConfigured))
 		return
 	}
 
@@ -107,6 +128,10 @@ func (h *MetricsHandler) RegisterRoutes(
 		authWrapper(h.handleMetricsQuery))
 	mux.HandleFunc("/api/v1/metrics/baselines",
 		authWrapper(h.handleMetricsBaselines))
+	mux.HandleFunc("/api/v1/metrics/anomaly-comparison",
+		authWrapper(h.handleAnomalyComparison))
+	mux.HandleFunc("/api/v1/metrics/anomaly-comparison/metrics",
+		authWrapper(h.handleAnomalyComparisonMetrics))
 }
 
 // parseQueryIDFilter reads the optional queryid filter from the request.
@@ -412,7 +437,8 @@ func (h *MetricsHandler) handleMetricsBaselines(
 	}
 
 	// Optional period type (default all) and database. Without a
-	// database, the rows for every database are returned, each labelled.
+	// database, the rows for every database are returned, each tagged
+	// with its database_name.
 	opts := metrics.BaselineQueryOptions{
 		PeriodType: ParseQueryString(r, "period_type"),
 	}
@@ -434,6 +460,165 @@ func (h *MetricsHandler) handleMetricsBaselines(
 		ctx, pool, connectionID, probeName, requestedMetrics, opts)
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, result)
+}
+
+// ComparisonMetric describes one metric the anomaly comparison accepts.
+type ComparisonMetric struct {
+	Name        string `json:"name"`
+	ProbeName   string `json:"probe_name"`
+	PerDatabase bool   `json:"per_database"`
+}
+
+// handleAnomalyComparisonMetrics handles GET
+// /api/v1/metrics/anomaly-comparison/metrics, listing every baselined
+// metric. The list is the static registry, so it needs no connection
+// access check.
+func (h *MetricsHandler) handleAnomalyComparisonMetrics(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if !RequireGET(w, r) {
+		return
+	}
+	defs := anomaly.BaselineMetrics()
+	result := make([]ComparisonMetric, 0, len(defs))
+	for _, def := range defs {
+		result = append(result, ComparisonMetric{
+			Name:        def.Name,
+			ProbeName:   def.ProbeName,
+			PerDatabase: def.PerDatabase,
+		})
+	}
+	RespondJSON(w, http.StatusOK, result)
+}
+
+// parseComparisonRequest reads and validates the anomaly comparison's
+// parameters other than connection_id. It returns false after sending a
+// 400 response.
+func parseComparisonRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	connectionID int,
+) (metrics.ComparisonRequest, bool) {
+	req := metrics.ComparisonRequest{
+		ConnectionID: connectionID,
+		Metric:       ParseQueryString(r, "metric"),
+		Model:        ParseQueryString(r, "model"),
+		Buckets:      metrics.DefaultComparisonBuckets,
+	}
+	if req.Metric == "" {
+		RespondError(w, http.StatusBadRequest, "metric is required")
+		return req, false
+	}
+	if dbName := ParseQueryString(r, "database_name"); dbName != "" {
+		req.DatabaseName = &dbName
+	}
+	// The metric is checked against the registry here, before any SQL
+	// is chosen; its errors name only the metric and the parameter.
+	if _, err := metrics.ResolveComparisonMetric(req.Metric, req.DatabaseName); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return req, false
+	}
+
+	if req.Model == "" {
+		req.Model = metrics.DefaultComparisonModel
+	}
+	if !metrics.IsValidComparisonModel(req.Model) {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid model: must be one of "+
+				strings.Join(metrics.ComparisonModels, ", "))
+		return req, false
+	}
+
+	if raw := ParseQueryString(r, "sensitivity"); raw != "" {
+		sensitivity, err := strconv.ParseFloat(raw, 64)
+		if err != nil || math.IsNaN(sensitivity) || sensitivity <= 0 ||
+			sensitivity > metrics.MaxComparisonSensitivity {
+			RespondError(w, http.StatusBadRequest,
+				"Invalid sensitivity: must be greater than 0 and at most 10")
+			return req, false
+		}
+		req.Sensitivity = &sensitivity
+	}
+
+	if raw := ParseQueryString(r, "buckets"); raw != "" {
+		b, err := strconv.Atoi(raw)
+		if err != nil || b < 1 || b > metrics.MaxComparisonBuckets {
+			RespondError(w, http.StatusBadRequest,
+				"Invalid buckets: must be between 1 and 500")
+			return req, false
+		}
+		req.Buckets = b
+	}
+
+	timeRange := ParseQueryString(r, "time_range")
+	if timeRange == "" {
+		timeRange = "24h"
+	}
+	window, err := metrics.ResolveTimeWindow(timeRange,
+		ParseQueryString(r, "time_start"),
+		ParseQueryString(r, "time_end"))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return req, false
+	}
+	req.Window = window
+	return req, true
+}
+
+// handleAnomalyComparison handles GET /api/v1/metrics/anomaly-comparison,
+// returning a metric's values against the band the alerter scores them
+// with.
+func (h *MetricsHandler) handleAnomalyComparison(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if !RequireGET(w, r) {
+		return
+	}
+
+	connIDStr := ParseQueryString(r, "connection_id")
+	if connIDStr == "" {
+		RespondError(w, http.StatusBadRequest,
+			"connection_id is required")
+		return
+	}
+	connectionID, err := strconv.Atoi(connIDStr)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid connection_id")
+		return
+	}
+
+	rbacChecker := h.accessChecker()
+	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connectionID)
+	if !canAccess {
+		h.denialRecorder.refuseConnection(w, r, deniedActionMetricsRead, connectionID,
+			fmt.Sprintf("Permission denied: you do not have access to connection %d", connectionID))
+		return
+	}
+
+	req, ok := parseComparisonRequest(w, r, connectionID)
+	if !ok {
+		return // error already sent
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	loadFn := h.loadComparisonFn
+	if loadFn == nil {
+		loadFn = metrics.LoadComparison
+	}
+	result, err := loadFn(ctx, h.datastore.GetPool(), req, time.Now())
+	if err != nil {
+		log.Printf("[ERROR] Failed to load anomaly comparison: %v", err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to load the anomaly comparison")
 		return
 	}
 

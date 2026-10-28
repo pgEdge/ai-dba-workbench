@@ -168,6 +168,10 @@ func accessRefusalCases() []accessRefusalCase {
 		{"metrics baselines", metrics, metrics.handleMetricsBaselines,
 			http.MethodGet, "/api/v1/metrics/baselines?connection_id=7", "",
 			byID(7), read(deniedActionMetricsRead, 7)},
+		{"metrics anomaly comparison", metrics, metrics.handleAnomalyComparison,
+			http.MethodGet, "/api/v1/metrics/anomaly-comparison?connection_id=7" +
+				"&metric=pg_sys_cpu_usage_info.processor_time_percent", "",
+			byID(7), read(deniedActionMetricsRead, 7)},
 		{"latest snapshot", latest, latest.handleLatestSnapshot,
 			http.MethodGet, "/api/v1/metrics/latest?connection_id=7", "",
 			byID(7), read(deniedActionMetricsRead, 7)},

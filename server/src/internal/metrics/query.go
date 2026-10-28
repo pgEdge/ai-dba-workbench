@@ -192,7 +192,7 @@ const DefaultBaselinePeriodType = "all"
 // DefaultBaselinePeriodType. DatabaseName, when set, keeps only the rows
 // for that database, so server-level metrics (whose rows carry no
 // database) drop out; when nil, the rows for every database and the
-// server-level rows are all returned, each labelled with its
+// server-level rows are all returned, each tagged with its
 // database_name.
 type BaselineQueryOptions struct {
 	PeriodType   string

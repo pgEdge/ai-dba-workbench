@@ -62,6 +62,10 @@ var catalogOmittedColumns = map[string][]string{
 	"anomaly_candidates": {"embedding_id"},
 	// A secret; see TestConfigurationSourcesExposeNoSecrets.
 	"cluster_groups": {"owner_token"},
+	// tier1_scoring is the alerter's published scoring settings as one
+	// JSONB document for the anomaly comparison endpoint (#348), not a
+	// value query_datastore can filter or sort on.
+	"alerter_settings": {"tier1_scoring"},
 }
 
 // collectorSchemaColumns returns the data type of every column of every

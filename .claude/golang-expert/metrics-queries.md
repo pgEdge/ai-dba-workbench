@@ -1668,13 +1668,39 @@ rows as stored, never averaged across periods or databases (#348; it
 once filtered `period_type = 'overall'`, a value nothing writes, and
 fell back to averaging every period). `BaselineQueryOptions.PeriodType`
 is `all` (default), `hourly` or `daily`; `DatabaseName` nil returns
-every database's rows plus the server-level ones, each labelled, and a
-name returns only that database's rows. The probe filter is a literal
+every database's rows plus the server-level ones, each tagged with its
+`database_name`, and a name returns only that database's rows. The probe filter is a literal
 `starts_with(metric_name, probe || '.')`, not `LIKE`. `p50`/`p95`/`p99`
 are mean, mean + 2 stddev and mean + 3 stddev. The test is
 `baselines_db_test.go`, against a scratch database migrated by the
 collector's `SchemaManager` (`newCollectorSchemaPool` in
 `collector_schema_db_test.go`).
+
+## Anomaly Comparison Endpoint (server)
+
+`GET /api/v1/metrics/anomaly-comparison` (#348) plots a metric against
+the band the alerter scores it with; the code is
+`server/src/internal/metrics/anomaly_comparison.go`. Rules:
+
+- Never reimplement selection or scoring: `BuildComparison` (pure, table
+  tested) calls `anomaly.Select`/`Candidates`/`IsWarm`/`EffectiveStdDev`/
+  `ZScore`/`InBand`, evaluating warmth and UTC period keys at each
+  sample's own time against the current baseline rows.
+- The series is the registry's `HistoricalSQL` wrapped as a subquery
+  (`comparisonSeriesQuery`) with `$1` lookback days and parameterised
+  connection, NULL-aware database and window predicates, so every
+  registry query must keep the output column names `connection_id`,
+  `database_name`, `value` and `collected_at`.
+  `TestQueryComparisonSeries_EveryMetric` runs the wrap for every
+  registered metric.
+- The metric is validated with `ResolveComparisonMetric` (registry
+  lookup plus database scope) before any SQL is chosen.
+- Settings come from `alerter_settings.tier1_scoring`;
+  `ParseScoringSettings` falls back to `DefaultScoringSettings()` with
+  `scoring_source: "defaults"` for NULL, malformed JSON or a non-positive
+  `default_sensitivity`.
+- The handler has a `loadComparisonFn` test hook, and returns a generic
+  500 on load failure, never the database error.
 
 ## Time-Window Resolution (server)
 

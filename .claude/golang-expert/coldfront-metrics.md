@@ -59,8 +59,11 @@ the block verbatim. Under ColdFront `execMetricsDDL` splits the block
 (`splitSQLStatements` handles quotes and `--` comments only, no
 dollar quoting) and: replaces `CREATE TABLE` with
 `coldfront.create_iceberg_table(p_schema => 'metrics', ...)` using
-`ColumnsJSON` and `PartitionColumns` (`{day(collected_at)}`); keeps
-`COMMENT ON TABLE/COLUMN`; drops `CREATE INDEX` and `COMMENT ON INDEX`;
+`ColumnsJSON` and `PartitionColumns` (`{day(collected_at)}`); rewrites
+`COMMENT ON TABLE` as `COMMENT ON VIEW` (`commentOnTableAsView`),
+because the relation is a view and PostgreSQL refuses `COMMENT ON
+TABLE` on one (SQLSTATE 42809, which failed migration 1 live); keeps
+`COMMENT ON COLUMN`, which works on views; drops `CREATE INDEX` and `COMMENT ON INDEX`;
 and errors on any other statement. Keep the DDL text in `schema.go`
 as `CREATE TABLE IF NOT EXISTS metrics.<name> (... ) PARTITION BY
 RANGE`: the server's `column_kinds_test.go` parses it.
@@ -72,13 +75,20 @@ Iceberg write in the same transaction), v4's metrics `DROP INDEX`, v6
 row rewrites of v25 and v26 (their comments still run). The rewrites
 are safe to skip because a datastore cannot be switched to ColdFront,
 so its metrics tables were created empty in the same startup. v7, v10,
-v12 and v13 run unchanged.
+v12 and v13 run unchanged: their `ALTER TABLE ... ADD COLUMN` relies on
+ColdFront intercepting that form on its views (a plain view rejects it
+with 42809), and their `COMMENT ON COLUMN` works on views. Later
+migrations only `COMMENT ON COLUMN` metrics relations; never add a
+`COMMENT ON TABLE`, `ALTER TABLE` of another form, `GRANT`, `TRUNCATE`
+or DML on a metrics relation without handling the ColdFront case.
 
 ## Startup and Runtime
 
 - `database.PrepareMetricsStorage` runs in `initializeSchema` before
   `Migrate`. It calls `CheckMetricsStorage`, which under ColdFront
-  requires the `coldfront` extension plus both
+  requires `coldfront.create_iceberg_table(text,text,jsonb,text[])`
+  (its presence is how "installed" is judged, rather than the
+  `pg_extension` row, so the stub below passes) plus both
   `coldfront._partition_clause(jsonb,text[])` (pgEdge/coldfront#92;
   `extversion` is 1.0 in every build, so never compare versions) and
   `coldfront.ensure_attached()`. In both modes it refuses existing
@@ -108,9 +118,19 @@ v12 and v13 run unchanged.
 No live ColdFront datastore is available to the tests. Two substitutes:
 `recordingTx` in `database/coldfront_schema_test.go` runs the whole
 migration chain without a database and asserts on the SQL issued, and
-`coldFrontStub` in `database/coldfront_integration_test.go` installs a
-plpgsql `coldfront.create_iceberg_table` that rejects the unmapped
-types and creates an ordinary table, so the full chain and real
-`StoreMetrics` inserts run on PostgreSQL. Neither verifies ColdFront's
-own behaviour (view DDL hooks, `ALTER TABLE` on the view, insert
-rewriting, Iceberg partitioning).
+`TestColdFrontMigrationsAgainstStub` in
+`database/coldfront_integration_test.go` installs `coldFrontStub`:
+stub `coldfront` and `duckdb` schemas whose `create_iceberg_table`
+refuses a table until `duckdb.raw_query` has created its namespace in
+an earlier committed statement, and then creates `metrics.<table>` as a
+view (over a backing table in `coldfront_stub`, so `StoreMetrics` can
+insert through it). It runs `PrepareMetricsStorage` and the full chain
+through `sm.migrate(conn, wrap)`, checks every metrics relation is a
+view with the specification's columns and comments, and shows a second
+run is a no-op. Removing either the namespace step or the `COMMENT ON
+VIEW` rewrite makes it fail with the live error. `coldFrontAlterTx`
+replaces only the five v7/v10/v12/v13 `ADD COLUMN` statements with the
+stub's emulation, because no stub can intercept DDL on a view the way
+ColdFront does; the test also asserts a plain view rejects that
+statement. None of this verifies ColdFront's own behaviour (its
+`ALTER TABLE` interception, insert rewriting, Iceberg partitioning).

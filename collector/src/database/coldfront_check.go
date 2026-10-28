@@ -18,14 +18,17 @@ import (
 	"github.com/pgedge/ai-workbench/collector/src/coldfront"
 )
 
-// coldFrontInstalledQuery reports whether the coldfront extension is
-// installed in the datastore and, if so, whether each of the two
-// functions the collector relies on exists: $1 identifies a build new
-// enough for the Workbench and $2 attaches the Iceberg catalog.
+// coldFrontInstalledQuery reports whether each coldfront function the
+// collector relies on exists: $1 is create_iceberg_table, whose presence
+// means the extension is installed; $2 identifies a build new enough for
+// the Workbench; and $3 attaches the Iceberg catalog. Testing for the
+// functions rather than the pg_extension row checks exactly what the
+// collector calls, and lets the database tests stand a stub schema in
+// for the extension.
 const coldFrontInstalledQuery = `
-    SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'coldfront'),
-           to_regprocedure($1) IS NOT NULL,
-           to_regprocedure($2) IS NOT NULL
+    SELECT to_regprocedure($1) IS NOT NULL,
+           to_regprocedure($2) IS NOT NULL,
+           to_regprocedure($3) IS NOT NULL
 `
 
 // The two statements that create the Iceberg namespace of the metrics
@@ -108,7 +111,8 @@ func CheckMetricsStorage(ctx context.Context, q rowQuerier, useColdFront bool) e
 	if useColdFront {
 		var installed, recentEnough, canAttach bool
 		if err := q.QueryRow(ctx, coldFrontInstalledQuery,
-			coldfront.MinimumBuildProcedure, coldfront.AttachProcedure).Scan(
+			coldfront.CreateTableProcedure, coldfront.MinimumBuildProcedure,
+			coldfront.AttachProcedure).Scan(
 			&installed, &recentEnough, &canAttach); err != nil {
 			return fmt.Errorf("failed to check for the coldfront extension: %w", err)
 		}

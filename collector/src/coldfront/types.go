@@ -35,6 +35,11 @@ import (
 // every build, so the version string cannot be used for this check.
 const MinimumBuildProcedure = "coldfront._partition_clause(jsonb,text[])"
 
+// CreateTableProcedure creates an Iceberg table and its wrapper view.
+// Its presence is how the collector tells that the coldfront extension
+// is installed.
+const CreateTableProcedure = "coldfront.create_iceberg_table(text,text,jsonb,text[])"
+
 // AttachProcedure attaches the Lakekeeper catalog as the DuckDB catalog
 // "ice" from the coldfront.warehouse and coldfront.lakekeeper_endpoint
 // settings. The collector calls it before creating the Iceberg namespace

@@ -184,6 +184,8 @@ func TestColdFrontMigrationsIssueNoMetricsIndexOrPartitionDDL(t *testing.T) {
 		regexp.MustCompile(`(?i)^CREATE TABLE.*\bmetrics\.`),
 		regexp.MustCompile(`(?i)^CREATE (UNIQUE )?INDEX.*\bON metrics\.`),
 		regexp.MustCompile(`(?i)^(COMMENT ON|DROP) INDEX.*\bmetrics\.`),
+		// A metrics relation is a view: COMMENT ON TABLE fails on it.
+		regexp.MustCompile(`(?i)^COMMENT ON TABLE metrics\.`),
 		regexp.MustCompile(`(?i)^ALTER TABLE metrics\.\S+ (ADD CONSTRAINT|ALTER COLUMN|ADD PRIMARY)`),
 		regexp.MustCompile(`(?i)\bPARTITION (BY|OF)\b`),
 		regexp.MustCompile(`(?i)\bSAVEPOINT\b`),
@@ -208,8 +210,8 @@ func TestColdFrontMigrationsIssueNoMetricsIndexOrPartitionDDL(t *testing.T) {
 
 	// Comments and later column additions still reach the views.
 	required := []string{
-		"COMMENT ON TABLE metrics.pg_stat_activity IS",
-		"COMMENT ON TABLE metrics.spock_resolutions IS",
+		"COMMENT ON VIEW metrics.pg_stat_activity IS",
+		"COMMENT ON VIEW metrics.spock_resolutions IS",
 		"COMMENT ON COLUMN metrics.pg_node_role.postmaster_start_time IS",
 		"COMMENT ON COLUMN metrics.spock_exception_log.database_name IS",
 		"ALTER TABLE metrics.pg_stat_all_tables ADD COLUMN IF NOT EXISTS table_size BIGINT",
@@ -419,7 +421,7 @@ func TestExecMetricsDDLColdFront(t *testing.T) {
 	if !strings.Contains(tx.stmts[0].sql, "coldfront.create_iceberg_table") {
 		t.Errorf("first statement is %q", tx.stmts[0].sql)
 	}
-	if tx.stmts[1].sql != "COMMENT ON TABLE metrics.pg_connectivity IS 'Connectivity; checks'" {
+	if tx.stmts[1].sql != "COMMENT ON VIEW metrics.pg_connectivity IS 'Connectivity; checks'" {
 		t.Errorf("second statement is %q", tx.stmts[1].sql)
 	}
 }
@@ -496,5 +498,18 @@ func TestAddMetricsConstraintSkippedUnderColdFront(t *testing.T) {
 	}
 	if len(tx.stmts) != 1 || !strings.Contains(tx.stmts[0].sql, "ADD CONSTRAINT fk") {
 		t.Errorf("addMetricsConstraint issued %+v in the default mode", tx.stmts)
+	}
+}
+
+func TestCommentOnTableAsView(t *testing.T) {
+	tests := map[string]string{
+		"COMMENT ON TABLE metrics.x IS 'a table'":       "COMMENT ON VIEW metrics.x IS 'a table'",
+		"comment  on\n table metrics.x IS 'ON TABLE y'": "COMMENT ON VIEW metrics.x IS 'ON TABLE y'",
+		"COMMENT ON COLUMN metrics.x.a IS 'b'":          "COMMENT ON COLUMN metrics.x.a IS 'b'",
+	}
+	for in, want := range tests {
+		if got := commentOnTableAsView(in); got != want {
+			t.Errorf("commentOnTableAsView(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

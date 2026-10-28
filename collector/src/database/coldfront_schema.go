@@ -57,8 +57,9 @@ const createIcebergTableSQL = `
 // Under ColdFront the block is translated statement by statement: its
 // CREATE TABLE becomes a coldfront.create_iceberg_table call built from
 // the column specification, after the CREATE TABLE has been checked
-// against that specification; COMMENT ON TABLE and COMMENT ON COLUMN run
-// unchanged; and CREATE INDEX and COMMENT ON INDEX are dropped, because
+// against that specification; COMMENT ON TABLE becomes COMMENT ON VIEW,
+// because the relation ColdFront creates is a view; COMMENT ON COLUMN
+// runs unchanged; and CREATE INDEX and COMMENT ON INDEX are dropped, because
 // ColdFront views carry no indexes. Any other statement is an error, so a
 // new kind of statement in a metrics block cannot be silently skipped.
 func (sm *SchemaManager) execMetricsDDL(ctx context.Context, tx ddlExecer, table, ddl string) error {
@@ -87,7 +88,12 @@ func (sm *SchemaManager) execMetricsDDL(ctx context.Context, tx ddlExecer, table
 				return err
 			}
 			created = true
-		case "COMMENT ON TABLE", "COMMENT ON COLUMN":
+		case "COMMENT ON TABLE":
+			// The relation is a view under ColdFront, and PostgreSQL
+			// refuses COMMENT ON TABLE for a view (SQLSTATE 42809).
+			keep = append(keep, commentOnTableAsView(stmt))
+		case "COMMENT ON COLUMN":
+			// COMMENT ON COLUMN accepts a view's columns as it is.
 			keep = append(keep, stmt)
 		case "CREATE INDEX", "CREATE UNIQUE INDEX", "COMMENT ON INDEX":
 			// ColdFront views cannot be indexed.
@@ -186,6 +192,15 @@ func splitSQLStatements(sql string) []string {
 // statement: the verb and, for CREATE and COMMENT, the object type.
 var statementKindPattern = regexp.MustCompile(
 	`^(?i)(CREATE\s+UNIQUE\s+INDEX|CREATE\s+(?:TABLE|INDEX)|COMMENT\s+ON\s+(?:TABLE|COLUMN|INDEX)|\S+)`)
+
+// commentOnTablePrefix matches the leading keywords of COMMENT ON TABLE.
+var commentOnTablePrefix = regexp.MustCompile(`^(?i)COMMENT\s+ON\s+TABLE\b`)
+
+// commentOnTableAsView rewrites a COMMENT ON TABLE statement as COMMENT
+// ON VIEW, leaving the object name and the comment text untouched.
+func commentOnTableAsView(stmt string) string {
+	return commentOnTablePrefix.ReplaceAllLiteralString(stmt, "COMMENT ON VIEW")
+}
 
 // statementKind returns the upper-cased leading keywords of stmt, with
 // runs of whitespace collapsed to one space.

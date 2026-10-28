@@ -4460,6 +4460,14 @@ func maskConnectionAlertDescriptions(ctx context.Context, tx pgx.Tx) error {
 
 // Migrate applies all pending migrations
 func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
+	return sm.migrate(conn, nil)
+}
+
+// migrate applies all pending migrations. When wrap is not nil each
+// migration runs against wrap(tx) instead of tx; the ColdFront database
+// tests use it to emulate the ALTER TABLE handling ColdFront gives its
+// views, which a stand-in view cannot provide. Production passes nil.
+func (sm *SchemaManager) migrate(conn *pgxpool.Conn, wrap func(pgx.Tx) pgx.Tx) error {
 	ctx := context.Background()
 	logger.Info("Starting schema migration...")
 
@@ -4493,7 +4501,11 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
 		}
 
 		// Apply the migration
-		if err := migration.Up(tx); err != nil {
+		upTx := tx
+		if wrap != nil {
+			upTx = wrap(tx)
+		}
+		if err := migration.Up(upTx); err != nil {
 			if rbErr := rollback.Tx(ctx, tx); rbErr != nil {
 				logger.Errorf("Failed to rollback transaction: %v", rbErr)
 			}

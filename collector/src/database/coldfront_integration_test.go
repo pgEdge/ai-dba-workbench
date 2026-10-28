@@ -12,9 +12,15 @@ package database
 
 import (
 	"context"
+	"errors"
+	"reflect"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/collector/src/coldfront"
@@ -106,13 +112,44 @@ func TestColdFrontSpecMatchesMigratedSchema(t *testing.T) {
 		func(pgType string) string { return pgType })
 }
 
-// coldFrontStub stands in for the coldfront extension: it validates its
-// arguments the way the real function does for the types the metrics
-// tables use, and creates an ordinary table, which accepts the same
-// ALTER TABLE, COMMENT and INSERT statements the migrations and probes
-// send to a ColdFront view.
+// coldFrontStub stands in for the coldfront extension and pg_duckdb's
+// raw_query, closely enough to catch what failed against live ColdFront
+// datastores:
+//
+//   - duckdb.raw_query records each statement with the transaction that
+//     ran it, and create_iceberg_table refuses a table whose Iceberg
+//     namespace was not created by an earlier, committed statement, as a
+//     Lakekeeper catalog does with "Namespace with name 'metrics' does
+//     not exist".
+//   - create_iceberg_table creates metrics.<table> as a view (relkind
+//     'v'), so a statement that only works on a table, such as COMMENT
+//     ON TABLE, fails as it does live. The view selects from a backing
+//     table in coldfront_stub, which keeps it automatically updatable so
+//     that StoreMetrics can insert through it as it does through
+//     ColdFront's insert hook.
+//   - It rejects the types ColdFront rejects and any partition spec but
+//     day(collected_at), and records each call.
+//
+// ensure_attached and _partition_clause are no-ops that exist so the
+// startup check finds them.
 const coldFrontStub = `
+    CREATE SCHEMA coldfront_stub;
+    CREATE TABLE coldfront_stub.raw_queries (query text NOT NULL, xid bigint NOT NULL);
+    CREATE TABLE coldfront_stub.calls (
+        p_schema text, p_table text, p_columns jsonb, p_partition_cols text[]);
+
+    CREATE SCHEMA duckdb;
+    CREATE FUNCTION duckdb.raw_query(query text) RETURNS void
+    LANGUAGE sql AS $f$
+        INSERT INTO coldfront_stub.raw_queries VALUES (query, txid_current())
+    $f$;
+
     CREATE SCHEMA coldfront;
+    CREATE FUNCTION coldfront.ensure_attached() RETURNS void
+    LANGUAGE plpgsql AS $f$ BEGIN NULL; END $f$;
+    CREATE FUNCTION coldfront._partition_clause(p_columns jsonb, p_partition_cols text[])
+    RETURNS text LANGUAGE sql AS $f$ SELECT ''::text $f$;
+
     CREATE FUNCTION coldfront.create_iceberg_table(
         p_schema text, p_table text, p_columns jsonb,
         p_partition_cols text[] DEFAULT NULL)
@@ -122,6 +159,12 @@ const coldFrontStub = `
         cols text := '';
         typ  text;
     BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM coldfront_stub.raw_queries
+            WHERE query = format('CREATE SCHEMA IF NOT EXISTS ice.%s', p_schema)
+              AND xid <> txid_current()) THEN
+            RAISE EXCEPTION 'Namespace with name ''%'' does not exist in warehouse', p_schema;
+        END IF;
         IF p_partition_cols IS DISTINCT FROM ARRAY['day(collected_at)'] THEN
             RAISE EXCEPTION 'unexpected partition spec %', p_partition_cols;
         END IF;
@@ -135,16 +178,94 @@ const coldFrontStub = `
             END IF;
             cols := cols || quote_ident(col->>'name') || ' ' || (col->>'type');
         END LOOP;
-        EXECUTE format('CREATE TABLE %I.%I (%s)', p_schema, p_table, cols);
+        INSERT INTO coldfront_stub.calls
+            VALUES (p_schema, p_table, p_columns, p_partition_cols);
+        EXECUTE format('CREATE TABLE coldfront_stub.%I (%s)', p_table, cols);
+        EXECUTE format('CREATE VIEW %I.%I AS SELECT * FROM coldfront_stub.%I',
+                       p_schema, p_table, p_table);
+    END
+    $f$;
+
+    -- Emulates ColdFront's handling of ALTER TABLE ... ADD COLUMN on one
+    -- of its views; see coldFrontAlterTx.
+    CREATE FUNCTION coldfront_stub.add_column(p_table text, p_column text, p_type text)
+    RETURNS void LANGUAGE plpgsql AS $f$
+    BEGIN
+        EXECUTE format('ALTER TABLE coldfront_stub.%I ADD COLUMN %I %s',
+                       p_table, p_column, p_type);
+        EXECUTE format('CREATE OR REPLACE VIEW metrics.%I AS SELECT * FROM coldfront_stub.%I',
+                       p_table, p_table);
     END
     $f$;
 `
 
-// TestColdFrontMigrationsAgainstStub runs the whole migration chain
-// under ColdFront against a stub of create_iceberg_table, then checks
-// the resulting schema and writes probe-shaped rows through
-// StoreMetrics, so the SQL the ColdFront path sends and the value
-// conversions are exercised on a real server.
+// dropColdFrontStub removes everything coldFrontStub created, including
+// the metrics views that depend on its backing tables.
+const dropColdFrontStub = `
+    DROP SCHEMA IF EXISTS coldfront_stub CASCADE;
+    DROP SCHEMA IF EXISTS coldfront CASCADE;
+    DROP SCHEMA IF EXISTS duckdb CASCADE;
+`
+
+// addColumnStatement matches the ADD COLUMN form migrations 7, 10, 12
+// and 13 send to a metrics relation.
+var addColumnStatement = regexp.MustCompile(
+	`(?is)^ALTER\s+TABLE\s+metrics\.(\w+)\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+(\w+)\s+(.+)$`)
+
+// coldFrontAlterTx runs a migration against the stub. A plain view
+// rejects ALTER TABLE ... ADD COLUMN (SQLSTATE 42809, which
+// TestColdFrontMigrationsAgainstStub demonstrates); ColdFront intercepts
+// that statement on its own views, which no stub can do, so this
+// wrapper replaces exactly that statement with the stub's emulation and
+// records it. Every other statement, including any other ALTER TABLE
+// form, runs unchanged and fails if a view cannot take it. Whether
+// ColdFront really accepts these ADD COLUMN statements can only be
+// confirmed against a live ColdFront datastore.
+type coldFrontAlterTx struct {
+	pgx.Tx
+	emulated *[]string
+}
+
+func (w coldFrontAlterTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if len(args) > 0 || !strings.Contains(sql, "ALTER TABLE metrics.") {
+		return w.Tx.Exec(ctx, sql, args...)
+	}
+	var tag pgconn.CommandTag
+	for _, stmt := range splitSQLStatements(sql) {
+		var err error
+		if m := addColumnStatement.FindStringSubmatch(stmt); m != nil {
+			*w.emulated = append(*w.emulated, m[1]+"."+m[2])
+			tag, err = w.Tx.Exec(ctx,
+				"SELECT coldfront_stub.add_column($1, $2, $3)", m[1], m[2], m[3])
+		} else {
+			tag, err = w.Tx.Exec(ctx, stmt)
+		}
+		if err != nil {
+			return tag, err
+		}
+	}
+	return tag, nil
+}
+
+// expectedViewComments returns the metrics relations whose ColdFront DDL
+// carries a COMMENT ON VIEW, read from the statements the migrations
+// issue under ColdFront.
+func expectedViewComments(t *testing.T) []string {
+	t.Helper()
+	re := regexp.MustCompile(`^COMMENT ON VIEW metrics\.(\w+) IS`)
+	var names []string
+	for _, s := range statementsOf(runMigrationsRecorded(t, NewSchemaManager(WithColdFrontMetrics(true)))) {
+		if m := re.FindStringSubmatch(squash(s.sql)); m != nil {
+			names = append(names, m[1])
+		}
+	}
+	return names
+}
+
+// TestColdFrontMigrationsAgainstStub runs the startup preparation and the
+// whole migration chain under ColdFront against coldFrontStub, then
+// checks the resulting views, runs everything again to show it is a
+// no-op, and writes probe-shaped rows through StoreMetrics.
 func TestColdFrontMigrationsAgainstStub(t *testing.T) {
 	ctx := context.Background()
 	pool, conn := getTestConnection(t)
@@ -153,31 +274,62 @@ func TestColdFrontMigrationsAgainstStub(t *testing.T) {
 	cleanupTestSchema(t, pool)
 	defer cleanupTestSchema(t, pool)
 
-	if _, err := conn.Exec(ctx, coldFrontStub); err != nil {
+	if _, err := conn.Exec(ctx, dropColdFrontStub+coldFrontStub); err != nil {
 		t.Fatalf("failed to install the coldfront stub: %v", err)
 	}
 	defer func() {
-		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS coldfront CASCADE"); err != nil {
+		if _, err := pool.Exec(ctx, dropColdFrontStub); err != nil {
 			t.Errorf("failed to drop the coldfront stub: %v", err)
 		}
 	}()
 
+	var emulated []string
+	wrap := func(tx pgx.Tx) pgx.Tx { return coldFrontAlterTx{Tx: tx, emulated: &emulated} }
 	sm := NewSchemaManager(WithColdFrontMetrics(true))
-	if err := sm.Migrate(conn); err != nil {
+
+	// Without the namespace step the first table is refused, as Lakekeeper
+	// refuses it, and migration 1 rolls back.
+	err := sm.migrate(conn, wrap)
+	if err == nil || !strings.Contains(err.Error(), "Namespace with name 'metrics' does not exist") {
+		t.Fatalf("migrating before the namespace exists: error = %v", err)
+	}
+
+	if err := PrepareMetricsStorage(ctx, conn, true); err != nil {
+		t.Fatalf("PrepareMetricsStorage failed: %v", err)
+	}
+	emulated = nil
+	if err := sm.migrate(conn, wrap); err != nil {
 		t.Fatalf("Migrate under ColdFront failed: %v", err)
 	}
 
-	var version int
-	if err := conn.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {
+	wantEmulated := []string{
+		"pg_stat_all_tables.table_size", "pg_stat_all_indexes.index_size",
+		"pg_stat_statements.stats_reset", "pg_stat_activity.query_id",
+		"pg_sys_memory_info.available_memory",
+	}
+	if !reflect.DeepEqual(emulated, wantEmulated) {
+		t.Errorf("emulated ADD COLUMN statements = %v, want %v", emulated, wantEmulated)
+	}
+
+	// A plain view really does reject the ADD COLUMN form, which is why
+	// the emulation above is needed and why it must be checked live.
+	_, err = conn.Exec(ctx, "ALTER TABLE metrics.pg_connectivity ADD COLUMN IF NOT EXISTS probe_check BIGINT")
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42809" {
+		t.Errorf("ADD COLUMN on a plain view: error = %v, want SQLSTATE 42809", err)
+	}
+
+	var version, versions int
+	if err := conn.QueryRow(ctx, "SELECT MAX(version), COUNT(*) FROM schema_version").Scan(&version, &versions); err != nil {
 		t.Fatal(err)
 	}
 	if version != sm.LatestVersion() {
 		t.Errorf("schema_version = %d, want %d", version, sm.LatestVersion())
 	}
 
-	// Every metrics table carries the specification's columns with their
-	// ColdFront types, including those later migrations add.
-	compareWithSpec(t, readMetricsColumns(t, conn, []string{"p", "r", "v"}),
+	// Every metrics relation is a view with the specification's columns
+	// and ColdFront types, including those later migrations add.
+	compareWithSpec(t, readMetricsColumns(t, conn, []string{"v"}),
 		func(pgType string) string {
 			st, err := coldfront.StorageType(pgType)
 			if err != nil {
@@ -186,34 +338,58 @@ func TestColdFrontMigrationsAgainstStub(t *testing.T) {
 			return st
 		})
 
-	var indexes, constraints, partitioned int
+	var nonViews, indexes, constraints, calls, badPartitions int
 	if err := conn.QueryRow(ctx, `
         SELECT
+            (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = 'metrics' AND c.relkind <> 'v'),
             (SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid
              JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'metrics'),
             (SELECT count(*) FROM pg_constraint k JOIN pg_namespace n ON n.oid = k.connamespace
              WHERE n.nspname = 'metrics'),
-            (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE n.nspname = 'metrics' AND (c.relkind = 'p' OR c.relispartition))
-    `).Scan(&indexes, &constraints, &partitioned); err != nil {
+            (SELECT count(*) FROM coldfront_stub.calls),
+            (SELECT count(*) FROM coldfront_stub.calls
+             WHERE p_schema <> 'metrics' OR p_partition_cols <> ARRAY['day(collected_at)'])
+    `).Scan(&nonViews, &indexes, &constraints, &calls, &badPartitions); err != nil {
 		t.Fatal(err)
 	}
-	if indexes != 0 || constraints != 0 || partitioned != 0 {
-		t.Errorf("metrics schema has %d indexes, %d constraints and %d partitioned relations under ColdFront, want none",
-			indexes, constraints, partitioned)
+	if nonViews != 0 || indexes != 0 || constraints != 0 {
+		t.Errorf("metrics schema has %d relations that are not views, %d indexes and %d constraints, want none",
+			nonViews, indexes, constraints)
+	}
+	if calls != len(coldfront.Tables()) || badPartitions != 0 {
+		t.Errorf("create_iceberg_table called %d times (%d with the wrong schema or partitions), want %d",
+			calls, badPartitions, len(coldfront.Tables()))
 	}
 
-	var tableComment, columnComment *string
+	// Every view comment the DDL carries, and the comments on columns
+	// later migrations add, reached the views.
+	commented := expectedViewComments(t)
+	if len(commented) == 0 {
+		t.Fatal("no COMMENT ON VIEW was issued under ColdFront")
+	}
+	var missing []string
 	if err := conn.QueryRow(ctx, `
-        SELECT obj_description('metrics.pg_stat_activity'::regclass, 'pg_class'),
-               col_description('metrics.pg_stat_activity'::regclass,
-                   (SELECT attnum FROM pg_attribute
-                    WHERE attrelid = 'metrics.pg_stat_activity'::regclass AND attname = 'query_id'))
-    `).Scan(&tableComment, &columnComment); err != nil {
+        SELECT COALESCE(array_agg(v), '{}') FROM unnest($1::text[]) v
+        WHERE obj_description(('metrics.' || quote_ident(v))::regclass, 'pg_class') IS NULL
+    `, commented).Scan(&missing); err != nil {
 		t.Fatal(err)
 	}
-	if tableComment == nil || columnComment == nil {
-		t.Error("COMMENT ON TABLE or COMMENT ON COLUMN did not reach the ColdFront relation")
+	if len(missing) > 0 {
+		t.Errorf("views without their comment: %v", missing)
+	}
+	var columnComments int
+	if err := conn.QueryRow(ctx, `
+        SELECT count(*) FROM (VALUES
+            ('pg_stat_activity', 'query_id'), ('pg_stat_statements', 'stats_reset'),
+            ('pg_settings', 'setting'), ('pg_node_role', 'postmaster_start_time')) AS c(rel, col)
+        JOIN pg_attribute a ON a.attrelid = ('metrics.' || c.rel)::regclass AND a.attname = c.col
+        WHERE col_description(a.attrelid, a.attnum) IS NOT NULL
+    `).Scan(&columnComments); err != nil {
+		t.Fatal(err)
+	}
+	if columnComments != 4 {
+		t.Errorf("%d of 4 sampled column comments reached the views", columnComments)
 	}
 
 	var embeddingColumn, anomalyEmbeddings bool
@@ -226,6 +402,24 @@ func TestColdFrontMigrationsAgainstStub(t *testing.T) {
 	}
 	if embeddingColumn || anomalyEmbeddings {
 		t.Error("the pgvector setup ran under ColdFront")
+	}
+
+	// A second start finds views, recreates nothing and applies nothing.
+	if err := PrepareMetricsStorage(ctx, conn, true); err != nil {
+		t.Fatalf("second PrepareMetricsStorage failed: %v", err)
+	}
+	if err := sm.Migrate(conn); err != nil {
+		t.Fatalf("second Migrate failed: %v", err)
+	}
+	var calls2, versions2 int
+	if err := conn.QueryRow(ctx, `
+        SELECT (SELECT count(*) FROM coldfront_stub.calls),
+               (SELECT count(*) FROM schema_version)
+    `).Scan(&calls2, &versions2); err != nil {
+		t.Fatal(err)
+	}
+	if calls2 != calls || versions2 != versions {
+		t.Errorf("second run changed create calls %d -> %d and versions %d -> %d", calls, calls2, versions, versions2)
 	}
 
 	storeConvertedValues(t, conn)

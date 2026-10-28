@@ -3924,6 +3924,11 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("order", "Sort order (asc or desc)"),
 					queryParamString("queryid", "Filter by specific query ID"),
 					queryParamString("database_name", "Filter by exact database name"),
+					queryParamString("query_text",
+						"Keep only queries whose text contains this term, ignoring case, as a plain substring: % and _ match themselves rather than acting as wildcards. "+
+							"The term is matched against the query text with passwords in known forms already masked, so a masked password cannot be searched for. "+
+							"Empty or absent applies no filter; a term longer than 1000 characters, or one that is not valid UTF-8 or contains a NUL character, is rejected with status 400. "+
+							"X-Total-Count and paging reflect the filtered set"),
 					queryParamBool("exclude_collector",
 						"Exclude Workbench-internal queries, including "+
 							"collector probe queries and the collector's "+

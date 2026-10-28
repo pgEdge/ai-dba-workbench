@@ -260,7 +260,10 @@ moved.
   output, so the Go pass does not protect them, and a `like` or
   range filter is an oracle for a secret the patterns miss, one
   character at a time; the user accepted this risk on 2026-10-21
-  (PR #730), so do not re-raise it as a new finding.
+  (PR #730), so do not re-raise it as a new finding. The
+  `query_text` filter of `GET /api/v1/metrics/top-queries` (#757)
+  matches the `RedactedText` output in the same way and carries the
+  same accepted risk.
   `RedactedText` is
   `left(value, 65536)` under a chain of `regexp_replace` calls built from
   `textRedactions` (URI userinfo, JSON keys, ALTER SYSTEM SET of a

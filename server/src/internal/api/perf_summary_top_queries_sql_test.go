@@ -179,7 +179,26 @@ const topQueriesCTEWindow = "ORDER BY d.queryid " +
 	"LEFT JOIN db_names dn ON ls.dbid = dn.datid " +
 	"LEFT JOIN user_names un ON ls.userid = un.usesysid " +
 	"LEFT JOIN last_client lc ON ls.queryid = lc.query_id " +
-	"AND ls.dbid = lc.datid AND ls.userid = lc.usesysid )"
+	"AND ls.dbid = lc.datid AND ls.userid = lc.usesysid"
+
+// topQueriesTextClause is the optional query text predicate that closes
+// deduped, bound to placeholder n. It tests the text the page lateral would
+// show for the statement, as metrics.RedactedText masks it in SQL, so a
+// secret those patterns mask cannot be matched.
+func topQueriesTextClause(n int) string {
+	return normaliseSQL(fmt.Sprintf(
+		"WHERE strpos(lower(%s), lower($%d::text)) > 0",
+		metrics.RedactedText("( "+
+			"SELECT pss.query "+
+			"FROM metrics.pg_stat_statements pss "+
+			"WHERE pss.connection_id = $1 "+
+			"AND pss.database_name = ls.sample_database_name "+
+			"AND pss.queryid = t.queryid "+
+			"AND pss.collected_at >= $2 "+
+			"AND pss.collected_at <= $3 "+
+			"ORDER BY pss.collected_at DESC "+
+			"LIMIT 1)"), n))
+}
 
 // topQueriesPageSelect is the projection the page statement wraps the
 // paged CTE in, and topQueriesPageLateral is the lookup that resolves the
@@ -255,13 +274,16 @@ func joinSQL(parts ...string) string {
 // TestBuildTopQueriesSQL_ClauseCombinations asserts the exact generated SQL
 // and argument slices for all eight combinations of (queryid present or
 // absent) x (exclude_collector on or off) x (database_name present or
-// absent). The placeholder numbering is the security-relevant part: every
+// absent), and for the query_text filter alone and alongside the queryid
+// and database_name filters, which it numbers after. The placeholder
+// numbering is the security-relevant part: every
 // user-supplied value must arrive as a $N parameter, and the count and page
 // statements must number the shared filters identically.
 func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 	const (
 		connID       = 42
 		databaseName = "alpha"
+		queryText    = "50%_off"
 		limit        = 25
 		offset       = 50
 		// The exclusion clause is shared with the rest of the API and
@@ -281,6 +303,7 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 		name             string
 		queryID          *int64
 		databaseName     string
+		queryText        string
 		excludeCollector bool
 		// wantLastClient is the optional queryid predicate pushed into
 		// the last_client CTE. It shares its placeholder with
@@ -294,7 +317,10 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 		// sits in samples, after readings keeps one copy per counter and
 		// deltas takes the differences, so that an unresolved dbid matches
 		// only one probing database and no delta loses its predecessor.
-		wantDBClause   string
+		wantDBClause string
+		// wantTextClause is the optional query text predicate closing
+		// deduped, numbered after every other filter.
+		wantTextClause string
 		wantTail       string
 		wantFilterArgs []any
 		wantPageArgs   []any
@@ -382,18 +408,81 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 			wantPageArgs: []any{
 				connID, start, end, queryID, databaseName, limit, offset},
 		},
+		{
+			name:           "query text only",
+			queryText:      queryText,
+			wantTextClause: topQueriesTextClause(4),
+			wantTail:       "LIMIT $5 OFFSET $6",
+			wantFilterArgs: []any{connID, start, end, queryText},
+			wantPageArgs: []any{
+				connID, start, end, queryText, limit, offset},
+		},
+		{
+			name:             "query text and exclude collector",
+			queryText:        queryText,
+			excludeCollector: true,
+			wantFilters:      excludeSQL,
+			wantTextClause:   topQueriesTextClause(4),
+			wantTail:         "LIMIT $5 OFFSET $6",
+			wantFilterArgs:   []any{connID, start, end, queryText},
+			wantPageArgs: []any{
+				connID, start, end, queryText, limit, offset},
+		},
+		{
+			name:           "query text and database name",
+			databaseName:   databaseName,
+			queryText:      queryText,
+			wantFilters:    topQueriesReadingsDBClause(4),
+			wantDBClause:   topQueriesSamplesDBClause(4),
+			wantTextClause: topQueriesTextClause(5),
+			wantTail:       "LIMIT $6 OFFSET $7",
+			wantFilterArgs: []any{connID, start, end, databaseName, queryText},
+			wantPageArgs: []any{
+				connID, start, end, databaseName, queryText, limit, offset},
+		},
+		{
+			name:           "query text and queryid",
+			queryID:        &queryID,
+			queryText:      queryText,
+			wantLastClient: "AND query_id = $4",
+			wantFilters:    "AND pss.queryid = $4",
+			wantTextClause: topQueriesTextClause(5),
+			wantTail:       "LIMIT $6 OFFSET $7",
+			wantFilterArgs: []any{connID, start, end, queryID, queryText},
+			wantPageArgs: []any{
+				connID, start, end, queryID, queryText, limit, offset},
+		},
+		{
+			name:             "query text, queryid, database name and exclude collector",
+			queryID:          &queryID,
+			databaseName:     databaseName,
+			queryText:        queryText,
+			excludeCollector: true,
+			wantLastClient:   "AND query_id = $4",
+			wantFilters: "AND pss.queryid = $4 " + excludeSQL + " " +
+				topQueriesReadingsDBClause(5),
+			wantDBClause:   topQueriesSamplesDBClause(5),
+			wantTextClause: topQueriesTextClause(6),
+			wantTail:       "LIMIT $7 OFFSET $8",
+			wantFilterArgs: []any{
+				connID, start, end, queryID, databaseName, queryText},
+			wantPageArgs: []any{
+				connID, start, end, queryID, databaseName, queryText,
+				limit, offset},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			countSQL, pageSQL, filterArgs, pageArgs := buildTopQueriesSQL(
-				connID, window, tc.queryID, tc.databaseName,
+				connID, window, tc.queryID, tc.databaseName, tc.queryText,
 				tc.excludeCollector, "total_exec_time", "DESC", limit,
 				offset)
 
 			wantCTE := joinSQL(topQueriesCTEHead, tc.wantLastClient,
 				topQueriesCTEBody, tc.wantFilters, topQueriesCTETail,
-				tc.wantDBClause, topQueriesCTEWindow)
+				tc.wantDBClause, topQueriesCTEWindow, tc.wantTextClause,
+				")")
 			wantCount := joinSQL(wantCTE, "SELECT COUNT(*) FROM deduped")
 			wantPage := joinSQL(wantCTE, topQueriesPageSelect,
 				"ORDER BY total_exec_time DESC, queryid",
@@ -426,7 +515,7 @@ func TestBuildTopQueriesSQL_OrderClause(t *testing.T) {
 		for dirToken, direction := range validTopQueryOrderDirections {
 			t.Run(token+"_"+dirToken, func(t *testing.T) {
 				_, pageSQL, _, _ := buildTopQueriesSQL(
-					1, testTopQueriesWindow(), nil, "", false, column,
+					1, testTopQueriesWindow(), nil, "", "", false, column,
 					direction, 10, 0)
 				want := "ORDER BY " + column + " " + direction +
 					", queryid LIMIT $4 OFFSET $5 " + topQueriesPageLateral
@@ -445,11 +534,11 @@ func TestBuildTopQueriesSQL_OrderClause(t *testing.T) {
 func TestBuildTopQueriesSQL_ArgumentsAreIndependent(t *testing.T) {
 	var queryID int64 = 99
 	_, _, filterArgs, pageArgs := buildTopQueriesSQL(
-		7, testTopQueriesWindow(), &queryID, "beta", true, "calls", "ASC",
-		5, 10)
+		7, testTopQueriesWindow(), &queryID, "beta", "gamma", true, "calls",
+		"ASC", 5, 10)
 
-	if len(filterArgs) != 5 {
-		t.Fatalf("filterArgs = %#v, want five entries", filterArgs)
+	if len(filterArgs) != 6 {
+		t.Fatalf("filterArgs = %#v, want six entries", filterArgs)
 	}
 	pageArgs[0] = "mutated"
 	if filterArgs[0] != 7 {
@@ -466,6 +555,7 @@ func TestBuildTopQueriesSQL_ArgumentsAreIndependent(t *testing.T) {
 // offset, namely that its decimal form is never interpolated.
 func TestBuildTopQueriesSQL_NoUserValuesInSQL(t *testing.T) {
 	const evilDBName = "alpha'; DROP TABLE metrics.pg_stat_statements; --"
+	const evilQueryText = "x') > 0; DELETE FROM metrics.pg_stat_statements; --"
 	var evilQueryID int64 = 8675309
 
 	window := metrics.TimeWindow{
@@ -474,10 +564,12 @@ func TestBuildTopQueriesSQL_NoUserValuesInSQL(t *testing.T) {
 	}
 
 	countSQL, pageSQL, filterArgs, pageArgs := buildTopQueriesSQL(
-		31337, window, &evilQueryID, evilDBName, true, "rows", "ASC", 11, 22)
+		31337, window, &evilQueryID, evilDBName, evilQueryText, true, "rows",
+		"ASC", 11, 22)
 
 	for _, sql := range []string{countSQL, pageSQL} {
-		for _, value := range []string{"8675309", evilDBName, "31337",
+		for _, value := range []string{"8675309", evilDBName, evilQueryText,
+			"DELETE FROM", "31337",
 			"11", "22", "2026-02-03", "2026-02-04"} {
 			if strings.Contains(sql, value) {
 				t.Errorf("generated SQL contains user value %q:\n%s", value,
@@ -487,12 +579,12 @@ func TestBuildTopQueriesSQL_NoUserValuesInSQL(t *testing.T) {
 	}
 
 	wantFilters := []any{31337, window.Start, window.End, evilQueryID,
-		evilDBName}
+		evilDBName, evilQueryText}
 	if !reflect.DeepEqual(filterArgs, wantFilters) {
 		t.Errorf("filterArgs = %#v, want %#v", filterArgs, wantFilters)
 	}
 	wantPage := []any{31337, window.Start, window.End, evilQueryID,
-		evilDBName, 11, 22}
+		evilDBName, evilQueryText, 11, 22}
 	if !reflect.DeepEqual(pageArgs, wantPage) {
 		t.Errorf("pageArgs = %#v, want %#v", pageArgs, wantPage)
 	}

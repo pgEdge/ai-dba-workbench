@@ -1937,6 +1937,24 @@ The page statement resolves it instead with a lateral lookup outside the
 `database_name` recorded on the sample rather than the name resolved
 through `db_names`. The join is `LEFT`, because the column is nullable.
 
+The optional `query_text` filter (#757) is the one text predicate, and it
+sits at the end of `deduped` (`queryTextClause`), once per statement,
+never in `readings` or `samples`: it filters whole statements, so it may
+follow `totals`, and it resolves the text with the same lookup the page
+lateral uses (latest sample in the window under `sample_database_name`,
+on `idx_pg_stat_statements_object`), so a statement is only kept for the
+text it displays. It is `strpos(lower(metrics.RedactedText(...)),
+lower($n::text)) > 0`: a plain substring (no `LIKE` wildcards), over the
+SQL-masked text so a secret the patterns mask cannot be searched for,
+with the term bound after `queryid` and `database_name`. Matching the
+SQL-masked rather than the Go-masked text leaves the same oracle as
+`query_datastore`'s statement filters, accepted on 2026-10-21 (PR #730);
+do not try to close it here. The handler rejects a term over
+`maxTopQueryTextLength` (1000) characters, or one that is invalid UTF-8
+or holds a NUL, with a 400 (`validateTopQueryText`). Tests:
+`perf_summary_top_queries_text_filter_test.go` and the query-text cases
+of `TestBuildTopQueriesSQL_ClauseCombinations`.
+
 On a 2.6-million-row, 30-day fixture the identity index plus the
 narrower `samples` took the page statement from 11.5 s to 5.5 s and the
 count statement from 10.9 s to 5.0 s, with the external merge sort gone

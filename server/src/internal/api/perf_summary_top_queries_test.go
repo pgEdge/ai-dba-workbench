@@ -12,6 +12,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -312,6 +314,87 @@ func TestTopQueries_DefaultsAndTotalCount(t *testing.T) {
 	if rows[4].DatabaseName != "beta" {
 		t.Errorf("resolved database_name = %q, want \"beta\"",
 			rows[4].DatabaseName)
+	}
+}
+
+// TestTopQueries_StatementTimeoutIsTransactionLocal checks that the
+// handler's statement timeout takes effect inside the read-only
+// transaction it uses and matches the Go deadline, and that setting it
+// does not leak to the pooled session once the transaction ends.
+func TestTopQueries_StatementTimeoutIsTransactionLocal(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+	seedTopQueriesFixture(t, pool)
+
+	var inTx string
+	h.topQueriesTimeoutFn = func(ctx context.Context, tx pgx.Tx) error {
+		if err := setTopQueriesStatementTimeout(ctx, tx); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SHOW statement_timeout`).Scan(&inTx)
+	}
+
+	rec := callTopQueries(t, h, "connection_id=4242&query_text=select")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	if inTx != "30s" {
+		t.Errorf("statement_timeout in transaction = %q, want \"30s\"", inTx)
+	}
+
+	// Pin one connection so that the session reading before and after
+	// comes from the backend the transaction ran on.
+	ctx := context.Background()
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("Failed to acquire connection: %v", err)
+	}
+	defer conn.Release()
+	var before, after string
+	if err := conn.QueryRow(ctx, `SHOW statement_timeout`).Scan(&before); err != nil {
+		t.Fatalf("Failed to read session statement_timeout: %v", err)
+	}
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	if err := setTopQueriesStatementTimeout(ctx, tx); err != nil {
+		t.Fatalf("Failed to set statement timeout in read-only transaction: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+	if err := conn.QueryRow(ctx, `SHOW statement_timeout`).Scan(&after); err != nil {
+		t.Fatalf("Failed to read session statement_timeout: %v", err)
+	}
+	if after != before {
+		t.Errorf("session statement_timeout = %q after commit, want %q",
+			after, before)
+	}
+}
+
+// TestTopQueries_StatementTimeoutFailureReportsError covers the branch
+// where the transaction-local statement timeout cannot be applied: the
+// handler must not go on to run the aggregation unbounded, and reports
+// the same 500 as a failure to begin the transaction.
+func TestTopQueries_StatementTimeoutFailureReportsError(t *testing.T) {
+	h, _, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+
+	h.topQueriesTimeoutFn = func(context.Context, pgx.Tx) error {
+		return errors.New("injected failure")
+	}
+
+	rec := callTopQueries(t, h, "connection_id=4242")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d (body %q)",
+			rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if got := decodeError(t, rec).Error; got != "Failed to query top queries" {
+		t.Errorf("error = %q, want %q", got, "Failed to query top queries")
+	}
+	if got := rec.Header().Get(headerTotalCount); got != "" {
+		t.Errorf("X-Total-Count = %q on a failed request, want unset", got)
 	}
 }
 

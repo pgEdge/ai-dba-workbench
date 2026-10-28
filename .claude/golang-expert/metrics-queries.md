@@ -1702,11 +1702,17 @@ whose cost is linear in the window. `/metrics/top-queries`,
 therefore apply a tighter `maxAggregationTimeSpan` of 30 days, through
 the shared `checkAggregationTimeSpan` in
 `server/src/internal/api/time_span.go`, immediately after
-`ResolveTimeWindow` returns and before any SQL is built. The only
-backstop behind them is the datastore pool's `statement_timeout`
+`ResolveTimeWindow` returns and before any SQL is built. The backstop
+behind them is the datastore pool's `statement_timeout`
 (`database.DefaultDatastoreStatementTimeout`, 30 seconds unless the
-`database.statement_timeout` setting says otherwise), which the cap is
-meant to keep an ordinary request well inside: top-queries runs its
+`database.statement_timeout` setting says otherwise); top-queries
+additionally pins its own transaction to `topQueriesTimeout` (30
+seconds, shared with its context deadline) through
+`setTopQueriesStatementTimeout`, a `set_config(..., true)` issued right
+after `BeginTx`, because a `query_text` filter runs
+`metrics.RedactedText` over every statement in the window and the pool
+setting can be raised or disabled (issue #757). The cap is
+meant to keep an ordinary request well inside these: top-queries runs its
 whole CTE twice per request, once for the count and once for the page,
 and performance-summary runs five sub-queries for every connection in
 `connection_ids` inside one read-only transaction, so its cost is

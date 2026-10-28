@@ -91,6 +91,12 @@ type PerfSummaryHandler struct {
 	// production; tests whose fixtures hold no connections substitute one.
 	sharingLookupFn auth.ConnectionSharingLookupFunc
 
+	// topQueriesTimeoutFn applies the transaction-local statement_timeout
+	// for handleTopQueries. When nil the handler uses
+	// setTopQueriesStatementTimeout, as in production; tests substitute
+	// one to observe the setting or to cover its failure path.
+	topQueriesTimeoutFn func(ctx context.Context, tx pgx.Tx) error
+
 	// denialAuditor audits this handler's connection-access refusals.
 	denialAuditor
 }
@@ -2044,6 +2050,27 @@ func buildTopQueriesSQL(
 	return countSQL, pageSQL, filterArgs, pageArgs
 }
 
+// topQueriesTimeout bounds a top-queries request, both as the Go context
+// deadline and as the transaction-local statement_timeout on the
+// datastore, so that the two always agree.
+const topQueriesTimeout = 30 * time.Second
+
+// setTopQueriesStatementTimeout applies topQueriesTimeout to tx as a
+// transaction-local statement_timeout. A query_text filter makes the
+// aggregation run metrics.RedactedText, a regexp_replace chain over up to
+// 64 KiB of text, for every statement in the window, once for the count
+// and again for the page. The Go context deadline is not a guaranteed
+// server-side bound on that work, so this has PostgreSQL itself stop a
+// pathological statement rather than leave it pinning a datastore backend.
+// set_config with is_local true is equivalent to SET LOCAL, and its value
+// is derived from the constant, never from the request.
+func setTopQueriesStatementTimeout(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx,
+		`SELECT set_config('statement_timeout', $1, true)`,
+		strconv.FormatInt(topQueriesTimeout.Milliseconds(), 10))
+	return err
+}
+
 // handleTopQueries handles GET /api/v1/metrics/top-queries
 func (h *PerfSummaryHandler) handleTopQueries(
 	w http.ResponseWriter,
@@ -2178,7 +2205,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), topQueriesTimeout)
 	defer cancel()
 
 	pool := h.datastore.GetPool()
@@ -2192,6 +2219,17 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		return
 	}
 	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+
+	setTimeout := h.topQueriesTimeoutFn
+	if setTimeout == nil {
+		setTimeout = setTopQueriesStatementTimeout
+	}
+	if err := setTimeout(ctx, tx); err != nil {
+		log.Printf("[ERROR] Failed to set top queries statement timeout: %v", err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to query top queries")
+		return
+	}
 
 	countQuery, query, filterArgs, pageArgs := buildTopQueriesSQL(
 		connID, window, queryID, databaseName, queryText, excludeCollector,

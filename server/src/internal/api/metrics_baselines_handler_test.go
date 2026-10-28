@@ -169,6 +169,7 @@ func TestHandleMetricsBaselines_Query(t *testing.T) {
         (1, NULL, 'pg_stat_activity.count', 'all', NULL, 4, 1, 2, 7, 10),
         (1, NULL, 'pg_stat_activity.count', 'hourly', 5, 6, 1, 2, 7, 3),
         (1, 'db1', 'pg_stat_database.xact_commit', 'all', NULL, 9, 1, 8, 10, 10),
+        (1, 'db2', 'pg_stat_database.xact_commit', 'all', NULL, 19, 1, 18, 20, 10),
         (2, NULL, 'pg_stat_activity.count', 'all', NULL, 40, 1, 20, 70, 10)`)
 
 	t.Run("baselines returned", func(t *testing.T) {
@@ -188,11 +189,13 @@ func TestHandleMetricsBaselines_Query(t *testing.T) {
 
 	t.Run("period and database parameters", func(t *testing.T) {
 		for _, tc := range []struct {
-			query string
-			want  string
+			query   string
+			want    string
+			notWant string
 		}{
-			{"connection_id=1&probe_name=pg_stat_activity&period_type=hourly", `"hour_of_day":5`},
-			{"connection_id=1&probe_name=pg_stat_database&database_name=db1", `"database_name":"db1"`},
+			{"connection_id=1&probe_name=pg_stat_activity&period_type=hourly", `"hour_of_day":5`, ""},
+			{"connection_id=1&probe_name=pg_stat_database&database_name=db1",
+				`"database_name":"db1"`, `"database_name":"db2"`},
 		} {
 			req := withSuperuser(httptest.NewRequest(http.MethodGet,
 				"/api/v1/metrics/baselines?"+tc.query, nil))
@@ -201,6 +204,9 @@ func TestHandleMetricsBaselines_Query(t *testing.T) {
 			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), tc.want) {
 				t.Errorf("%s: status = %d, body = %s; want 200 containing %s",
 					tc.query, rec.Code, rec.Body.String(), tc.want)
+			}
+			if tc.notWant != "" && strings.Contains(rec.Body.String(), tc.notWant) {
+				t.Errorf("%s: body = %s; want no %s", tc.query, rec.Body.String(), tc.notWant)
 			}
 		}
 	})

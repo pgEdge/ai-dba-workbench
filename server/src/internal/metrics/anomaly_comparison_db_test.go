@@ -398,3 +398,72 @@ func TestLoadComparison_NonFinite(t *testing.T) {
 		t.Errorf("marshal comparison: %v", err)
 	}
 }
+
+// TestQueryComparisonBaselines_NewestRecalculation seeds three baseline
+// rows with the newest recalculation in the middle, so baselines_as_of
+// must be the newest of them, not the first or last row read.
+func TestQueryComparisonBaselines_NewestRecalculation(t *testing.T) {
+	pool := newCollectorSchemaPool(t)
+	ctx := context.Background()
+	conn := insertTestConnection(t, pool, "comparison-as-of")
+	now := time.Now().UTC().Truncate(time.Second)
+	newest := now.Add(-time.Minute)
+
+	for i, row := range []struct {
+		hour       any
+		period     string
+		calculated time.Time
+	}{
+		{nil, "all", now.Add(-3 * time.Hour)},
+		{0, "hourly", newest},
+		{1, "hourly", now.Add(-2 * time.Hour)},
+	} {
+		execSchema(t, pool, `
+            INSERT INTO metric_baselines
+                (connection_id, database_name, metric_name, period_type,
+                 hour_of_day, mean, stddev, min, max, sample_count,
+                 earliest_sample_at, last_calculated)
+            VALUES ($1, NULL, $2, $3, $4, $5, 1, 0, 100, 1000, $6, $7)`,
+			conn, cpuMetric, row.period, row.hour, 10*(i+1), now.AddDate(0, -1, 0), row.calculated)
+	}
+
+	got, asOf, err := QueryComparisonBaselines(ctx, pool, conn, cpuMetric, nil)
+	if err != nil {
+		t.Fatalf("QueryComparisonBaselines: %v", err)
+	}
+	if len(got) != 3 {
+		t.Errorf("baselines = %d, want 3", len(got))
+	}
+	if asOf == nil || !asOf.Equal(newest) {
+		t.Errorf("baselines_as_of = %v, want the newest recalculation %v", asOf, newest)
+	}
+}
+
+// TestQueryComparisonSeries_NullValue seeds a disk sample whose used
+// space is NULL, which the disk metric's historical query turns into a
+// NULL value, and checks that it is left out rather than failing the
+// scan.
+func TestQueryComparisonSeries_NullValue(t *testing.T) {
+	pool := newCollectorSchemaPool(t)
+	ctx := context.Background()
+	conn := insertTestConnection(t, pool, "comparison-null")
+	now := time.Now().UTC().Truncate(time.Second)
+
+	for i, used := range []any{50, nil} {
+		execSchema(t, pool, `
+            INSERT INTO metrics.pg_sys_disk_info
+                (connection_id, mount_point, file_system_type,
+                 total_space, used_space, collected_at)
+            VALUES ($1, '/', 'ext4', 100, $2::bigint, $3)`,
+			conn, used, now.Add(-time.Duration(i+1)*10*time.Minute))
+	}
+
+	got, err := QueryComparisonSeries(ctx, pool, conn, "pg_sys_disk_info.used_percent", nil,
+		TimeWindow{Start: now.Add(-time.Hour), End: now}, now)
+	if err != nil {
+		t.Fatalf("QueryComparisonSeries: %v", err)
+	}
+	if len(got) != 1 || got[0].Value != 50 {
+		t.Errorf("samples = %+v, want only the 50%% sample", got)
+	}
+}

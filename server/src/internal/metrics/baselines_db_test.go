@@ -154,6 +154,22 @@ func TestQueryBaselines_Integration(t *testing.T) {
 		}
 	})
 
+	t.Run("a probe matches only up to the dot", func(t *testing.T) {
+		// pg_stat_activity_extra starts with pg_stat_activity, but is a
+		// different probe: only a metric name continuing with a dot
+		// belongs to the probe.
+		longer := insertTestConnection(t, pool, "baselines-probe-dot")
+		insert(longer, nil, count, "all", nil, nil, 5)
+		insert(longer, nil, "pg_stat_activity_extra.count", "all", nil, nil, 6)
+		got, err := QueryBaselines(ctx, pool, longer, "pg_stat_activity", nil, BaselineQueryOptions{})
+		if err != nil {
+			t.Fatalf("QueryBaselines: %v", err)
+		}
+		if keys := baselineKeys(got); keys != "pg_stat_activity.count|-|all=5" {
+			t.Errorf("rows = %q, want pg_stat_activity.count only", keys)
+		}
+	})
+
 	t.Run("rows with a non-finite value are skipped", func(t *testing.T) {
 		odd := insertTestConnection(t, pool, "baselines-non-finite")
 		execSchema(t, pool, `

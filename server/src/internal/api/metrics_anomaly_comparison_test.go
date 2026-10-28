@@ -195,6 +195,21 @@ func TestHandleAnomalyComparison_Success(t *testing.T) {
 			t.Errorf("request = %+v", got)
 		}
 	})
+
+	t.Run("largest sensitivity and bucket count", func(t *testing.T) {
+		var got *metrics.ComparisonRequest
+		h := comparisonHandler(t, &got, &metrics.AnomalyComparison{}, nil)
+		rec := httptest.NewRecorder()
+		h.handleAnomalyComparison(rec, withSuperuser(httptest.NewRequest(http.MethodGet,
+			comparisonURL+"?connection_id=1&metric="+cpuMetricName+
+				"&sensitivity=10&buckets=500", nil)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+		}
+		if got == nil || got.Sensitivity == nil || *got.Sensitivity != 10 || got.Buckets != 500 {
+			t.Errorf("request = %+v, want sensitivity 10 and 500 buckets", got)
+		}
+	})
 }
 
 func TestHandleAnomalyComparison_LoadFailure(t *testing.T) {

@@ -1415,6 +1415,14 @@ conventions from that change hold across both:
   `database.MetricBaseline`); change the rule in `pkg/anomaly`, never in
   an adapter.
 
+- The alerter publishes `Tier1Config.ScoringSettings()` as JSON to
+  `alerter_settings.tier1_scoring` (collector migration 31) through
+  `Datastore.PublishScoringSettings`, called by
+  `Engine.publishScoringSettings` at start and after each reload. A
+  failure is logged and ignored, so a new Tier 1 setting must be added
+  to `anomaly.ScoringSettings` for the server to see it; the server
+  falls back to `DefaultScoringSettings()` when the column is empty.
+
 - Selection is in Go. `selectBaseline` prefers the `hourly` row for the
   current hour, then the `daily` row for the current weekday, then
   `all`, and returns the first candidate that is warm; a cold candidate

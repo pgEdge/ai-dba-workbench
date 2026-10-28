@@ -25,6 +25,28 @@ project adheres to
   substring of at most 1,000 characters matched against the statement
   text with passwords masked; a longer term, or one that is not valid
   UTF-8 or contains a NUL character, returns status 400.
+- Compare a metric with its anomaly baselines on the server
+  dashboard (#348). The new Baseline comparison section plots a
+  baselined metric against the band of normal values (the baseline
+  mean plus or minus 2, 3 or 4 standard deviations) that the
+  alerter's tier 1 detection uses, with a choice of baseline model
+  (as scored, day of week, hour of day or overall), faded stretches
+  where a baseline is not yet warm, solid markers for points that
+  raised an anomaly alert and hollow markers for points outside the
+  band with no alert. The server provides the data through the new
+  `GET /api/v1/metrics/anomaly-comparison` and
+  `GET /api/v1/metrics/anomaly-comparison/metrics` endpoints, and
+  scores with the alerter's own code, which moved to the shared
+  `pkg/anomaly` package together with the baselined metrics'
+  historical queries. The alerter now publishes its effective scoring
+  settings to the new `alerter_settings.tier1_scoring` column
+  (collector schema migration 31) when it starts and when it reloads
+  its configuration; until it does, the view uses the default
+  settings and says so. Upgrade the collector before, or together
+  with, the alerter; an alerter upgraded first logs a warning that
+  it could not publish its settings. The `GET
+  /api/v1/metrics/baselines` endpoint also accepts the new
+  `period_type` and `database_name` parameters.
 
 - Configure reasoning effort, prompt caching and extra request body
   fields for LLM requests (#726). The server's `llm` section, and
@@ -1269,6 +1291,16 @@ project adheres to
   fixture. (#387)
 
 ### Fixed
+
+- Return the stored baseline rows from `GET
+  /api/v1/metrics/baselines` (#348). The endpoint averaged every
+  baseline row of a metric across its periods, and filtered on a
+  period type that the alerter never writes, so the figures it
+  returned were not any baseline the alerter used. It now returns
+  one row for each metric, database and period, with new
+  `period_type`, `database_name`, `hour_of_day`, `day_of_week`
+  and `earliest_sample_at` fields; the `period_type` parameter
+  selects `all` (the default), `hourly` or `daily`.
 
 - Apply the custom LLM headers set in the server configuration
   file (#754). The `llm.custom_headers`,

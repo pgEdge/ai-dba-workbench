@@ -198,18 +198,27 @@ from a custom table:
 
 ### Step 2: Add the Historical Query
 
-Set the `historicalSQL` field on the same registry entry if the
-metric should support anomaly detection. The baseline calculator
-builds the `all`, `hourly` and `daily` baselines from this query,
-and the `historicalScan` field names its column layout:
-`historicalScanBasic` when the database name column is always
-`NULL`, `historicalScanWithDB` when the column carries a database
-name, and `historicalScanWithDBAndSamples` or
-`historicalScanBasicWithSamples` when the query returns
+Add a `metricDefs` entry to `pkg/anomaly/metrics.go` if the
+metric should support anomaly detection. The alerter and the
+server both read the historical queries from that shared
+package, so the baseline calculator and the server's baseline
+comparison view run the same statement. Do not set
+`historicalSQL` or `historicalScan` on the registry entry; the
+alerter's `withBaselineQueries` function copies them from
+`metricDefs` when the package initialises. The entry names the
+`ProbeName` that the metric reads, the `HistoricalSQL` and the
+`HistoricalScan` layout of its rows: `HistoricalScanBasic` when
+the database name column is always `NULL`,
+`HistoricalScanWithDB` when the column carries a database name,
+and `HistoricalScanWithDBAndSamples` or
+`HistoricalScanBasicWithSamples` when the query returns
 pre-aggregated rows with a trailing `sample_count` column, with or
 without a database name. The historical query must compute the same
 statistic as the latest query, so add an integration test that
 compares the two on the same samples.
+`TestRegistryMatchesSharedBaselineDefinitions` fails when a
+metric has a registry entry without a `metricDefs` entry, or the
+reverse, or when the probe names differ.
 
 A metric without a historical query is skipped by both baseline
 calculation and anomaly detection; the alerter does not build a
@@ -225,13 +234,18 @@ a query that reads `metrics.*` alone would have the calculator
 write a baseline for a deleted connection and fail on the foreign
 key.
 
-In the following example, a historical query retrieves data for
-baseline calculations:
+The server wraps the historical query as a subquery to build the
+baseline comparison series, so it must keep the output column
+names `connection_id`, `database_name`, `value` and
+`collected_at`.
+
+In the following example, a `metricDefs` entry holds a historical
+query that retrieves data for baseline calculations:
 
 ```go
 "your_new_metric_name": {
-    latestSQL: `...`,
-    historicalSQL: `
+    ProbeName: "your_table",
+    HistoricalSQL: `
         SELECT m.connection_id, NULL::text AS database_name,
             m.your_value::float, m.collected_at
         FROM metrics.your_table m
@@ -240,8 +254,7 @@ baseline calculations:
             - INTERVAL '1 day' * $1
         ORDER BY m.connection_id, m.collected_at
     `,
-    scan:           scanBasic,
-    historicalScan: historicalScanBasic,
+    HistoricalScan: HistoricalScanBasic,
 },
 ```
 

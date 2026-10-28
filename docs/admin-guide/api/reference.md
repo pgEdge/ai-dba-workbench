@@ -587,6 +587,72 @@ The masking cannot recognise every form a password can take,
 so query text and replicated row data may still contain
 sensitive values, including passwords in other forms.
 
+## Metric Baselines and Anomaly Comparison
+
+The `/api/v1/metrics/baselines` endpoint returns the baseline
+rows the alerter has stored for a connection; it requires the
+`connection_id` and `probe_name` parameters. The endpoint returns
+each stored row as it is, one per metric, database and period,
+rather than an average across periods. The following table
+describes the optional parameters:
+
+| Parameter | Description |
+|-----------|-------------|
+| `metrics` | A comma-separated list of metric names to return. |
+| `period_type` | The period type to return: `all` (the default), `hourly` or `daily`. |
+| `database_name` | Restricts the rows to one database; without it, the rows for every database are returned. |
+
+Each row carries the `metric`, `database_name` (null for a
+server-level metric), `period_type`, `hour_of_day` and
+`day_of_week` (null when they do not apply), `mean`, `stddev`,
+`min`, `max`, `sample_count` and `earliest_sample_at`. The `p50`,
+`p95` and `p99` values are derived from the mean and standard
+deviation rather than measured. An unknown `period_type` returns
+a 400 response.
+
+The `/api/v1/metrics/anomaly-comparison/metrics` endpoint lists
+the baselined metrics that the comparison accepts. Each entry has
+a `name`, the `probe_name` of the probe that collects it and
+`per_database`, which is true when the comparison needs a
+`database_name`.
+
+The `/api/v1/metrics/anomaly-comparison` endpoint returns the
+raw values of one metric, bucketed over a time window, with the
+band that the alerter's tier 1 detection would score each value
+against. The server reuses the alerter's selection, warmup and
+scoring code, so the band matches the alerter's verdict. The
+following table describes the parameters:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `connection_id` | Yes | The connection to compare. |
+| `metric` | Yes | A metric from the metrics listing. |
+| `database_name` | For per-database metrics | The database to compare; a server-level metric rejects it. |
+| `model` | No | `as_scored` (the default), `hourly`, `daily` or `all`. |
+| `sensitivity` | No | The band width in standard deviations, above 0 and at most 10; defaults to the alerter's setting. |
+| `buckets` | No | The number of points, from 1 to 500; defaults to 300. |
+| `time_range` | No | A window preset or `custom`; defaults to `24h`. |
+| `time_start` | For `custom` | The window start, as RFC 3339. |
+| `time_end` | For `custom` | The window end, as RFC 3339. |
+
+The `as_scored` model selects, for each point, the baseline the
+alerter would use at that time; the other models pin one period
+type. Each point has the `time` and `value`, and the baseline
+applied to it: `period_type`, `mean`, `stddev` (the effective
+divisor after the variance floor), `cold` (true when the
+baseline is not yet warm and the alerter would not score the
+point), `z_score` and `outside` (true when the point lies outside
+the band). The baseline fields are null when no baseline row
+applies. The response also reports the `sensitivity` used, the
+`default_sensitivity`, the `baselines_as_of` time of the newest
+baseline and the `scoring_source`, which is `alerter` when the
+alerter has published its scoring settings and `defaults` when
+the server has used the shipped defaults instead.
+
+The comparison applies the current baselines to every point in
+the window; it does not reconstruct the baselines that existed
+when each sample was collected.
+
 ## Error Responses
 
 All API errors return a consistent JSON format.

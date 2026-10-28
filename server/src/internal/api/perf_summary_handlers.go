@@ -1680,10 +1680,13 @@ func buildTopQueriesSQL(
 	// metrics.RedactStatementText, whose lexer can mask a secret the SQL
 	// patterns miss (one after a quote they move, say); for such a secret
 	// the filter is an oracle that can confirm it one character at a time
-	// even though the returned text hides it. That is the same residual
-	// risk as query_datastore's filters on statement columns, accepted by
-	// the project owner on 2026-10-21 (PR #730, issue #724), and it is
-	// deliberately not addressed here. RedactedText also cuts the text to
+	// even though the returned text hides it. This resembles the risk
+	// accepted for query_datastore's filters on statement columns (PR
+	// #730, issue #724), but is wider: that tool needs a non-public MCP
+	// privilege, whereas this endpoint needs only read access to the
+	// connection. The exposure covers rows stored before #643 that the
+	// collector migration has not rewritten, and awaits explicit
+	// acceptance by the project owner. RedactedText also cuts the text to
 	// redact.MaxTextLength characters, so a term is only found within that
 	// prefix. Both sides are folded with lower() under the database
 	// collation, and the placeholder is cast to text so that lower()

@@ -95,6 +95,17 @@ func newTopQueriesTestHandler(
 	t *testing.T,
 ) (*PerfSummaryHandler, *pgxpool.Pool, func()) {
 	t.Helper()
+	return newTopQueriesTestHandlerWithMaxConns(t, 0)
+}
+
+// newTopQueriesTestHandlerWithMaxConns is newTopQueriesTestHandler with
+// the pool capped at maxConns connections; zero keeps the pgxpool
+// default. A cap of one makes every pool query use the same backend, so
+// a test can observe session state the handler leaves behind.
+func newTopQueriesTestHandlerWithMaxConns(
+	t *testing.T, maxConns int32,
+) (*PerfSummaryHandler, *pgxpool.Pool, func()) {
+	t.Helper()
 
 	if os.Getenv("SKIP_DB_TESTS") != "" {
 		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
@@ -105,7 +116,14 @@ func newTopQueriesTestHandler(
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, connStr)
+	poolConfig, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		t.Fatalf("Failed to parse TEST_AI_WORKBENCH_SERVER: %v", err)
+	}
+	if maxConns > 0 {
+		poolConfig.MaxConns = maxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		t.Skipf("Could not connect to test database: %v", err)
 	}
@@ -320,11 +338,23 @@ func TestTopQueries_DefaultsAndTotalCount(t *testing.T) {
 // TestTopQueries_StatementTimeoutIsTransactionLocal checks that the
 // handler's statement timeout takes effect inside the read-only
 // transaction it uses and matches the Go deadline, and that setting it
-// does not leak to the pooled session once the transaction ends.
+// does not leak to the pooled session once the transaction ends. The
+// pool is capped at one connection so that the session readings before
+// and after the handler come from the backend the transaction ran on.
 func TestTopQueries_StatementTimeoutIsTransactionLocal(t *testing.T) {
-	h, pool, cleanup := newTopQueriesTestHandler(t)
+	h, pool, cleanup := newTopQueriesTestHandlerWithMaxConns(t, 1)
 	defer cleanup()
 	seedTopQueriesFixture(t, pool)
+
+	ctx := context.Background()
+	var before string
+	if err := pool.QueryRow(ctx, `SHOW statement_timeout`).Scan(&before); err != nil {
+		t.Fatalf("Failed to read session statement_timeout: %v", err)
+	}
+	if before == "30s" {
+		t.Fatalf("session statement_timeout is already %q before the handler, "+
+			"so a leak could not be detected", before)
+	}
 
 	var inTx string
 	h.topQueriesTimeoutFn = func(ctx context.Context, tx pgx.Tx) error {
@@ -342,33 +372,12 @@ func TestTopQueries_StatementTimeoutIsTransactionLocal(t *testing.T) {
 		t.Errorf("statement_timeout in transaction = %q, want \"30s\"", inTx)
 	}
 
-	// Pin one connection so that the session reading before and after
-	// comes from the backend the transaction ran on.
-	ctx := context.Background()
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		t.Fatalf("Failed to acquire connection: %v", err)
-	}
-	defer conn.Release()
-	var before, after string
-	if err := conn.QueryRow(ctx, `SHOW statement_timeout`).Scan(&before); err != nil {
-		t.Fatalf("Failed to read session statement_timeout: %v", err)
-	}
-	tx, err := conn.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
-	if err != nil {
-		t.Fatalf("Failed to begin transaction: %v", err)
-	}
-	if err := setTopQueriesStatementTimeout(ctx, tx); err != nil {
-		t.Fatalf("Failed to set statement timeout in read-only transaction: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("Failed to commit: %v", err)
-	}
-	if err := conn.QueryRow(ctx, `SHOW statement_timeout`).Scan(&after); err != nil {
+	var after string
+	if err := pool.QueryRow(ctx, `SHOW statement_timeout`).Scan(&after); err != nil {
 		t.Fatalf("Failed to read session statement_timeout: %v", err)
 	}
 	if after != before {
-		t.Errorf("session statement_timeout = %q after commit, want %q",
+		t.Errorf("session statement_timeout = %q after the handler, want %q",
 			after, before)
 	}
 }

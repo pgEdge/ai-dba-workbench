@@ -46,7 +46,9 @@ func TestLoadComparison_Integration(t *testing.T) {
 	insertCPU(conn, now.Add(-3*time.Hour), 99) // before the window
 	insertCPU(conn, now.Add(-90*time.Minute), 40)
 	insertCPU(conn, now.Add(-30*time.Minute), 90)
-	insertCPU(other, now.Add(-30*time.Minute), 77)
+	// The other connection's sample sits in a bucket of its own, so a
+	// series query that leaked it would return a third point.
+	insertCPU(other, now.Add(-60*time.Minute), 77)
 
 	req := ComparisonRequest{
 		ConnectionID: conn,

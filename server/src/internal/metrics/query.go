@@ -1932,8 +1932,9 @@ const baselinesQuery = `
 // a connection, optionally restricted to a probe's metrics, a database
 // and a list of metric names. Every row is returned as stored: rows of
 // different periods or databases are never averaged together, since a
-// mean of hourly means is not the mean of anything. See
-// BaselineQueryOptions for the defaults.
+// mean of hourly means is not the mean of anything. A row holding a
+// non-finite value is left out. See BaselineQueryOptions for the
+// defaults.
 func QueryBaselines(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -1972,6 +1973,11 @@ func QueryBaselines(
 		b.P50 = b.Mean
 		b.P95 = b.Mean + 2*b.Stddev
 		b.P99 = b.Mean + 3*b.Stddev
+		// A float column can hold NaN or +/-Inf, which encoding/json
+		// cannot marshal; such a row is treated as missing.
+		if !allFinite(b.Mean, b.Stddev, b.Min, b.Max, b.P95, b.P99) {
+			continue
+		}
 		result = append(result, b)
 	}
 	if err := rows.Err(); err != nil {
@@ -2453,6 +2459,17 @@ func finiteFloat(f float64) (float64, bool) {
 		return 0, false
 	}
 	return f, true
+}
+
+// allFinite reports whether every value is finite, so that a row holding
+// NaN or +/-Inf can be left out of a JSON response as a whole.
+func allFinite(vals ...float64) bool {
+	for _, v := range vals {
+		if _, ok := finiteFloat(v); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // toFloat64 converts a scanned database value to float64. It returns

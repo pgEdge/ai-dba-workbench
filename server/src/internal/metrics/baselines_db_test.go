@@ -154,6 +154,26 @@ func TestQueryBaselines_Integration(t *testing.T) {
 		}
 	})
 
+	t.Run("rows with a non-finite value are skipped", func(t *testing.T) {
+		odd := insertTestConnection(t, pool, "baselines-non-finite")
+		execSchema(t, pool, `
+            INSERT INTO metric_baselines
+                (connection_id, database_name, metric_name, period_type,
+                 mean, stddev, min, max, sample_count)
+            VALUES ($1, 'a', $2, 'all', 'NaN', 1, 0, 1, 10),
+                   ($1, 'b', $2, 'all', 1, 'Infinity', 0, 1, 10),
+                   ($1, 'c', $2, 'all', 1, 1, '-Infinity', 1, 10),
+                   ($1, 'd', $2, 'all', 1, 1, 0, 'NaN', 10),
+                   ($1, 'e', $2, 'all', 5, 1, 0, 9, 10)`, odd, temp)
+		got, err := QueryBaselines(ctx, pool, odd, "", nil, BaselineQueryOptions{})
+		if err != nil {
+			t.Fatalf("QueryBaselines: %v", err)
+		}
+		if keys := baselineKeys(got); keys != "pg_stat_database.temp_files_delta|e|all=5" {
+			t.Errorf("rows = %q, want only the finite row", keys)
+		}
+	})
+
 	t.Run("invalid period type", func(t *testing.T) {
 		_, err := QueryBaselines(ctx, pool, conn, "", nil, BaselineQueryOptions{PeriodType: "overall"})
 		if err == nil || !strings.Contains(err.Error(), "invalid period_type") {

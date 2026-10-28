@@ -334,7 +334,8 @@ const comparisonBaselinesQuery = `
 
 // QueryComparisonBaselines returns the baseline rows for a metric and
 // the time of the most recent recalculation among them, which is nil
-// when there are no rows.
+// when there are no rows. Rows with a non-finite mean or stddev are
+// left out.
 func QueryComparisonBaselines(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -360,6 +361,12 @@ func QueryComparisonBaselines(
 			&b.Mean, &b.StdDev, &b.SampleCount, &earliest,
 			&lastCalculated); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan baseline: %w", err)
+		}
+		// A row with a non-finite mean or stddev cannot be scored or
+		// encoded, so it is treated as missing, including for
+		// baselines_as_of.
+		if !allFinite(b.Mean, b.StdDev) {
+			continue
 		}
 		if earliest != nil {
 			b.EarliestSampleAt = earliest.UTC()
@@ -404,7 +411,7 @@ func comparisonLookbackDays(window TimeWindow, now time.Time) int {
 	return days
 }
 
-// QueryComparisonSeries returns the metric's raw values on one
+// QueryComparisonSeries returns the metric's finite raw values on one
 // connection and database within the window, oldest first. The metric is
 // looked up in the registry here, so an unknown name runs no SQL.
 func QueryComparisonSeries(
@@ -433,6 +440,11 @@ func QueryComparisonSeries(
 		var s ComparisonSample
 		if err := rows.Scan(&s.Value, &s.Time); err != nil {
 			return nil, fmt.Errorf("failed to scan metric value: %w", err)
+		}
+		// encoding/json cannot marshal NaN or +/-Inf, which a float
+		// column can hold, so such samples are dropped.
+		if !allFinite(s.Value) {
+			continue
 		}
 		s.Time = s.Time.UTC()
 		samples = append(samples, s)

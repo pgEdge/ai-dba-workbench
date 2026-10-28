@@ -340,3 +340,59 @@ func TestLoadScoringSettings_MissingSchema(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadComparison_NonFinite seeds NaN and infinite samples and
+// baseline rows, which float columns can hold, and checks that they are
+// left out rather than breaking the JSON encoding of the response.
+func TestLoadComparison_NonFinite(t *testing.T) {
+	pool := newCollectorSchemaPool(t)
+	ctx := context.Background()
+
+	// The load average is read without clamping, unlike the CPU
+	// percentage, so a NaN sample reaches the scan loop.
+	const metric = "pg_sys_load_avg_info.load_avg_fifteen_minutes"
+	conn := insertTestConnection(t, pool, "comparison-non-finite")
+	now := time.Now().UTC().Truncate(time.Second)
+	for i, v := range []string{"4", "NaN", "Infinity", "-Infinity"} {
+		execSchema(t, pool, `
+            INSERT INTO metrics.pg_sys_load_avg_info
+                (connection_id, load_avg_fifteen_minutes, collected_at)
+            VALUES ($1, $2::real, $3)`,
+			conn, v, now.Add(-time.Duration(i+1)*10*time.Minute))
+	}
+	execSchema(t, pool, `
+        INSERT INTO metric_baselines
+            (connection_id, database_name, metric_name, period_type,
+             hour_of_day, mean, stddev, min, max, sample_count,
+             earliest_sample_at, last_calculated)
+        VALUES ($1, NULL, $2, 'all', NULL, 'NaN', 5, 0, 100, 1000, $3, $4)`,
+		conn, metric, now.AddDate(0, -1, 0), now)
+	execSchema(t, pool, `
+        INSERT INTO metric_baselines
+            (connection_id, database_name, metric_name, period_type,
+             hour_of_day, mean, stddev, min, max, sample_count,
+             earliest_sample_at, last_calculated)
+        SELECT $1, NULL, $2, 'hourly', h, 40, 'Infinity', 0, 100, 1000, $3, $4
+          FROM generate_series(0, 23) AS h`,
+		conn, metric, now.AddDate(0, -1, 0), now)
+
+	got, err := LoadComparison(ctx, pool, ComparisonRequest{
+		ConnectionID: conn,
+		Metric:       metric,
+		Model:        ComparisonModelAsScored,
+		Window:       TimeWindow{Start: now.Add(-time.Hour), End: now},
+		Buckets:      DefaultComparisonBuckets,
+	}, now)
+	if err != nil {
+		t.Fatalf("LoadComparison: %v", err)
+	}
+	if len(got.Points) != 1 || got.Points[0].Value != 4 {
+		t.Fatalf("points = %+v, want only the finite sample", got.Points)
+	}
+	if got.BaselinesAsOf != nil || got.Points[0].Mean != nil {
+		t.Errorf("comparison = %+v, want the non-finite baselines treated as missing", got)
+	}
+	if _, err := json.Marshal(got); err != nil {
+		t.Errorf("marshal comparison: %v", err)
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -457,6 +458,17 @@ func TestIsMissingSchemaError(t *testing.T) {
 	for _, tt := range tests {
 		if got := isMissingSchemaError(tt.err); got != tt.want {
 			t.Errorf("%s: isMissingSchemaError = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestAllFinite(t *testing.T) {
+	if !allFinite() || !allFinite(0, -1.5, 1e300) {
+		t.Error("finite values rejected")
+	}
+	for _, v := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		if allFinite(1, v) {
+			t.Errorf("allFinite accepted %v", v)
 		}
 	}
 }

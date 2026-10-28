@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/pkg/anomaly"
@@ -288,12 +289,31 @@ func ParseScoringSettings(raw []byte) (anomaly.ScoringSettings, string) {
 // scoringSettingsQuery reads the settings the alerter last published.
 const scoringSettingsQuery = `SELECT tier1_scoring FROM alerter_settings WHERE id = 1`
 
+// SQLSTATEs for a column or table the collector's migrations have not
+// created yet.
+const (
+	pgErrCodeUndefinedColumn = "42703"
+	pgErrCodeUndefinedTable  = "42P01"
+)
+
+// isMissingSchemaError reports whether err is PostgreSQL saying that a
+// column or table does not exist, which happens when the server is
+// upgraded before the collector has run the migration that adds it.
+func isMissingSchemaError(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == pgErrCodeUndefinedColumn || pgErr.Code == pgErrCodeUndefinedTable
+}
+
 // LoadScoringSettings returns the alerter's published Tier 1 settings,
-// or the defaults when there is no settings row or it cannot be decoded.
+// or the defaults when there is no settings row, it cannot be decoded,
+// or the collector has not yet created the table or column.
 func LoadScoringSettings(ctx context.Context, pool *pgxpool.Pool) (anomaly.ScoringSettings, string, error) {
 	var raw []byte
 	err := pool.QueryRow(ctx, scoringSettingsQuery).Scan(&raw)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) && !isMissingSchemaError(err) {
 		return anomaly.ScoringSettings{}, "", fmt.Errorf("failed to read scoring settings: %w", err)
 	}
 	s, source := ParseScoringSettings(raw)

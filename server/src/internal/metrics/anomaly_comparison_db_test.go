@@ -311,3 +311,32 @@ func TestComparisonSeriesQuery_Plan(t *testing.T) {
 	}
 	t.Logf("plan:\n%s", strings.Join(plan, "\n"))
 }
+
+// TestLoadScoringSettings_MissingSchema checks that a server upgraded
+// before the collector has added the tier1_scoring column, or created
+// alerter_settings at all, compares against the defaults instead of
+// failing the request.
+func TestLoadScoringSettings_MissingSchema(t *testing.T) {
+	pool := newCollectorSchemaPool(t)
+	ctx := context.Background()
+
+	for _, step := range []struct {
+		name string
+		ddl  string
+	}{
+		{"missing column", `ALTER TABLE alerter_settings DROP COLUMN tier1_scoring`},
+		{"missing table", `DROP TABLE alerter_settings CASCADE`},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			execSchema(t, pool, step.ddl)
+			got, source, err := LoadScoringSettings(ctx, pool)
+			if err != nil {
+				t.Fatalf("LoadScoringSettings: %v", err)
+			}
+			if source != ScoringSourceDefaults ||
+				got.DefaultSensitivity != anomaly.DefaultScoringSettings().DefaultSensitivity {
+				t.Errorf("settings = %+v from %q, want the defaults", got, source)
+			}
+		})
+	}
+}

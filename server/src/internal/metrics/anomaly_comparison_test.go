@@ -13,10 +13,13 @@ package metrics
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/pgedge/ai-workbench/pkg/anomaly"
 )
@@ -434,6 +437,26 @@ func TestComparisonHelpers(t *testing.T) {
 		w := TimeWindow{Start: cmpNow.Add(tt.start), End: cmpNow}
 		if got := comparisonLookbackDays(w, cmpNow); got != tt.want {
 			t.Errorf("lookback for a start %v from now = %d, want %d", tt.start, got, tt.want)
+		}
+	}
+}
+
+func TestIsMissingSchemaError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"undefined column", &pgconn.PgError{Code: "42703"}, true},
+		{"undefined table", &pgconn.PgError{Code: "42P01"}, true},
+		{"wrapped", fmt.Errorf("query: %w", &pgconn.PgError{Code: "42703"}), true},
+		{"other SQLSTATE", &pgconn.PgError{Code: "42501"}, false},
+		{"not a PostgreSQL error", errors.New("boom"), false},
+		{"nil", nil, false},
+	}
+	for _, tt := range tests {
+		if got := isMissingSchemaError(tt.err); got != tt.want {
+			t.Errorf("%s: isMissingSchemaError = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }

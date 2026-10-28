@@ -1384,6 +1384,24 @@ conventions from that change hold across both:
   `baselines[0]` as a preference. The server's `get_metric_baselines`
   tool is a separate implementation over the pool and is unaffected.
 
+- The Tier 1 rules themselves live in `pkg/anomaly`, shared with the
+  server (#348): `PeriodKeys`, `Candidates`, `IsWarm`, `Select`,
+  `EffectiveStdDev` (variance floor plus the metric's `MinStdDev`),
+  `ZScore` (cap, and `ok=false` on a zero divisor) and `InBand`, plus
+  the config structs and `DefaultScoringSettings()` with the built-in
+  per-metric floors. The alerter's `config.VarianceFloorConfig`,
+  `WarmupConfig`, `PerPeriodWarmupConfig` and `MetricFloor` are type
+  aliases of the pkg types, so YAML keys are unchanged, and
+  `Tier1Config.ScoringSettings()` returns the effective settings
+  (built-in floors with `metric_floors` overrides applied).
+  `TestDefaultScoringSettingsMatchConfigDefaults` pins
+  `DefaultScoringSettings()` to `config.NewConfig()`, so change a Tier 1
+  default in both places. The engine's `selectBaseline`,
+  `isBaselineWarm`, `effectiveStdDev` and `baselinePeriodKeys` are thin
+  adapters over the pkg functions (`toAnomalyBaseline` converts a
+  `database.MetricBaseline`); change the rule in `pkg/anomaly`, never in
+  an adapter.
+
 - Selection is in Go. `selectBaseline` prefers the `hourly` row for the
   current hour, then the `daily` row for the current weekday, then
   `all`, and returns the first candidate that is warm; a cold candidate
@@ -1411,7 +1429,8 @@ conventions from that change hold across both:
   cannot write. The walkthrough config keeps `lookback_days: 1` and
   shortens its hourly and daily spans to 24 to match.
 
-- Hour and weekday keys come from `baselinePeriodKeys`, used both when
+- Hour and weekday keys come from `baselinePeriodKeys` (which wraps
+  `anomaly.PeriodKeys`), used both when
   hourly and daily rows are written and when `selectBaseline` matches
   them, and it normalises to UTC first. pgx scans `timestamptz` into the
   process's local zone unless `ScanLocation` is set, and `time.Now()` is

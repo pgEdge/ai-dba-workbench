@@ -16,6 +16,7 @@ import (
 	"math"
 	"os"
 
+	"github.com/pgedge/ai-workbench/pkg/anomaly"
 	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/pkg/llmsettings"
@@ -193,31 +194,18 @@ type Tier1Config struct {
 // first.
 const DefaultAnomalyClearCount = 3
 
-// VarianceFloorConfig parameterises the hybrid variance floor.
-// effective_stddev = max(raw_stddev,
-//
-//	max(|mean| * RelativePct,
-//	     AbsoluteFloor))
-type VarianceFloorConfig struct {
-	RelativePct   float64 `yaml:"relative_pct"`
-	AbsoluteFloor float64 `yaml:"absolute_floor"`
-}
+// VarianceFloorConfig parameterises the hybrid variance floor. It is
+// the shared pkg/anomaly type, so the YAML keys and the scoring that
+// reads them have one definition.
+type VarianceFloorConfig = anomaly.VarianceFloorConfig
 
-// WarmupConfig holds per-period_type warmup thresholds for
-// tier-1 anomaly detection.
-type WarmupConfig struct {
-	All    PerPeriodWarmupConfig `yaml:"all"`
-	Hourly PerPeriodWarmupConfig `yaml:"hourly"`
-	Daily  PerPeriodWarmupConfig `yaml:"daily"`
-}
+// WarmupConfig holds per-period_type warmup thresholds for tier-1
+// anomaly detection; see anomaly.WarmupConfig.
+type WarmupConfig = anomaly.WarmupConfig
 
-// PerPeriodWarmupConfig gates a single period_type. Both checks
-// must pass for detection to proceed; either threshold at 0
-// disables that half of the gate.
-type PerPeriodWarmupConfig struct {
-	MinSamples   int `yaml:"min_samples"`
-	MinSpanHours int `yaml:"min_span_hours"`
-}
+// PerPeriodWarmupConfig gates a single period_type; see
+// anomaly.PeriodWarmup.
+type PerPeriodWarmupConfig = anomaly.PeriodWarmup
 
 // Tier2Config holds Tier 2 embedding similarity settings
 type Tier2Config struct {

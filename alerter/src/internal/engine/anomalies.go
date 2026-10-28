@@ -14,148 +14,70 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/anomaly"
 	"github.com/pgedge/ai-workbench/pkg/redact"
 )
 
-// effectiveStdDev applies the hybrid variance floor described in
-// the anomaly detector design. Returns max(raw_stddev,
-// max(|mean| * RelativePct, AbsoluteFloor)). Callers retain the
-// existing stddev == 0 guard for the degenerate case where both
-// floor knobs are zero.
+// toAnomalyBaseline copies the fields Tier 1 selection and scoring read
+// from a stored baseline row into the shared pkg/anomaly form.
+func toAnomalyBaseline(b database.MetricBaseline) anomaly.Baseline {
+	return anomaly.Baseline{
+		PeriodType:       b.PeriodType,
+		HourOfDay:        b.HourOfDay,
+		DayOfWeek:        b.DayOfWeek,
+		Mean:             b.Mean,
+		StdDev:           b.StdDev,
+		SampleCount:      b.SampleCount,
+		EarliestSampleAt: b.EarliestSampleAt,
+	}
+}
+
+// effectiveStdDev applies the hybrid variance floor alone, without any
+// per-metric MinStdDev; see anomaly.EffectiveStdDev.
 func effectiveStdDev(
 	b database.MetricBaseline,
 	cfg config.VarianceFloorConfig,
 ) float64 {
-	relFloor := math.Abs(b.Mean) * cfg.RelativePct
-	floor := math.Max(relFloor, cfg.AbsoluteFloor)
-	return math.Max(b.StdDev, floor)
+	return anomaly.EffectiveStdDev(toAnomalyBaseline(b), cfg, anomaly.MetricFloor{})
 }
 
-// isBaselineWarm reports whether the baseline has accumulated
-// enough samples and enough wall-clock span to be trustworthy
-// for anomaly detection. A zero EarliestSampleAt (e.g. a row
-// written before the column was populated, or a fallback
-// baseline that lacks raw sample timestamps) is treated as not
-// warm.
-//
-// The span check is skipped when the configured MinSpanHours is
-// zero, which is the documented escape hatch to disable the
-// time-span half of the gate.
-//
-// Unknown period_types fall back to the daily thresholds, which
-// are the strictest of the three configured pairs by default.
-// This is defensive; period_type is enum-constrained at write
-// time.
+// isBaselineWarm reports whether a stored baseline row passes the
+// warmup gate; see anomaly.IsWarm.
 func isBaselineWarm(
 	b database.MetricBaseline,
 	cfg config.WarmupConfig,
 	now time.Time,
 ) bool {
-	thresh := warmupThresholdFor(b.PeriodType, cfg)
-	if b.SampleCount < int64(thresh.MinSamples) {
-		return false
-	}
-	if thresh.MinSpanHours > 0 {
-		if b.EarliestSampleAt.IsZero() {
-			return false
-		}
-		minSpan := time.Duration(thresh.MinSpanHours) * time.Hour
-		if now.Sub(b.EarliestSampleAt) < minSpan {
-			return false
-		}
-	}
-	return true
+	return anomaly.IsWarm(toAnomalyBaseline(b), cfg, now)
 }
 
-// warmupThresholdFor selects the per-period_type warmup
-// thresholds, falling back to the daily thresholds for any
-// unrecognized period_type.
-func warmupThresholdFor(
-	periodType string,
-	cfg config.WarmupConfig,
-) config.PerPeriodWarmupConfig {
-	switch periodType {
-	case "all":
-		return cfg.All
-	case "hourly":
-		return cfg.Hourly
-	case "daily":
-		return cfg.Daily
-	default:
-		return cfg.Daily
-	}
-}
-
-// baselineCandidates returns the rows selectBaseline considers, in
-// preference order: the hourly row for now's UTC hour, the daily row for
-// now's UTC weekday, then the 'all' row. Missing rows are nil entries so
-// the caller can keep the order without re-deriving it.
-func baselineCandidates(
-	baselines []*database.MetricBaseline,
-	now time.Time,
-) []*database.MetricBaseline {
-	hour, weekday := baselinePeriodKeys(now)
-
-	var hourly, daily, all *database.MetricBaseline
-	for _, b := range baselines {
-		if b == nil {
-			continue
-		}
-		switch b.PeriodType {
-		case "hourly":
-			if b.HourOfDay != nil && *b.HourOfDay == hour {
-				hourly = b
-			}
-		case "daily":
-			if b.DayOfWeek != nil && *b.DayOfWeek == weekday {
-				daily = b
-			}
-		case "all":
-			all = b
-		}
-	}
-	return []*database.MetricBaseline{hourly, daily, all}
-}
-
-// selectBaseline picks the baseline row to score a value against. The
-// preference order is the hourly row for the current UTC hour, then the
-// daily row for the current UTC weekday, then the 'all' row; the first
-// candidate in that order that passes isBaselineWarm is returned as
-// chosen. skippedCold is the most preferred candidate that exists but
-// failed the gate, whether or not a later candidate was chosen, so the
-// caller can log both a suppressed detection and a fall-through to a
-// less specific baseline. It is nil when nothing was skipped.
-//
-// Hourly and daily rows are preferred over 'all' because a metric with a
-// diurnal or weekly cycle has a much tighter spread within one period
-// than across the whole window; scoring against the grand mean inflates
-// the divisor and hides genuine within-cycle deviation. Warmth is
-// checked per candidate so a cold hourly row does not block a mature
-// 'all' row, and a cold 'all' row does not block a mature hourly one.
-// See GitHub issue #408.
+// selectBaseline picks the stored baseline row to score a value against,
+// with the preference order and per-candidate warmth check of
+// anomaly.Select, and returns the caller's own rows rather than copies.
+// skippedCold is the most preferred row that exists but failed the
+// warmup gate, or nil. See GitHub issue #408.
 func selectBaseline(
 	baselines []*database.MetricBaseline,
 	now time.Time,
 	cfg config.WarmupConfig,
 ) (chosen, skippedCold *database.MetricBaseline) {
-	for _, candidate := range baselineCandidates(baselines, now) {
-		if candidate == nil {
+	converted := make([]*anomaly.Baseline, len(baselines))
+	origin := make(map[*anomaly.Baseline]*database.MetricBaseline, len(baselines))
+	for i, b := range baselines {
+		if b == nil {
 			continue
 		}
-		if isBaselineWarm(*candidate, cfg, now) {
-			return candidate, skippedCold
-		}
-		if skippedCold == nil {
-			skippedCold = candidate
-		}
+		ab := toAnomalyBaseline(*b)
+		converted[i] = &ab
+		origin[&ab] = b
 	}
-	return nil, skippedCold
+	c, cold := anomaly.Select(converted, now, cfg)
+	return origin[c], origin[cold]
 }
 
 // detectAnomalies runs the tiered anomaly detection
@@ -384,7 +306,9 @@ type anomalyScore struct {
 // candidate for an in-band value, and recovery counts it towards
 // clearing an open alert, so the two paths cannot disagree.
 func (s anomalyScore) inBand(sensitivity float64) bool {
-	return s.belowFloor || (s.zScore <= sensitivity && s.zScore >= -sensitivity)
+	// The value floor was already applied when belowFloor was set, so
+	// the band check proper needs no floor of its own.
+	return s.belowFloor || anomaly.InBand(0, s.zScore, sensitivity, anomaly.MetricFloor{})
 }
 
 // severity is the alert severity for the score; see anomalySeverity and
@@ -430,7 +354,7 @@ func (e *Engine) scoreAnomalyValue(
 	// value under it also counts as normal for recovery when the
 	// baseline is cold or missing.
 	floor := cfg.Anomaly.Tier1.MetricFloor(metricName)
-	if floor.MinValue > 0 && value.Value < floor.MinValue {
+	if floor.BelowValueFloor(value.Value) {
 		return anomalyScore{scored: true, belowFloor: true}
 	}
 
@@ -470,28 +394,15 @@ func (e *Engine) scoreAnomalyValue(
 	// z-score in the thousands; MinStdDev sizes the divisor to the
 	// smallest change that matters in the metric's units, so a small
 	// value scores low while a genuinely large jump still scores high.
-	// If every floor is zero the divisor can still be zero, so the
-	// degenerate-case skip is retained.
-	stddev := math.Max(
-		effectiveStdDev(*baseline, cfg.Anomaly.Tier1.VarianceFloor),
-		floor.MinStdDev,
-	)
-	if stddev == 0 {
+	// If every floor is zero the divisor can still be zero, and ZScore
+	// refuses it, so the degenerate-case skip is retained. The z-score
+	// is clamped symmetrically to max_z_score; a zero cap disables the
+	// clamp.
+	scored := toAnomalyBaseline(*baseline)
+	stddev := anomaly.EffectiveStdDev(scored, cfg.Anomaly.Tier1.VarianceFloor, floor)
+	zScore, ok := anomaly.ZScore(value.Value, scored, stddev, cfg.Anomaly.Tier1.MaxZScore)
+	if !ok {
 		return anomalyScore{}
-	}
-
-	// Calculate z-score using the floored divisor.
-	zScore := (value.Value - baseline.Mean) / stddev
-
-	// Symmetric z-score cap: clamp |zScore| to MaxZScore
-	// when the cap is positive. A zero cap disables the
-	// clamp entirely.
-	if zCap := cfg.Anomaly.Tier1.MaxZScore; zCap > 0 {
-		if zScore > zCap {
-			zScore = zCap
-		} else if zScore < -zCap {
-			zScore = -zCap
-		}
 	}
 	return anomalyScore{
 		zScore:          zScore,

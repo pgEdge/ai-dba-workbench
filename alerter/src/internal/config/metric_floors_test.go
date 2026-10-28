@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/pkg/anomaly"
 )
 
 func floatPtr(v float64) *float64 { return &v }
@@ -42,9 +44,9 @@ func TestDefaultMetricFloors(t *testing.T) {
 	}
 
 	names := DefaultMetricFloorNames()
-	if len(names) != len(defaultMetricFloors) {
+	if len(names) != len(anomaly.DefaultScoringSettings().MetricFloors) {
 		t.Fatalf("DefaultMetricFloorNames() returned %d names, want %d",
-			len(names), len(defaultMetricFloors))
+			len(names), len(anomaly.DefaultScoringSettings().MetricFloors))
 	}
 	if !sort.StringsAreSorted(names) {
 		t.Errorf("DefaultMetricFloorNames() is not sorted: %v", names)

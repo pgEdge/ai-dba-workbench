@@ -472,3 +472,27 @@ func TestOpenAPIAlertSchemaMatchesStruct(t *testing.T) {
 		t.Errorf("Alert required = %v, want %v", gotRequired, wantRequired)
 	}
 }
+
+// TestOpenAPINullableSchemasHaveNoEnum checks that no component schema,
+// at any depth, is both nullable and an enum: OpenAPI 3.0 applies the
+// enum to a nullable value too, and the string enums here cannot list
+// null, so a client validating against the spec would reject null.
+func TestOpenAPINullableSchemasHaveNoEnum(t *testing.T) {
+	var walk func(path string, s *OpenAPISchema)
+	walk = func(path string, s *OpenAPISchema) {
+		if s == nil {
+			return
+		}
+		if s.Nullable && len(s.Enum) > 0 {
+			t.Errorf("%s is nullable with enum %v", path, s.Enum)
+		}
+		for name, prop := range s.Properties {
+			walk(path+"."+name, prop)
+		}
+		walk(path+"[]", s.Items)
+		walk(path+"{}", s.AdditionalProperties)
+	}
+	for name, schema := range BuildOpenAPISpec().Components.Schemas {
+		walk(name, schema)
+	}
+}

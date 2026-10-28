@@ -12266,12 +12266,7 @@
           },
           "period_type": {
             "type": "string",
-            "description": "Period of the baseline row applied; null when no row applies",
-            "enum": [
-              "all",
-              "hourly",
-              "daily"
-            ],
+            "description": "Period of the baseline row applied (all, hourly or daily); null when no row applies",
             "nullable": true
           },
           "stddev": {
@@ -12441,22 +12436,7 @@
           },
           "role": {
             "type": "string",
-            "description": "Cluster role for the connection",
-            "enum": [
-              "standalone",
-              "binary_primary",
-              "binary_standby",
-              "binary_cascading",
-              "logical_publisher",
-              "logical_subscriber",
-              "logical_bidirectional",
-              "spock_node",
-              "spock_standby",
-              "primary",
-              "replica",
-              "node",
-              "unknown"
-            ],
+            "description": "Cluster role for the connection, or null for none: one of standalone, binary_primary, binary_standby, binary_cascading, logical_publisher, logical_subscriber, logical_bidirectional, spock_node, spock_standby, primary, replica, node or unknown",
             "nullable": true
           }
         }

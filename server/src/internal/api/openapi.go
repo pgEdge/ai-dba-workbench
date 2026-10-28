@@ -292,8 +292,10 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"ConnectionClusterUpdateRequest": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"cluster_id":        {Type: "integer", Description: "Target cluster ID; null resets the connection to auto-detection", Nullable: true},
-				"role":              {Type: "string", Description: "Cluster role for the connection", Nullable: true, Enum: []string{"standalone", "binary_primary", "binary_standby", "binary_cascading", "logical_publisher", "logical_subscriber", "logical_bidirectional", "spock_node", "spock_standby", "primary", "replica", "node", "unknown"}},
+				"cluster_id": {Type: "integer", Description: "Target cluster ID; null resets the connection to auto-detection", Nullable: true},
+				// The roles are listed in the description, not as an
+				// enum, so that null stays valid under OpenAPI 3.0.
+				"role":              {Type: "string", Description: "Cluster role for the connection, or null for none: one of standalone, binary_primary, binary_standby, binary_cascading, logical_publisher, logical_subscriber, logical_bidirectional, spock_node, spock_standby, primary, replica, node or unknown", Nullable: true},
 				"membership_source": {Type: "string", Description: "How the connection is assigned: auto or manual"},
 			},
 		},
@@ -1551,9 +1553,12 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type:        "object",
 			Description: "One sample scored against the baseline row the model selects at the sample's time; hourly and daily rows are keyed by UTC hour and weekday",
 			Properties: map[string]*OpenAPISchema{
-				"time":        {Type: "string", Format: "date-time", Description: "Sample time (UTC)"},
-				"value":       {Type: "number", Description: "Sample value"},
-				"period_type": {Type: "string", Description: "Period of the baseline row applied; null when no row applies", Enum: []string{"all", "hourly", "daily"}, Nullable: true},
+				"time":  {Type: "string", Format: "date-time", Description: "Sample time (UTC)"},
+				"value": {Type: "number", Description: "Sample value"},
+				// The values are listed in the description, not as an
+				// enum: OpenAPI 3.0 applies an enum to a nullable value
+				// too, so an enum without null would reject null.
+				"period_type": {Type: "string", Description: "Period of the baseline row applied (all, hourly or daily); null when no row applies", Nullable: true},
 				"mean":        {Type: "number", Description: "Baseline mean; null when no row applies", Nullable: true},
 				"stddev":      {Type: "number", Description: "Effective standard deviation, after the variance and metric floors, used as the z-score divisor; null when no row applies", Nullable: true},
 				"cold":        {Type: "boolean", Description: "True when the row shown has not passed the warmup gate (explicit models), or when rows apply to the sample but none is warm (as_scored); false when no row applies"},

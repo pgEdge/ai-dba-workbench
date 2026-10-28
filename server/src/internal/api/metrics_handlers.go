@@ -515,7 +515,7 @@ func (h *MetricsHandler) handleAnomalyComparisonMetrics(
 
 // parseComparisonRequest reads and validates the anomaly comparison's
 // parameters other than connection_id. It returns false after sending a
-// 400 response.
+// 400 response; each helper below sends its own.
 func parseComparisonRequest(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -523,24 +523,46 @@ func parseComparisonRequest(
 ) (metrics.ComparisonRequest, bool) {
 	req := metrics.ComparisonRequest{
 		ConnectionID: connectionID,
-		Metric:       ParseQueryString(r, "metric"),
-		Model:        ParseQueryString(r, "model"),
 		Buckets:      metrics.DefaultComparisonBuckets,
 	}
+	ok := parseComparisonMetric(w, r, &req) &&
+		parseComparisonModel(w, r, &req) &&
+		parseComparisonSensitivity(w, r, &req) &&
+		parseComparisonBuckets(w, r, &req) &&
+		parseComparisonWindow(w, r, &req)
+	return req, ok
+}
+
+// parseComparisonMetric reads the required metric and the optional
+// database_name. The metric is checked against the registry here, before
+// any SQL is chosen; its errors name only the metric and the parameter.
+func parseComparisonMetric(
+	w http.ResponseWriter,
+	r *http.Request,
+	req *metrics.ComparisonRequest,
+) bool {
+	req.Metric = ParseQueryString(r, "metric")
 	if req.Metric == "" {
 		RespondError(w, http.StatusBadRequest, "metric is required")
-		return req, false
+		return false
 	}
 	if dbName := ParseQueryString(r, "database_name"); dbName != "" {
 		req.DatabaseName = &dbName
 	}
-	// The metric is checked against the registry here, before any SQL
-	// is chosen; its errors name only the metric and the parameter.
 	if _, err := metrics.ResolveComparisonMetric(req.Metric, req.DatabaseName); err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
-		return req, false
+		return false
 	}
+	return true
+}
 
+// parseComparisonModel reads the model, defaulting it when absent.
+func parseComparisonModel(
+	w http.ResponseWriter,
+	r *http.Request,
+	req *metrics.ComparisonRequest,
+) bool {
+	req.Model = ParseQueryString(r, "model")
 	if req.Model == "" {
 		req.Model = metrics.DefaultComparisonModel
 	}
@@ -548,30 +570,61 @@ func parseComparisonRequest(
 		RespondError(w, http.StatusBadRequest,
 			"Invalid model: must be one of "+
 				strings.Join(metrics.ComparisonModels, ", "))
-		return req, false
+		return false
 	}
+	return true
+}
 
-	if raw := ParseQueryString(r, "sensitivity"); raw != "" {
-		sensitivity, err := strconv.ParseFloat(raw, 64)
-		if err != nil || math.IsNaN(sensitivity) || sensitivity <= 0 ||
-			sensitivity > metrics.MaxComparisonSensitivity {
-			RespondError(w, http.StatusBadRequest,
-				"Invalid sensitivity: must be greater than 0 and at most 10")
-			return req, false
-		}
-		req.Sensitivity = &sensitivity
+// parseComparisonSensitivity reads the optional sensitivity, leaving it
+// nil when absent.
+func parseComparisonSensitivity(
+	w http.ResponseWriter,
+	r *http.Request,
+	req *metrics.ComparisonRequest,
+) bool {
+	raw := ParseQueryString(r, "sensitivity")
+	if raw == "" {
+		return true
 	}
-
-	if raw := ParseQueryString(r, "buckets"); raw != "" {
-		b, err := strconv.Atoi(raw)
-		if err != nil || b < 1 || b > metrics.MaxComparisonBuckets {
-			RespondError(w, http.StatusBadRequest,
-				"Invalid buckets: must be between 1 and 500")
-			return req, false
-		}
-		req.Buckets = b
+	sensitivity, err := strconv.ParseFloat(raw, 64)
+	if err != nil || math.IsNaN(sensitivity) || sensitivity <= 0 ||
+		sensitivity > metrics.MaxComparisonSensitivity {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid sensitivity: must be greater than 0 and at most 10")
+		return false
 	}
+	req.Sensitivity = &sensitivity
+	return true
+}
 
+// parseComparisonBuckets reads the optional bucket count, leaving the
+// default in place when absent.
+func parseComparisonBuckets(
+	w http.ResponseWriter,
+	r *http.Request,
+	req *metrics.ComparisonRequest,
+) bool {
+	raw := ParseQueryString(r, "buckets")
+	if raw == "" {
+		return true
+	}
+	b, err := strconv.Atoi(raw)
+	if err != nil || b < 1 || b > metrics.MaxComparisonBuckets {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid buckets: must be between 1 and 500")
+		return false
+	}
+	req.Buckets = b
+	return true
+}
+
+// parseComparisonWindow resolves the time window, defaulting the range
+// to 24h.
+func parseComparisonWindow(
+	w http.ResponseWriter,
+	r *http.Request,
+	req *metrics.ComparisonRequest,
+) bool {
 	timeRange := ParseQueryString(r, "time_range")
 	if timeRange == "" {
 		timeRange = "24h"
@@ -581,10 +634,10 @@ func parseComparisonRequest(
 		ParseQueryString(r, "time_end"))
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
-		return req, false
+		return false
 	}
 	req.Window = window
-	return req, true
+	return true
 }
 
 // handleAnomalyComparison handles GET /api/v1/metrics/anomaly-comparison,

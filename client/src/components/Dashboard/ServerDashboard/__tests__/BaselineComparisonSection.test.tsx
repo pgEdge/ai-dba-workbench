@@ -50,7 +50,7 @@ interface ChartProps {
     title: string;
     data: { categories: string[]; series: { name: string }[] };
     echartsOptions: {
-        legend: { data: string[] };
+        legend: { data: (string | { name: string })[] };
         series: { name: string }[];
     };
 }
@@ -60,7 +60,9 @@ vi.mock('../../../Chart', () => ({
         <div
             data-testid="chart"
             data-categories={data.categories.length}
-            data-legend={echartsOptions.legend.data.join('|')}
+            data-legend={echartsOptions.legend.data
+                .map((item) => (typeof item === 'string' ? item : item.name))
+                .join('|')}
         >
             {title}
         </div>
@@ -197,6 +199,60 @@ describe('BaselineComparisonSection', () => {
         expect(
             screen.getByText(/Bands are the current baselines applied across the window\./)
         ).toBeInTheDocument();
+    });
+
+    it('names the chart for assistive technology', () => {
+        renderSection();
+        const image = screen.getByRole('img', {
+            name: /^CPU usage \(%\) against its baseline from /,
+        });
+        expect(image).toContainElement(screen.getByTestId('chart'));
+        expect(image.getAttribute('aria-label')).toContain(
+            '1 engine anomaly alert; 1 point outside the band with no engine alert.'
+        );
+    });
+
+    it('says when no baselines exist yet for the metric', () => {
+        const bare = { mean: null, stddev: null, period_type: null, z_score: null };
+        comparisonResult = loadedComparison({
+            data: response({
+                model: 'daily',
+                points: [point('2026-10-28T11:00:00Z', bare), point('2026-10-28T11:05:00Z', bare)],
+            }),
+        });
+        renderSection();
+        expect(
+            screen.getByText(
+                'No day-of-week baselines exist yet for this metric, so only its value is shown.'
+            )
+        ).toBeInTheDocument();
+        expect(screen.queryByText(/Bands are the current baselines/)).not.toBeInTheDocument();
+        expect(screen.getByRole('img').getAttribute('aria-label')).toContain(
+            'no baseline applies'
+        );
+    });
+
+    it('explains unmarked points beyond the band under the value floor', () => {
+        comparisonResult = loadedComparison({
+            data: response({
+                points: [
+                    // z beyond the band, yet not outside: below the floor.
+                    point('2026-10-28T11:00:00Z', { value: 5, z_score: -6.25 }),
+                    point('2026-10-28T11:05:00Z'),
+                ],
+            }),
+            alerts: [],
+        });
+        renderSection();
+        expect(screen.getByText(/below the metric's value floor/)).toBeInTheDocument();
+        expect(screen.getByRole('img').getAttribute('aria-label')).toContain(
+            '1 point below the value floor'
+        );
+    });
+
+    it('does not mention the value floor when no point is below it', () => {
+        renderSection();
+        expect(screen.queryByText(/value floor/)).not.toBeInTheDocument();
     });
 
     it('shows the database selector for a per-database metric', () => {

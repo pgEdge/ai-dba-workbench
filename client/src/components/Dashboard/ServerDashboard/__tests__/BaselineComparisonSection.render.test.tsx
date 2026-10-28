@@ -165,4 +165,15 @@ describe('BaselineComparisonSection rendering', () => {
         // Points inside the band carry no marker.
         expect(symbolsAt(painted, 0)).toHaveLength(0);
     });
+
+    it('draws the band legend swatch in the band fill colour', () => {
+        const theme = createTheme();
+        const swatches = paths(theme).filter(
+            (p) =>
+                p.includes('ecmeta_ssr_type="legend"') &&
+                p.includes(`fill="${theme.palette.info.main}"`)
+        );
+        expect(swatches).toHaveLength(1);
+        expect(swatches[0]).toContain('fill-opacity="0.25"');
+    });
 });

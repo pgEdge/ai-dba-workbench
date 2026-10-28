@@ -108,10 +108,17 @@ export interface ComparisonChartModel {
     coldValues: (number | null)[];
     engineMarkers: (EngineMarker | null)[];
     outsideMarkers: (number | null)[];
+    /**
+     * True for a scored point beyond the band that the server still
+     * reports as inside it, which only the metric's value floor does:
+     * the engine never alerts on a value below that floor.
+     */
+    belowFloor: boolean[];
     hasBand: boolean;
     hasCold: boolean;
     hasEngine: boolean;
     hasOutside: boolean;
+    hasBelowFloor: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +164,21 @@ export const MODEL_OPTIONS: { value: ComparisonModel; label: string }[] = [
     { value: 'hourly', label: 'Hour of day' },
     { value: 'all', label: 'Overall' },
 ];
+
+/**
+ * The caption shown when no baseline applies to any point, naming the
+ * model's baselines unless the model is the one the engine scores with.
+ */
+const NO_BASELINE_SUBJECT: Record<ComparisonModel, string> = {
+    as_scored: 'No baselines',
+    daily: 'No day-of-week baselines',
+    hourly: 'No hour-of-day baselines',
+    all: 'No overall baselines',
+};
+
+/** The caption for a chart with no band under the given model. */
+export const noBaselineCaption = (model: ComparisonModel): string =>
+    `${NO_BASELINE_SUBJECT[model]} exist yet for this metric, so only its value is shown.`;
 
 /** The sensitivities offered, in standard deviations. */
 export const SENSITIVITY_OPTIONS = [2, 3, 4];
@@ -489,6 +511,20 @@ const alertsUnloaded = (
 };
 
 /**
+ * Whether a point is drawn beyond the band yet not outside it. The
+ * server scores `outside` as |z| > k unless the value is under the
+ * metric's value floor, so a warm, scored point with |z| > k that is
+ * not outside can only be below that floor. The floor itself is not
+ * in the response, which is why it is inferred rather than compared.
+ */
+const isBelowFloor = (p: ComparisonPoint, sensitivity: number): boolean =>
+    !p.cold &&
+    !p.outside &&
+    p.value !== null &&
+    p.z_score !== null &&
+    Math.abs(p.z_score) > sensitivity;
+
+/**
  * Build the chart model for a comparison response and the engine's
  * alerts, which the caller has already filtered to the metric and
  * database. `sensitivity` is the k of the band mean ± k·σ, and should
@@ -537,6 +573,7 @@ export const buildComparisonChart = (
         p.outside && !covered(i) && !unloaded(i) ? p.value : null
     );
     const values = splitValues(points);
+    const belowFloor = points.map((p) => isBelowFloor(p, sensitivity));
 
     return {
         categories: points.map((p) => p.time),
@@ -551,10 +588,12 @@ export const buildComparisonChart = (
         coldValues: values.cold,
         engineMarkers: markers,
         outsideMarkers,
+        belowFloor,
         hasBand: lower.some((v) => v !== null),
         hasCold: points.some((p) => p.cold),
         hasEngine: markers.some((m) => m !== null),
         hasOutside: outsideMarkers.some((v) => v !== null),
+        hasBelowFloor: belowFloor.some(Boolean),
     };
 };
 
@@ -595,7 +634,47 @@ export const describeComparisonIndex = (
     if (chart.outsideMarkers[index] !== null) {
         lines.push('Outside the band with no engine alert');
     }
+    if (chart.belowFloor[index]) {
+        lines.push("Below the metric's value floor, so the engine does not alert on it");
+    }
     return lines;
+};
+
+/** A count with its noun, made plural unless the count is one. */
+const countOf = (count: number, singular: string, plural: string): string =>
+    `${count} ${count === 1 ? singular : plural}`;
+
+/** Format a window edge for the chart's text alternative. */
+const formatWindowTime = (ms: number): string =>
+    Number.isFinite(ms) ? new Date(ms).toLocaleString('en-GB') : 'unknown';
+
+/**
+ * The chart's text alternative: the metric, the window, and how many
+ * engine anomaly alerts and unalerted outside points it shows.
+ */
+export const describeComparisonChart = (
+    chart: ComparisonChartModel,
+    valueLabel: string,
+    window: ComparisonWindow
+): string => {
+    const engine = chart.engineMarkers.filter((m) => m !== null).length;
+    const outside = chart.outsideMarkers.filter((v) => v !== null).length;
+    const belowFloor = chart.belowFloor.filter(Boolean).length;
+    const parts = [
+        `${valueLabel} against its baseline from ${formatWindowTime(window.startMs)}` +
+            ` to ${formatWindowTime(window.endMs)}`,
+        chart.hasBand ? null : 'no baseline applies',
+        countOf(engine, 'engine anomaly alert', 'engine anomaly alerts'),
+        countOf(
+            outside,
+            'point outside the band with no engine alert',
+            'points outside the band with no engine alert'
+        ),
+        belowFloor > 0
+            ? countOf(belowFloor, 'point below the value floor', 'points below the value floor')
+            : null,
+    ];
+    return `${parts.filter((part) => part !== null).join('; ')}.`;
 };
 
 // ---------------------------------------------------------------------------
@@ -633,9 +712,19 @@ interface TooltipParam {
     axisValue: string;
 }
 
+/**
+ * A legend entry given its own swatch, for a series whose default
+ * swatch would not match what it draws.
+ */
+export interface ComparisonLegendItem {
+    name: string;
+    icon: string;
+    itemStyle: { color: string; opacity: number };
+}
+
 /** The ECharts options the section merges over the line chart's own. */
 export interface ComparisonOptions {
-    legend: { data: string[] };
+    legend: { data: (string | ComparisonLegendItem)[] };
     tooltip: {
         trigger: 'axis';
         formatter: (params: TooltipParam | TooltipParam[]) => string;
@@ -682,10 +771,22 @@ const bandSeries = (
             ...shared,
             name,
             data: widthData,
+            itemStyle: { color: colour },
             areaStyle: { color: colour, opacity },
         },
     ];
 };
+
+/**
+ * The legend entry for a band. A line series' own swatch is a line and
+ * a symbol in the series colour, both of which the band hides, so the
+ * swatch is a rectangle in the band's fill colour and opacity instead.
+ */
+const bandLegendItem = (name: string, colour: string, opacity: number): ComparisonLegendItem => ({
+    name,
+    icon: 'rect',
+    itemStyle: { color: colour, opacity },
+});
 
 /**
  * A series that draws only markers: no line, and every non-null point
@@ -777,8 +878,12 @@ export const buildComparisonOptions = (
     const legend = [
         valueLabel,
         ...(chart.hasCold ? [COLD_VALUE_LABEL] : []),
-        ...(chart.warmWidth.some((v) => v !== null) ? [bandLabel] : []),
-        ...(chart.coldWidth.some((v) => v !== null) ? [COLD_BAND_LABEL] : []),
+        ...(chart.warmWidth.some((v) => v !== null)
+            ? [bandLegendItem(bandLabel, colours.band, WARM_BAND_OPACITY)]
+            : []),
+        ...(chart.coldWidth.some((v) => v !== null)
+            ? [bandLegendItem(COLD_BAND_LABEL, colours.band, COLD_BAND_OPACITY)]
+            : []),
         ...(chart.hasEngine ? [ENGINE_ANOMALY_LABEL] : []),
         ...(chart.hasOutside ? [OUTSIDE_LABEL] : []),
     ];

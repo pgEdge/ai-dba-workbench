@@ -38,9 +38,11 @@ import {
     SENSITIVITY_OPTIONS,
     buildComparisonChart,
     buildComparisonOptions,
+    describeComparisonChart,
     filterEngineAlerts,
     friendlyMetricLabel,
     nearestSensitivity,
+    noBaselineCaption,
     type ComparisonModel,
 } from './baselineComparison';
 
@@ -195,6 +197,9 @@ const BaselineComparisonSection: React.FC<ServerSectionProps> = ({ connectionId 
         });
         return {
             options,
+            hasBand: chart.hasBand,
+            hasBelowFloor: chart.hasBelowFloor,
+            summary: describeComparisonChart(chart, valueLabel, window),
             // Sizes the y axis and supplies the categories; the series
             // drawn are those in the options, which replace these.
             data: {
@@ -303,20 +308,30 @@ const BaselineComparisonSection: React.FC<ServerSectionProps> = ({ connectionId 
                             height={CHART_HEIGHT}
                         >
                             {chartData && (
-                                <Chart
-                                    type="line"
-                                    data={chartData.data}
-                                    title={title}
-                                    height={CHART_HEIGHT}
-                                    showLegend
-                                    showTooltip
-                                    enableExport={false}
-                                    echartsOptions={chartData.options}
-                                />
+                                // The canvas has no text of its own, so the
+                                // wrapper names what it shows.
+                                <Box role="img" aria-label={chartData.summary}>
+                                    <Chart
+                                        type="line"
+                                        data={chartData.data}
+                                        title={title}
+                                        height={CHART_HEIGHT}
+                                        showLegend
+                                        showTooltip
+                                        showToolbar={false}
+                                        enableExport={false}
+                                        echartsOptions={chartData.options}
+                                    />
+                                </Box>
                             )}
                         </ChartPanel>
                         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                            Bands are the current baselines applied across the window.
+                            {chartData && !chartData.hasBand
+                                ? noBaselineCaption(data?.model ?? model)
+                                : 'Bands are the current baselines applied across the window.'}
+                            {chartData?.hasBelowFloor &&
+                                " Points beyond the band with no marker are below the metric's" +
+                                    ' value floor, under which the engine does not alert.'}
                             {alertsError &&
                                 ' The anomaly alerts could not be loaded, so' +
                                     ' engine alerts are not marked.'}

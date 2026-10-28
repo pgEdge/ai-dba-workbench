@@ -17,12 +17,14 @@ import {
     OUTSIDE_LABEL,
     buildComparisonChart,
     buildComparisonOptions,
+    describeComparisonChart,
     describeComparisonIndex,
     escapeHtml,
     filterEngineAlerts,
     formatComparisonValue,
     friendlyMetricLabel,
     nearestSensitivity,
+    noBaselineCaption,
     parsePeriodType,
     periodTypeLabel,
     type AnomalyAlert,
@@ -116,6 +118,19 @@ describe('nearestSensitivity', () => {
     it('falls back to 3 for a non-finite value', () => {
         expect(nearestSensitivity(Number.NaN)).toBe(3);
         expect(nearestSensitivity(undefined)).toBe(3);
+    });
+});
+
+describe('noBaselineCaption', () => {
+    it.each([
+        ['as_scored', 'No baselines'],
+        ['daily', 'No day-of-week baselines'],
+        ['hourly', 'No hour-of-day baselines'],
+        ['all', 'No overall baselines'],
+    ] as const)('names the %s baselines', (model, subject) => {
+        expect(noBaselineCaption(model)).toBe(
+            `${subject} exist yet for this metric, so only its value is shown.`
+        );
     });
 });
 
@@ -370,6 +385,92 @@ describe('buildComparisonChart', () => {
         expect(chart.outsideMarkers).toEqual([null, null]);
     });
 
+    it('clamps a point at the window end into the last bucket', () => {
+        // Clamped, the point at the window's end shares the last bucket
+        // with the point at minute 9 and, being later, is the one the
+        // alert in that bucket is drawn on. Unclamped it would sit in a
+        // bucket past the end and the marker would go on minute 9.
+        const chart = buildComparisonChart(
+            [point(9, { value: 39 }), point(10, { value: 40 })],
+            [alert(9.9)],
+            3,
+            WINDOW
+        );
+        expect(chart.engineMarkers[0]).toBeNull();
+        expect(chart.engineMarkers[1]).not.toBeNull();
+    });
+
+    it('marks an alert triggered exactly at the window end', () => {
+        const chart = buildComparisonChart(
+            [point(8, { value: 38 }), point(9.5, { value: 39 })],
+            [alert(10)],
+            3,
+            WINDOW
+        );
+        expect(chart.hasEngine).toBe(true);
+        expect(chart.engineMarkers[1]).not.toBeNull();
+    });
+
+    it('gives no marker to an alert triggered just after the window end', () => {
+        const chart = buildComparisonChart(
+            [point(9.5, { value: 39 })],
+            [alert(10.01, { cleared_at: at(10.01) })],
+            3,
+            WINDOW
+        );
+        expect(chart.hasEngine).toBe(false);
+    });
+
+    it('covers the last bucket and the one before it under an alert after the window', () => {
+        // The alert has no marker, so only its span covers points: from
+        // the bucket before its (clamped) trigger bucket to the last.
+        const chart = buildComparisonChart(
+            [7.5, 8.5, 9.5].map((m) => point(m, { value: 30 + m, outside: true })),
+            [alert(10.5, { cleared_at: at(10.5) })],
+            3,
+            WINDOW
+        );
+        expect(chart.hasEngine).toBe(false);
+        expect(chart.outsideMarkers).toEqual([37.5, null, null]);
+    });
+
+    it('covers the first and last points under an open alert from before the window', () => {
+        // Outside points at both edges of the window, one of them at the
+        // window's very end, are all covered by the open alert's span.
+        const points = [0, 0.5, 5, 9.5, 10].map((m) => point(m, { value: 30 + m, outside: true }));
+        const chart = buildComparisonChart(
+            points,
+            [alert(-30, { status: 'active', cleared_at: null })],
+            3,
+            WINDOW
+        );
+        expect(chart.hasEngine).toBe(false);
+        expect(chart.outsideMarkers).toEqual([null, null, null, null, null]);
+    });
+
+    it('covers the first point under an alert that cleared at the window start', () => {
+        const chart = buildComparisonChart(
+            [point(0, { value: 30, outside: true }), point(1.5, { value: 31, outside: true })],
+            [alert(-30, { cleared_at: at(0) })],
+            3,
+            WINDOW
+        );
+        expect(chart.outsideMarkers).toEqual([null, 31]);
+    });
+
+    it('stops an open span at the window end when the window is unusable', () => {
+        // An unusable window still carries its end, which bounds an
+        // open span compared by time.
+        const window = { startMs: START, endMs: START + 5 * MINUTE, buckets: 0 };
+        const chart = buildComparisonChart(
+            [0, 1, 5, 6].map((m) => point(m, { value: 30 + m, outside: true })),
+            [alert(0, { status: 'active', cleared_at: null })],
+            3,
+            window
+        );
+        expect(chart.outsideMarkers).toEqual([null, null, null, 36]);
+    });
+
     it('covers the point an alert is drawn on when its bucket has no point', () => {
         // The alert's bucket (5) has no point, so its marker goes on the
         // nearest point (minute 8), which with the point before it
@@ -478,6 +579,76 @@ describe('buildComparisonChart', () => {
     });
 });
 
+describe('value floor', () => {
+    it('flags warm scored points beyond the band that are not outside', () => {
+        const chart = buildComparisonChart(
+            [
+                point(0, { value: 5, z_score: -3.5 }),
+                point(1, { value: 5, z_score: -3.5, cold: true }),
+                point(2, { value: 5, z_score: -3.5, outside: true }),
+                point(3, { value: 5, z_score: 3 }),
+                point(4, { value: 5, z_score: null }),
+                point(5, { value: null, z_score: -3.5 }),
+            ],
+            [],
+            3,
+            WINDOW
+        );
+        expect(chart.belowFloor).toEqual([true, false, false, false, false, false]);
+        expect(chart.hasBelowFloor).toBe(true);
+        expect(describeComparisonIndex(chart, 0, 3)).toContain(
+            "Below the metric's value floor, so the engine does not alert on it"
+        );
+        expect(describeComparisonIndex(chart, 3, 3).join('\n')).not.toContain('value floor');
+    });
+
+    it('reports no floor when every point is in band', () => {
+        const chart = buildComparisonChart([point(0)], [], 3, WINDOW);
+        expect(chart.hasBelowFloor).toBe(false);
+    });
+});
+
+describe('describeComparisonChart', () => {
+    const when = (ms: number): string => new Date(ms).toLocaleString('en-GB');
+
+    it('summarises the metric, window and deviation counts', () => {
+        const chart = buildComparisonChart(
+            [
+                point(0, { outside: true, value: 30 }),
+                point(2),
+                point(5, { outside: true, value: 35 }),
+                point(9, { value: 39, z_score: 4 }),
+            ],
+            [alert(5)],
+            3,
+            WINDOW
+        );
+        expect(describeComparisonChart(chart, 'CPU usage (%)', WINDOW)).toBe(
+            `CPU usage (%) against its baseline from ${when(WINDOW.startMs)} to ` +
+                `${when(WINDOW.endMs)}; 1 engine anomaly alert; ` +
+                '1 point outside the band with no engine alert; ' +
+                '1 point below the value floor.'
+        );
+    });
+
+    it('pluralises counts and notes a chart with no baseline', () => {
+        const bare = { mean: null, stddev: null, z_score: null };
+        const chart = buildComparisonChart([point(0, bare), point(1, bare)], [], 3, WINDOW);
+        expect(describeComparisonChart(chart, 'CPU', WINDOW)).toBe(
+            `CPU against its baseline from ${when(WINDOW.startMs)} to ` +
+                `${when(WINDOW.endMs)}; no baseline applies; 0 engine anomaly alerts; ` +
+                '0 points outside the band with no engine alert.'
+        );
+    });
+
+    it('describes an unreadable window edge as unknown', () => {
+        const chart = buildComparisonChart([point(0)], [], 3, WINDOW);
+        expect(
+            describeComparisonChart(chart, 'CPU', { startMs: NaN, endMs: NaN, buckets: 1 })
+        ).toContain('from unknown to unknown');
+    });
+});
+
 describe('describeComparisonIndex', () => {
     it('describes a point with a band, an alert and the cold state', () => {
         const chart = buildComparisonChart(
@@ -539,8 +710,16 @@ describe('buildComparisonOptions', () => {
         expect(options.legend.data).toEqual([
             'CPU usage (%)',
             COLD_VALUE_LABEL,
-            `${BAND_LABEL_PREFIX} (±3σ)`,
-            COLD_BAND_LABEL,
+            {
+                name: `${BAND_LABEL_PREFIX} (±3σ)`,
+                icon: 'rect',
+                itemStyle: { color: COLOURS.band, opacity: 0.25 },
+            },
+            {
+                name: COLD_BAND_LABEL,
+                icon: 'rect',
+                itemStyle: { color: COLOURS.band, opacity: 0.1 },
+            },
             ENGINE_ANOMALY_LABEL,
             OUTSIDE_LABEL,
         ]);
@@ -550,7 +729,14 @@ describe('buildComparisonOptions', () => {
     it('omits legend entries for absent series', () => {
         const chart = buildComparisonChart([point(0)], [], 3, WINDOW);
         const options = buildComparisonOptions(chart, 'CPU', 2, COLOURS);
-        expect(options.legend.data).toEqual(['CPU', `${BAND_LABEL_PREFIX} (±2σ)`]);
+        expect(options.legend.data).toEqual([
+            'CPU',
+            {
+                name: `${BAND_LABEL_PREFIX} (±2σ)`,
+                icon: 'rect',
+                itemStyle: { color: COLOURS.band, opacity: 0.25 },
+            },
+        ]);
     });
 
     it('draws engine alerts solid and outside points hollow', () => {

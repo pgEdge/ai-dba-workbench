@@ -138,6 +138,16 @@ The rules for new or modified charts are as follows:
   invisible lower edge plus a shaded width series stacked on it with
   `stackStrategy: 'all'`, since the default same-sign strategy
   stacks a width onto zero rather than onto a negative lower edge.
+  A line series' legend swatch is a line plus a symbol in the series
+  colour, both of which a band hides, so give a band's `legend.data`
+  entry its own `icon: 'rect'` and an `itemStyle` with the fill colour
+  and opacity.
+
+- A canvas chart has no text of its own. Where a chart's content
+  matters beyond its title, wrap the `Chart` in a `Box` with
+  `role="img"` and an `aria-label` summarising what it shows, as
+  `BaselineComparisonSection` does with `describeComparisonChart`, and
+  pass `showToolbar={false}` so that the image role hides no controls.
 
 - Say what the numbers cover in the chart title and legend. The
   `pg_stat_database` probe filters on `current_database()`, so
@@ -412,8 +422,10 @@ object through ECharts' own server-side SVG renderer, then measures the
 subpaths that were actually emitted; use that pattern for any bug where
 the question is what landed on the canvas.
 `ServerDashboard/__tests__/BaselineComparisonSection.render.test.tsx`
-applies it to a whole section; rendering the real `Chart` that way
-also renders `ChartToolbar`, so mock `contexts/useAICapabilities`.
+applies it to a whole section, including the legend (its swatches
+carry `ecmeta_ssr_type="legend"`); rendering the real `Chart` that way
+renders `ChartToolbar` unless `showToolbar` is false, so mock
+`contexts/useAICapabilities` in that case.
 
 A marker-only series (line opacity 0, `showSymbol` and `showAllSymbol`
 true) is the way to draw scattered points, since the `Chart` component

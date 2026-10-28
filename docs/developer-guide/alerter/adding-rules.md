@@ -217,8 +217,11 @@ without a database name. The historical query must compute the same
 statistic as the latest query, so add an integration test that
 compares the two on the same samples.
 `TestRegistryMatchesSharedBaselineDefinitions` fails when a
-metric has a registry entry without a `metricDefs` entry, or the
-reverse, or when the probe names differ.
+`metricDefs` entry has no registry entry, because the two lists
+then differ in length. A registry entry with no `metricDefs`
+entry is allowed; the registry treats it as a metric that is not
+baselined. The test compares the historical SQL, scan layout and
+probe name only for baselined metrics.
 
 A metric without a historical query is skipped by both baseline
 calculation and anomaly detection; the alerter does not build a
@@ -250,6 +253,7 @@ query that retrieves data for baseline calculations:
             m.your_value::float, m.collected_at
         FROM metrics.your_table m
         JOIN connections c ON c.id = m.connection_id
+            AND c.deleted_at IS NULL
         WHERE m.collected_at > NOW()
             - INTERVAL '1 day' * $1
         ORDER BY m.connection_id, m.collected_at

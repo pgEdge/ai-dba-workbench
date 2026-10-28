@@ -274,9 +274,10 @@ live in [`pkg/anomaly/scoring.go`][anomaly-scoring]; the
 `EffectiveStdDev` function implements the floor, and the `IsWarm`
 function implements the warmup gate. The alerter in
 [`alerter/src/internal/engine/anomalies.go`][anomalies-go] calls
-`anomaly.EffectiveStdDev` and `anomaly.IsWarm` directly, as does
-the server's baseline comparison endpoint, so change a rule in
-`pkg/anomaly` and both callers pick it up.
+`anomaly.EffectiveStdDev` and reaches `IsWarm` through
+`anomaly.Select`. The server's baseline comparison endpoint calls
+the same functions, so change a rule in `pkg/anomaly` and both
+callers pick it up.
 
 [anomalies-go]:
     https://github.com/pgEdge/ai-dba-workbench/blob/main/alerter/src/internal/engine/anomalies.go

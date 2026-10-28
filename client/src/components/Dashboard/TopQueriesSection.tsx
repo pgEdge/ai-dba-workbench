@@ -384,7 +384,7 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
     const databaseFilterId = `${idPrefix}-database-filter`;
     const databaseFilterLabelId = `${databaseFilterId}-label`;
 
-    const [queries,setQueries] = useState<TopQueryRow[]>([]);
+    const [queries, setQueries] = useState<TopQueryRow[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [hideCollectorQueries, setHideCollectorQueries] = useState<boolean>(true);

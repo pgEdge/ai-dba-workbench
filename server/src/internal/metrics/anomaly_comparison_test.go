@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -375,6 +376,41 @@ func TestParseScoringSettings(t *testing.T) {
 	s, _ := ParseScoringSettings(good)
 	if s.MaxZScore != 50 || s.Warmup.Hourly.MinSamples != 5 {
 		t.Errorf("published settings not decoded: %+v", s)
+	}
+}
+
+// TestParseScoringSettings_MissingKeysKeepDefaults checks that settings
+// published without some keys keep the shipped defaults for them, and
+// that a published metric_floors map replaces the default floors.
+func TestParseScoringSettings_MissingKeysKeepDefaults(t *testing.T) {
+	defaults := anomaly.DefaultScoringSettings()
+
+	s, source := ParseScoringSettings([]byte(`{"default_sensitivity":4}`))
+	if source != ScoringSourceAlerter || s.DefaultSensitivity != 4 {
+		t.Fatalf("source %q sensitivity %v; want alerter 4", source, s.DefaultSensitivity)
+	}
+	if s.Warmup != defaults.Warmup || s.VarianceFloor != defaults.VarianceFloor ||
+		s.MaxZScore != defaults.MaxZScore {
+		t.Errorf("settings = %+v, want the default warmup, variance floor and z cap", s)
+	}
+	if !reflect.DeepEqual(s.MetricFloors, defaults.MetricFloors) || len(s.MetricFloors) == 0 {
+		t.Errorf("metric floors = %v, want the defaults %v", s.MetricFloors, defaults.MetricFloors)
+	}
+
+	s, _ = ParseScoringSettings([]byte(
+		`{"default_sensitivity":4,"warmup":{"all":{"min_samples":7}},"metric_floors":{}}`))
+	if s.Warmup.All.MinSamples != 7 || s.Warmup.All.MinSpanHours != defaults.Warmup.All.MinSpanHours ||
+		s.Warmup.Hourly != defaults.Warmup.Hourly {
+		t.Errorf("warmup = %+v, want min_samples 7 over the defaults", s.Warmup)
+	}
+	if s.MetricFloors == nil || len(s.MetricFloors) != 0 {
+		t.Errorf("metric floors = %v, want the published empty map", s.MetricFloors)
+	}
+
+	for _, raw := range []string{`{"default_sensitivity":0}`, `{"default_sensitivity":null}`} {
+		if _, source := ParseScoringSettings([]byte(raw)); source != ScoringSourceDefaults {
+			t.Errorf("%s: source %q, want defaults", raw, source)
+		}
 	}
 }
 

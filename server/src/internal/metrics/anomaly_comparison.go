@@ -272,14 +272,25 @@ func scoreComparisonPoint(
 	return p
 }
 
-// ParseScoringSettings decodes the alerter's published Tier 1 settings.
-// NULL, malformed JSON, or settings without a positive default
-// sensitivity (which no running alerter publishes) fall back to the
-// shipped defaults, and the source says which was used.
+// ParseScoringSettings decodes the alerter's published Tier 1 settings
+// over the shipped defaults, so a key the published JSON lacks keeps its
+// default rather than becoming zero; a published metric_floors map
+// replaces the default floors whole. NULL, malformed JSON, or settings
+// without a positive default sensitivity (which no running alerter
+// publishes) fall back to the defaults, and the source says which was
+// used.
 func ParseScoringSettings(raw []byte) (anomaly.ScoringSettings, string) {
 	if len(raw) > 0 {
-		var s anomaly.ScoringSettings
-		if err := json.Unmarshal(raw, &s); err == nil && s.DefaultSensitivity > 0 {
+		var probe struct {
+			DefaultSensitivity *float64 `json:"default_sensitivity"`
+		}
+		s := anomaly.DefaultScoringSettings()
+		s.MetricFloors = nil
+		if json.Unmarshal(raw, &probe) == nil && json.Unmarshal(raw, &s) == nil &&
+			probe.DefaultSensitivity != nil && *probe.DefaultSensitivity > 0 {
+			if s.MetricFloors == nil {
+				s.MetricFloors = anomaly.DefaultScoringSettings().MetricFloors
+			}
 			return s, ScoringSourceAlerter
 		}
 	}

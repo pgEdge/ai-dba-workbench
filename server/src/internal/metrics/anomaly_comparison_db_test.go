@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,4 +200,114 @@ func TestQueryComparisonSeries_EveryMetric(t *testing.T) {
 			}
 		})
 	}
+}
+
+const deadlocksMetric = "pg_stat_database.deadlocks_delta"
+
+// TestLoadComparison_PerDatabase seeds deadlock samples and baselines for
+// two databases on one connection and checks that a comparison for one
+// database sees only that database's samples and band.
+func TestLoadComparison_PerDatabase(t *testing.T) {
+	pool := newCollectorSchemaPool(t)
+	ctx := context.Background()
+
+	conn := insertTestConnection(t, pool, "comparison-per-db")
+	now := time.Now().UTC().Truncate(time.Second)
+	window := TimeWindow{Start: now.Add(-3 * time.Hour), End: now}
+	// Both samples fall in one UTC hour inside the window, so the
+	// metric's hourly delta is the difference between them.
+	hour := now.Truncate(time.Hour).Add(-time.Hour)
+
+	insertDeadlocks := func(db string, at time.Time, n int) {
+		t.Helper()
+		execSchema(t, pool, `
+            INSERT INTO metrics.pg_stat_database
+                (connection_id, database_name, datname, deadlocks, collected_at)
+            VALUES ($1, $2::text, $2::text, $3, $4)`, conn, db, n, at)
+	}
+	insertDeadlocks("db_a", hour.Add(10*time.Minute), 0)
+	insertDeadlocks("db_a", hour.Add(20*time.Minute), 5)
+	insertDeadlocks("db_b", hour.Add(10*time.Minute), 0)
+	insertDeadlocks("db_b", hour.Add(20*time.Minute), 50)
+
+	execSchema(t, pool, `
+        INSERT INTO metric_baselines
+            (connection_id, database_name, metric_name, period_type,
+             mean, stddev, min, max, sample_count, earliest_sample_at,
+             last_calculated)
+        VALUES ($1, 'db_a', $2, 'all', 5, 2, 0, 20, 1000, $3, $4),
+               ($1, 'db_b', $2, 'all', 100, 2, 0, 200, 1000, $3, $4)`,
+		conn, deadlocksMetric, now.AddDate(0, -1, 0), now)
+
+	for _, tc := range []struct {
+		db      string
+		value   float64
+		mean    float64
+		outside bool
+	}{
+		{"db_a", 5, 5, false},
+		{"db_b", 50, 100, true},
+	} {
+		t.Run(tc.db, func(t *testing.T) {
+			db := tc.db
+			got, err := LoadComparison(ctx, pool, ComparisonRequest{
+				ConnectionID: conn,
+				Metric:       deadlocksMetric,
+				DatabaseName: &db,
+				Model:        ComparisonModelAll,
+				Window:       window,
+				Buckets:      DefaultComparisonBuckets,
+			}, now)
+			if err != nil {
+				t.Fatalf("LoadComparison: %v", err)
+			}
+			if got.DatabaseName == nil || *got.DatabaseName != tc.db {
+				t.Errorf("database_name = %v, want %s", got.DatabaseName, tc.db)
+			}
+			if len(got.Points) != 1 {
+				t.Fatalf("points = %+v, want only %s's one hourly point", got.Points, tc.db)
+			}
+			p := got.Points[0]
+			if p.Value != tc.value {
+				t.Errorf("value = %v, want %v", p.Value, tc.value)
+			}
+			if p.Cold || p.Mean == nil || *p.Mean != tc.mean || p.Outside != tc.outside {
+				t.Errorf("point = %+v, want %s's band (mean %v, outside %v)",
+					p, tc.db, tc.mean, tc.outside)
+			}
+		})
+	}
+}
+
+// TestComparisonSeriesQuery_Plan logs the plan of the wrapped series
+// query for a CTE and LAG metric with a connection and database bound,
+// to show whether those predicates reach the inner scan. It asserts only
+// that the query plans; the plan itself is evidence for review.
+func TestComparisonSeriesQuery_Plan(t *testing.T) {
+	pool := newCollectorSchemaPool(t)
+	ctx := context.Background()
+	db := "db_a"
+	def, err := ResolveComparisonMetric("pg_stat_database.cache_hit_ratio", &db)
+	if err != nil {
+		t.Fatalf("ResolveComparisonMetric: %v", err)
+	}
+	now := time.Now().UTC()
+	rows, err := pool.Query(ctx, "EXPLAIN "+comparisonSeriesQuery(def),
+		2, 1, db, now.Add(-24*time.Hour), now)
+	if err != nil {
+		t.Fatalf("EXPLAIN: %v", err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatalf("scan plan: %v", err)
+		}
+		plan = append(plan, line)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("plan rows: %v", err)
+	}
+	t.Logf("plan:\n%s", strings.Join(plan, "\n"))
 }

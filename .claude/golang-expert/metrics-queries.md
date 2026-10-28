@@ -1692,7 +1692,12 @@ the band the alerter scores it with; the code is
   registry query must keep the output column names `connection_id`,
   `database_name`, `value` and `collected_at`.
   `TestQueryComparisonSeries_EveryMetric` runs the wrap for every
-  registered metric.
+  registered metric, and `TestLoadComparison_PerDatabase` checks the
+  database predicate keeps two databases apart. On PostgreSQL 18 the
+  planner pushes the connection predicate into the inner index condition
+  and the database predicate into the inner scan's filter, even through
+  a CTE with `LAG` (`TestComparisonSeriesQuery_Plan` logs the plan); the
+  window bounds stay outside the window function, as they must.
 - The metric is validated with `ResolveComparisonMetric` (registry
   lookup plus database scope) before any SQL is chosen.
 - Settings come from `alerter_settings.tier1_scoring`;
@@ -2282,7 +2287,8 @@ failure, a statement timeout on a wide window above all, logs at
 generic message, because an empty success hides a persistent failure as
 a quiet database. `handleQueryStats`, `handleTopQueries`
 (`respondTopQueriesError`) and `handleDatabaseSummaries`
-(`respondDatabaseSummariesError`, issue #519) follow this;
+(`respondDatabaseSummariesError`, issue #519) and
+`handleMetricsBaselines` (`respondBaselinesError`) follow this;
 `handleConnectionGroups` and the performance-summary helpers
 (`queryCacheHit`, `queryTransactions` and the rest) still log at DEBUG
 and return empty.

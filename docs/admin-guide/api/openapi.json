@@ -6228,7 +6228,7 @@
           {
             "name": "database_name",
             "in": "query",
-            "description": "Return only this database's rows, which excludes server-level metrics; when omitted, the rows for every database and the server-level rows are returned, each labelled with database_name",
+            "description": "Return only this database's rows, which excludes server-level metrics; when omitted, the rows for every database and the server-level rows are returned, each tagged with database_name",
             "schema": {
               "type": "string"
             }
@@ -6270,6 +6270,16 @@
           },
           "403": {
             "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to query metric baselines",
             "content": {
               "application/json": {
                 "schema": {

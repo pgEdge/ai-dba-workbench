@@ -23,6 +23,7 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/anomaly"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
@@ -459,11 +460,27 @@ func (h *MetricsHandler) handleMetricsBaselines(
 	result, err := metrics.QueryBaselines(
 		ctx, pool, connectionID, probeName, requestedMetrics, opts)
 	if err != nil {
-		RespondError(w, http.StatusBadRequest, err.Error())
+		respondBaselinesError(w, connectionID, err)
 		return
 	}
 
 	RespondJSON(w, http.StatusOK, result)
+}
+
+// respondBaselinesError answers a failed baselines query. A missing
+// table means the collector has never created its schema, so the answer
+// is an empty list; anything else is a server fault, because every
+// request value was validated before the query ran, so the detail is
+// logged and the caller gets a generic 500.
+func respondBaselinesError(w http.ResponseWriter, connID int, err error) {
+	if isUndefinedTableError(err) {
+		log.Printf("[DEBUG] No metric baselines for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+		RespondJSON(w, http.StatusOK, []metrics.MetricBaseline{})
+		return
+	}
+	log.Printf("[ERROR] Failed to query metric baselines for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+	RespondError(w, http.StatusInternalServerError,
+		"Failed to query metric baselines")
 }
 
 // ComparisonMetric describes one metric the anomaly comparison accepts.
@@ -616,7 +633,7 @@ func (h *MetricsHandler) handleAnomalyComparison(
 	}
 	result, err := loadFn(ctx, h.datastore.GetPool(), req, time.Now())
 	if err != nil {
-		log.Printf("[ERROR] Failed to load anomaly comparison: %v", err)
+		log.Printf("[ERROR] Failed to load anomaly comparison: %s", logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: err is sanitized via logging.SanitizeForLog
 		RespondError(w, http.StatusInternalServerError,
 			"Failed to load the anomaly comparison")
 		return

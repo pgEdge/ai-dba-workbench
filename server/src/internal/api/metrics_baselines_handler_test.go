@@ -11,8 +11,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,8 +65,9 @@ func TestHandleMetricsBaselines_RequestValidation(t *testing.T) {
 const baselinesTestSchema = "api_metrics_baselines_test"
 
 // TestHandleMetricsBaselines_Query drives the baselines query through
-// the handler: a datastore without the table answers 400 with the query
-// error, and one with it returns the requested probe's baselines only.
+// the handler: a datastore without the table answers an empty list, any
+// other query failure a generic 500 with the detail logged, and one with
+// the table returns the requested probe's baselines only.
 func TestHandleMetricsBaselines_Query(t *testing.T) {
 	if os.Getenv("SKIP_DB_TESTS") != "" {
 		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
@@ -113,10 +116,36 @@ func TestHandleMetricsBaselines_Query(t *testing.T) {
 		return rec
 	}
 
-	t.Run("query failure", func(t *testing.T) {
+	t.Run("missing table is an empty list", func(t *testing.T) {
 		rec := serve()
-		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "failed to query baselines") {
-			t.Fatalf("status = %d, body = %s; want 400 with the query error", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+			t.Fatalf("status = %d, body = %s; want 200 with []", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("query failure is a generic 500", func(t *testing.T) {
+		var logged bytes.Buffer
+		log.SetOutput(&logged)
+		defer log.SetOutput(os.Stderr)
+
+		// A canceled request context fails the query with an error
+		// that is neither a validation error nor a missing table.
+		cctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
+			"/api/v1/metrics/baselines?connection_id=1&probe_name=pg_stat_activity", nil)).WithContext(cctx)
+		rec := httptest.NewRecorder()
+		handler.handleMetricsBaselines(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusInternalServerError ||
+			!strings.Contains(body, "Failed to query metric baselines") {
+			t.Fatalf("status = %d, body = %s; want 500 with a generic message", rec.Code, body)
+		}
+		if strings.Contains(body, "failed to query baselines") || strings.Contains(body, "context") {
+			t.Errorf("body = %s, leaks the query error", body)
+		}
+		if !strings.Contains(logged.String(), "failed to query baselines") {
+			t.Errorf("log = %q, want the query error logged", logged.String())
 		}
 	})
 

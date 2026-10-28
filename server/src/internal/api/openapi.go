@@ -3908,6 +3908,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid query parameters"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"500": jsonResponse("ErrorResponse", "Failed to query metric baselines"),
 				},
 			},
 		},

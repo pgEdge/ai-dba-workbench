@@ -412,7 +412,12 @@ Set `provision_users` to `true` to have the Workbench create an account
 the first time an unknown identity logs in. The account is created with
 an unusable password hash, so it can never be reached through password
 login, and it starts with no groups and no superuser flag until
-reconciliation grants them.
+reconciliation grants them. The new account is recorded in the
+[audit log](audit-log.md) as `user.create`, attributed to the `system`
+actor with a `details.reason` of `identity_provider`, the provider's
+issuer in `details.issuer` and the identity's subject in
+`details.subject`. If the event cannot be written, the account is not
+created and the login fails.
 
 Leave `provision_users` at `false`, which is the default, to pre-create
 every account instead. A login by an identity that no account is linked
@@ -680,6 +685,23 @@ them unless `-restore-password` is passed. Linking an account to the
 identity it already holds changes nothing at all, which keeps a
 configuration-management run that reasserts every link from disturbing
 anybody on each pass.
+
+Both commands record what they change in the [audit log](audit-log.md),
+attributed to the `cli` actor named after the operating system user
+who ran them: a link as `user.link_identity` and an unlink as
+`user.unlink_identity`, each carrying the issuer and subject concerned
+and the account's `auth_source` and `external_subject` before and after
+the change. An unlink also records whether it made the password
+unusable in `details.password_changed`, and each API token it revokes
+as a `token.delete` event attributed to the same operator. A link or
+unlink whose `user.link_identity` or `user.unlink_identity` event cannot
+be written is rolled back and the command fails. Token revocation runs
+after the unlink has been committed, so when a `token.delete` event
+cannot be written the account stays unlinked, the command fails, and
+every one of the account's API tokens remains valid; list them with
+`-list-tokens` and remove them with `-remove-token`. A refused link or
+unlink is recorded as a `failure`, and a link that changes nothing
+records nothing.
 
 ## Mapping Provider Groups to Workbench Groups
 

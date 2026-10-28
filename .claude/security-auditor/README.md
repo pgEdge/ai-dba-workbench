@@ -936,6 +936,12 @@ The grants in the same login stay fail-closed: `grantFederatedLocked`
 writes `group.member.add` and the superuser `user.update` inside the
 grant transaction, so an audit failure rolls the grant back and the
 login is refused (`TestReconcileFederatedGroupsRollsBackAnUnauditedGrant`).
+Provisioning a federated account (`user.create`, system actor) and the
+operator's link and unlink (`user.link_identity` and
+`user.unlink_identity`, `cli` actor) are fail-closed too; the token
+revocations an unlink makes afterwards are recorded as `token.delete`
+under the operator, and a failure there is reported as
+`ErrPartialUnlink` rather than swallowed.
 
 Do not report either best-effort event as a missing fail-closed path;
 report any *new* audited mutation that copies the pattern, or a

@@ -77,7 +77,7 @@ func linkOIDCUserCommand(dataDir, username, issuer, subject string, relink bool)
 	}
 	defer store.Close()
 
-	key, err := store.LinkFederatedIdentity(username, issuer, subject, relink)
+	key, err := cliStore(store).LinkFederatedIdentity(username, issuer, subject, relink)
 	if err != nil {
 		return fmt.Errorf("failed to link user: %w", err)
 	}
@@ -121,7 +121,7 @@ func unlinkOIDCUserCommand(dataDir, username string, restorePassword bool) error
 	}
 	defer store.Close()
 
-	key, revoked, err := store.UnlinkFederatedIdentity(username, restorePassword)
+	key, revoked, err := cliStore(store).UnlinkFederatedIdentity(username, restorePassword)
 	if err != nil {
 		// A half-applied unlink is the one case where the operator most
 		// needs the caveat, so it is printed before the error rather

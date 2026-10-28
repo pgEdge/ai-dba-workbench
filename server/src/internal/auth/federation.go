@@ -278,24 +278,73 @@ func (s *AuthStore) provisionFederatedUserLocked(identity FederatedIdentity, key
 		return nil, err
 	}
 
-	result, err := s.db.Exec(
+	return s.insertFederatedUserLocked(identity, key, hash, email)
+}
+
+// insertFederatedUserLocked inserts a provisioned account and records its
+// user.create event in the same transaction, so an account whose event cannot
+// be written is never created and the login that asked for it fails. That is
+// the fail-closed rule every federated grant follows, and creating the account
+// is the largest grant a federated login makes. The event is attributed to the
+// system actor with the identity provider reason and issuer, as
+// reconciliation's events are, and also carries the subject: the account is
+// matched on the pair, and the audit log is the record of which identity it
+// was created for.
+//
+// A failed INSERT is rolled back before resolveProvisionInsertFailureLocked
+// runs, since adopting a concurrently created row reads it outside this
+// transaction; the server that created that row recorded its event. s.mu must
+// be held.
+func (s *AuthStore) insertFederatedUserLocked(identity FederatedIdentity,
+	key, hash, email string) (*StoredUser, error) {
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin provisioning transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			//nolint:errcheck // Rollback error is not critical; the
+			// outer error is already being returned.
+			tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.Exec(
 		`INSERT INTO users (username, password_hash, display_name, email, enabled, auth_source, external_subject)
          VALUES (?, ?, ?, ?, TRUE, ?, ?)`,
 		identity.Username, hash, identity.DisplayName, email, AuthSourceOIDC, key,
-	)
-	if err != nil {
+	); err != nil {
+		//nolint:errcheck // Rollback error is not critical; the insert
+		// error decides what happens next.
+		tx.Rollback()
 		return s.resolveProvisionInsertFailureLocked(err, identity, key)
 	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read provisioned user ID: %w", err)
-	}
 
-	user, err := scanUser(s.db.QueryRow(
-		"SELECT "+federatedUserColumns+" FROM users WHERE id = ?", id))
+	// The row is read back by username, which is unique, inside the
+	// transaction that inserted it, so it is the row just written.
+	user, err := scanUser(tx.QueryRow(
+		"SELECT "+federatedUserColumns+" FROM users WHERE username = ?", identity.Username))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read back provisioned user: %w", err)
 	}
+	after, err := userSnapshotTx(tx, user.Username)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read back provisioned user: %w", err)
+	}
+	if err := s.recordAudit(tx, newEvent(systemActor, "user.create", "user", &after.ID,
+		after.Username, federatedAuditDetails(identity.Issuer, map[string]any{
+			"subject": identity.Subject,
+			"after":   after,
+		}))); err != nil {
+		return nil, fmt.Errorf("failed to record the provisioned user: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit the provisioned user: %w", err)
+	}
+	committed = true
+
 	// Both values originate with the identity provider, and the subject key
 	// embeds the raw "sub" claim, so a hostile provider could otherwise put
 	// CR/LF in it and forge whole log lines.
@@ -938,8 +987,38 @@ func describeSubjectKey(key string) string {
 // concurrent invocations cannot slip an unflagged move between the check and
 // the write.
 //
+// A link that changes the row records a user.link_identity event in the same
+// transaction, so a link whose event cannot be written is not applied; a
+// refused link records a failure event, and the idempotent re-link records
+// nothing. This variant attributes the event to the system actor; the CLI goes
+// through ActorStore.LinkFederatedIdentity so it names the operator.
+//
 // The returned string is the external subject key that was stored.
 func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, relink bool) (string, error) {
+	return s.linkFederatedIdentity(systemActor, username, issuer, subject, relink)
+}
+
+// LinkFederatedIdentity attaches a provider identity to an existing account,
+// attributing the change to this store's actor. See
+// AuthStore.LinkFederatedIdentity.
+func (a *ActorStore) LinkFederatedIdentity(username, issuer, subject string, relink bool) (string, error) {
+	return a.s.linkFederatedIdentity(a.actor, username, issuer, subject, relink)
+}
+
+// Action names for the account changes LinkFederatedIdentity and
+// UnlinkFederatedIdentity make. They are verbs of their own rather than
+// user.update because the user.update snapshot carries neither auth_source
+// nor external_subject, and handing an account to the provider or taking it
+// back is a change of who controls the account that an auditor needs to find
+// by name, as user.set_superuser is.
+const (
+	actionLinkIdentity   = "user.link_identity"
+	actionUnlinkIdentity = "user.unlink_identity"
+)
+
+func (s *AuthStore) linkFederatedIdentity(actor Actor, username, issuer, subject string,
+	relink bool) (string, error) {
+
 	if username == "" {
 		return "", fmt.Errorf("a username is required")
 	}
@@ -969,58 +1048,11 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Sessions are not for service accounts: CreateSessionForUser refuses
-	// one outright, so a linked service account could never complete a
-	// login and the link would be a trap rather than a configuration. The
-	// auth_source condition is the converse of the belt-and-braces check
-	// lookupFederatedUserLocked makes, and keeps this from quietly
-	// converting an account whose identity some future source owns.
-	//
-	// The last condition excludes a row that already says exactly what this
-	// UPDATE would say. SQLite's changes() counts matched rows rather than
-	// modified ones, so without it the documented idempotent re-link would
-	// report a row affected and log the user out; a configuration-management
-	// run that reasserts links every pass would then log every federated
-	// user out every pass. IS NOT is used rather than <> because
-	// external_subject is nullable.
-	query := `UPDATE users SET auth_source = ?, external_subject = ?
-        WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
-          AND (external_subject IS NOT ? OR auth_source <> ?)`
-	args := []any{AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC, key, AuthSourceOIDC}
-	if !relink {
-		query += " AND (external_subject IS NULL OR external_subject = ?)"
-		args = append(args, key)
-	}
-
-	// No pre-flight check that some other account already holds this
-	// subject: the partial unique index on external_subject is what
-	// actually decides that, including against a second server sharing the
-	// auth.db, so the collision is read off the constraint rather than off
-	// a racy SELECT that ran beforehand. The account holding the subject is
-	// then looked up so the operator is told who it is, instead of being
-	// handed a raw SQLite constraint error.
-	result, err := s.db.Exec(query, args...)
+	changed, err := s.applyLinkLocked(actor, username, issuer, subject, relink)
 	if err != nil {
-		if isUniqueViolation(err, "users.external_subject") {
-			holder, lookupErr := s.subjectHolderLocked(key)
-			if lookupErr == nil && holder != "" {
-				return "", fmt.Errorf("issuer %q, subject %q is already linked to account %s",
-					issuer, subject, holder)
-			}
-		}
-		return "", fmt.Errorf("failed to link %s to the identity provider: %w", username, err)
+		return "", err
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return "", fmt.Errorf("failed to confirm the link for %s: %w", username, err)
-	}
-	if affected == 0 {
-		// Either the row already carries this link, in which case there
-		// is nothing to do and nobody to log out, or one of the
-		// conditions refused it.
-		if err := s.explainLinkRefusalLocked(username, key); err != nil {
-			return "", err
-		}
+	if !changed {
 		//nolint:gosec // G706: both values passed through logging.SanitizeForLog
 		log.Printf("[AUTH] Account %s is already linked to federated subject %s; nothing to do",
 			logging.SanitizeForLog(username), logging.SanitizeForLog(key))
@@ -1036,6 +1068,167 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 	log.Printf("[AUTH] Linked account %s to federated subject %s",
 		logging.SanitizeForLog(username), logging.SanitizeForLog(key))
 	return key, nil
+}
+
+// federatedLinkState is the part of a user row that linking and unlinking
+// change, read inside the transaction that changes it.
+type federatedLinkState struct {
+	id              int64
+	authSource      string
+	externalSubject sql.NullString
+}
+
+// readFederatedLinkState reads username's federatedLinkState, returning
+// sql.ErrNoRows unwrapped when there is no such account.
+func readFederatedLinkState(q rowQuerier, username string) (federatedLinkState, error) {
+	var state federatedLinkState
+	err := q.QueryRow(
+		"SELECT id, auth_source, external_subject FROM users WHERE username = ?",
+		username).Scan(&state.id, &state.authSource, &state.externalSubject)
+	return state, err
+}
+
+// auditView renders the state for an audit event. external_subject is the
+// stored key, or null for an account no provider holds.
+func (st federatedLinkState) auditView() map[string]any {
+	view := map[string]any{"auth_source": st.authSource, "external_subject": nil}
+	if st.externalSubject.Valid {
+		view["external_subject"] = st.externalSubject.String
+	}
+	return view
+}
+
+// execLinkUpdate runs the UPDATE that links username to key inside tx.
+//
+// Sessions are not for service accounts: CreateSessionForUser refuses one
+// outright, so a linked service account could never complete a login and the
+// link would be a trap rather than a configuration. The auth_source condition
+// is the converse of the belt-and-braces check lookupFederatedUserLocked
+// makes, and keeps this from quietly converting an account whose identity
+// some future source owns.
+//
+// The (external_subject IS NOT ? OR auth_source <> ?) condition excludes a
+// row that already says exactly what the UPDATE would say. SQLite's changes()
+// counts matched rows rather than modified ones, so without it the documented
+// idempotent re-link would report a row affected and log the user out; a
+// configuration-management run that reasserts links every pass would then log
+// every federated user out every pass. IS NOT is used rather than <> because
+// external_subject is nullable. Without relink, a last condition refuses to
+// move an account already holding a different identity.
+//
+// Each statement is written out in full at its Exec call, rather than shared
+// or assembled, so a static analyser can see that it is a literal.
+func execLinkUpdate(tx *sql.Tx, username, key string, relink bool) (sql.Result, error) {
+	if relink {
+		return tx.Exec(`UPDATE users SET auth_source = ?, external_subject = ?
+            WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
+              AND (external_subject IS NOT ? OR auth_source <> ?)`,
+			AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC, key, AuthSourceOIDC)
+	}
+	return tx.Exec(`UPDATE users SET auth_source = ?, external_subject = ?
+        WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
+          AND (external_subject IS NOT ? OR auth_source <> ?)
+          AND (external_subject IS NULL OR external_subject = ?)`,
+		AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC, key, AuthSourceOIDC, key)
+}
+
+// explainLinkFailureLocked turns a failed link UPDATE into the error the
+// operator sees. There is no pre-flight check that some other account already
+// holds the subject: the partial unique index on external_subject is what
+// actually decides that, including against a second server sharing the
+// auth.db, so the collision is read off the constraint rather than off a racy
+// SELECT that ran beforehand. The account holding the subject is then looked
+// up so the operator is told who it is, instead of being handed a raw SQLite
+// constraint error. s.mu must be held.
+func (s *AuthStore) explainLinkFailureLocked(execErr error, username, issuer,
+	subject string) error {
+
+	if isUniqueViolation(execErr, "users.external_subject") {
+		holder, lookupErr := s.subjectHolderLocked(ExternalSubjectKey(issuer, subject))
+		if lookupErr == nil && holder != "" {
+			return fmt.Errorf("issuer %q, subject %q is already linked to account %s",
+				issuer, subject, holder)
+		}
+	}
+	return fmt.Errorf("failed to link %s to the identity provider: %w", username, execErr)
+}
+
+// applyLinkLocked writes the link and its user.link_identity event in one
+// transaction, reporting whether the row changed. An UPDATE that matched no
+// row is either the idempotent re-link, which returns false and no error, or
+// a refusal, which explainLinkRefusalLocked names and which is recorded as a
+// failure event. s.mu must be held.
+func (s *AuthStore) applyLinkLocked(actor Actor, username, issuer, subject string,
+	relink bool) (changed bool, err error) {
+
+	key := ExternalSubjectKey(issuer, subject)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	target := &auditTarget{action: actionLinkIdentity, targetType: "user", targetName: username}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	// The transaction begins IMMEDIATE (see NewAuthStore), so this read
+	// and the UPDATE below see the same row; it supplies the event's before
+	// state, while the UPDATE's own conditions still decide the write.
+	// Each error return below assigns the named err, which is what the
+	// deferred failAudit reads.
+	before, err := readFederatedLinkState(tx, username)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("user not found: %s", username)
+	}
+	if err != nil {
+		return false, fmt.Errorf("looking up user: %w", err)
+	}
+	target.targetID = &before.id
+
+	result, err := execLinkUpdate(tx, username, key, relink)
+	if err != nil {
+		// The explanation reads outside the transaction, so it is rolled
+		// back first; failAudit's own rollback is then a no-op.
+		//nolint:errcheck // Rollback error is not critical; see above.
+		tx.Rollback()
+		return false, s.explainLinkFailureLocked(err, username, issuer, subject)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to confirm the link for %s: %w", username, err)
+	}
+	if affected == 0 {
+		// Either the row already carries this link, in which case there
+		// is nothing to do and nobody to log out, or one of the
+		// conditions refused it.
+		//nolint:errcheck // Rollback error is not critical; see above.
+		tx.Rollback()
+		return false, s.explainLinkRefusalLocked(username, key)
+	}
+
+	after := federatedLinkState{
+		id:              before.id,
+		authSource:      AuthSourceOIDC,
+		externalSubject: sql.NullString{String: key, Valid: true},
+	}
+	err = s.recordAudit(tx, newEvent(actor, actionLinkIdentity, "user", &before.id,
+		username, map[string]any{
+			"issuer":  issuer,
+			"subject": subject,
+			"relink":  relink,
+			"before":  before.auditView(),
+			"after":   after.auditView(),
+		}))
+	if err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, fmt.Errorf("failed to commit the link for %s: %w", username, err)
+	}
+	return true, nil
 }
 
 // explainLinkRefusalLocked turns an UPDATE that matched no row into the reason
@@ -1113,9 +1306,29 @@ func (s *AuthStore) explainLinkRefusalLocked(username, key string) error {
 // with the same per-process caveat as in LinkFederatedIdentity: a call from the
 // CLI cannot end a session the running server is holding.
 //
+// The account change records a user.unlink_identity event in the same
+// transaction, so an unlink whose event cannot be written is not applied, and
+// a refused unlink records a failure event. The token deletions that follow
+// record their own token.delete events, attributed to the same actor. This
+// variant attributes everything to the system actor; the CLI goes through
+// ActorStore.UnlinkFederatedIdentity so it names the operator.
+//
 // The returned values are the external subject key that was cleared and the
 // number of tokens revoked, which is always zero when restorePassword is set.
 func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword bool) (string, int, error) {
+	return s.unlinkFederatedIdentity(systemActor, username, restorePassword)
+}
+
+// UnlinkFederatedIdentity detaches an account from its provider identity,
+// attributing the change and its token deletions to this store's actor. See
+// AuthStore.UnlinkFederatedIdentity.
+func (a *ActorStore) UnlinkFederatedIdentity(username string, restorePassword bool) (string, int, error) {
+	return a.s.unlinkFederatedIdentity(a.actor, username, restorePassword)
+}
+
+func (s *AuthStore) unlinkFederatedIdentity(actor Actor, username string,
+	restorePassword bool) (string, int, error) {
+
 	if username == "" {
 		return "", 0, fmt.Errorf("a username is required")
 	}
@@ -1123,12 +1336,18 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword boo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	id, key, existing, err := s.federatedAccountForUnlinkLocked(username)
+	before, err := s.federatedAccountForUnlinkLocked(username)
 	if err != nil {
+		var targetID *int64
+		if before.id != 0 {
+			targetID = &before.id
+		}
+		s.recordFailure(actor, actionUnlinkIdentity, "user", targetID, username, err)
 		return "", 0, err
 	}
+	key := before.externalSubject.String
 
-	if err := s.applyUnlinkLocked(username, id, existing, restorePassword); err != nil {
+	if err := s.applyUnlinkLocked(actor, username, before, restorePassword); err != nil {
 		return "", 0, err
 	}
 
@@ -1139,7 +1358,7 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword boo
 
 	revoked := 0
 	if !restorePassword {
-		revoked, err = s.revokeAccountTokensLocked(username)
+		revoked, err = s.revokeAccountTokensLocked(actor, username)
 		if err != nil {
 			// The account is already local and its password already
 			// unusable, so this is reported rather than rolled back:
@@ -1168,34 +1387,23 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword boo
 
 // federatedAccountForUnlinkLocked reads the account an unlink is about and
 // refuses the ones that have no federated identity to clear. It returns the
-// row's id, the external subject key as a plain string for reporting, and the
-// same value as it was read, which the UPDATE pins itself to. s.mu must be
-// held.
-func (s *AuthStore) federatedAccountForUnlinkLocked(
-	username string) (int64, string, sql.NullString, error) {
-
-	var id int64
-	var authSource string
-	var existing sql.NullString
-	err := s.db.QueryRow(
-		"SELECT id, auth_source, external_subject FROM users WHERE username = ?",
-		username).Scan(&id, &authSource, &existing)
+// row as it was read, which the UPDATE pins itself to and the event reports as
+// the before state; on a refusal of an account that exists, the row is
+// returned too, so the failure event can name it. s.mu must be held.
+func (s *AuthStore) federatedAccountForUnlinkLocked(username string) (federatedLinkState, error) {
+	state, err := readFederatedLinkState(s.db, username)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, "", existing, fmt.Errorf("user not found: %s", username)
+		return federatedLinkState{}, fmt.Errorf("user not found: %s", username)
 	}
 	if err != nil {
-		return 0, "", existing, fmt.Errorf("looking up user: %w", err)
+		return federatedLinkState{}, fmt.Errorf("looking up user: %w", err)
 	}
 
-	key := ""
-	if existing.Valid {
-		key = existing.String
-	}
-	if key == "" && authSource != AuthSourceOIDC {
-		return 0, "", existing, fmt.Errorf(
+	if state.externalSubject.String == "" && state.authSource != AuthSourceOIDC {
+		return state, fmt.Errorf(
 			"account %s is not linked to an identity provider", username)
 	}
-	return id, key, existing, nil
+	return state, nil
 }
 
 // applyUnlinkLocked writes the unlink itself: auth_source back to local,
@@ -1207,12 +1415,19 @@ func (s *AuthStore) federatedAccountForUnlinkLocked(
 // = so a NULL matches, which is what makes the key reported to the operator
 // and written to the log the key that was actually cleared: if a link commits
 // in between, this matches no row and says so rather than naming a subject it
-// did not clear. s.mu must be held.
-func (s *AuthStore) applyUnlinkLocked(
-	username string, id int64, existing sql.NullString, restorePassword bool) error {
+// did not clear.
+//
+// The UPDATE and its user.unlink_identity event share one transaction, so an
+// unlink whose event cannot be written is rolled back and reported, and a
+// refused one records a failure event. The unusable hash is computed before
+// the transaction begins, because the transaction holds SQLite's write lock
+// and bcrypt is deliberately slow. s.mu must be held.
+func (s *AuthStore) applyUnlinkLocked(actor Actor, username string,
+	before federatedLinkState, restorePassword bool) (err error) {
 
+	existing := before.externalSubject
 	query := "UPDATE users SET auth_source = ?, external_subject = NULL WHERE id = ? AND external_subject IS ?"
-	args := []any{AuthSourceLocal, id, existing}
+	args := []any{AuthSourceLocal, before.id, existing}
 	if !restorePassword {
 		hash, hashErr := s.unusablePasswordHashLocked()
 		if hashErr != nil {
@@ -1220,9 +1435,24 @@ func (s *AuthStore) applyUnlinkLocked(
 		}
 		query = "UPDATE users SET auth_source = ?, external_subject = NULL, password_hash = ? " +
 			"WHERE id = ? AND external_subject IS ?"
-		args = []any{AuthSourceLocal, hash, id, existing}
+		args = []any{AuthSourceLocal, hash, before.id, existing}
 	}
-	result, err := s.db.Exec(query, args...)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	target := &auditTarget{action: actionUnlinkIdentity, targetType: "user",
+		targetID: &before.id, targetName: username}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	// Each error return below assigns the named err, which is what the
+	// deferred failAudit reads.
+	result, err := tx.Exec(query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to unlink %s from the identity provider: %w", username, err)
 	}
@@ -1232,10 +1462,41 @@ func (s *AuthStore) applyUnlinkLocked(
 	}
 	if affected == 0 {
 		// Which of the two conditions failed decides the message only,
-		// never the write, exactly as on the link side.
+		// never the write, exactly as on the link side. The explanation
+		// reads outside the transaction, so it is rolled back first.
+		//nolint:errcheck // Rollback error is not critical; failAudit
+		// rolls back again regardless.
+		tx.Rollback()
 		return s.explainUnlinkRefusalLocked(username)
 	}
+
+	err = s.recordAudit(tx, newEvent(actor, actionUnlinkIdentity, "user", &before.id,
+		username, unlinkAuditDetails(before, restorePassword)))
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit the unlink for %s: %w", username, err)
+	}
 	return nil
+}
+
+// unlinkAuditDetails builds the details of a user.unlink_identity event. The
+// issuer and subject are split out of the cleared key when it parses, as the
+// link event carries them, and password_changed says whether the unlink wrote
+// an unusable hash, with the meaning user.update gives it.
+func unlinkAuditDetails(before federatedLinkState, restorePassword bool) map[string]any {
+	after := federatedLinkState{id: before.id, authSource: AuthSourceLocal}
+	details := map[string]any{
+		"password_changed": !restorePassword,
+		"before":           before.auditView(),
+		"after":            after.auditView(),
+	}
+	if issuer, subject, ok := parseExternalSubjectKey(before.externalSubject.String); ok {
+		details["issuer"] = issuer
+		details["subject"] = subject
+	}
+	return details
 }
 
 // explainUnlinkRefusalLocked says why an unlink UPDATE matched no row: either
@@ -1261,7 +1522,7 @@ func (s *AuthStore) explainUnlinkRefusalLocked(username string) error {
 // them. It returns how many tokens were deleted. s.mu must be held, which is
 // why it calls deleteTokensByFilter rather than an exported method that would
 // take the lock again.
-func (s *AuthStore) revokeAccountTokensLocked(username string) (int, error) {
+func (s *AuthStore) revokeAccountTokensLocked(actor Actor, username string) (int, error) {
 	const ownedByUser = "owner_id = (SELECT id FROM users WHERE username = ?)"
 
 	var count int
@@ -1275,10 +1536,10 @@ func (s *AuthStore) revokeAccountTokensLocked(username string) (int, error) {
 	if count == 0 {
 		return 0, nil
 	}
-	// The revocation is a consequence of the unlink the operator asked
-	// for at the command line, so its token.delete events are attributed
-	// to the system actor rather than to a request principal.
-	if err := s.deleteTokensByFilter(systemActor, ownedByUser, []any{username},
+	// The revocation is a consequence of the unlink, so its token.delete
+	// events are attributed to whoever asked for the unlink: the operator,
+	// when it comes from the command line.
+	if err := s.deleteTokensByFilter(actor, ownedByUser, []any{username},
 		true); err != nil {
 		return 0, err
 	}

@@ -11,6 +11,7 @@ package auth
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -235,23 +236,29 @@ func TestLinkFederatedIdentityRelinkStillRefusesCollision(t *testing.T) {
 	}
 }
 
+// Both link statements carry the service-account guard, so the refusal is
+// checked for a first link and for a relink.
 func TestLinkFederatedIdentityRefusesServiceAccount(t *testing.T) {
-	store, cleanup := createTestAuthStoreForStore(t)
-	defer cleanup()
+	for _, relink := range []bool{false, true} {
+		t.Run(fmt.Sprintf("relink=%t", relink), func(t *testing.T) {
+			store, cleanup := createTestAuthStoreForStore(t)
+			defer cleanup()
 
-	if err := store.CreateServiceAccount("robot", "", "", ""); err != nil {
-		t.Fatalf("CreateServiceAccount: %v", err)
-	}
+			if err := store.CreateServiceAccount("robot", "", "", ""); err != nil {
+				t.Fatalf("CreateServiceAccount: %v", err)
+			}
 
-	_, err := store.LinkFederatedIdentity("robot", linkTestIssuer, linkTestSubject, false)
-	if err == nil {
-		t.Fatal("a service account was linked to an identity provider")
-	}
-	if !strings.Contains(err.Error(), "service account") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if authSource, subject, _ := linkedAccountState(t, store, "robot"); authSource != AuthSourceLocal || subject != "" {
-		t.Fatalf("refused link altered the service account: auth_source=%q external_subject=%q", authSource, subject)
+			_, err := store.LinkFederatedIdentity("robot", linkTestIssuer, linkTestSubject, relink)
+			if err == nil {
+				t.Fatal("a service account was linked to an identity provider")
+			}
+			if !strings.Contains(err.Error(), "service account") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if authSource, subject, _ := linkedAccountState(t, store, "robot"); authSource != AuthSourceLocal || subject != "" {
+				t.Fatalf("refused link altered the service account: auth_source=%q external_subject=%q", authSource, subject)
+			}
+		})
 	}
 }
 

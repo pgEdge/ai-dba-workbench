@@ -311,3 +311,42 @@ func TestUnlinkOIDCUserCommand(t *testing.T) {
 		}
 	})
 }
+
+// The link, the unlink and the token revocations the unlink makes are all
+// attributed to the operator who ran the commands.
+func TestOIDCLinkingCommandsRecordTheCLIActor(t *testing.T) {
+	dataDir := seedLinkTestUser(t, "alice")
+	seed, err := auth.NewAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
+	if err != nil {
+		t.Fatalf("failed to reopen auth store: %v", err)
+	}
+	_, _, err = cliStore(seed).CreateToken("alice", "to be revoked", nil, true)
+	seed.Close()
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+
+	captureStdout(t, func() {
+		if err := linkOIDCUserCommand(dataDir, "alice", cliTestIssuer, cliTestSubject, false); err != nil {
+			t.Errorf("link: %v", err)
+		}
+		if err := unlinkOIDCUserCommand(dataDir, "alice", false); err != nil {
+			t.Errorf("unlink: %v", err)
+		}
+	})
+
+	store := reopenStore(t, dataDir)
+	for _, action := range []string{"user.link_identity", "user.unlink_identity", "token.delete"} {
+		events, _, err := store.ListAuditEvents(auth.AuditFilter{Action: action})
+		if err != nil {
+			t.Fatalf("ListAuditEvents(%s): %v", action, err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("recorded %d %s event(s), want 1", len(events), action)
+		}
+		if events[0].ActorType != auth.ActorCLI || events[0].ActorName != cliActor().Name {
+			t.Errorf("%s attributed to %q/%q, want the CLI operator %q", action,
+				events[0].ActorType, events[0].ActorName, cliActor().Name)
+		}
+	}
+}

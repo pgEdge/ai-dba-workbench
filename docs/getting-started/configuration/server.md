@@ -420,7 +420,8 @@ example that needs `access_type: offline`.
     token such an account already owns is refused on use.
     Switching it on lets those tokens keep working after
     the person is removed at the identity provider,
-    until each token expires or is revoked, because the
+    until each token expires or is revoked, or the
+    Workbench account is disabled or deleted, because the
     provider is never consulted when a token is used.
     Use a local service account for automation instead.
 

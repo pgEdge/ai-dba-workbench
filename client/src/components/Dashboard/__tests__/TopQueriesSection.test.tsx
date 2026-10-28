@@ -473,7 +473,7 @@ describe('TopQueriesSection', () => {
             expect(screen.getByText('proddb')).toBeInTheDocument();
         });
 
-        const rowButton = screen.getByRole('button', {
+        const rowButton = screen.getByRole('row', {
             name: /View details for query/,
         });
         fireEvent.click(rowButton);
@@ -495,7 +495,7 @@ describe('TopQueriesSection', () => {
 
         renderSection();
 
-        const rowButton = await screen.findByRole('button', {
+        const rowButton = await screen.findByRole('row', {
             name: /View details for query/,
         });
         fireEvent.keyDown(rowButton, { key: 'Enter' });
@@ -510,7 +510,7 @@ describe('TopQueriesSection', () => {
 
         renderSection();
 
-        const rowButton = await screen.findByRole('button', {
+        const rowButton = await screen.findByRole('row', {
             name: /View details for query/,
         });
         fireEvent.keyDown(rowButton, { key: 'Escape' });
@@ -533,7 +533,7 @@ describe('TopQueriesSection', () => {
             expect(screen.getByText('proddb')).toBeInTheDocument();
         });
 
-        fireEvent.click(screen.getByRole('button', {
+        fireEvent.click(screen.getByRole('row', {
             name: /View details for query/,
         }));
 
@@ -1310,5 +1310,449 @@ describe('TopQueriesSection', () => {
                 screen.getByText(/No query statistics available/),
             ).toBeInTheDocument();
         });
+    });
+
+    describe('column sorting', () => {
+        /** The header cell holding the named sort control. */
+        const headerFor = (label: string): HTMLElement =>
+            screen.getByRole('columnheader', { name: label });
+
+        /** The sort control inside the named header. */
+        const sortControl = (label: string): HTMLElement =>
+            screen.getByRole('button', { name: label });
+
+        it('orders by total time, largest first, by default', async () => {
+            setupFetch({ rows: makeRows(1) });
+
+            renderSection();
+
+            await screen.findByRole('table', { name: 'Top queries' });
+            expect(paramOf(lastTopQueryUrl(), 'order_by')).toBe(
+                'total_exec_time',
+            );
+            expect(paramOf(lastTopQueryUrl(), 'order')).toBe('desc');
+            expect(headerFor('Total Time')).toHaveAttribute(
+                'aria-sort', 'descending',
+            );
+            for (const label of ['Calls', 'Mean Time', 'Rows']) {
+                expect(headerFor(label)).toHaveAttribute('aria-sort', 'none');
+            }
+        });
+
+        it('leaves the Database and Query headers unsortable', async () => {
+            setupFetch({ rows: makeRows(1) });
+
+            renderSection();
+
+            await screen.findByRole('table', { name: 'Top queries' });
+            expect(headerFor('Database')).not.toHaveAttribute('aria-sort');
+            expect(headerFor('Query')).not.toHaveAttribute('aria-sort');
+            expect(
+                screen.queryByRole('button', { name: 'Query' }),
+            ).not.toBeInTheDocument();
+        });
+
+        it.each([
+            ['Calls', 'calls'],
+            ['Mean Time', 'mean_exec_time'],
+            ['Rows', 'rows'],
+        ])('sorts by %s descending on first click', async (label, key) => {
+            setupFetch({ rows: makeRows(1) });
+
+            renderSection();
+
+            await screen.findByRole('table', { name: 'Top queries' });
+            fireEvent.click(sortControl(label));
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'order_by')).toBe(key);
+            });
+            expect(paramOf(lastTopQueryUrl(), 'order')).toBe('desc');
+            expect(headerFor(label)).toHaveAttribute(
+                'aria-sort', 'descending',
+            );
+            expect(headerFor('Total Time')).toHaveAttribute(
+                'aria-sort', 'none',
+            );
+        });
+
+        it('toggles direction when the active column is clicked', async () => {
+            setupFetch({ rows: makeRows(1) });
+
+            renderSection();
+
+            await screen.findByRole('table', { name: 'Top queries' });
+            fireEvent.click(sortControl('Total Time'));
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'order')).toBe('asc');
+            });
+            expect(paramOf(lastTopQueryUrl(), 'order_by')).toBe(
+                'total_exec_time',
+            );
+            expect(headerFor('Total Time')).toHaveAttribute(
+                'aria-sort', 'ascending',
+            );
+
+            fireEvent.click(sortControl('Total Time'));
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'order')).toBe('desc');
+            });
+            expect(headerFor('Total Time')).toHaveAttribute(
+                'aria-sort', 'descending',
+            );
+        });
+
+        it('starts a newly chosen column descending after an ascending sort',
+            async () => {
+                setupFetch({ rows: makeRows(1) });
+
+                renderSection();
+
+                await screen.findByRole('table', { name: 'Top queries' });
+                fireEvent.click(sortControl('Total Time'));
+                await waitFor(() => {
+                    expect(paramOf(lastTopQueryUrl(), 'order')).toBe('asc');
+                });
+
+                fireEvent.click(sortControl('Calls'));
+
+                await waitFor(() => {
+                    expect(paramOf(lastTopQueryUrl(), 'order_by')).toBe(
+                        'calls',
+                    );
+                });
+                expect(paramOf(lastTopQueryUrl(), 'order')).toBe('desc');
+            });
+
+        it('can be operated from the keyboard', async () => {
+            setupFetch({ rows: makeRows(1) });
+
+            renderSection();
+
+            await screen.findByRole('table', { name: 'Top queries' });
+            const control = sortControl('Mean Time');
+            expect(control).toHaveAttribute('tabindex', '0');
+            control.focus();
+            fireEvent.keyDown(control, { key: 'Enter' });
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'order_by')).toBe(
+                    'mean_exec_time',
+                );
+            });
+        });
+
+        it('resets to the first page when the sort changes', async () => {
+            setupFetch({
+                pages: {
+                    '0': makeRows(20, 'a'),
+                    '20': makeRows(20, 'b'),
+                },
+                totalCount: '90',
+            });
+
+            renderSection();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByRole('button', {
+                        name: 'Next page of queries',
+                    }),
+                ).toBeEnabled();
+            });
+            fireEvent.click(
+                screen.getByRole('button', { name: 'Next page of queries' }),
+            );
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('20');
+            });
+
+            fireEvent.click(sortControl('Rows'));
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'order_by')).toBe('rows');
+            });
+            expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('0');
+        });
+    });
+
+    describe('query text filter', () => {
+        /** The text filter input. */
+        const filterInput = (): HTMLInputElement =>
+            screen.getByRole('textbox', { name: 'Filter queries' }) as
+                HTMLInputElement;
+
+        /** Type a term into the filter as a single change. */
+        const typeFilter = (value: string): void => {
+            fireEvent.change(filterInput(), { target: { value } });
+        };
+
+        /** Top-queries URLs that carried a query_text parameter. */
+        const filteredUrls = (): string[] => topQueryUrls().filter(
+            url => paramOf(url, 'query_text') !== null,
+        );
+
+        /** Wait comfortably past the debounce delay. */
+        const waitPastDebounce = (): Promise<void> =>
+            new Promise(resolve => { setTimeout(resolve, 400); });
+
+        it('omits query_text when no term is entered', async () => {
+            setupFetch({ rows: makeRows(1) });
+
+            renderSection();
+
+            await screen.findByRole('table', { name: 'Top queries' });
+            expect(filterInput()).toHaveValue('');
+            expect(paramOf(lastTopQueryUrl(), 'query_text')).toBeNull();
+        });
+
+        it('caps the term at the server limit of 1000 characters',
+            async () => {
+                setupFetch({ rows: makeRows(1) });
+
+                renderSection();
+
+                await screen.findByRole('table', { name: 'Top queries' });
+                expect(filterInput()).toHaveAttribute('maxlength', '1000');
+            });
+
+        it('sends one debounced request for a burst of keystrokes',
+            async () => {
+                setupFetch({ rows: makeRows(1) });
+
+                renderSection();
+
+                await screen.findByRole('table', { name: 'Top queries' });
+                typeFilter('s');
+                typeFilter('se');
+                typeFilter('sel');
+                typeFilter('select');
+
+                // Nothing has been sent yet: the debounce is still
+                // waiting for the user to pause.
+                expect(filteredUrls()).toHaveLength(0);
+
+                await waitFor(() => {
+                    expect(filteredUrls()).toHaveLength(1);
+                });
+                expect(paramOf(lastTopQueryUrl(), 'query_text')).toBe(
+                    'select',
+                );
+
+                await waitPastDebounce();
+                expect(filteredUrls()).toHaveLength(1);
+            });
+
+        it('trims surrounding whitespace from the term', async () => {
+            setupFetch({ rows: makeRows(1) });
+
+            renderSection();
+
+            await screen.findByRole('table', { name: 'Top queries' });
+            typeFilter('  users  ');
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'query_text')).toBe(
+                    'users',
+                );
+            });
+        });
+
+        it('sends no filter for a whitespace-only term', async () => {
+            setupFetch({ rows: makeRows(1) });
+
+            renderSection();
+
+            await screen.findByRole('table', { name: 'Top queries' });
+            const before = topQueryUrls().length;
+            typeFilter('   ');
+
+            await waitPastDebounce();
+            expect(filteredUrls()).toHaveLength(0);
+            expect(topQueryUrls()).toHaveLength(before);
+        });
+
+        it('clears the term with the clear button', async () => {
+            setupFetch({ rows: makeRows(1) });
+
+            renderSection();
+
+            await screen.findByRole('table', { name: 'Top queries' });
+            expect(
+                screen.queryByRole('button', { name: 'Clear query filter' }),
+            ).not.toBeInTheDocument();
+
+            typeFilter('users');
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'query_text')).toBe(
+                    'users',
+                );
+            });
+
+            fireEvent.click(
+                screen.getByRole('button', { name: 'Clear query filter' }),
+            );
+
+            expect(filterInput()).toHaveValue('');
+            expect(
+                screen.queryByRole('button', { name: 'Clear query filter' }),
+            ).not.toBeInTheDocument();
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'query_text')).toBeNull();
+            });
+        });
+
+        it('resets to the first page when the filter changes', async () => {
+            setupFetch({
+                pages: {
+                    '0': makeRows(20, 'a'),
+                    '20': makeRows(20, 'b'),
+                },
+                totalCount: '90',
+            });
+
+            renderSection();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByRole('button', {
+                        name: 'Next page of queries',
+                    }),
+                ).toBeEnabled();
+            });
+            fireEvent.click(
+                screen.getByRole('button', { name: 'Next page of queries' }),
+            );
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('20');
+            });
+
+            typeFilter('users');
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'query_text')).toBe(
+                    'users',
+                );
+            });
+            expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('0');
+            // The reset lands before the fetch, so no request ever
+            // pairs the new term with the old offset.
+            for (const url of filteredUrls()) {
+                expect(paramOf(url, 'offset')).toBe('0');
+            }
+        });
+
+        it('says so when the term matches nothing', async () => {
+            mockApiFetch.mockImplementation((url: string) => {
+                if (url.includes('database-summaries')) {
+                    return Promise.resolve(okResponse({ databases: [] }));
+                }
+                const rows = paramOf(url, 'query_text') === null
+                    ? makeRows(1)
+                    : [];
+                return Promise.resolve(okResponse(rows, String(rows.length)));
+            });
+
+            renderSection();
+
+            await screen.findByRole('table', { name: 'Top queries' });
+            typeFilter('zzz');
+
+            expect(
+                await screen.findByText("No queries match 'zzz'."),
+            ).toBeInTheDocument();
+            expect(
+                screen.queryByText(/pg_stat_statements/),
+            ).not.toBeInTheDocument();
+            // The field stays available so the user can amend the term.
+            expect(filterInput()).toHaveValue('zzz');
+        });
+
+        it('names the selected database when the term matches nothing',
+            async () => {
+                mockApiFetch.mockImplementation((url: string) => {
+                    if (url.includes('database-summaries')) {
+                        return Promise.resolve(okResponse({
+                            databases: [
+                                { database_name: 'analytics' },
+                                { database_name: 'reporting' },
+                            ],
+                        }));
+                    }
+                    const rows = paramOf(url, 'query_text') === null
+                        ? makeRows(1)
+                        : [];
+                    return Promise.resolve(okResponse(rows));
+                });
+
+                renderSection();
+
+                await screen.findByRole('combobox');
+                fireEvent.mouseDown(screen.getByRole('combobox'));
+                fireEvent.click(
+                    screen.getByRole('option', { name: 'reporting' }),
+                );
+                typeFilter('zzz');
+
+                expect(
+                    await screen.findByText(
+                        "No queries in reporting match 'zzz'.",
+                    ),
+                ).toBeInTheDocument();
+            });
+    });
+
+    describe('sorting and filtering when pinned to a database', () => {
+        it('offers the filter and sort controls and sends both', async () => {
+            setupFetch({ rows: makeRows(1) });
+
+            renderScopedSection('analytics');
+
+            await screen.findByRole('table', { name: 'Top queries' });
+            fireEvent.click(screen.getByRole('button', { name: 'Calls' }));
+            fireEvent.change(
+                screen.getByRole('textbox', { name: 'Filter queries' }),
+                { target: { value: 'orders' } },
+            );
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'query_text')).toBe(
+                    'orders',
+                );
+            });
+            const url = lastTopQueryUrl();
+            expect(paramOf(url, 'order_by')).toBe('calls');
+            expect(paramOf(url, 'order')).toBe('desc');
+            expect(paramOf(url, 'database_name')).toBe('analytics');
+            expect(
+                screen.getByRole('columnheader', { name: 'Calls' }),
+            ).toHaveAttribute('aria-sort', 'descending');
+        });
+
+        it('names the pinned database when the term matches nothing',
+            async () => {
+                mockApiFetch.mockImplementation((url: string) => {
+                    const rows = paramOf(url, 'query_text') === null
+                        ? makeRows(1)
+                        : [];
+                    return Promise.resolve(okResponse(rows));
+                });
+
+                renderScopedSection('analytics');
+
+                await screen.findByRole('table', { name: 'Top queries' });
+                fireEvent.change(
+                    screen.getByRole('textbox', { name: 'Filter queries' }),
+                    { target: { value: 'zzz' } },
+                );
+
+                expect(
+                    await screen.findByText(
+                        "No queries in analytics match 'zzz'.",
+                    ),
+                ).toBeInTheDocument();
+            });
     });
 });

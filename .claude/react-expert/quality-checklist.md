@@ -101,6 +101,11 @@ dialog.
 
 ## TextField Native Input Attributes
 
+The client is on MUI 5 (`@mui/material` 5.18), where `TextField`
+does not apply the MUI 6 `slotProps.htmlInput` and
+`slotProps.input` keys. Pass native attributes such as `maxLength` through
+`inputProps`, and adornments through `InputProps`.
+
 ## Dashboard Chart Semantics
 
 Metric series carry units and semantics, and a chart must not mix
@@ -474,8 +479,8 @@ should be written; it is deliberately separate from
 - Route every offset reset through one helper rather than calling
   `setPage(0)` at each call site, because the total row count read
   from `X-Total-Count` has to be cleared alongside the offset.
-  `TopQueriesSection.resetPaging` does both, and its filter, toggle
-  and page-size handlers all go through it; a bare `setPage(0)`
+  `TopQueriesSection.resetPaging` does both, and its filter, toggle,
+  sort and page-size handlers all go through it; a bare `setPage(0)`
   leaves the previous filter's total on screen until the next
   response lands.
 
@@ -550,6 +555,45 @@ whose weighted cache hit average cannot be recomputed from the response
 fields, so a consumer needing it must read an unbatched response.
 `/api/v1/alerts` and `/api/v1/overview` also take `connection_ids` but
 are not capped, and are sent whole.
+
+## Sortable and Searchable Dashboard Tables
+
+`TopQueriesSection` is the worked example of a Box-grid table with
+server-side sorting and a text filter.
+
+- `aria-sort` is only valid on a `columnheader`, so a sortable Box
+  grid needs the full table roles: `role="table"` with an
+  `aria-label` on the container, `role="row"` on the header and on
+  each body row, `role="columnheader"` and `role="cell"` on the
+  cells. A clickable body row keeps its `tabIndex`, Enter and Space
+  handling and `aria-label`, but is a `row`, not a `button`; query
+  it in tests with `getByRole('row', { name: ... })`.
+
+- Put MUI `TableSortLabel` inside the `columnheader`; it is a
+  keyboard-operable `ButtonBase` named by its label text. Set
+  `aria-sort` to `ascending` or `descending` on the active header
+  and `none` on the other sortable ones, and leave it off
+  unsortable headers. Over a right-aligned numeric column, give the
+  label `flexDirection: 'row-reverse'` so the arrow sits on the
+  left, and `font`, `letterSpacing` and `textTransform: 'inherit'`
+  so it keeps the header styling.
+
+- Keep sort state as one `{ column, order }` object whose `column`
+  is the server's `order_by` key. A new column starts `desc`, since
+  largest first is the useful end of a metric; the active column
+  toggles.
+
+- Debounce text filters with `useDebouncedValue` from
+  `client/src/hooks/useDebouncedValue.ts` (300 ms), trim the result
+  and omit the request parameter when it is blank. Cap the input
+  with `maxLength` at the server's limit. Reset paging off the
+  debounced value with `useResetOnChange`, not in the change
+  handler, so the reset lands with the fetch that uses the term.
+
+- The empty state must say the filter matched nothing ("No queries
+  match '...'.") rather than suggest the data source is missing.
+  React escapes the interpolated term, and the message needs
+  `overflowWrap: 'anywhere'` for long terms.
 
 ## TypeScript Standards
 

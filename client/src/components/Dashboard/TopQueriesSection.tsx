@@ -16,21 +16,27 @@ import CircularProgress from '@mui/material/CircularProgress';
 import FormControl from '@mui/material/FormControl';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
+import InputAdornment from '@mui/material/InputAdornment';
 import InputLabel from '@mui/material/InputLabel';
 import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 import type { SelectChangeEvent } from '@mui/material/Select';
 import Switch from '@mui/material/Switch';
+import TableSortLabel from '@mui/material/TableSortLabel';
+import TextField from '@mui/material/TextField';
 import {
     QueryStats as QueryStatsIcon,
     ChevronLeft as ChevronLeftIcon,
     ChevronRight as ChevronRightIcon,
+    Clear as ClearIcon,
+    Search as SearchIcon,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../../contexts/useAuth';
 import { apiFetch } from '../../utils/apiClient';
 import { useDashboard } from '../../contexts/useDashboard';
 import { useDatabaseSummaries } from '../../hooks/useDatabaseSummaries';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import CollapsibleSection from './CollapsibleSection';
 import { formatTime, formatNumber } from '../../utils/formatters';
 import {
@@ -59,6 +65,38 @@ const DEFAULT_PAGE_SIZE = 20;
 
 /** Sentinel value used by the database filter for "no filter" */
 const ALL_DATABASES = '';
+
+/** Numeric columns the server can order the result set by */
+type SortColumn = 'calls' | 'total_exec_time' | 'mean_exec_time' | 'rows';
+
+/** Direction of the active sort */
+type SortOrder = 'asc' | 'desc';
+
+interface SortState {
+    column: SortColumn;
+    order: SortOrder;
+}
+
+/** The ranking the section opens with: the heaviest queries first */
+const DEFAULT_SORT: SortState = { column: 'total_exec_time', order: 'desc' };
+
+/**
+ * Sortable columns in display order. Each value doubles as the
+ * server's `order_by` key, so the header and the request cannot drift
+ * apart.
+ */
+const SORTABLE_COLUMNS: ReadonlyArray<{ column: SortColumn; label: string }> = [
+    { column: 'calls', label: 'Calls' },
+    { column: 'total_exec_time', label: 'Total Time' },
+    { column: 'mean_exec_time', label: 'Mean Time' },
+    { column: 'rows', label: 'Rows' },
+];
+
+/** Longest query-text filter the server accepts */
+const QUERY_FILTER_MAX_LENGTH = 1000;
+
+/** Pause after the last keystroke before the filter is applied */
+const QUERY_FILTER_DEBOUNCE_MS = 300;
 
 /**
  * Window the database list is fetched over. The list is only used to
@@ -141,6 +179,24 @@ const DATABASE_CELL_SX = {
     color: 'text.primary',
 };
 
+/** Sortable header cell, right-aligned over its numeric column */
+const SORTABLE_HEADER_CELL_SX = {
+    ...HEADER_CELL_SX,
+    textAlign: 'right' as const,
+};
+
+/**
+ * Sort control inside a header cell. It inherits the header's
+ * uppercase label styling, and the arrow sits to the left of the
+ * label so that the label stays flush with the right-aligned numbers.
+ */
+const SORT_LABEL_SX = {
+    font: 'inherit',
+    letterSpacing: 'inherit',
+    textTransform: 'inherit' as const,
+    flexDirection: 'row-reverse' as const,
+};
+
 /** Numeric cell */
 const NUMERIC_CELL_SX = {
     fontSize: '0.875rem',
@@ -150,11 +206,30 @@ const NUMERIC_CELL_SX = {
     color: 'text.primary',
 };
 
-/** Header controls container (database filter plus toggle) */
+/** Header controls container (filters plus toggle) */
 const HEADER_CONTROLS_SX = {
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap' as const,
     gap: 1.5,
+};
+
+/** Query-text filter field */
+const QUERY_FILTER_SX = {
+    width: 220,
+    '& .MuiInputBase-root': DASHBOARD_CONTROL_TEXT_SX,
+    '& .MuiInputLabel-root': DASHBOARD_CONTROL_TEXT_SX,
+};
+
+/** Search icon inside the query-text filter */
+const QUERY_FILTER_ICON_SX = { fontSize: 18, color: 'text.disabled' };
+
+/** Empty-state message; a long filter term must wrap, not overflow */
+const EMPTY_STATE_SX = {
+    textAlign: 'center' as const,
+    py: 3,
+    overflowWrap: 'anywhere' as const,
 };
 
 /** Database filter control width */
@@ -276,9 +351,11 @@ const useResetOnChange = (key: string, reset: () => void): void => {
 
 /**
  * Top Queries section displays the most resource-intensive queries
- * from pg_stat_statements, sorted by total execution time. Results
- * are paged server-side and can be filtered to a single database.
- * Each row is clickable to drill down into query detail via overlay.
+ * from pg_stat_statements, sorted by total execution time unless the
+ * user picks another column. Sorting, the query-text filter and the
+ * database filter are all applied server-side across the whole result
+ * set, and the results are paged. Each row is clickable to drill down
+ * into query detail via overlay.
  *
  * Passing `databaseName` pins the section to that one database, which
  * is how the database dashboard uses it: the filter control and the
@@ -305,6 +382,8 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
     const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
     const [databaseFilter, setDatabaseFilter] = useState<string>(ALL_DATABASES);
     const [totalCount, setTotalCount] = useState<number | null>(null);
+    const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
+    const [queryFilterInput, setQueryFilterInput] = useState<string>('');
     const isMountedRef = useRef<boolean>(true);
     // Identifies the most recently started request. isMountedRef alone
     // cannot order overlapping fetches: the effect's cleanup sets it
@@ -351,6 +430,13 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
     // the filter control would.
     useResetOnChange(scopedDatabase, resetPaging);
 
+    // The text filter is applied once typing pauses, so that a burst
+    // of keystrokes costs one request rather than one per character.
+    // Surrounding whitespace is dropped, and a blank term is no filter.
+    const queryFilter = useDebouncedValue(
+        queryFilterInput, QUERY_FILTER_DEBOUNCE_MS).trim();
+    useResetOnChange(queryFilter, resetPaging);
+
     // The database list drives the filter control only, so it tracks
     // the connection rather than the dashboard refresh cycle or the
     // selected window; the list of databases a connection monitors
@@ -389,8 +475,8 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
             connection_id: connectionId.toString(),
             limit: pageSize.toString(),
             offset: (page * pageSize).toString(),
-            order_by: 'total_exec_time',
-            order: 'desc',
+            order_by: sort.column,
+            order: sort.order,
         });
         appendTimeRangeParams(params, selectedWindow);
         if (hideCollectorQueries) {
@@ -398,6 +484,9 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
         }
         if (effectiveDatabase !== ALL_DATABASES) {
             params.set('database_name', effectiveDatabase);
+        }
+        if (queryFilter !== '') {
+            params.set('query_text', queryFilter);
         }
         const url = `/api/v1/metrics/top-queries?${params.toString()}`;
 
@@ -463,6 +552,7 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
     }, [
         connectionId, hideCollectorQueries, page, pageSize,
         effectiveDatabase, selectedRange, customStart, customEnd,
+        sort, queryFilter,
     ]);
 
     useEffect(() => {
@@ -509,6 +599,27 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
         resetPaging();
     }, [resetPaging]);
 
+    // A new column opens largest first, which is the useful end for
+    // every metric offered; the active column flips direction.
+    const handleSort = useCallback((column: SortColumn): void => {
+        setSort(prev => (
+            prev.column === column
+                ? { column, order: prev.order === 'desc' ? 'asc' : 'desc' }
+                : { column, order: 'desc' }
+        ));
+        resetPaging();
+    }, [resetPaging]);
+
+    const handleQueryFilterChange = useCallback((
+        event: React.ChangeEvent<HTMLInputElement>
+    ): void => {
+        setQueryFilterInput(event.target.value);
+    }, []);
+
+    const handleClearQueryFilter = useCallback((): void => {
+        setQueryFilterInput('');
+    }, []);
+
     const handlePageSizeChange = useCallback((size: number): void => {
         setPageSize(size);
         resetPaging();
@@ -549,6 +660,19 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
         : `Showing ${firstRowNumber}–${lastRowNumber} of ${totalCount}`;
 
     const isFiltered = effectiveDatabase !== ALL_DATABASES;
+
+    let emptyMessage: string;
+    if (queryFilter !== '') {
+        emptyMessage = isFiltered
+            ? `No queries in ${effectiveDatabase} match '${queryFilter}'.`
+            : `No queries match '${queryFilter}'.`;
+    } else if (isFiltered) {
+        emptyMessage =
+            `No query statistics available for ${effectiveDatabase}.`;
+    } else {
+        emptyMessage = 'No query statistics available. '
+            + 'Is the pg_stat_statements extension installed?';
+    }
     const showPager = !error && (queries.length > 0 || hasPreviousPage);
 
     return (
@@ -558,6 +682,34 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
             defaultExpanded
             headerRight={
                 <Box sx={HEADER_CONTROLS_SX}>
+                    <TextField
+                        size="small"
+                        id="top-queries-text-filter"
+                        label="Filter queries"
+                        value={queryFilterInput}
+                        onChange={handleQueryFilterChange}
+                        sx={QUERY_FILTER_SX}
+                        inputProps={{ maxLength: QUERY_FILTER_MAX_LENGTH }}
+                        InputProps={{
+                            startAdornment: (
+                                <InputAdornment position="start">
+                                    <SearchIcon sx={QUERY_FILTER_ICON_SX} />
+                                </InputAdornment>
+                            ),
+                            endAdornment: queryFilterInput !== '' && (
+                                <InputAdornment position="end">
+                                    <IconButton
+                                        size="small"
+                                        edge="end"
+                                        aria-label="Clear query filter"
+                                        onClick={handleClearQueryFilter}
+                                    >
+                                        <ClearIcon fontSize="small" />
+                                    </IconButton>
+                                </InputAdornment>
+                            ),
+                        }}
+                    />
                     {showDatabaseFilter && (
                         <FormControl size="small" sx={DB_FILTER_SX}>
                             <InputLabel id="top-queries-database-filter-label">
@@ -624,50 +776,54 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
                 <Typography
                     variant="body2"
                     color="text.secondary"
-                    sx={{ textAlign: 'center', py: 3 }}
+                    sx={EMPTY_STATE_SX}
                 >
-                    {isFiltered
-                        ? `No query statistics available for ${effectiveDatabase}.`
-                        : 'No query statistics available. '
-                            + 'Is the pg_stat_statements extension installed?'}
+                    {emptyMessage}
                 </Typography>
             )}
 
             {queries.length > 0 && (
-                <Box sx={TABLE_CONTAINER_SX}>
-                    <Box sx={headerRowSx}>
+                <Box
+                    sx={TABLE_CONTAINER_SX}
+                    role="table"
+                    aria-label="Top queries"
+                >
+                    <Box sx={headerRowSx} role="row">
                         {!isScoped && (
-                            <Typography sx={HEADER_CELL_SX}>
+                            <Typography sx={HEADER_CELL_SX} role="columnheader">
                                 Database
                             </Typography>
                         )}
-                        <Typography sx={HEADER_CELL_SX}>
+                        <Typography sx={HEADER_CELL_SX} role="columnheader">
                             Query
                         </Typography>
-                        <Typography sx={{
-                            ...HEADER_CELL_SX,
-                            textAlign: 'right',
-                        }}>
-                            Calls
-                        </Typography>
-                        <Typography sx={{
-                            ...HEADER_CELL_SX,
-                            textAlign: 'right',
-                        }}>
-                            Total Time
-                        </Typography>
-                        <Typography sx={{
-                            ...HEADER_CELL_SX,
-                            textAlign: 'right',
-                        }}>
-                            Mean Time
-                        </Typography>
-                        <Typography sx={{
-                            ...HEADER_CELL_SX,
-                            textAlign: 'right',
-                        }}>
-                            Rows
-                        </Typography>
+                        {SORTABLE_COLUMNS.map(({ column, label }) => {
+                            const isActive = sort.column === column;
+                            let ariaSort: 'ascending' | 'descending' | 'none' =
+                                'none';
+                            if (isActive) {
+                                ariaSort = sort.order === 'asc'
+                                    ? 'ascending'
+                                    : 'descending';
+                            }
+                            return (
+                                <Box
+                                    key={column}
+                                    sx={SORTABLE_HEADER_CELL_SX}
+                                    role="columnheader"
+                                    aria-sort={ariaSort}
+                                >
+                                    <TableSortLabel
+                                        active={isActive}
+                                        direction={isActive ? sort.order : 'desc'}
+                                        onClick={() => { handleSort(column); }}
+                                        sx={SORT_LABEL_SX}
+                                    >
+                                        {label}
+                                    </TableSortLabel>
+                                </Box>
+                            );
+                        })}
                     </Box>
 
                     {queries.map((query, index) => (
@@ -676,7 +832,7 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
                             sx={bodyRowSx}
                             onClick={() => { handleQueryClick(query); }}
                             tabIndex={0}
-                            role="button"
+                            role="row"
                             aria-label={`View details for query: ${truncateQuery(query.query, 40)}`}
                             onKeyDown={(e: React.KeyboardEvent) => {
                                 if (e.key === 'Enter' || e.key === ' ') {
@@ -688,6 +844,7 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
                             {!isScoped && (
                                 <Typography
                                     sx={DATABASE_CELL_SX}
+                                    role="cell"
                                     title={query.database_name}
                                 >
                                     {query.database_name}
@@ -695,22 +852,23 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
                             )}
                             <Typography
                                 sx={QUERY_CELL_SX}
+                                role="cell"
                                 title={query.query}
                             >
                                 {truncateQuery(
                                     query.query, MAX_QUERY_LENGTH
                                 )}
                             </Typography>
-                            <Typography sx={NUMERIC_CELL_SX}>
+                            <Typography sx={NUMERIC_CELL_SX} role="cell">
                                 {formatNumber(query.calls)}
                             </Typography>
-                            <Typography sx={NUMERIC_CELL_SX}>
+                            <Typography sx={NUMERIC_CELL_SX} role="cell">
                                 {formatTime(query.total_exec_time)}
                             </Typography>
-                            <Typography sx={NUMERIC_CELL_SX}>
+                            <Typography sx={NUMERIC_CELL_SX} role="cell">
                                 {formatTime(query.mean_exec_time)}
                             </Typography>
-                            <Typography sx={NUMERIC_CELL_SX}>
+                            <Typography sx={NUMERIC_CELL_SX} role="cell">
                                 {formatNumber(query.rows)}
                             </Typography>
                         </Box>

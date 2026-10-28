@@ -108,16 +108,38 @@ objects keyed by column (`coldFrontRowsJSON`) and calls
   `CREATE OR REPLACE` at every ColdFront startup, after the namespace
   step, not in a migration: it always matches the collector calling it,
   and the default-mode schema and `schema_version` stay untouched.
-- It accepts only a relation registered in `coldfront.tiered_views`
-  with `schema_name = 'metrics'`, takes the column list and types from
+- There are three functions: `workbench_coldfront_literal(text)`,
+  `workbench_coldfront_insert_sql(p_table, p_rows)`, which renders the
+  INSERT (separate so the tests can assert on its SQL), and
+  `workbench_coldfront_insert`, which EXECUTEs it. The renderer accepts
+  only a relation registered in `coldfront.tiered_views` with
+  `schema_name = 'metrics'`, takes the column list and types from
   `pg_attribute`/`format_type` in attnum order (never from the JSON
-  keys), types the values with `jsonb_populate_recordset(NULL::<view>,
-  ...)`, renders each with `quote_nullable(...) || '::<type>'` (one call
-  per column, so a wide table stays under the 100-argument limit), and
-  EXECUTEs one literal multi-row INSERT, which ColdFront turns into one
-  Iceberg commit. `SECURITY INVOKER`, `search_path = pg_catalog,
-  pg_temp`. It must not read the view: ColdFront refuses DuckDB reads
-  inside a function.
+  keys), and types the values with
+  `jsonb_populate_recordset(NULL::<view>, ...)`. The result is one
+  literal multi-row INSERT, which ColdFront turns into one Iceberg
+  commit. Both insert functions are `SECURITY INVOKER` with
+  `search_path = pg_catalog, pg_temp`. Neither may read the view:
+  ColdFront refuses DuckDB reads inside a function.
+- DuckDB evaluates the rendered values, so they must be SQL it reads:
+  - A scalar is `workbench_coldfront_literal(v::text) || '::<type>'`:
+    NULL or a standard literal with quotes doubled and backslashes left
+    alone. Never `quote_literal`/`quote_nullable`: they emit `E'...'`
+    for a backslash.
+  - An array column (`pg_type.typcategory = 'A'`) is
+    `ARRAY[<literal(elem)>, ...]::<type>` built from
+    `unnest(...) WITH ORDINALITY`, `ARRAY[]::<type>` when empty and
+    `NULL::<type>` when NULL. DuckDB cannot parse the `'{...}'` array
+    literal, which failed every `pg_settings`, `pg_hba_file_rules` and
+    `pg_node_role` write live. A multi-dimensional value would be
+    flattened, so it is refused.
+  - The functions pin `standard_conforming_strings = on`,
+    `DateStyle = 'ISO, YMD'`, `IntervalStyle = 'postgres'` and
+    `extra_float_digits = 1`, so the text means the same whatever the
+    session settings.
+  - One expression per column is concatenated, rather than passing
+    every column to one `format()`, so a wide table stays under the
+    100-argument limit.
 - `jsonValue` makes the JSON faithful: `time.Time` as RFC 3339 with
   nanoseconds, integers and `pgtype.Numeric` as exact JSON numbers
   (jsonb keeps them exactly), `pgtype.Interval` as "N months N days N

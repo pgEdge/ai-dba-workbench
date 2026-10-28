@@ -12,6 +12,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"math/big"
 	"net/netip"
@@ -162,5 +163,94 @@ func exerciseInsertHelper(t *testing.T, conn *pgxpool.Conn) {
 	var connections int
 	if err := conn.QueryRow(ctx, "SELECT count(*) FROM pg_class WHERE oid = 'public.connections'::regclass").Scan(&connections); err != nil || connections != 1 {
 		t.Errorf("connections table missing after the quoting tests: %v", err)
+	}
+
+	exerciseArrayRendering(t, conn)
+}
+
+// exerciseArrayRendering checks how the helper renders array and
+// backslash values. The stub views are plain PostgreSQL, which also
+// accepts the '{...}' array literal and E'...' strings that ColdFront's
+// DuckDB rejects, so the rendered SQL itself is asserted, and then the
+// stored values are read back.
+func exerciseArrayRendering(t *testing.T, conn *pgxpool.Conn) {
+	t.Helper()
+	ctx := context.Background()
+
+	options := [][]any{
+		{int32(501), []string{}},
+		{int32(502), []any{nil, "b"}},
+		{int32(503), nil},
+		{int32(504), []string{"all", "it's, {x}", `back\slash`, "}"}},
+	}
+	var rows []map[string]any
+	for _, o := range options {
+		rows = append(rows, map[string]any{"connection_id": o[0], "options": o[1], "address": `C:\dir 'x'`})
+	}
+	doc, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var rendered string
+	if err := conn.QueryRow(ctx, "SELECT public.workbench_coldfront_insert_sql('pg_hba_file_rules', $1::jsonb)",
+		string(doc)).Scan(&rendered); err != nil {
+		t.Fatalf("rendering the INSERT: %v", err)
+	}
+	for _, want := range []string{
+		"ARRAY[]::text[]",
+		"ARRAY[NULL, 'b']::text[]",
+		"ARRAY['all', 'it''s, {x}', 'back\\slash', '}']::text[]",
+		"'C:\\dir ''x'''::text",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered INSERT lacks %s:\n%s", want, rendered)
+		}
+	}
+	// options is NULL in one row; the other array columns are NULL in
+	// every row.
+	if n := strings.Count(rendered, "NULL::text[]"); n != 1+2*len(options) {
+		t.Errorf("rendered INSERT has %d NULL arrays, want %d", n, 1+2*len(options))
+	}
+	if strings.Contains(rendered, "'{") || strings.Contains(rendered, "E'") {
+		t.Errorf("rendered INSERT uses an array or escape-string literal:\n%s", rendered)
+	}
+
+	columns := []string{"connection_id", "options", "address"}
+	values := make([][]any, len(options))
+	for i, o := range options {
+		values[i] = []any{o[0], o[1], `C:\dir 'x'`}
+	}
+	if err := probes.StoreMetrics(ctx, conn, "pg_hba_file_rules", columns, values); err != nil {
+		t.Fatalf("StoreMetrics with arrays: %v", err)
+	}
+	want := map[int32]*string{
+		501: strPtr("{}"),
+		502: strPtr("{NULL,b}"),
+		503: nil,
+		504: strPtr(`{all,"it's, {x}","back\\slash","}"}`),
+	}
+	for id, w := range want {
+		var got *string
+		var address string
+		if err := conn.QueryRow(ctx,
+			"SELECT options::text, address FROM metrics.pg_hba_file_rules WHERE connection_id = $1", id).
+			Scan(&got, &address); err != nil {
+			t.Fatalf("connection %d: %v", id, err)
+		}
+		if (got == nil) != (w == nil) || (got != nil && *got != *w) {
+			t.Errorf("connection %d options = %v, want %v", id, got, w)
+		}
+		if address != `C:\dir 'x'` {
+			t.Errorf("connection %d address = %q", id, address)
+		}
+	}
+
+	// A multi-dimensional array would be flattened by ARRAY[...], so it
+	// is refused.
+	_, err = conn.Exec(ctx, "SELECT public.workbench_coldfront_insert('pg_hba_file_rules', $1::jsonb)",
+		`[{"connection_id": 505, "options": [["a"], ["b"]]}]`)
+	if err == nil || !strings.Contains(err.Error(), "multi-dimensional array") {
+		t.Errorf("helper accepted a two-dimensional array: %v", err)
 	}
 }

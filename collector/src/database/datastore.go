@@ -145,7 +145,7 @@ func (ds *Datastore) initializeSchema() error {
 	useColdFront := ds.config.GetUseColdFrontForMetrics()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := CheckMetricsStorage(ctx, conn, useColdFront); err != nil {
+	if err := PrepareMetricsStorage(ctx, conn, useColdFront); err != nil {
 		return err
 	}
 

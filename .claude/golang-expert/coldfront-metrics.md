@@ -76,12 +76,26 @@ v12 and v13 run unchanged.
 
 ## Startup and Runtime
 
-- `database.CheckMetricsStorage` runs in `initializeSchema` before
-  `Migrate`. Under ColdFront it requires the `coldfront` extension and
-  `to_regprocedure('coldfront._partition_clause(jsonb,text[])')`
-  (pgEdge/coldfront#92; `extversion` is 1.0 in every build, so never
-  compare versions). In both modes it refuses existing metrics
-  relations of the other kind (tables vs views).
+- `database.PrepareMetricsStorage` runs in `initializeSchema` before
+  `Migrate`. It calls `CheckMetricsStorage`, which under ColdFront
+  requires the `coldfront` extension plus both
+  `coldfront._partition_clause(jsonb,text[])` (pgEdge/coldfront#92;
+  `extversion` is 1.0 in every build, so never compare versions) and
+  `coldfront.ensure_attached()`. In both modes it refuses existing
+  metrics relations of the other kind (tables vs views).
+- Under ColdFront it then calls `EnsureColdFrontNamespace`, which runs
+  `SELECT coldfront.ensure_attached()` and
+  `SELECT duckdb.raw_query('CREATE SCHEMA IF NOT EXISTS ice.metrics')`
+  as two separate autocommit statements on the pool connection, outside
+  any transaction. This is required: `create_iceberg_table` issues the
+  namespace `CREATE SCHEMA` and the `CREATE TABLE` inside one function
+  call, and a Lakekeeper REST catalog does not see the namespace before
+  the table request, so on an empty warehouse migration 1 failed with
+  "Namespace with name 'metrics' does not exist" (404). ColdFront's own
+  install steps pre-create the namespace for the same reason. Both
+  statements are idempotent; a failure names the namespace and says the
+  warehouse in `coldfront.warehouse` must be reachable and writable.
+  Never move them into the migration transaction.
 - `probes.SetColdFrontMetrics` is process-wide state set once in
   `main` by `applyMetricsStorageMode`, which also logs once that
   retention settings are ignored. `EnsurePartition` and

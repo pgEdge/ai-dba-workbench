@@ -35,6 +35,17 @@ import (
 // every build, so the version string cannot be used for this check.
 const MinimumBuildProcedure = "coldfront._partition_clause(jsonb,text[])"
 
+// AttachProcedure attaches the Lakekeeper catalog as the DuckDB catalog
+// "ice" from the coldfront.warehouse and coldfront.lakekeeper_endpoint
+// settings. The collector calls it before creating the Iceberg namespace
+// for the metrics tables, so a build without it is refused as well.
+const AttachProcedure = "coldfront.ensure_attached()"
+
+// IcebergNamespace is the Iceberg namespace the metrics tables are
+// created in. create_iceberg_table names its Iceberg table
+// ice.<p_schema>.<p_table>, and p_schema is always metrics.
+const IcebergNamespace = "metrics"
+
 // MinimumBuildDescription names the minimum ColdFront build in operator-
 // facing error messages.
 const MinimumBuildDescription = "a pgEdge ColdFront build that includes " +

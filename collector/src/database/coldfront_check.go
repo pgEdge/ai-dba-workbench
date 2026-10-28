@@ -19,12 +19,66 @@ import (
 )
 
 // coldFrontInstalledQuery reports whether the coldfront extension is
-// installed in the datastore and, if so, whether it is a build new
-// enough for the Workbench.
+// installed in the datastore and, if so, whether each of the two
+// functions the collector relies on exists: $1 identifies a build new
+// enough for the Workbench and $2 attaches the Iceberg catalog.
 const coldFrontInstalledQuery = `
     SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'coldfront'),
-           to_regprocedure($1) IS NOT NULL
+           to_regprocedure($1) IS NOT NULL,
+           to_regprocedure($2) IS NOT NULL
 `
+
+// The two statements that create the Iceberg namespace of the metrics
+// tables. Both are constants: the namespace is always metrics
+// (coldfront.IcebergNamespace), so no identifier is interpolated.
+const (
+	attachIcebergCatalogSQL   = `SELECT coldfront.ensure_attached()`
+	createIcebergNamespaceSQL = `SELECT duckdb.raw_query('CREATE SCHEMA IF NOT EXISTS ice.metrics')`
+)
+
+// storageConn is what PrepareMetricsStorage needs from a datastore
+// connection that is not inside a transaction.
+type storageConn interface {
+	rowQuerier
+	ddlExecer
+}
+
+// PrepareMetricsStorage readies the datastore for the configured metrics
+// storage mode before any migration runs: it runs CheckMetricsStorage
+// and, under ColdFront, then creates the Iceberg namespace with
+// EnsureColdFrontNamespace. In the default mode it only checks.
+func PrepareMetricsStorage(ctx context.Context, conn storageConn, useColdFront bool) error {
+	if err := CheckMetricsStorage(ctx, conn, useColdFront); err != nil {
+		return err
+	}
+	if !useColdFront {
+		return nil
+	}
+	return EnsureColdFrontNamespace(ctx, conn)
+}
+
+// EnsureColdFrontNamespace creates the Iceberg namespace the metrics
+// tables live in, ice.metrics, if it does not already exist.
+//
+// coldfront.create_iceberg_table issues CREATE SCHEMA IF NOT EXISTS and
+// CREATE TABLE inside one function call, and a Lakekeeper REST catalog
+// does not see the namespace before the table request arrives, so the
+// first table in a new namespace fails with "Namespace ... does not
+// exist". Creating the namespace first, as ColdFront's own installation
+// steps do, avoids that. e must not be inside a transaction: each
+// statement has to commit on its own so the catalog sees the namespace
+// before migration 1 creates the tables. Both statements are idempotent.
+func EnsureColdFrontNamespace(ctx context.Context, e ddlExecer) error {
+	for _, stmt := range []string{attachIcebergCatalogSQL, createIcebergNamespaceSQL} {
+		if _, err := e.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to create the Iceberg namespace %q for "+
+				"the ColdFront metrics tables; the Lakekeeper warehouse "+
+				"configured in coldfront.warehouse must be reachable and "+
+				"writable: %w", coldfront.IcebergNamespace, err)
+		}
+	}
+	return nil
+}
 
 // metricsRelationKindsQuery lists the known metrics relations that exist
 // in the datastore, split into those stored as PostgreSQL tables (plain
@@ -52,9 +106,10 @@ const metricsRelationKindsQuery = `
 // an explanation rather than part-way through a migration or a probe.
 func CheckMetricsStorage(ctx context.Context, q rowQuerier, useColdFront bool) error {
 	if useColdFront {
-		var installed, recentEnough bool
+		var installed, recentEnough, canAttach bool
 		if err := q.QueryRow(ctx, coldFrontInstalledQuery,
-			coldfront.MinimumBuildProcedure).Scan(&installed, &recentEnough); err != nil {
+			coldfront.MinimumBuildProcedure, coldfront.AttachProcedure).Scan(
+			&installed, &recentEnough, &canAttach); err != nil {
 			return fmt.Errorf("failed to check for the coldfront extension: %w", err)
 		}
 		if !installed {
@@ -63,11 +118,18 @@ func CheckMetricsStorage(ctx context.Context, q rowQuerier, useColdFront bool) e
 				"install %s and run CREATE EXTENSION coldfront, or disable "+
 				"use_coldfront_for_metrics", coldfront.MinimumBuildDescription)
 		}
-		if !recentEnough {
-			return fmt.Errorf("use_coldfront_for_metrics is enabled but the "+
-				"installed coldfront extension is too old: %s is missing; "+
-				"upgrade to %s", coldfront.MinimumBuildProcedure,
-				coldfront.MinimumBuildDescription)
+		for _, p := range []struct {
+			present bool
+			name    string
+		}{
+			{recentEnough, coldfront.MinimumBuildProcedure},
+			{canAttach, coldfront.AttachProcedure},
+		} {
+			if !p.present {
+				return fmt.Errorf("use_coldfront_for_metrics is enabled but the "+
+					"installed coldfront extension is too old: %s is missing; "+
+					"upgrade to %s", p.name, coldfront.MinimumBuildDescription)
+			}
 		}
 	}
 

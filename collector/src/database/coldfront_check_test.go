@@ -14,10 +14,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // scriptedRow scans fixed values, or fails with err.
@@ -64,8 +66,8 @@ func (q *scriptedQuerier) QueryRow(_ context.Context, sql string, _ ...any) pgx.
 	return r
 }
 
-func extensionRow(installed, recentEnough bool) scriptedRow {
-	return scriptedRow{values: []any{installed, recentEnough}}
+func extensionRow(installed, recentEnough, canAttach bool) scriptedRow {
+	return scriptedRow{values: []any{installed, recentEnough, canAttach}}
 }
 
 func relationsRow(tables, views []string) scriptedRow {
@@ -105,22 +107,28 @@ func TestCheckMetricsStorage(t *testing.T) {
 		},
 		{
 			name: "ColdFront on a fresh datastore", coldFront: true,
-			rows: []scriptedRow{extensionRow(true, true), relationsRow(nil, nil)}, wantSQL: 2,
+			rows: []scriptedRow{extensionRow(true, true, true), relationsRow(nil, nil)}, wantSQL: 2,
 		},
 		{
 			name: "ColdFront on ColdFront views", coldFront: true,
-			rows: []scriptedRow{extensionRow(true, true), relationsRow(nil, many)}, wantSQL: 2,
+			rows: []scriptedRow{extensionRow(true, true, true), relationsRow(nil, many)}, wantSQL: 2,
 		},
 		{
 			name: "ColdFront without the extension", coldFront: true,
-			rows:    []scriptedRow{extensionRow(false, false)},
+			rows:    []scriptedRow{extensionRow(false, false, false)},
 			wantErr: []string{"coldfront extension is not installed", "pgEdge/coldfront#92", "CREATE EXTENSION coldfront"},
 			wantSQL: 1,
 		},
 		{
 			name: "ColdFront with a build that is too old", coldFront: true,
-			rows:    []scriptedRow{extensionRow(true, false)},
+			rows:    []scriptedRow{extensionRow(true, false, true)},
 			wantErr: []string{"too old", "coldfront._partition_clause(jsonb,text[])", "pgEdge/coldfront#92"},
+			wantSQL: 1,
+		},
+		{
+			name: "ColdFront build without ensure_attached", coldFront: true,
+			rows:    []scriptedRow{extensionRow(true, true, false)},
+			wantErr: []string{"too old", "coldfront.ensure_attached()", "pgEdge/coldfront#92"},
 			wantSQL: 1,
 		},
 		{
@@ -131,7 +139,7 @@ func TestCheckMetricsStorage(t *testing.T) {
 		},
 		{
 			name: "ColdFront on partitioned tables", coldFront: true,
-			rows: []scriptedRow{extensionRow(true, true), relationsRow(many, nil)},
+			rows: []scriptedRow{extensionRow(true, true, true), relationsRow(many, nil)},
 			wantErr: []string{
 				"use_coldfront_for_metrics is enabled", "PostgreSQL tables",
 				"metrics.pg_database, metrics.pg_settings, metrics.pg_stat_activity and 2 more",
@@ -160,6 +168,87 @@ func TestCheckMetricsStorage(t *testing.T) {
 				t.Errorf("issued %d queries, want %d", len(q.sql), tt.wantSQL)
 			}
 		})
+	}
+}
+
+// scriptedConn is a datastore connection outside a transaction: it
+// answers QueryRow from a scriptedQuerier and records each Exec, failing
+// the one whose 1-based position is failExec.
+type scriptedConn struct {
+	scriptedQuerier
+	execs    []string
+	failExec int
+	execErr  error
+}
+
+func (c *scriptedConn) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+	c.execs = append(c.execs, sql)
+	if len(c.execs) == c.failExec {
+		return pgconn.CommandTag{}, c.execErr
+	}
+	return pgconn.CommandTag{}, nil
+}
+
+func TestEnsureColdFrontNamespace(t *testing.T) {
+	want := []string{
+		"SELECT coldfront.ensure_attached()",
+		"SELECT duckdb.raw_query('CREATE SCHEMA IF NOT EXISTS ice.metrics')",
+	}
+
+	c := &scriptedConn{}
+	if err := EnsureColdFrontNamespace(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(c.execs, want) {
+		t.Errorf("issued %q, want %q", c.execs, want)
+	}
+
+	for failAt := 1; failAt <= len(want); failAt++ {
+		c := &scriptedConn{failExec: failAt, execErr: errors.New("NotFound_404")}
+		err := EnsureColdFrontNamespace(context.Background(), c)
+		if err == nil {
+			t.Fatalf("failing statement %d: no error", failAt)
+		}
+		for _, s := range []string{`"metrics"`, "coldfront.warehouse", "reachable and writable", "NotFound_404"} {
+			if !strings.Contains(err.Error(), s) {
+				t.Errorf("failing statement %d: error %q does not mention %q", failAt, err, s)
+			}
+		}
+		if len(c.execs) != failAt {
+			t.Errorf("failing statement %d: issued %d statements", failAt, len(c.execs))
+		}
+	}
+}
+
+func TestPrepareMetricsStorage(t *testing.T) {
+	ctx := context.Background()
+
+	// Default mode: checks only, never touches Iceberg.
+	c := &scriptedConn{scriptedQuerier: scriptedQuerier{rows: []scriptedRow{relationsRow(nil, nil)}}}
+	if err := PrepareMetricsStorage(ctx, c, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.execs) != 0 {
+		t.Errorf("default mode issued %q", c.execs)
+	}
+
+	// ColdFront: checks, then creates the namespace.
+	c = &scriptedConn{scriptedQuerier: scriptedQuerier{rows: []scriptedRow{
+		extensionRow(true, true, true), relationsRow(nil, nil)}}}
+	if err := PrepareMetricsStorage(ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.execs) != 2 {
+		t.Errorf("ColdFront mode issued %q, want the two namespace statements", c.execs)
+	}
+
+	// A failed check stops before the namespace is created.
+	c = &scriptedConn{scriptedQuerier: scriptedQuerier{rows: []scriptedRow{extensionRow(false, false, false)}}}
+	if err := PrepareMetricsStorage(ctx, c, true); err == nil {
+		t.Fatal("PrepareMetricsStorage ignored a missing extension")
+	}
+	if len(c.execs) != 0 {
+		t.Errorf("namespace statements issued after a failed check: %q", c.execs)
 	}
 }
 

@@ -12,6 +12,20 @@ project adheres to
 
 ### Added
 
+- Add column sorting and a query-text filter to the Top Queries section
+  of the Server Dashboard and the Database Dashboard (#757). Clicking
+  the Calls, Total Time, Mean Time or Rows header sorts the list by
+  that column, largest first, and clicking the same header again
+  reverses the order; the default remains Total Time, largest first.
+  A Filter queries field in the section header keeps only the queries
+  whose text contains the term, ignoring case. Sorting and filtering
+  apply across the whole result set, and either change returns the
+  section to its first page. The `GET /api/v1/metrics/top-queries`
+  endpoint gained an optional `query_text` parameter, a plain
+  substring of at most 1,000 characters matched against the statement
+  text with passwords masked; a longer term, or one that is not valid
+  UTF-8 or contains a NUL character, returns status 400.
+
 - Configure reasoning effort, prompt caching and extra request body
   fields for LLM requests (#726). The server's `llm` section, and
   each of the alerter's `llm.openai`, `llm.anthropic`, `llm.gemini`

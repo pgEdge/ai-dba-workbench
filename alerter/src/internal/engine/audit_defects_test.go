@@ -575,7 +575,7 @@ func TestAuditC6DetectAnomaliesPrefersTimeAwareBaselines(t *testing.T) {
 // in #408. A metric whose registry entry has no historicalSQL used to be
 // routed through a fallback that built a baseline from the single
 // latest sample; that row had sample_count 1, stddev 0 and a NULL
-// earliest_sample_at, so isBaselineWarm rejected it forever while it
+// earliest_sample_at, so anomaly.IsWarm rejected it forever while it
 // was rewritten every cycle. Such metrics are now skipped by both
 // calculateBaselines and detectAnomalies, and any rows the old fallback
 // left behind are deleted on the next baseline run.

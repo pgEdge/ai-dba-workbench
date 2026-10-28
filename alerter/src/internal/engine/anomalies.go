@@ -37,25 +37,6 @@ func toAnomalyBaseline(b database.MetricBaseline) anomaly.Baseline {
 	}
 }
 
-// effectiveStdDev applies the hybrid variance floor alone, without any
-// per-metric MinStdDev; see anomaly.EffectiveStdDev.
-func effectiveStdDev(
-	b database.MetricBaseline,
-	cfg config.VarianceFloorConfig,
-) float64 {
-	return anomaly.EffectiveStdDev(toAnomalyBaseline(b), cfg, anomaly.MetricFloor{})
-}
-
-// isBaselineWarm reports whether a stored baseline row passes the
-// warmup gate; see anomaly.IsWarm.
-func isBaselineWarm(
-	b database.MetricBaseline,
-	cfg config.WarmupConfig,
-	now time.Time,
-) bool {
-	return anomaly.IsWarm(toAnomalyBaseline(b), cfg, now)
-}
-
 // selectBaseline picks the stored baseline row to score a value against,
 // with the preference order and per-candidate warmth check of
 // anomaly.Select, and returns the caller's own rows rather than copies.

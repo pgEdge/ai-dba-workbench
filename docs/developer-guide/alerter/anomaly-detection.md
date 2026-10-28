@@ -272,11 +272,11 @@ floor; the second suppresses detection on baselines that have
 not yet observed enough data to be trustworthy. Both checks
 live in [`pkg/anomaly/scoring.go`][anomaly-scoring]; the
 `EffectiveStdDev` function implements the floor, and the `IsWarm`
-function implements the warmup gate. The alerter's
-`effectiveStdDev` and `isBaselineWarm` helpers in
-[`alerter/src/internal/engine/anomalies.go`][anomalies-go] are
-thin adapters over them, so change a rule in `pkg/anomaly` rather
-than in an adapter.
+function implements the warmup gate. The alerter in
+[`alerter/src/internal/engine/anomalies.go`][anomalies-go] calls
+`anomaly.EffectiveStdDev` and `anomaly.IsWarm` directly, as does
+the server's baseline comparison endpoint, so change a rule in
+`pkg/anomaly` and both callers pick it up.
 
 [anomalies-go]:
     https://github.com/pgEdge/ai-dba-workbench/blob/main/alerter/src/internal/engine/anomalies.go
@@ -300,8 +300,8 @@ scores.
 
 #### Hybrid Variance Floor
 
-The `effectiveStdDev` helper raises the divisor to a hybrid
-floor before the z-score is computed. The floor combines a
+The `anomaly.EffectiveStdDev` function raises the divisor to a
+hybrid floor before the z-score is computed. The floor combines a
 relative term, scaled by the absolute baseline mean, and an
 absolute term that acts as a safety net when the mean
 approaches zero.

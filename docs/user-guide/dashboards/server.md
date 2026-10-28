@@ -361,9 +361,9 @@ The Baseline model selector offers these choices:
   the day of week baseline, then the overall baseline, taking the
   first one that has collected enough data.
 - Day of week uses only the baseline for the weekday of each
-  point.
-- Hour of day uses only the baseline for the UTC hour of each
-  point.
+  point, with the weekday computed in UTC.
+- Hour of day uses only the baseline for the hour of each point,
+  with the hour computed in UTC.
 - Overall uses only the baseline built from all of the samples.
 
 The sensitivity starts at the value the alerter is configured
@@ -387,12 +387,24 @@ The chart marks the following:
 - A hollow circle marks a point outside the band for which no
   anomaly alert exists.
 
+A point counts as alerted when an anomaly alert for the metric was
+raised at that point, or when the point falls between an alert's
+trigger time and the time the alert cleared. For an alert that is
+still active, including one that triggered before the window
+started, every point from its trigger time to the end of the
+window counts as alerted. The alerter raises nothing new for a metric whilst an
+alert for it is open, so a sustained excursion shows one triangle
+rather than a hollow circle on every later point.
+
 A hollow circle is not necessarily a fault. The band drawn is the
 current one rather than the one the alerter used at the time, the
 chart may show a different baseline model or sensitivity from the
 alerter's, and a candidate that passes tier 1 can still be
-suppressed by a later tier. Hover over a point to see its value, the
-band limits, the baseline used and its z-score.
+suppressed by a later tier. The alerter also raises nothing for a
+point in the five-minute cooldown after an anomaly alert for the
+metric clears, or for a point during a blackout. Hover over a
+point to see its value, the band limits, the baseline used and its
+z-score.
 
 The bands are the current baselines applied across the whole
 window. The alerter recalculates its baselines periodically, so

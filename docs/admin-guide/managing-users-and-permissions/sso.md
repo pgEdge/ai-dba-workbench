@@ -694,9 +694,14 @@ and the account's `auth_source` and `external_subject` before and after
 the change. An unlink also records whether it made the password
 unusable in `details.password_changed`, and each API token it revokes
 as a `token.delete` event attributed to the same operator. A link or
-unlink whose event cannot be written is rolled back and the command
-fails, a refused link or unlink is recorded as a `failure`, and a link
-that changes nothing records nothing.
+unlink whose `user.link_identity` or `user.unlink_identity` event cannot
+be written is rolled back and the command fails. Token revocation runs
+after the unlink has been committed, so when a `token.delete` event
+cannot be written the account stays unlinked, the command fails, and
+every one of the account's API tokens remains valid; list them with
+`-list-tokens` and remove them with `-remove-token`. A refused link or
+unlink is recorded as a `failure`, and a link that changes nothing
+records nothing.
 
 ## Mapping Provider Groups to Workbench Groups
 

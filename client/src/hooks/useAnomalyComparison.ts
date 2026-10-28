@@ -110,6 +110,33 @@ export const buildAnomalyAlertsUrl = (connectionId: number, window: ComparisonWi
     return `/api/v1/alerts?${params.toString()}`;
 };
 
+/**
+ * Build the request for a connection's anomaly alerts that were raised
+ * before the window and have not cleared. The alerts endpoint filters
+ * on `triggered_at` only, so an alert still open across the window's
+ * start needs this second request. Its span covers the outside points
+ * it held the engine back from alerting on.
+ */
+export const buildOpenAnomalyAlertsUrl = (
+    connectionId: number,
+    window: ComparisonWindow
+): string => {
+    const params = new URLSearchParams({
+        alert_type: 'anomaly',
+        connection_id: connectionId.toString(),
+        exclude_cleared: 'true',
+        end_time: new Date(window.startMs).toISOString(),
+        limit: ALERT_LIMIT.toString(),
+    });
+    return `/api/v1/alerts?${params.toString()}`;
+};
+
+/** The alerts of both lists, keeping the first of any repeated id. */
+const mergeAlerts = (first: AnomalyAlert[], second: AnomalyAlert[]): AnomalyAlert[] => {
+    const seen = new Set(first.map((a) => a.id));
+    return [...first, ...second.filter((a) => !seen.has(a.id))];
+};
+
 /** A thrown value's message, or the fallback when it carries none. */
 const messageOf = (err: unknown, fallback: string): string =>
     (err as Error | undefined)?.message || fallback;
@@ -196,7 +223,10 @@ export const alertsCompleteFrom = (
 
 export interface UseAnomalyComparisonReturn {
     data: AnomalyComparisonResponse | null;
-    /** Every anomaly alert for the connection in the window, unfiltered. */
+    /**
+     * Every anomaly alert for the connection in the window, and those
+     * raised before it that are still open, unfiltered.
+     */
     alerts: AnomalyAlert[];
     window: ComparisonWindow | null;
     loading: boolean;
@@ -266,11 +296,11 @@ export const useAnomalyComparison = (
         const window = resolveComparisonWindow(selectedRange);
         const isCurrent = beginRequest();
 
-        const [comparison, alerts] = await Promise.allSettled([
+        type AlertsBody = { alerts?: AnomalyAlert[] | null; total?: number };
+        const [comparison, alerts, openAlerts] = await Promise.allSettled([
             apiGet<AnomalyComparisonResponse>(buildComparisonUrl(query, window)),
-            apiGet<{ alerts?: AnomalyAlert[] | null; total?: number }>(
-                buildAnomalyAlertsUrl(query.connectionId, window)
-            ),
+            apiGet<AlertsBody>(buildAnomalyAlertsUrl(query.connectionId, window)),
+            apiGet<AlertsBody>(buildOpenAnomalyAlertsUrl(query.connectionId, window)),
         ]);
         if (!isCurrent()) {
             return;
@@ -282,9 +312,20 @@ export const useAnomalyComparison = (
         if (alerts.status === 'rejected') {
             logger.error('Error fetching anomaly alerts:', alerts.reason);
         }
+        if (openAlerts.status === 'rejected') {
+            logger.error('Error fetching open anomaly alerts:', openAlerts.reason);
+        }
 
         const loadedAlerts =
             alerts.status === 'fulfilled' ? (alerts.value.alerts ?? NO_ALERTS) : NO_ALERTS;
+        const loadedOpenAlerts =
+            openAlerts.status === 'fulfilled' ? (openAlerts.value.alerts ?? NO_ALERTS) : NO_ALERTS;
+        const alertsFailure =
+            alerts.status === 'rejected'
+                ? alerts
+                : openAlerts.status === 'rejected'
+                  ? openAlerts
+                  : null;
         setResult({
             key,
             window,
@@ -293,11 +334,10 @@ export const useAnomalyComparison = (
                 comparison.status === 'rejected'
                     ? messageOf(comparison.reason, 'Failed to load the baseline comparison')
                     : null,
-            alerts: loadedAlerts,
-            alertsError:
-                alerts.status === 'rejected'
-                    ? messageOf(alerts.reason, 'Failed to load anomaly alerts')
-                    : null,
+            alerts: mergeAlerts(loadedAlerts, loadedOpenAlerts),
+            alertsError: alertsFailure
+                ? messageOf(alertsFailure.reason, 'Failed to load anomaly alerts')
+                : null,
             alertsCompleteFromMs:
                 alerts.status === 'fulfilled'
                     ? alertsCompleteFrom(loadedAlerts, alerts.value.total, window)

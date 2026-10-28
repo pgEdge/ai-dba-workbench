@@ -65,6 +65,8 @@ const alert = (minutes: number, overrides: Partial<AnomalyAlert> = {}): AnomalyA
         baseline_context: { period_type: 'daily' },
     }),
     triggered_at: at(minutes),
+    status: 'cleared',
+    cleared_at: at(minutes),
     ...overrides,
 });
 
@@ -85,6 +87,17 @@ describe('friendlyMetricLabel', () => {
 
     it('falls back to the raw name for an unknown metric', () => {
         expect(friendlyMetricLabel('made_up.metric')).toBe('made_up.metric');
+    });
+
+    it('labels only metrics in the anomaly registry', () => {
+        // These were never baselined, so they fall back to the raw name.
+        expect(friendlyMetricLabel('pg_settings.max_connections')).toBe(
+            'pg_settings.max_connections'
+        );
+        expect(friendlyMetricLabel('age_percent')).toBe('age_percent');
+        expect(friendlyMetricLabel('table_last_autovacuum_hours')).toBe(
+            'table_last_autovacuum_hours'
+        );
     });
 });
 
@@ -348,13 +361,120 @@ describe('buildComparisonChart', () => {
     it('clamps a point outside the window into the edge buckets', () => {
         const chart = buildComparisonChart(
             [point(-5, { outside: true }), point(15, { outside: true })],
-            [alert(-1), alert(12)],
+            [alert(0.5), alert(9.5)],
             3,
             WINDOW
         );
 
         expect(chart.engineMarkers.every((m) => m !== null)).toBe(true);
         expect(chart.outsideMarkers).toEqual([null, null]);
+    });
+
+    it('covers the point an alert is drawn on when its bucket has no point', () => {
+        // The alert's bucket (5) has no point, so its marker goes on the
+        // nearest point (minute 8), which with the point before it
+        // (minute 1) counts as alerted even though neither is in bucket
+        // 4 or 5.
+        const chart = buildComparisonChart(
+            [
+                point(0, { value: 30, outside: true }),
+                point(1, { value: 31, outside: true }),
+                point(8, { value: 38, outside: true }),
+                point(9, { value: 39, outside: true }),
+            ],
+            [alert(5)],
+            3,
+            WINDOW
+        );
+
+        expect(chart.engineMarkers[2]).not.toBeNull();
+        expect(chart.outsideMarkers).toEqual([30, null, null, 39]);
+    });
+
+    it('covers outside points whilst an alert is held open', () => {
+        const points = [0, 1, 2, 3, 4, 5, 6, 7].map((m) =>
+            point(m, { value: 30 + m, outside: m >= 2 })
+        );
+
+        const open = buildComparisonChart(
+            points,
+            [alert(2, { status: 'active', cleared_at: undefined })],
+            3,
+            WINDOW
+        );
+        expect(open.engineMarkers.filter((m) => m !== null)).toHaveLength(1);
+        expect(open.outsideMarkers.every((v) => v === null)).toBe(true);
+
+        const acknowledged = buildComparisonChart(
+            points,
+            [alert(2, { status: 'acknowledged', cleared_at: null })],
+            3,
+            WINDOW
+        );
+        expect(acknowledged.outsideMarkers.every((v) => v === null)).toBe(true);
+
+        const cleared = buildComparisonChart(
+            points,
+            [alert(2, { cleared_at: at(4.5) })],
+            3,
+            WINDOW
+        );
+        expect(cleared.outsideMarkers).toEqual([null, null, null, null, null, 35, 36, 37]);
+    });
+
+    it('treats a cleared alert with no usable clear time as a single point', () => {
+        const chart = buildComparisonChart(
+            [0, 1, 2, 3].map((m) => point(m, { value: 30 + m, outside: true })),
+            [alert(1, { cleared_at: 'not a time' })],
+            3,
+            WINDOW
+        );
+        expect(chart.outsideMarkers).toEqual([null, null, 32, 33]);
+    });
+
+    it('covers points under an alert raised before the window that is still open', () => {
+        const points = [0, 1, 2, 3].map((m) => point(m, { value: 30 + m, outside: true }));
+
+        const open = buildComparisonChart(
+            points,
+            [alert(-30, { status: 'active', cleared_at: undefined })],
+            3,
+            WINDOW
+        );
+        // It triggered before the window, so it has no marker of its own.
+        expect(open.hasEngine).toBe(false);
+        expect(open.outsideMarkers).toEqual([null, null, null, null]);
+
+        const cleared = buildComparisonChart(
+            points,
+            [alert(-30, { cleared_at: at(1.5) })],
+            3,
+            WINDOW
+        );
+        expect(cleared.hasEngine).toBe(false);
+        expect(cleared.outsideMarkers).toEqual([null, null, 32, 33]);
+    });
+
+    it('ignores the span of an alert that cleared before the window', () => {
+        const chart = buildComparisonChart(
+            [point(0, { value: 30, outside: true })],
+            [alert(-30, { cleared_at: at(-10) })],
+            3,
+            WINDOW
+        );
+        expect(chart.hasEngine).toBe(false);
+        expect(chart.outsideMarkers).toEqual([30]);
+    });
+
+    it('covers an open span by time when the window is unusable', () => {
+        const chart = buildComparisonChart(
+            [point(0, { outside: true }), point(4, { outside: true }), point(8, { outside: true })],
+            [alert(3.9, { cleared_at: at(8) })],
+            3,
+            { startMs: START, endMs: START, buckets: 10 }
+        );
+        // Point 0 precedes the marker point (4) and is covered as such.
+        expect(chart.outsideMarkers).toEqual([null, null, null]);
     });
 });
 

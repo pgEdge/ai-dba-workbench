@@ -103,8 +103,10 @@ const response = (
     scoring_source: 'alerter',
     baselines_as_of: '2026-10-28T12:00:00Z',
     points: [
-        point('2026-10-28T11:00:00Z'),
-        point('2026-10-28T11:05:00Z', { value: 60, z_score: 7.5, outside: true }),
+        // Not next to the alerted point, whose marker also covers the
+        // point before it, so it keeps its hollow marker.
+        point('2026-10-28T11:00:00Z', { value: 60, z_score: 7.5, outside: true }),
+        point('2026-10-28T11:05:00Z'),
         point('2026-10-28T11:10:00Z', { value: 70, z_score: 10, outside: true }),
     ],
     ...overrides,
@@ -122,6 +124,8 @@ const loadedComparison = (
             anomaly_score: 10,
             anomaly_details: '{"baseline_context":{"period_type":"hourly"}}',
             triggered_at: '2026-10-28T11:10:00Z',
+            status: 'cleared',
+            cleared_at: '2026-10-28T11:10:00Z',
         },
     ],
     window: {

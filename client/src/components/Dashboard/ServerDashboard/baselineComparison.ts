@@ -73,6 +73,10 @@ export interface AnomalyAlert {
     /** A JSON string; the period type is at baseline_context.period_type. */
     anomaly_details?: string | null;
     triggered_at: string;
+    /** 'active', 'acknowledged' or 'cleared'. */
+    status?: string;
+    /** When the alert cleared; absent (or null) whilst it is open. */
+    cleared_at?: string | null;
 }
 
 /** The window the comparison was requested for, split into buckets. */
@@ -115,12 +119,12 @@ export interface ComparisonChartModel {
 // ---------------------------------------------------------------------------
 
 /**
- * Friendly names for the alerter's baselined metrics. A metric missing
- * from the map is shown by its raw name, so a metric added to the
- * alerter registry still appears before it is given a label here.
+ * Friendly names for the baselined metrics, which are those in the
+ * anomaly registry (`BaselineMetrics()` in pkg/anomaly/metrics.go). A
+ * metric missing from the map is shown by its raw name, so a metric
+ * added to the registry still appears before it is given a label here.
  */
 const METRIC_LABELS: Record<string, string> = {
-    'pg_settings.max_connections': 'Max connections',
     connection_utilization_percent: 'Connection utilisation (%)',
     'pg_stat_activity.count': 'Backends',
     'pg_stat_activity.blocked_count': 'Blocked backends',
@@ -128,18 +132,10 @@ const METRIC_LABELS: Record<string, string> = {
     'pg_stat_activity.max_lock_wait_seconds': 'Longest lock wait (s)',
     'pg_stat_activity.max_query_duration_seconds': 'Longest running query (s)',
     'pg_stat_activity.max_xact_duration_seconds': 'Longest transaction (s)',
-    'pg_stat_replication.replay_lag_seconds': 'Replay lag (s)',
     'pg_stat_replication.lag_bytes': 'Replication lag (bytes)',
-    'pg_stat_replication.standby_disconnected': 'Standbys disconnected',
-    'pg_replication_slots.retained_bytes': 'Slot retained WAL (bytes)',
-    'pg_replication_slots.inactive': 'Inactive slot',
-    'pg_replication_slots.inactive_count': 'Inactive slots',
     'pg_replication_slots.max_retained_bytes': 'Largest slot retained WAL (bytes)',
     'spock_exception_log.recent_count': 'Spock exceptions',
     'spock_resolutions.recent_count': 'Spock conflict resolutions',
-    'pg_node_role.subscription_worker_down': 'Subscription workers down',
-    'pg_stat_all_tables.dead_tuple_percent': 'Dead tuples (%)',
-    'pg_stat_archiver.failed_count_delta': 'Failed WAL archives',
     'pg_stat_checkpointer.checkpoints_req_delta': 'Requested checkpoints',
     'pg_stat_database.cache_hit_ratio': 'Cache hit ratio (%)',
     'pg_stat_database.deadlocks_delta': 'Deadlocks',
@@ -149,8 +145,6 @@ const METRIC_LABELS: Record<string, string> = {
     'pg_sys_disk_info.used_percent': 'Disk usage (%)',
     'pg_sys_load_avg_info.load_avg_fifteen_minutes': 'Load average (15 min)',
     'pg_sys_memory_info.used_percent': 'Memory usage (%)',
-    age_percent: 'Transaction ID age (%)',
-    table_last_autovacuum_hours: 'Hours since autovacuum',
 };
 
 /** The friendly label for a metric, or its raw name when it has none. */
@@ -288,17 +282,24 @@ const alertStrength = (marker: EngineMarker): number => Math.abs(marker.zScore ?
 /**
  * Place each engine alert on a chart point: the point in the alert's
  * bucket, or the nearest point when that bucket has none. Returns the
- * markers per point and the buckets that hold an engine alert.
+ * markers per point, the buckets that hold an engine alert and the
+ * indices of the points the markers were drawn on.
+ *
+ * An alert triggered outside a usable window gets no marker, since it
+ * was not raised on any point shown. One still open from before the
+ * window covers points through its span instead (see `alertSpans`).
  */
 const placeEngineAlerts = (
     alerts: AnomalyAlert[],
     times: number[],
     pointBuckets: number[],
     bucketOf: ((time: number) => number) | null,
-    points: ComparisonPoint[]
-): { markers: (EngineMarker | null)[]; buckets: Set<number> } => {
+    points: ComparisonPoint[],
+    window: ComparisonWindow
+): { markers: (EngineMarker | null)[]; buckets: Set<number>; indices: Set<number> } => {
     const markers: (EngineMarker | null)[] = points.map(() => null);
     const buckets = new Set<number>();
+    const indices = new Set<number>();
     const pointByBucket = new Map<number, number>();
     pointBuckets.forEach((bucket, i) => pointByBucket.set(bucket, i));
 
@@ -307,10 +308,14 @@ const placeEngineAlerts = (
         if (Number.isNaN(time) || points.length === 0) {
             continue;
         }
+        if (bucketOf && (time < window.startMs || time > window.endMs)) {
+            continue;
+        }
 
         const bucket = bucketOf ? bucketOf(time) : nearestIndex(times, time);
         const index = pointByBucket.get(bucket) ?? nearestIndex(times, time);
         buckets.add(bucket);
+        indices.add(index);
 
         const marker: EngineMarker = {
             value: a.metric_value ?? points[index].value,
@@ -324,7 +329,56 @@ const placeEngineAlerts = (
         }
     }
 
-    return { markers, buckets };
+    return { markers, buckets, indices };
+};
+
+/**
+ * The time each alert stops covering points: when it cleared, the end
+ * of the window whilst it is still open, or its trigger time when it
+ * is marked cleared with no usable clear time. Null for an alert whose
+ * trigger time cannot be read.
+ */
+const alertSpan = (
+    a: AnomalyAlert,
+    window: ComparisonWindow
+): { from: number; to: number } | null => {
+    const from = Date.parse(a.triggered_at);
+    if (Number.isNaN(from)) {
+        return null;
+    }
+    const cleared = a.cleared_at ? Date.parse(a.cleared_at) : NaN;
+    if (!Number.isNaN(cleared)) {
+        return { from, to: cleared };
+    }
+    return { from, to: a.status === 'cleared' ? from : window.endMs };
+};
+
+/**
+ * Build a predicate telling whether a point lies within an alert's
+ * span, from the bucket before its trigger (as for its marker) to the
+ * bucket it cleared in. Whilst an anomaly alert is open the engine
+ * raises nothing new for the metric, so the outside points under it
+ * are accounted for rather than unalerted.
+ */
+const alertSpans = (
+    alerts: AnomalyAlert[],
+    times: number[],
+    pointBuckets: number[],
+    bucketOf: ((time: number) => number) | null,
+    window: ComparisonWindow
+): ((i: number) => boolean) => {
+    const spans = alerts
+        .map((a) => alertSpan(a, window))
+        .filter((span): span is { from: number; to: number } => span !== null)
+        .filter((span) => span.to >= window.startMs || !bucketOf);
+    if (bucketOf) {
+        const ranges = spans.map((span) => ({
+            from: bucketOf(span.from) - 1,
+            to: bucketOf(span.to),
+        }));
+        return (i) => ranges.some((r) => pointBuckets[i] >= r.from && pointBuckets[i] <= r.to);
+    }
+    return (i) => spans.some((span) => times[i] >= span.from && times[i] <= span.to);
 };
 
 /**
@@ -350,10 +404,16 @@ const splitValues = (
  *
  * An alert covers its own bucket and the one before it, because the
  * engine stamps `triggered_at` when it evaluates, which lags the
- * collection time of the value that tripped it. `alertsCompleteFromMs`
- * is set when the alerts were capped: no alert older than it was
- * loaded, so no point at or before it is marked as outside without an
- * engine alert.
+ * collection time of the value that tripped it. It also covers the
+ * point its marker is drawn on and the point before that, and every
+ * point up to the bucket it cleared in (or the window's end whilst it
+ * is open), since the engine raises nothing new whilst it is open.
+ * Alerts triggered before the window that are still open belong in
+ * `alerts` too: they cover points but draw no marker.
+ *
+ * `alertsCompleteFromMs` is set when the alerts were capped: no alert
+ * older than it was loaded, so no point at or before it is marked as
+ * outside without an engine alert.
  */
 export const buildComparisonChart = (
     points: ComparisonPoint[],
@@ -379,9 +439,21 @@ export const buildComparisonChart = (
         return lo === null || hi === null ? null : hi - lo;
     };
 
-    const { markers, buckets } = placeEngineAlerts(alerts, times, pointBuckets, bucketOf, points);
+    const { markers, buckets, indices } = placeEngineAlerts(
+        alerts,
+        times,
+        pointBuckets,
+        bucketOf,
+        points,
+        window
+    );
+    const inSpan = alertSpans(alerts, times, pointBuckets, bucketOf, window);
     const covered = (i: number): boolean =>
-        buckets.has(pointBuckets[i]) || buckets.has(pointBuckets[i] + 1);
+        buckets.has(pointBuckets[i]) ||
+        buckets.has(pointBuckets[i] + 1) ||
+        indices.has(i) ||
+        indices.has(i + 1) ||
+        inSpan(i);
     const unloaded = (i: number): boolean => {
         if (alertsCompleteFromMs === null) {
             return false;

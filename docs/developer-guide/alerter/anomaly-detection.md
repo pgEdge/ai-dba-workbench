@@ -462,15 +462,18 @@ added by collector schema migration 31, when it starts and after
 each configuration reload. The settings cover the warmup
 thresholds, the variance floor, the z-score cap, the default
 sensitivity and the per-metric floors, with any
-`anomaly.tier1.metric_floors` overrides applied. The alerter logs
-a warning and carries on when the write fails, for example when
-the collector has not yet applied migration 31.
+`anomaly.tier1.metric_floors` overrides applied. When the write
+fails, for example because the collector has not yet applied
+migration 31, the alerter logs a warning, carries on and retries
+every 30 seconds until the write succeeds.
 
 The server reads the column on each request. When the column is
-empty, malformed or holds a non-positive default sensitivity, the
+empty, malformed or holds no positive `default_sensitivity`, the
 server uses `DefaultScoringSettings()` from `pkg/anomaly` and
 reports `scoring_source` as `defaults` in its response, which the
-dashboard shows as a notice.
+dashboard shows as a notice. When the column is valid but lacks
+any other key, `ParseScoringSettings` keeps the default for that
+key.
 `TestDefaultScoringSettingsMatchConfigDefaults` pins those
 defaults to the alerter's configuration defaults, so change a
 Tier 1 default in both places.

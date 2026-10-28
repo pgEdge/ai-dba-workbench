@@ -396,10 +396,11 @@ window counts as alerted. The alerter raises nothing new for a metric whilst an
 alert for it is open, so a sustained excursion shows one triangle
 rather than a hollow circle on every later point.
 
-CPU, memory and connection utilisation have a value floor of 50;
-the engine does not alert below a metric's floor, so a point below
-it is drawn outside the band without a marker. When no baselines
-exist yet for the metric, the chart shows only the line.
+Many metrics have a value floor below which the engine does not
+alert, so a point below its metric's floor is drawn outside the band
+without a marker. When such a point is in view, the chart caption and
+the point's tooltip say so. When no baselines exist yet for the
+metric, the chart shows only the line.
 
 A hollow circle is not necessarily a fault. The band drawn is the
 current one rather than the one the alerter used at the time, the

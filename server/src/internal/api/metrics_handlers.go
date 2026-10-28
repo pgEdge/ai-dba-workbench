@@ -411,12 +411,27 @@ func (h *MetricsHandler) handleMetricsBaselines(
 		}
 	}
 
+	// Optional period type (default all) and database. Without a
+	// database, the rows for every database are returned, each labelled.
+	opts := metrics.BaselineQueryOptions{
+		PeriodType: ParseQueryString(r, "period_type"),
+	}
+	if opts.PeriodType != "" && !metrics.IsValidBaselinePeriodType(opts.PeriodType) {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid period_type: must be one of "+
+				strings.Join(metrics.BaselinePeriodTypes, ", "))
+		return
+	}
+	if dbName := ParseQueryString(r, "database_name"); dbName != "" {
+		opts.DatabaseName = &dbName
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	pool := h.datastore.GetPool()
 	result, err := metrics.QueryBaselines(
-		ctx, pool, connectionID, probeName, requestedMetrics)
+		ctx, pool, connectionID, probeName, requestedMetrics, opts)
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return

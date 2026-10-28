@@ -5991,7 +5991,7 @@
     "/metrics/baselines": {
       "get": {
         "summary": "Get metric baselines",
-        "description": "Returns baseline values for metrics on a specific connection",
+        "description": "Returns the stored baseline rows of one period type for a connection's metrics, one row per metric, database and period key, exactly as the alerter computed them; rows are never averaged across periods or databases",
         "operationId": "getMetricBaselines",
         "tags": [
           "Metrics"
@@ -6009,7 +6009,7 @@
           {
             "name": "probe_name",
             "in": "query",
-            "description": "Probe name",
+            "description": "Probe name; only metrics named after it with a dot (probe_name.column) are returned",
             "required": true,
             "schema": {
               "type": "string"
@@ -6022,15 +6022,39 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "period_type",
+            "in": "query",
+            "description": "Period type to return (default all): all is the whole lookback window, hourly one row per UTC hour of day, daily one row per UTC weekday",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "hourly",
+                "daily"
+              ]
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "description": "Return only this database's rows, which excludes server-level metrics; when omitted, the rows for every database and the server-level rows are returned, each labelled with database_name",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Baseline values",
+            "description": "Baseline rows",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BaselinesResult"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MetricBaseline"
+                  }
                 }
               }
             }
@@ -6047,6 +6071,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -11222,26 +11256,6 @@
           }
         }
       },
-      "BaselinesResult": {
-        "type": "object",
-        "properties": {
-          "baselines": {
-            "type": "object",
-            "description": "Baseline values per metric",
-            "additionalProperties": {
-              "type": "object"
-            }
-          },
-          "connection_id": {
-            "type": "integer",
-            "description": "Connection ID"
-          },
-          "probe_name": {
-            "type": "string",
-            "description": "Probe name"
-          }
-        }
-      },
       "Blackout": {
         "type": "object",
         "properties": {
@@ -13146,6 +13160,78 @@
           "role",
           "content"
         ]
+      },
+      "MetricBaseline": {
+        "type": "object",
+        "description": "One stored metric_baselines row. Rows of different periods or databases are never averaged together.",
+        "properties": {
+          "database_name": {
+            "type": "string",
+            "description": "Database the row covers; null for a server-level metric",
+            "nullable": true
+          },
+          "day_of_week": {
+            "type": "integer",
+            "description": "UTC weekday (Sunday = 0) of a daily row; null otherwise",
+            "nullable": true
+          },
+          "earliest_sample_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Oldest sample behind the row; null when unknown",
+            "nullable": true
+          },
+          "hour_of_day": {
+            "type": "integer",
+            "description": "UTC hour (0-23) of an hourly row; null otherwise",
+            "nullable": true
+          },
+          "max": {
+            "type": "number",
+            "description": "Largest sample"
+          },
+          "mean": {
+            "type": "number",
+            "description": "Mean of the samples behind the row"
+          },
+          "metric": {
+            "type": "string",
+            "description": "Metric name"
+          },
+          "min": {
+            "type": "number",
+            "description": "Smallest sample"
+          },
+          "p50": {
+            "type": "number",
+            "description": "Not a percentile: the mean, kept for compatibility"
+          },
+          "p95": {
+            "type": "number",
+            "description": "Not a percentile: the approximation mean + 2 stddev, kept for compatibility"
+          },
+          "p99": {
+            "type": "number",
+            "description": "Not a percentile: the approximation mean + 3 stddev, kept for compatibility"
+          },
+          "period_type": {
+            "type": "string",
+            "description": "Period the row covers",
+            "enum": [
+              "all",
+              "hourly",
+              "daily"
+            ]
+          },
+          "sample_count": {
+            "type": "integer",
+            "description": "Number of raw samples behind the row"
+          },
+          "stddev": {
+            "type": "number",
+            "description": "Standard deviation of the samples behind the row"
+          }
+        }
       },
       "MetricDataPoint": {
         "type": "object",

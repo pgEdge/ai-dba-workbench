@@ -1660,6 +1660,22 @@ Per-database baselines of a
 metric that became server-wide need no migration: the stale-baseline
 sweep (`DeleteStaleMetricBaselines`) deletes them on the next cycle.
 
+## Baselines Endpoint (server)
+
+`metrics.QueryBaselines` (`server/src/internal/metrics/query.go`)
+backs `GET /api/v1/metrics/baselines` and returns `metric_baselines`
+rows as stored, never averaged across periods or databases (#348; it
+once filtered `period_type = 'overall'`, a value nothing writes, and
+fell back to averaging every period). `BaselineQueryOptions.PeriodType`
+is `all` (default), `hourly` or `daily`; `DatabaseName` nil returns
+every database's rows plus the server-level ones, each labelled, and a
+name returns only that database's rows. The probe filter is a literal
+`starts_with(metric_name, probe || '.')`, not `LIKE`. `p50`/`p95`/`p99`
+are mean, mean + 2 stddev and mean + 3 stddev. The test is
+`baselines_db_test.go`, against a scratch database migrated by the
+collector's `SchemaManager` (`newCollectorSchemaPool` in
+`collector_schema_db_test.go`).
+
 ## Time-Window Resolution (server)
 
 Every dashboard metrics query runs against an absolute window, and the

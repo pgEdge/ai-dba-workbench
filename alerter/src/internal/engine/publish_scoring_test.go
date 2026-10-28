@@ -55,6 +55,36 @@ func (r *scoringRecorder) last() anomaly.ScoringSettings {
 	return r.calls[len(r.calls)-1]
 }
 
+// all returns a copy of every publication, oldest first.
+func (r *scoringRecorder) all() []anomaly.ScoringSettings {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]anomaly.ScoringSettings(nil), r.calls...)
+}
+
+// sendTick delivers one retry tick to a waiting retry loop. The channel
+// is unbuffered, so the send completes only when the loop has taken the
+// tick, and a second send cannot complete until the first has been
+// processed.
+func sendTick(t *testing.T, tick chan<- time.Time) {
+	t.Helper()
+	select {
+	case tick <- time.Time{}:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out sending a retry tick: no retry loop is waiting")
+	}
+}
+
+// assertNoRetryLoop fails if a retry loop is still receiving ticks.
+func assertNoRetryLoop(t *testing.T, tick chan<- time.Time) {
+	t.Helper()
+	select {
+	case tick <- time.Time{}:
+		t.Error("a retry loop took a tick it should have stopped before")
+	default:
+	}
+}
+
 // waitFor polls cond until it holds, failing the test after five seconds.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -88,47 +118,51 @@ func configWithMaxZ(z float64) *config.Config {
 // first failed.
 func TestPublishScoringSettingsRetriesUntilSuccess(t *testing.T) {
 	rec := &scoringRecorder{err: errors.New("column tier1_scoring does not exist")}
+	tick := make(chan time.Time)
 	e := &Engine{config: configWithMaxZ(5), publishScoring: rec.publish,
-		scoringRetryInterval: 10 * time.Millisecond}
+		scoringRetryTick: tick}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	e.publishScoringSettings(ctx, true)
-	waitFor(t, "a retry", func() bool { return rec.count() >= 3 })
+	sendTick(t, tick)
+	sendTick(t, tick)
+	waitFor(t, "two failed retries", func() bool { return rec.count() == 3 })
 
 	e.mu.Lock()
 	e.config = configWithMaxZ(9)
 	e.mu.Unlock()
 	rec.setErr(nil)
+	sendTick(t, tick)
 
 	waitFor(t, "the retry loop to stop", func() bool { return e.retryLoops() == 0 })
-	n := rec.count()
+	if n := rec.count(); n != 4 {
+		t.Errorf("published %d times, want 4 (start, two failures, success)", n)
+	}
 	if got := rec.last().MaxZScore; got != 9 {
 		t.Errorf("published MaxZScore = %v, want the current configuration's 9", got)
 	}
-	time.Sleep(50 * time.Millisecond)
-	if rec.count() != n {
-		t.Errorf("published %d more times after a success", rec.count()-n)
-	}
+	assertNoRetryLoop(t, tick)
 }
 
 // TestPublishScoringSettingsRetryStopsWithContext verifies the retry
 // loop ends when its context is canceled, even if every attempt fails.
 func TestPublishScoringSettingsRetryStopsWithContext(t *testing.T) {
 	rec := &scoringRecorder{err: errors.New("datastore down")}
+	tick := make(chan time.Time)
 	e := &Engine{config: config.NewConfig(), publishScoring: rec.publish,
-		scoringRetryInterval: 10 * time.Millisecond}
+		scoringRetryTick: tick}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	e.publishScoringSettings(ctx, true)
-	waitFor(t, "a retry", func() bool { return rec.count() >= 2 })
+	sendTick(t, tick)
+	waitFor(t, "a retry", func() bool { return rec.count() == 2 })
 	cancel()
 
 	waitFor(t, "the retry loop to stop", func() bool { return e.retryLoops() == 0 })
-	n := rec.count()
-	time.Sleep(50 * time.Millisecond)
-	if rec.count() != n {
-		t.Errorf("published %d more times after cancellation", rec.count()-n)
+	assertNoRetryLoop(t, tick)
+	if n := rec.count(); n != 2 {
+		t.Errorf("published %d times, want 2 (none after cancellation)", n)
 	}
 }
 
@@ -144,10 +178,11 @@ func TestReloadDuringPendingRetry(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			rec := &scoringRecorder{err: errors.New("datastore down")}
-			// The interval keeps the loop waiting while the reload
-			// runs.
+			// No tick arrives until the test sends one, so the loop
+			// waits while the reload runs.
+			tick := make(chan time.Time)
 			e := &Engine{config: configWithMaxZ(5), publishScoring: rec.publish,
-				scoringRetryInterval: 200 * time.Millisecond}
+				scoringRetryTick: tick}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			e.ctx = ctx
@@ -168,9 +203,13 @@ func TestReloadDuringPendingRetry(t *testing.T) {
 			}
 
 			rec.setErr(nil)
+			sendTick(t, tick)
 			waitFor(t, "the retry loop to stop", func() bool { return e.retryLoops() == 0 })
-			if got := rec.last().MaxZScore; got != 9 {
-				t.Errorf("last published MaxZScore = %v, want the reloaded 9", got)
+			assertNoRetryLoop(t, tick)
+			for i, c := range rec.all()[1:] {
+				if c.MaxZScore != 9 {
+					t.Errorf("publication %d after the start has MaxZScore %v, want the reloaded 9", i+1, c.MaxZScore)
+				}
 			}
 			want := 3
 			if reloadSucceeds {

@@ -84,12 +84,12 @@ func (e *Engine) publishScoringLocked(ctx context.Context) bool {
 // settings until one succeeds, a publication made elsewhere leaves
 // nothing pending, or ctx is done.
 func (e *Engine) retryScoringPublish(ctx context.Context) {
-	interval := e.scoringRetryInterval
-	if interval <= 0 {
-		interval = scoringPublishRetryInterval
+	tick := e.scoringRetryTick
+	if tick == nil {
+		ticker := time.NewTicker(scoringPublishRetryInterval)
+		defer ticker.Stop()
+		tick = ticker.C
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 
 	for {
 		select {
@@ -98,7 +98,7 @@ func (e *Engine) retryScoringPublish(ctx context.Context) {
 			e.scoringRetryLoops--
 			e.scoringMu.Unlock()
 			return
-		case <-ticker.C:
+		case <-tick:
 		}
 
 		e.scoringMu.Lock()

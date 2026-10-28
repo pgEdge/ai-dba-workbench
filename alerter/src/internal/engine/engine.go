@@ -137,9 +137,10 @@ type Engine struct {
 	scoringPending    bool
 	scoringRetryLoops int
 
-	// scoringRetryInterval, when positive, replaces
-	// scoringPublishRetryInterval; tests use it.
-	scoringRetryInterval time.Duration
+	// scoringRetryTick, when set, replaces the retry timer, so that a
+	// test decides exactly when each retry happens; see
+	// scoring_publish.go.
+	scoringRetryTick <-chan time.Time
 
 	// Synchronization
 	mu sync.RWMutex

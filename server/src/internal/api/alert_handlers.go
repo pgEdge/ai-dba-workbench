@@ -175,6 +175,19 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		filter.EndTime = &endTime
 	}
 
+	// Parse active_start and active_end - silently ignore invalid, as
+	// for start_time and end_time; an inverted range is a client error.
+	if activeStart, ok := ParseQueryTimeSilent(r, "active_start"); ok {
+		filter.ActiveStart = &activeStart
+	}
+	if activeEnd, ok := ParseQueryTimeSilent(r, "active_end"); ok {
+		filter.ActiveEnd = &activeEnd
+	}
+	if filter.ActiveStart != nil && filter.ActiveEnd != nil && filter.ActiveStart.After(*filter.ActiveEnd) {
+		RespondError(w, http.StatusBadRequest, "active_start must not be after active_end")
+		return
+	}
+
 	// Parse limit and offset with defaults
 	filter.Limit = ParseLimitWithDefaults(r, 100, 1000)
 	filter.Offset = ParseOffsetWithDefault(r, 0)

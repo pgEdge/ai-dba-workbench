@@ -679,6 +679,22 @@
             }
           },
           {
+            "name": "active_start",
+            "in": "query",
+            "description": "Keep only alerts not cleared before this time (RFC3339); with active_end, alerts active at some instant in the range",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "active_end",
+            "in": "query",
+            "description": "Keep only alerts triggered at or before this time (RFC3339); with active_start, alerts active at some instant in the range",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "Maximum number of results (default 100)",
@@ -702,6 +718,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AlertListResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "active_start is after active_end",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }

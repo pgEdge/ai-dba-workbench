@@ -363,7 +363,7 @@ func TestMetricScanHelpers(t *testing.T) {
 	t.Run("queryHistoricalMetricValuesBasic", func(t *testing.T) {
 		got, err := ds.queryHistoricalMetricValuesBasic(ctx,
 			"SELECT 7::int, NULL::text, 1.5::float8, now() "+
-				"WHERE $1::int > 0", 7)
+				"WHERE $1::int > 0 AND now() <= $2", 7)
 		if err != nil {
 			t.Fatalf("error = %v", err)
 		}
@@ -377,7 +377,7 @@ func TestMetricScanHelpers(t *testing.T) {
 		}
 		if _, err := ds.queryHistoricalMetricValuesBasic(ctx,
 			"SELECT 'x'::text, 'y'::text, 'z'::text, 'w'::text "+
-				"WHERE $1::int > 0", 7); err == nil {
+				"WHERE $1::int > 0 AND now() <= $2", 7); err == nil {
 			t.Error("expected a scan error for mistyped columns")
 		}
 	})
@@ -385,7 +385,7 @@ func TestMetricScanHelpers(t *testing.T) {
 	t.Run("queryHistoricalMetricValuesWithDB", func(t *testing.T) {
 		got, err := ds.queryHistoricalMetricValuesWithDB(ctx,
 			"SELECT 7::int, 'appdb'::text, 1.5::float8, now() "+
-				"WHERE $1::int > 0", 7)
+				"WHERE $1::int > 0 AND now() <= $2", 7)
 		if err != nil {
 			t.Fatalf("error = %v", err)
 		}
@@ -400,7 +400,7 @@ func TestMetricScanHelpers(t *testing.T) {
 		}
 		if _, err := ds.queryHistoricalMetricValuesWithDB(ctx,
 			"SELECT 'x'::text, 'y'::text, 'z'::text, 'w'::text "+
-				"WHERE $1::int > 0", 7); err == nil {
+				"WHERE $1::int > 0 AND now() <= $2", 7); err == nil {
 			t.Error("expected a scan error for mistyped columns")
 		}
 	})
@@ -408,7 +408,7 @@ func TestMetricScanHelpers(t *testing.T) {
 	t.Run("queryHistoricalMetricValuesWithSamples", func(t *testing.T) {
 		got, err := ds.queryHistoricalMetricValuesWithSamples(ctx,
 			"SELECT 7::int, 'appdb'::text, 1.5::float8, now(), 3::bigint "+
-				"WHERE $1::int > 0", 7, true)
+				"WHERE $1::int > 0 AND now() <= $2", 7, true)
 		if err != nil {
 			t.Fatalf("error = %v", err)
 		}
@@ -418,7 +418,7 @@ func TestMetricScanHelpers(t *testing.T) {
 		}
 
 		noDB := "SELECT 7::int, NULL::text, 1.5::float8, now(), 3::bigint " +
-			"WHERE $1::int > 0"
+			"WHERE $1::int > 0 AND now() <= $2"
 		got, err = ds.queryHistoricalMetricValuesWithSamples(ctx, noDB, 7, false)
 		if err != nil {
 			t.Fatalf("error = %v", err)
@@ -437,7 +437,7 @@ func TestMetricScanHelpers(t *testing.T) {
 		}
 		if _, err := ds.queryHistoricalMetricValuesWithSamples(ctx,
 			"SELECT 'x'::text, 'y'::text, 'z'::text, 'w'::text, 'v'::text "+
-				"WHERE $1::int > 0", 7, false); err == nil {
+				"WHERE $1::int > 0 AND now() <= $2", 7, false); err == nil {
 			t.Error("expected a scan error for mistyped columns")
 		}
 	})

@@ -11,6 +11,7 @@
 package anomaly
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -109,6 +110,37 @@ func TestSharedFragmentsEmbedded(t *testing.T) {
 		}
 		if !strings.Contains(def.HistoricalSQL, fragment) {
 			t.Errorf("%s HistoricalSQL does not embed its shared fragment", name)
+		}
+	}
+}
+
+// lookbackPredicate matches a historical query's lookback on
+// collected_at, capturing the column as written.
+var lookbackPredicate = regexp.MustCompile(
+	`((?:\w+\.)?collected_at) > NOW\(\) - INTERVAL '1 day' \* \$1`)
+
+// TestHistoricalUpperBound checks that every lookback on collected_at is
+// followed at once by the $2 upper bound on the same column, so a reader
+// of a past window can keep each inner scan off the present (GitHub
+// issue #776).
+func TestHistoricalUpperBound(t *testing.T) {
+	for _, def := range BaselineMetrics() {
+		sql := def.HistoricalSQL
+		matches := lookbackPredicate.FindAllStringSubmatchIndex(sql, -1)
+		if len(matches) == 0 {
+			t.Errorf("%s HistoricalSQL has no lookback on collected_at", def.Name)
+		}
+		if got, want := strings.Count(sql, "$2"), len(matches); got != want {
+			t.Errorf("%s HistoricalSQL binds $2 %d times, want once per lookback (%d)",
+				def.Name, got, want)
+		}
+		for _, m := range matches {
+			column := sql[m[2]:m[3]]
+			rest := strings.TrimLeft(sql[m[1]:], " \t\n")
+			if !strings.HasPrefix(rest, "AND "+column+" <= $2") {
+				t.Errorf("%s HistoricalSQL lookback on %s has no $2 upper bound beside it",
+					def.Name, column)
+			}
 		}
 	}
 }

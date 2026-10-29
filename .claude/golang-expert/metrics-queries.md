@@ -103,6 +103,7 @@ SELECT m.connection_id, ...
 FROM metrics.pg_stat_activity m
 JOIN connections c ON c.id = m.connection_id
 WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+  AND m.collected_at <= $2
 ```
 
 For queries that use CTEs with window functions (LAG, partitioned by
@@ -119,6 +120,7 @@ WITH db_blocks AS (
     FROM metrics.pg_stat_database m
     JOIN connections c ON c.id = m.connection_id
     WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+      AND m.collected_at <= $2
 )
 SELECT ...
 FROM db_blocks
@@ -1447,7 +1449,8 @@ conventions from that change hold across both:
 
 - A tier is only reachable if its `min_span_hours` is at most
   `lookback_days * 24`. Every `historicalSQL` filters `collected_at >
-  NOW() - INTERVAL '1 day' * $1` and `UpsertMetricBaseline` rewrites
+  NOW() - INTERVAL '1 day' * $1` (and `<= $2`, +infinity from the
+  alerter) and `UpsertMetricBaseline` rewrites
   `earliest_sample_at` on every refresh, so a baseline's span never
   exceeds the lookback. At the original 7-day default the daily tier's
   336-hour span was unreachable and the documented three-step order was
@@ -1710,8 +1713,9 @@ the band the alerter scores it with; the code is
   `ZScore`/`InBand`, evaluating warmth and UTC period keys at each
   sample's own time against the current baseline rows.
 - The series is the registry's `HistoricalSQL` wrapped as a subquery
-  (`comparisonSeriesQuery`) with `$1` lookback days and parameterised
-  connection, NULL-aware database and window predicates, so every
+  (`comparisonSeriesQuery`) with `$1` lookback days, `$2` the inner
+  upper bound on `collected_at`, and parameterised connection,
+  NULL-aware database and window predicates, so every
   registry query must keep the output column names `connection_id`,
   `database_name`, `value` and `collected_at`.
   `TestQueryComparisonSeries_EveryMetric` runs the wrap for every
@@ -1729,6 +1733,18 @@ the band the alerter scores it with; the code is
   kept (at its own, earlier time, in the first interval).
   `TestBucketWidthMatchesSQL` in `pkg/anomaly` fails a definition whose
   `date_trunc` and `BucketWidth` disagree.
+- Every `HistoricalSQL` lookback (`collected_at > NOW() - INTERVAL '1
+  day' * $1`) is followed at once by `AND <same column> <= $2`, because
+  the outer window predicate cannot pass a CTE's window function and a
+  past window would otherwise scan up to now (#776).
+  `TestHistoricalUpperBound` in `pkg/anomaly` enforces the pairing. The
+  alerter passes `noHistoricalUpperBound` (+infinity, a
+  `pgtype.Timestamptz`); the comparison passes `comparisonUpperBound`,
+  the window end for a raw metric and the start of the next bucket for
+  a bucketed one, so the bucket holding the end stays complete
+  (`TestLoadComparison_PastWindowBucketEnd`).
+  `TestComparisonSeriesQuery_Plan` asserts the bound reaches the inner
+  scan beside the lookback.
 - The metric is validated with `ResolveComparisonMetric` (registry
   lookup plus database scope) before any SQL is chosen.
 - Settings come from `alerter_settings.tier1_scoring`;

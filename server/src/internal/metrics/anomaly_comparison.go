@@ -403,19 +403,33 @@ func QueryComparisonBaselines(
 // one the baselines are computed from, so the plotted values are exactly
 // the values that were baselined. Every registered query yields columns
 // named connection_id, database_name, value and collected_at. $1 is the
-// historical query's lookback in days; the outer predicates narrow it to
-// one connection, one database (NULL for server-level metrics) and the
+// historical query's lookback in days and $2 its upper bound on
+// collected_at, which together keep the inner scan to the window (see
+// comparisonUpperBound); the outer predicates narrow the result to one
+// connection, one database (NULL for server-level metrics) and the
 // window, whose start the caller has already moved back to the start of
 // the bucket that holds it for a bucketed metric. Only the registry's own
 // SQL is spliced in, never request input.
 func comparisonSeriesQuery(def anomaly.MetricDef) string {
 	return `SELECT h.value::float8, h.collected_at
         FROM (` + def.HistoricalSQL + `) AS h
-        WHERE h.connection_id = $2
-          AND h.database_name IS NOT DISTINCT FROM $3::text
-          AND h.collected_at BETWEEN $4 AND $5
+        WHERE h.connection_id = $3
+          AND h.database_name IS NOT DISTINCT FROM $4::text
+          AND h.collected_at BETWEEN $5 AND $6
           AND h.value IS NOT NULL
         ORDER BY h.collected_at`
+}
+
+// comparisonUpperBound returns the historical query's inclusive upper
+// bound on collected_at for a window ending at end, so a window set in
+// the past does not make the inner query scan up to now (GitHub issue
+// #776). For a raw metric it is end itself. For a bucketed metric it is
+// the start of the next bucket, so the bucket holding end aggregates
+// every sample it covers, as it does in the baseline calculator; a row
+// that bound admits for the next bucket is stamped after end, and the
+// outer window predicate drops it.
+func comparisonUpperBound(def anomaly.MetricDef, end time.Time) time.Time {
+	return def.BucketStart(end).Add(def.BucketWidth)
 }
 
 // comparisonLookbackDays returns the historical query's lookback: whole
@@ -449,8 +463,8 @@ func QueryComparisonSeries(
 	}
 	queried := TimeWindow{Start: def.BucketStart(window.Start), End: window.End.UTC()}
 	rows, err := pool.Query(ctx, comparisonSeriesQuery(def),
-		comparisonLookbackDays(queried, now), connectionID, databaseName,
-		queried.Start, queried.End)
+		comparisonLookbackDays(queried, now), comparisonUpperBound(def, queried.End),
+		connectionID, databaseName, queried.Start, queried.End)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query metric values: %w", err)
 	}

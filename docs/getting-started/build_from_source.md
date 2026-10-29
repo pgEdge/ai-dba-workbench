@@ -12,8 +12,8 @@ single host.
 Before building the Workbench, confirm that the following prerequisites
 are in place on a supported operating system and platform:
 
-- [Go 1.26.10](https://go.dev/dl/) or later is required to build the
-  server-side components.
+- [Go 1.26.10](https://go.dev/dl/) or a later 1.26 release, or Go 1.27.3
+  or later, is required to build the server-side components.
 
 - [Node.js 20.19](https://nodejs.org/en/download) or later on the 20.x
   line, or Node.js 22.12 or later, is required to build the web client.

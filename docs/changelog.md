@@ -2809,9 +2809,10 @@ project adheres to
 
 - Drop trust in eight compromised eMudhra intermediate CAs
   (CVE-2026-111943). Go 1.26.10, which the collector, server and
-  alerter now build with, adds them to the `crypto/x509` denylist,
-  and the documentation build's `certifi` pin moves to 2026.10.23,
-  which removes them.
+  alerter now build with, adds them to the `crypto/x509` denylist, as
+  does Go 1.27.3 on the 1.27 line; Go 1.27.0 to 1.27.2 remain
+  vulnerable. The documentation build's `certifi` pin moves to
+  2026.10.23, which removes them.
 
 - Apply the API token protections on groups named in the OIDC
   `group_map` to the map as it stands after a configuration

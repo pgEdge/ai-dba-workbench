@@ -672,11 +672,23 @@ func serverConditions(q *datastoreQuery, src datastoreSource, req datastoreReque
 // caller (issue #669). It also hides rows a metrics table without a
 // foreign key still holds for a connection already purged. It binds
 // nothing, so it leaves the parameter numbering alone.
+//
+// A metric source names connections unqualified, resolved through the
+// search_path as every other server query that reads the metrics schema
+// does: on a pgEdge ColdFront datastore DuckDB plans the whole statement
+// once it reads a metrics view, and it cannot resolve a schema-qualified
+// PostgreSQL table such as public.connections (issue #755). A
+// configuration source, which reads only ordinary tables, keeps the
+// qualified name, as fromClause does.
 func liveConnectionCondition(src datastoreSource) string {
 	if src.Scope != scopeConnection || src.ConnectionColumn == "" {
 		return ""
 	}
-	return "EXISTS (SELECT 1 FROM public.connections lc WHERE lc.id = " +
+	connections := "public.connections"
+	if src.Kind == datastoreKindMetric {
+		connections = "connections"
+	}
+	return "EXISTS (SELECT 1 FROM " + connections + " lc WHERE lc.id = " +
 		qualified(datastoreTableAlias, src.ConnectionColumn) +
 		" AND lc.deleted_at IS NULL)"
 }

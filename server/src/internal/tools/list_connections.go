@@ -111,7 +111,11 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 				ctx = context.Background()
 			}
 
-			// Query for all connections (excluding sensitive fields like passwords)
+			// Query for all connections (excluding sensitive fields like
+			// passwords). connections is named unqualified, as in every
+			// server query that reads the metrics schema: on a pgEdge
+			// ColdFront datastore DuckDB plans the whole statement and
+			// cannot resolve public.connections (issue #755).
 			query := `
                 WITH latest_connectivity AS (
                     SELECT DISTINCT ON (connection_id)
@@ -138,7 +142,7 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
                         ELSE 'unknown'
                     END as status,
                     COALESCE(c.connection_error, '') as connection_error
-                FROM public.connections c
+                FROM connections c
                 LEFT JOIN latest_connectivity lc ON c.id = lc.connection_id
                 WHERE c.deleted_at IS NULL
                 ORDER BY c.name, c.host

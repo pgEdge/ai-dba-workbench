@@ -449,12 +449,18 @@ func TestBuildDatastoreQueryUnrestrictedSkipsScoping(t *testing.T) {
 // connection-scoped source keeps to live connections for every caller,
 // one who may read every connection included (issue #669), and that a
 // source with no connection column, or the connections source, which
-// tests its own deleted_at, is not given the predicate.
+// tests its own deleted_at, is not given the predicate. A metric source
+// names connections unqualified, which a pgEdge ColdFront datastore can
+// resolve where it cannot resolve public.connections (issue #755).
 func TestBuildDatastoreQueryKeepsToLiveConnections(t *testing.T) {
-	live := `EXISTS (SELECT 1 FROM public.connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL)`
 	for _, vis := range []visibleSet{{All: true}, {IDs: []int{3}}} {
 		for _, src := range append(configurationSources(), testMetricSource()) {
 			sql, _ := mustBuild(t, src, map[string]any{"source": src.Name}, vis)
+			table := "public.connections"
+			if src.Kind == datastoreKindMetric {
+				table = "connections"
+			}
+			live := `EXISTS (SELECT 1 FROM ` + table + ` lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL)`
 			want := src.Scope == scopeConnection && src.ConnectionColumn != "" && src.LiveColumn == ""
 			if got := strings.Contains(sql, live); got != want {
 				t.Errorf("%s (all=%v): live connection predicate present = %v, want %v: %s",
@@ -602,7 +608,7 @@ func TestBuildDatastoreQueryConnectionIDs(t *testing.T) {
 
 func TestBuildDatastoreQueryMetricDefaultWindow(t *testing.T) {
 	sql, qargs := mustBuild(t, testMetricSource(), map[string]any{"source": "pg_stat_database"}, everyone)
-	want := `SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE EXISTS (SELECT 1 FROM public.connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $1 AND t."collected_at" <= $2 OFFSET 0) t ORDER BY t."collected_at" DESC, t."connection_id" ASC, t."datname" ASC LIMIT $3 OFFSET $4`
+	want := `SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE EXISTS (SELECT 1 FROM connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $1 AND t."collected_at" <= $2 OFFSET 0) t ORDER BY t."collected_at" DESC, t."connection_id" ASC, t."datname" ASC LIMIT $3 OFFSET $4`
 	if sql != want {
 		t.Errorf("SQL =\n%s\nwant\n%s", sql, want)
 	}
@@ -753,7 +759,7 @@ func TestBuildDatastoreQueryLatest(t *testing.T) {
 		"columns": []any{"datname", "xact_commit"},
 		"filters": []any{map[string]any{"column": "datname", "op": "!=", "value": "template1"}},
 	}, restricted)
-	want := `SELECT "datname", "xact_commit" FROM (SELECT DISTINCT ON (t."connection_id", t."datname") t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY(string_to_array($1, ',')::integer[]) AND EXISTS (SELECT 1 FROM public.connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $2 AND t."collected_at" <= $3 OFFSET 0) t WHERE t."datname" <> $4 ORDER BY t."connection_id", t."datname", t."collected_at" DESC) latest ORDER BY "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
+	want := `SELECT "datname", "xact_commit" FROM (SELECT DISTINCT ON (t."connection_id", t."datname") t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY(string_to_array($1, ',')::integer[]) AND EXISTS (SELECT 1 FROM connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $2 AND t."collected_at" <= $3 OFFSET 0) t WHERE t."datname" <> $4 ORDER BY t."connection_id", t."datname", t."collected_at" DESC) latest ORDER BY "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
 	if sql != want {
 		t.Errorf("SQL =\n%s\nwant\n%s", sql, want)
 	}
@@ -776,7 +782,7 @@ func TestBuildDatastoreQueryAggregate(t *testing.T) {
 		"group_by":    []any{"connection_id", "datname"},
 		"buckets":     6,
 	}, restricted)
-	want := `SELECT date_bin($4::interval, t."collected_at", $2::timestamptz) AS "bucket_time", t."connection_id", t."datname", avg(t."xact_commit")::float8 AS "avg_xact_commit", avg(t."cache_ratio")::float8 AS "avg_cache_ratio" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY(string_to_array($1, ',')::integer[]) AND EXISTS (SELECT 1 FROM public.connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $2 AND t."collected_at" <= $3 OFFSET 0) t GROUP BY 1, 2, 3 ORDER BY "bucket_time" ASC, "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
+	want := `SELECT date_bin($4::interval, t."collected_at", $2::timestamptz) AS "bucket_time", t."connection_id", t."datname", avg(t."xact_commit")::float8 AS "avg_xact_commit", avg(t."cache_ratio")::float8 AS "avg_cache_ratio" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY(string_to_array($1, ',')::integer[]) AND EXISTS (SELECT 1 FROM connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $2 AND t."collected_at" <= $3 OFFSET 0) t GROUP BY 1, 2, 3 ORDER BY "bucket_time" ASC, "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
 	if sql != want {
 		t.Errorf("SQL =\n%s\nwant\n%s", sql, want)
 	}

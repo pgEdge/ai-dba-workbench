@@ -8,11 +8,12 @@ ordinary view. Metrics history is append-mostly analytic data that
 grows steadily; moving that data to object storage lowers storage cost
 on the datastore and allows longer retention.
 
-ColdFront storage is a collector option; the server and alerter need no
-setting, because both components read the metrics tables through the
-same SQL in either mode. This page describes the prerequisites, the
-configuration option, and the ways in which a ColdFront datastore
-behaves differently from a standard datastore.
+ColdFront storage is a collector option. The server and alerter need no
+setting, because both components run metrics queries that work against
+either kind of datastore. This page describes the prerequisites, the
+configuration option, the operational tasks that ColdFront storage
+adds, and the ways in which a ColdFront datastore behaves differently
+from a standard datastore.
 
 ## Understanding ColdFront Metrics Storage
 
@@ -28,6 +29,13 @@ The collector still creates every operational table, such as
 PostgreSQL table. Only the tables in the `metrics` schema move to
 object storage.
 
+The collector writes metrics rows through helper functions in a
+`workbench_coldfront` schema that the collector creates and maintains
+itself. Each write appends one Parquet data file and one snapshot to
+the Iceberg table; the
+[Scheduling the ColdFront Compactor](#scheduling-the-coldfront-compactor)
+section explains why that matters for operations.
+
 ## Meeting the Prerequisites
 
 ColdFront storage requires a datastore that has been prepared for
@@ -37,21 +45,27 @@ must meet the following requirements:
 - The datastore PostgreSQL server has the
   [pg_duckdb](https://github.com/duckdb/pg_duckdb) and `coldfront`
   extensions installed.
-- ColdFront is configured with an Iceberg catalog, such as
-  [Lakekeeper](https://github.com/lakekeeper/lakekeeper), and with
-  object storage, as the ColdFront documentation describes.
+- ColdFront is configured with a
+  [Lakekeeper](https://github.com/lakekeeper/lakekeeper) Iceberg
+  catalog and with object storage, as the ColdFront documentation
+  describes.
+- The Lakekeeper warehouse named in the `coldfront.warehouse` setting
+  is reachable from the datastore and writable.
 - The installed ColdFront build includes the
-  `coldfront._partition_clause(jsonb,text[])` function.
+  `coldfront._partition_clause(jsonb,text[])` and
+  `coldfront.ensure_attached()` functions.
 - The datastore roles that the Workbench components use have been
   granted access to ColdFront.
+- The collector's datastore role can create a schema in the datastore
+  database.
 
 The `coldfront._partition_clause` function arrived in pgEdge ColdFront
 pull request #92, which also contains the read support from pull
 request #85 that the server relies on. Use ColdFront `1.0.0-rc1` or
 later; the `v1.0.0-beta2` release is too old. ColdFront reports the
 same extension version in every build, so the collector checks for the
-function instead of a version number. The collector refuses to start
-when the installed ColdFront build lacks that function.
+functions instead of a version number. The collector refuses to start
+when the installed ColdFront build lacks either function.
 
 ### Granting ColdFront Access to Workbench Roles
 
@@ -67,6 +81,27 @@ SELECT coldfront.grant_app_access('ai_workbench');
 Replace `ai_workbench` with the collector's `datastore.username` value.
 If the server or alerter connects to the datastore as a different role,
 run the same function for each of those roles as well.
+
+### Preparing the Collector's Datastore Role
+
+The collector creates the `workbench_coldfront` schema at startup, so
+the collector's datastore role needs the `CREATE` privilege on the
+datastore database. In the following example, the `GRANT` statement
+gives the `ai_workbench` role that privilege on the `ai_workbench`
+database:
+
+```sql
+GRANT CREATE ON DATABASE ai_workbench TO ai_workbench;
+```
+
+The collector's role must own the `workbench_coldfront` schema and
+every function in it. The collector revokes all `PUBLIC` access to the
+schema and its functions, and refuses to start when another role owns
+the schema or any function in it. This rule prevents another role from
+replacing the functions that the collector writes metrics through.
+
+Run the collector as a dedicated role that is not a superuser, so that
+the collector holds only the privileges it needs.
 
 ## Enabling ColdFront Storage
 
@@ -106,6 +141,68 @@ does not match the existing metrics tables; the
 [Collector Configuration](collector.md#troubleshooting) document lists
 each startup error and its fix.
 
+### Understanding the Startup Steps
+
+In ColdFront mode, the collector prepares the datastore at every
+startup, before running any schema migration. The collector performs
+the following steps in order:
+
+1. The collector checks that the required ColdFront functions exist
+   and that any existing metrics relations are ColdFront views.
+2. The collector calls `coldfront.ensure_attached()` and creates the
+   `metrics` Iceberg namespace in the Lakekeeper warehouse, outside any
+   transaction, if the namespace does not already exist.
+3. The collector creates or replaces the `workbench_coldfront` schema
+   and its helper functions, and checks their ownership.
+
+The collector creates the Iceberg namespace itself because
+`coldfront.create_iceberg_table` cannot create a new namespace on a
+Lakekeeper catalog in the same call that creates a table. Every step
+is safe to repeat on each startup.
+
+## Scheduling the ColdFront Compactor
+
+ColdFront storage adds one operational task that the operator must
+perform: scheduling the ColdFront compactor for every metrics table.
+Each metrics write by the collector is one Iceberg append, which adds
+one small Parquet file and one snapshot to the table. The Workbench
+does not compact or expire this data.
+
+Without compaction, snapshots and small files accumulate quickly. In
+testing, each metrics table reached about 900 snapshots after 16 hours
+of one-minute probe intervals. Reads then slow down, and object-store
+errors followed that caused pg_duckdb to abort backends and PostgreSQL
+to restart after a crash. Shorter probe intervals multiply the rate at
+which files accumulate.
+
+Schedule ColdFront's `cmd/compactor` tool to run regularly against each
+metrics table, with the `--expire-snapshots` option so that the
+compactor also expires old snapshots. The
+[ColdFront compaction guide](https://github.com/pgEdge/ColdFront/blob/main/docs/compaction.md)
+describes how to build, configure, and schedule the compactor, and the
+options that remove orphaned files.
+
+## Protecting the Datastore Log
+
+When ColdFront rejects a metrics write, the PostgreSQL error context
+can carry the values of that batch into the datastore's server log.
+Those values can include credential-bearing `pg_settings` values and
+`pg_hba_file_rules` options collected from monitored servers. The
+collector's own log records only the error message and SQLSTATE.
+
+Protect the datastore log as carefully as the datastore itself. The
+following practices reduce the exposure:
+
+- Restrict access to the datastore's log files to the roles and
+  operators who may read the datastore's data.
+- Keep `log_parameter_max_length_on_error` at its default of `0`, so
+  that PostgreSQL does not log the bound batch parameter.
+- Set `log_error_verbosity = terse`, or raise
+  `log_min_error_statement`, to log less of the failing statement.
+
+The last two settings apply to the whole datastore server, so they
+also remove diagnostic detail from every other error in the log.
+
 ## Understanding Behavioural Differences
 
 A ColdFront datastore stores the same metrics as a standard datastore,
@@ -117,12 +214,13 @@ describe each difference.
 The Workbench performs no retention on metrics data in ColdFront mode.
 The collector creates and drops no partitions, deletes no old rows, and
 does not start its garbage collector. The collector ignores the
-`retention_days` value in the `probe_configs` table for every probe.
+`retention_days` value in the `probe_configs` table for every probe,
+and logs one line at startup to say so.
 
-The data lifecycle belongs to ColdFront and to the operator.
-ColdFront's compactor, run with the `--expire-snapshots` and
-`--orphans` options, removes expired Iceberg snapshots and orphaned
-data files. Deleting old metrics rows remains the operator's
+The data lifecycle belongs to ColdFront and to the operator. The
+ColdFront compactor expires old snapshots and data files, as the
+[Scheduling the ColdFront Compactor](#scheduling-the-coldfront-compactor)
+section describes. Deleting old metrics rows remains the operator's
 responsibility.
 
 ### Purging Deleted Connections
@@ -155,8 +253,25 @@ how the collector stores each affected type:
 | unbounded `numeric` | `numeric(38,0)` | The value is stored as a whole number; the two affected columns hold byte counts. |
 | `jsonb` | `jsonb` | Queries return the column as `json`. |
 
-Custom queries against the metrics tables, such as those run through
-the `query_metrics` tool or directly with SQL, see the ColdFront types.
+When read through a ColdFront view, `text` columns report the type
+`character varying` and `oid` columns report `bigint`. Custom queries
+against the metrics tables see these types.
+
+### Writing Metrics in Batches
+
+The collector writes each probe's rows through the helper functions in
+batches of at most 5,000 rows and 16 MiB of JSON. Each batch is one
+statement and one Iceberg commit, so a normal probe run produces a
+single write.
+
+The collector handles values and rejected rows as follows:
+
+- A `NaN` or infinite floating-point value is stored as `NULL`, and the
+  collector logs one line for each batch and column affected.
+- A row that ColdFront refuses because of its data is dropped, and the
+  collector logs only the table, the connection ID, and the SQLSTATE.
+- More than ten refused rows in one write, or any error that does not
+  come from a single row's data, fails the whole write.
 
 ### Indexing Metrics Tables
 
@@ -171,6 +286,27 @@ The `list_probes` tool reports an approximate row count for each probe.
 The tool never counts the rows of a view, so the `row_count` column
 shows `unknown` for every probe that ColdFront stores as a view.
 
+## Querying the Metrics Views by Hand
+
+DuckDB, through pg_duckdb, plans and runs every statement that reads a
+ColdFront view, including the parts of the statement that read
+ordinary tables. Queries written by hand, such as those run in `psql`
+or built with the `query_datastore` tool, must follow DuckDB's rules:
+
+- A statement that reads a metrics view cannot also join PostgreSQL
+  catalog tables or views such as `pg_settings` or `pg_class`.
+- Ordinary tables must be named without a schema; write `connections`
+  rather than `public.connections`.
+- A statement cannot bind an array parameter, so compare a column with
+  a list of values through an `IN` list or a chain of `OR` comparisons.
+- `avg()` and `EXTRACT` over integer columns need a `::float8` cast for
+  clients that use PostgreSQL's binary protocol, such as pgx.
+- Casting an array to `text` produces DuckDB's `[a, b]` format rather
+  than PostgreSQL's `{a,b}` format.
+
+The `psql` client uses the text protocol, so a query that works in
+`psql` can still fail in a binary-protocol client.
+
 ## Understanding the Limitations
 
 ColdFront mode has the following limitations:
@@ -182,10 +318,13 @@ ColdFront mode has the following limitations:
   datastore.
 - The optional pgvector chat-memory embedding feature is disabled.
 - The collector refuses to start on a ColdFront build that lacks the
-  `coldfront._partition_clause` function.
+  `coldfront._partition_clause` or `coldfront.ensure_attached`
+  function.
 - The `pg_node_role.role_details` column reads back as `json`, so a
   `query_datastore` filter, `order_by`, `group_by`, `min` or `max` on
   that column fails; a plain select of the column works.
+- The operator must schedule the ColdFront compactor; the Workbench
+  performs no compaction or snapshot expiry.
 
 To move from one storage mode to the other, create a new datastore with
 the required mode and point the Workbench components at that datastore.

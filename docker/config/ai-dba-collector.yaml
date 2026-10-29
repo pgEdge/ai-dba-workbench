@@ -36,7 +36,8 @@ scheduler:
 
 # Store metrics tables in pgEdge ColdFront (Apache Iceberg) instead of
 # partitioned PostgreSQL tables. Requires a datastore with pg_duckdb and
-# ColdFront installed; the Workbench then performs no metrics retention.
+# ColdFront installed; the Workbench then performs no metrics retention,
+# and ColdFront's compactor must be scheduled for every metrics table.
 # Choose the mode when creating the datastore, as it cannot change later.
 use_coldfront_for_metrics: false
 

@@ -210,9 +210,12 @@ scheduler:
 #
 # In this mode the Workbench performs no metrics retention: partitions,
 # garbage collection and retention_days do not apply, and old data must
-# be managed outside the Workbench. Choose the mode when creating the
-# datastore; the collector refuses to start if this value does not match
-# the existing metrics tables. Only the collector reads this setting.
+# be managed outside the Workbench. Every metrics write adds an Iceberg
+# snapshot and data file, so schedule ColdFront's compactor (with
+# --expire-snapshots) for every metrics table. Choose the mode when
+# creating the datastore; the collector refuses to start if this value
+# does not match the existing metrics tables. Only the collector reads
+# this setting.
 #
 # Default: false
 # Command-line: -use-coldfront-for-metrics

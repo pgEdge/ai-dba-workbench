@@ -56,6 +56,11 @@ manually alongside it.
   retention and purge sections in `docs/admin-guide/probes.md`,
   `docs/admin-guide/connections.md` and
   `docs/developer-guide/collector/` link to; keep them in agreement.
+  The "ColdFront Metrics Storage Errors" table in the collector page's
+  Troubleshooting section quotes the start of each startup error in
+  `collector/src/database/coldfront_check.go` and
+  `collector/src/database/coldfront_insert.go`; update it when those
+  messages change.
 
 ## Maintenance
 

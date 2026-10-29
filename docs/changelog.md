@@ -106,26 +106,42 @@ project adheres to
   table through `coldfront.create_iceberg_table`, as a
   PostgreSQL view over an Apache Iceberg table on object
   storage partitioned by day of `collected_at`; operational
-  tables stay ordinary PostgreSQL tables. The server and
-  alerter need no setting. In this mode the Workbench performs
-  no metrics retention: it creates and drops no partitions,
-  deletes no old rows, does not run the garbage collector and
-  ignores `retention_days`; purging a connection removes the
-  connection but leaves its metrics rows in place and logs the
-  views it skipped. Some column types are stored differently,
-  metrics tables have no indexes or foreign keys, the pgvector
-  chat-memory embedding feature is disabled, `list_probes`
-  shows `unknown` as the row count of a probe stored as a view,
-  and `query_datastore` cannot filter, sort, group or take the
+  tables stay ordinary PostgreSQL tables. The server's and the
+  alerter's metrics queries now run on either kind of
+  datastore, so neither needs a setting. At startup the
+  collector creates the `metrics` Iceberg namespace and a
+  `workbench_coldfront` schema of insert helper functions,
+  which its datastore role must own, and writes each probe's
+  rows through them in batches of at most 5,000 rows and
+  16 MiB, dropping and logging a single row ColdFront refuses
+  and storing NaN or infinite values as NULL. In this mode the
+  Workbench performs no metrics retention: it creates and drops
+  no partitions, deletes no old rows, does not run the garbage
+  collector and ignores `retention_days`; purging a connection
+  removes the connection but leaves its metrics rows in place
+  and logs the views it skipped. Every write adds one Iceberg
+  snapshot and data file, so the operator must schedule
+  ColdFront's compactor with `--expire-snapshots` for each
+  metrics table; without it, files accumulate until reads slow
+  and object-store errors can crash the datastore. A rejected
+  write can put batch values, including credentials, into the
+  datastore's server log, so protect that log like the data.
+  Some column types are stored differently, metrics tables have
+  no indexes or foreign keys, the pgvector chat-memory
+  embedding feature is disabled, `list_probes` shows `unknown`
+  as the row count of a probe stored as a view, and
+  `query_datastore` cannot filter, sort, group or take the
   minimum or maximum of `pg_node_role.role_details`. The
-  datastore needs `pg_duckdb` and a ColdFront build that
-  includes `coldfront._partition_clause` (`1.0.0-rc1` or
-  later), with `coldfront.grant_app_access` run for each
-  Workbench role. Choose the mode when creating the datastore:
-  switching an existing datastore is not supported, and the
-  collector refuses to start when the extension is missing or
-  too old, or when the setting does not match the existing
-  metrics tables.
+  datastore needs `pg_duckdb`, a writable Lakekeeper
+  warehouse, and a ColdFront build that includes
+  `coldfront._partition_clause` and `coldfront.ensure_attached`
+  (`1.0.0-rc1` or later; `v1.0.0-beta2` is too old), with
+  `coldfront.grant_app_access` run for each Workbench role and
+  `CREATE` on the database for the collector's role. Choose the
+  mode when creating the datastore: switching an existing
+  datastore is not supported, and the collector refuses to
+  start when the extension is missing or too old, or when the
+  setting does not match the existing metrics tables.
 
 - Classify tier 3 anomaly candidates with an optional decision
   model (#626). The new `llm.decision_provider` option selects

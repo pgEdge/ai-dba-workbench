@@ -232,7 +232,7 @@ describe('BaselineComparisonSection', () => {
         );
     });
 
-    it('explains unmarked points beyond the band under the value floor', () => {
+    it('explains that some unmarked points beyond the band are below the value floor', () => {
         comparisonResult = loadedComparison({
             data: response({
                 points: [
@@ -244,7 +244,7 @@ describe('BaselineComparisonSection', () => {
             alerts: [],
         });
         renderSection();
-        expect(screen.getByText(/below the metric's value floor/)).toBeInTheDocument();
+        expect(screen.getByText(/Some unmarked points beyond the band are below the metric's value floor, where the engine does not alert\./)).toBeInTheDocument();
         expect(screen.getByRole('img').getAttribute('aria-label')).toContain(
             '1 point below the value floor'
         );

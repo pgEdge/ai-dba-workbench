@@ -330,8 +330,8 @@ const BaselineComparisonSection: React.FC<ServerSectionProps> = ({ connectionId 
                                 ? noBaselineCaption(data?.model ?? model)
                                 : 'Bands are the current baselines applied across the window.'}
                             {chartData?.hasBelowFloor &&
-                                " Points beyond the band with no marker are below the metric's" +
-                                    ' value floor, under which the engine does not alert.'}
+                                ' Some unmarked points beyond the band are below the metric' +
+                                    "'s value floor, where the engine does not alert."}
                             {alertsError &&
                                 ' The anomaly alerts could not be loaded, so' +
                                     ' engine alerts are not marked.'}

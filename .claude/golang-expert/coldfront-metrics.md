@@ -79,14 +79,16 @@ so its metrics tables were created empty in the same startup.
 v7, v10, v12 and v13 run their SQL through `sm.execMetricsAlter`. In
 the default mode that is the block verbatim. Under ColdFront each
 statement runs on its own, and around each `ALTER TABLE metrics.<v>`
-the view's comment and column comments are read (`metricsCommentsQuery`)
-and written back after the ALTER. ColdFront applies `ALTER TABLE ... ADD
-COLUMN` to one of its views by dropping and recreating the view
+the view's comments are read and written back after the ALTER.
+`metricsCommentsQuery` builds the `COMMENT ON VIEW`/`COMMENT ON COLUMN`
+statements on the server with `format('%I', '%L')`, so their quoting is
+PostgreSQL's own. ColdFront applies `ALTER TABLE ... ADD COLUMN` to one
+of its views by dropping and recreating the view
 (`coldfront._rebuild_iceberg_view`), which keeps owner and grants but
 loses every comment; live, the four commented views these migrations
 alter were left bare. (`pg_sys_memory_info`, `pg_sys_cpu_info` and
-`pg_sys_io_analysis_info` have no view comment in either mode.) A
-plain view rejects that ALTER with 42809, so the form itself relies on
+`pg_sys_io_analysis_info` have no view comment in either mode.) A plain
+view rejects that ALTER with 42809, so the form itself relies on
 ColdFront's interception. Any new `ALTER TABLE` on a metrics relation
 must go through `execMetricsAlter`; never add `COMMENT ON TABLE`,
 `GRANT`, `TRUNCATE` or DML on a metrics relation without handling the
@@ -100,32 +102,50 @@ statement can carry at most 99 parameters (never more than 1,024); a
 100-row batch of a wide probe failed every cycle live. Reading rows
 inside DuckDB (`jsonb_populate_recordset`, multi-array `unnest`) does
 not work either. So `StoreMetrics` under ColdFront
-(`probes.storeColdFrontMetrics`) marshals each batch to a JSON array of
-objects keyed by column (`coldFrontRowsJSON`) and calls
-`SELECT public.workbench_coldfront_insert($1, $2::jsonb)`.
+(`probes.storeColdFrontMetrics`) encodes each row as a JSON object
+keyed by column (`encodeColdFrontRows`), joins a batch into an array,
+and calls `SELECT workbench_coldfront.insert_rows($1, $2::jsonb)`
+(`coldfront.InsertRowsFunction`), each statement on its own rather
+than in one transaction.
 
-- The helper is created by `database.EnsureColdFrontInsertHelper` with
-  `CREATE OR REPLACE` at every ColdFront startup, after the namespace
-  step, not in a migration: it always matches the collector calling it,
-  and the default-mode schema and `schema_version` stay untouched.
-- There are three functions: `workbench_coldfront_literal(text)`,
-  `workbench_coldfront_insert_sql(p_table, p_rows)`, which renders the
+### The helper functions
+
+- They live in the schema `workbench_coldfront`
+  (`coldfront.HelperSchema`), created by
+  `database.EnsureColdFrontInsertHelper` at every ColdFront startup,
+  after the namespace step, in one transaction, with
+  `CREATE OR REPLACE`; not in a migration, so they always match the
+  collector calling them and the default-mode schema stays untouched.
+- Not in `public`: a role with CREATE there could create the functions
+  first, keep ownership through `CREATE OR REPLACE`, and later swap in
+  a body the collector runs on its next write (security review
+  VULN-001). Not in `metrics` (views only) nor `coldfront` (the
+  extension's). The collector refuses to start if the schema, or any
+  function in it, is owned by another role (`coldFrontHelperOwnersQuery`),
+  and revokes PUBLIC from the schema and from every function.
+- `literal(text)`, `insert_rows_sql(p_table, p_rows)`, which renders the
   INSERT (separate so the tests can assert on its SQL), and
-  `workbench_coldfront_insert`, which EXECUTEs it. The renderer accepts
-  only a relation registered in `coldfront.tiered_views` with
-  `schema_name = 'metrics'`, takes the column list and types from
-  `pg_attribute`/`format_type` in attnum order (never from the JSON
-  keys), and types the values with
-  `jsonb_populate_recordset(NULL::<view>, ...)`. The result is one
-  literal multi-row INSERT, which ColdFront turns into one Iceberg
-  commit. Both insert functions are `SECURITY INVOKER` with
-  `search_path = pg_catalog, pg_temp`. Neither may read the view:
-  ColdFront refuses DuckDB reads inside a function.
+  `insert_rows`, which EXECUTEs it. The renderer accepts only a relation
+  registered in `coldfront.tiered_views` with `schema_name = 'metrics'`,
+  takes the column list and types from `pg_attribute`/`format_type` in
+  attnum order (never from the JSON keys), and types the values with
+  `jsonb_populate_recordset(NULL::<view>, ...)`. The INSERT carries the
+  `sqlmarker` comment, like every other collector write. Both insert
+  functions are `SECURITY INVOKER` with `search_path = pg_catalog,
+  pg_temp`. Neither may read the view: ColdFront refuses DuckDB reads
+  inside a function.
+- `insert_rows` catches a failed EXECUTE and raises
+  `workbench_coldfront insert into metrics.<t> failed: <SQLERRM, 200
+  chars>` with the same SQLSTATE: otherwise the error's CONTEXT carries
+  the whole statement, and every value of the batch (credentials from
+  `pg_settings` or `pg_hba_file_rules` included), into the datastore
+  log (VULN-003). The handler is a PL/pgSQL subtransaction around a
+  DuckDB write. pgx's `PgError.Error()` gives only severity, message
+  and SQLSTATE, and the collector never logs `Where` or `InternalQuery`.
 - DuckDB evaluates the rendered values, so they must be SQL it reads:
-  - A scalar is `workbench_coldfront_literal(v::text) || '::<type>'`:
-    NULL or a standard literal with quotes doubled and backslashes left
-    alone. Never `quote_literal`/`quote_nullable`: they emit `E'...'`
-    for a backslash.
+  - A scalar is `literal(v::text) || '::<type>'`: NULL or a standard
+    literal with quotes doubled and backslashes left alone. (`E'...'`
+    from `quote_literal` was later shown to work live as well.)
   - An array column (`pg_type.typcategory = 'A'`) is
     `ARRAY[<literal(elem)>, ...]::<type>` built from
     `unnest(...) WITH ORDINALITY`, `ARRAY[]::<type>` when empty and
@@ -140,6 +160,9 @@ objects keyed by column (`coldFrontRowsJSON`) and calls
   - One expression per column is concatenated, rather than passing
     every column to one `format()`, so a wide table stays under the
     100-argument limit.
+
+### Values, batches and failures
+
 - `jsonValue` makes the JSON faithful: `time.Time` as RFC 3339 with
   nanoseconds, integers and `pgtype.Numeric` as exact JSON numbers
   (jsonb keeps them exactly), `pgtype.Interval` as "N months N days N
@@ -150,11 +173,23 @@ objects keyed by column (`coldFrontRowsJSON`) and calls
 - NaN and infinite floats cannot be JSON: they are stored as NULL, with
   one log line per batch and column. Failing or dropping the row would
   lose the rest of a sample for one undefined gauge.
-- `coldFrontBatchRows` is 5,000 (100 in the default mode): each
-  statement is one Iceberg commit, so a probe run should be one
-  statement, and 5,000 covers the largest normal run (pg_stat_statements
-  keeps 5,000 statements by default) while bounding the JSON and the
-  literal INSERT to a few megabytes.
+- `splitColdFrontBatches` bounds a statement by `coldFrontBatchRows`
+  (5,000; 100 in the default mode) and `coldFrontBatchBytes` (16 MiB of
+  encoded JSON). Each statement is one Iceberg commit, so a normal
+  probe run should be one statement; but free text such as
+  `pg_stat_statements.query` is unbounded and comes from the monitored
+  server, so rows alone could push a batch past jsonb's 256 MB or the
+  1 GB literal-INSERT limit and fail that probe every cycle
+  (VULN-002). 16 MiB keeps the helper's working copies well inside
+  those limits; a single larger row is still sent on its own. There is
+  no value truncation, in either mode.
+- `writeOrHalve` retries a batch that fails with a row-specific SQLSTATE
+  class (22, 23, 53, 54, XX, the last being how pg_duckdb reports a
+  conversion failure) in halves, so one refused row is dropped and
+  logged with only the table, its `connection_id` and the SQLSTATE,
+  never the values. Other errors are returned at once, and more than
+  `maxColdFrontDroppedRows` (10) dropped rows in one call is treated as
+  systemic and returned, bounding statements and log lines.
 
 ## Startup and Runtime
 
@@ -210,7 +245,13 @@ view; the test also asserts a plain view rejects that statement. The
 stub registers each view in `coldfront.tiered_views`, and
 `exerciseInsertHelper` (`database/coldfront_insert_test.go`) writes
 every column type of every table through `StoreMetrics` and the helper,
-with a NULL row, awkward quoting, a NaN and refused relations.
-`TestColdFrontAltersRestoreComments` asserts the restore statements
-without a database. None of this verifies ColdFront's own behaviour (its
+with a NULL row, awkward quoting, a NaN and refused relations; asserts
+the rendered SQL for arrays (`exerciseArrayRendering`), since plain
+PostgreSQL also accepts `'{...}'`; and, through a trigger that refuses
+one `pg_settings` row, that the helper's error exposes neither the
+statement nor a value and that `StoreMetrics` drops only that row
+(`exerciseRejectedRows`). `TestColdFrontHelperSchemaOwnership` uses a
+second role to check the schema is locked down and that a schema or
+function another role owns is refused. `TestColdFrontAltersRestoreComments`
+asserts the restore statements without a database. None of this verifies ColdFront's own behaviour (its
 `ALTER TABLE` interception, insert rewriting, Iceberg partitioning).

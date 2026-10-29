@@ -12,6 +12,7 @@ package llmsettings
 
 import (
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -65,6 +66,20 @@ func TestValidate(t *testing.T) {
 			wantErr: "llm.extra_body.options cannot be encoded as JSON",
 		},
 		{
+			name:    "non-string key in a list refused",
+			yaml:    "extra_body:\n  options:\n    - name: a\n    - 2: secret-value",
+			wantErr: "llm.extra_body.options cannot be encoded as JSON",
+		},
+		{
+			name:    "non-string deeply nested key refused",
+			yaml:    "extra_body:\n  options:\n    inner:\n      deeper:\n        true: secret-value",
+			wantErr: "llm.extra_body.options cannot be encoded as JSON",
+		},
+		{
+			name: "nested lists and null accepted",
+			yaml: "extra_body:\n  options:\n    - [1, 2]\n    - ~\n    - {k: v}",
+		},
+		{
 			name:    "NaN refused",
 			yaml:    "extra_body:\n  weight: .nan",
 			wantErr: "llm.extra_body.weight cannot be encoded as JSON",
@@ -93,6 +108,37 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// TestUnencodable covers value shapes YAML never produces but a caller
+// building Settings in code could: pointers, arrays, typed maps and
+// reference cycles.
+func TestUnencodable(t *testing.T) {
+	inner := map[int]string{1: "x"}
+	var nilMap *map[string]any
+	tests := []struct {
+		name string
+		v    any
+		want bool
+	}{
+		{name: "nil", v: nil},
+		{name: "scalar", v: 3},
+		{name: "string-keyed map", v: map[string]int{"a": 1}},
+		{name: "int-keyed map", v: map[int]int{1: 1}, want: true},
+		{name: "pointer to bad map", v: &inner, want: true},
+		{name: "nil pointer", v: nilMap},
+		{name: "array holding bad map", v: [1]any{inner}, want: true},
+		{name: "array of scalars", v: [2]int{1, 2}},
+		{name: "empty slice", v: []any{}},
+		{name: "nil map", v: map[string]any(nil)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := unencodable(reflect.ValueOf(tt.v), map[visit]struct{}{}); got != tt.want {
+				t.Fatalf("unencodable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestValidateDoesNotQuoteValues guards against an extra_body value,
 // which may be a credential, reaching an error message by way of the
 // JSON encoder's own error text.
@@ -110,6 +156,64 @@ func TestValidateDoesNotQuoteValues(t *testing.T) {
 	if !strings.HasPrefix(err.Error(), "llm.openai.extra_body.auth ") {
 		t.Fatalf("Validate() error does not name the key under its section: %v", err)
 	}
+}
+
+// TestValidateReferenceCycles checks that Validate refuses an extra_body
+// value that refers back to itself, which encoding/json also refuses,
+// rather than recursing until the stack runs out, whilst still accepting
+// a value that appears more than once without forming a cycle.
+func TestValidateReferenceCycles(t *testing.T) {
+	selfMap := map[string]any{"token": "sk-secret"}
+	selfMap["self"] = selfMap
+
+	first := map[string]any{}
+	second := map[string]any{"first": first}
+	first["second"] = second
+
+	selfSlice := []any{"sk-secret", nil}
+	selfSlice[1] = selfSlice
+
+	shared := map[string]any{"k": []any{1, 2}}
+	sharedSlice := []any{shared, shared}
+
+	tests := []struct {
+		name    string
+		v       any
+		wantErr bool
+	}{
+		{name: "self-referential map", v: selfMap, wantErr: true},
+		{name: "mutually referential maps", v: first, wantErr: true},
+		{name: "self-referential slice", v: selfSlice, wantErr: true},
+		{name: "pointer cycle", v: newPointerCycle(), wantErr: true},
+		{name: "shared map", v: map[string]any{"a": shared, "b": shared}},
+		{name: "shared slice", v: map[string]any{"a": sharedSlice, "b": sharedSlice}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := Settings{ExtraBody: map[string]any{"options": tt.v}}.Validate("llm")
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("Validate() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "llm.extra_body.options cannot be encoded as JSON") {
+				t.Fatalf("Validate() = %v, want a cannot-be-encoded error", err)
+			}
+			if strings.Contains(err.Error(), "sk-secret") {
+				t.Fatalf("Validate() error quotes the value: %v", err)
+			}
+		})
+	}
+}
+
+// newPointerCycle returns a pointer to an interface that holds the
+// pointer itself.
+func newPointerCycle() *any {
+	var v any
+	p := &v
+	v = p
+	return p
 }
 
 func TestCachingEnabled(t *testing.T) {

@@ -26,8 +26,8 @@ database estates.
 
 Install the following tools before starting development:
 
-- [Go 1.24](https://go.dev/doc/install) or later for
-  building server-side components.
+- [Go 1.26.10](https://go.dev/doc/install) or a later 1.26 release, or
+  Go 1.27.3 or later, for building server-side components.
 - [Node.js 20.19](https://nodejs.org/) or later on the 20.x line,
   or Node.js 22.12 or later, for building the web client.
 - [PostgreSQL 14](https://www.postgresql.org/download/)

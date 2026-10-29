@@ -15,6 +15,7 @@ import SystemResourcesSection from './SystemResourcesSection';
 import PostgresOverviewSection from './PostgresOverviewSection';
 import WalReplicationSection from './WalReplicationSection';
 import ReplicationSlotsSection from './ReplicationSlotsSection';
+import BaselineComparisonSection from './BaselineComparisonSection';
 import DatabaseSummariesSection from './DatabaseSummariesSection';
 import ConnectionsSection from './ConnectionsSection';
 import TopQueriesSection from '../TopQueriesSection';
@@ -26,7 +27,8 @@ import type { ServerSelection } from '../../../types/selection';
  * It displays system resources, PostgreSQL metrics, WAL and
  * replication status, replication slot health, database
  * summaries, active connections grouped by user, client, and
- * database, and top queries.
+ * database, top queries, and a baselined metric charted against its
+ * anomaly baseline.
  */
 const ServerDashboard: React.FC<{ selection: ServerSelection }> = ({
     selection,
@@ -55,6 +57,7 @@ const ServerDashboard: React.FC<{ selection: ServerSelection }> = ({
             <DatabaseSummariesSection connectionId={connectionId} connectionName={connectionName} />
             <ConnectionsSection connectionId={connectionId} connectionName={connectionName} />
             <TopQueriesSection connectionId={connectionId} connectionName={connectionName} />
+            <BaselineComparisonSection connectionId={connectionId} connectionName={connectionName} />
         </Box>
     );
 };

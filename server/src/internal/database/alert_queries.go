@@ -85,6 +85,12 @@ type AlertListFilter struct {
 	StartTime      *time.Time
 	EndTime        *time.Time
 	ExcludeCleared bool // If true, only return alerts where cleared_at IS NULL
+	// ActiveStart and ActiveEnd keep only alerts that were active at
+	// some instant in [ActiveStart, ActiveEnd]: triggered no later than
+	// ActiveEnd, and not cleared before ActiveStart. Either may be nil,
+	// leaving that side open.
+	ActiveStart *time.Time
+	ActiveEnd   *time.Time
 	// IncludeSystem adds system alerts to the result alongside the
 	// alerts the connection filters select. When false, system alerts
 	// are left out whatever the other filters say, so a caller has to
@@ -186,6 +192,18 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 
 	if filter.ExcludeCleared {
 		conditions = append(conditions, "a.cleared_at IS NULL")
+	}
+
+	if filter.ActiveStart != nil {
+		conditions = append(conditions, fmt.Sprintf("(a.cleared_at IS NULL OR a.cleared_at >= $%d)", argNum))
+		args = append(args, *filter.ActiveStart)
+		argNum++
+	}
+
+	if filter.ActiveEnd != nil {
+		conditions = append(conditions, fmt.Sprintf("a.triggered_at <= $%d", argNum))
+		args = append(args, *filter.ActiveEnd)
+		argNum++
 	}
 
 	whereClause := ""

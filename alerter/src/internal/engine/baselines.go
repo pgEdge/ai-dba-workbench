@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/anomaly"
 )
 
 // calculateBaselines recalculates metric baselines for anomaly detection.
@@ -328,21 +329,10 @@ func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName
 	return ok
 }
 
-// baselinePeriodKeys returns the hour_of_day (0-23) and day_of_week
-// (0=Sunday to 6=Saturday) bucket keys for a timestamp. It is the single
-// definition used both when hourly and daily baselines are written and
-// when selectBaseline looks one up, so the two sides cannot drift.
-//
-// The timestamp is normalised to UTC first. pgx scans timestamptz
-// columns into the process's local zone unless a ScanLocation is
-// configured, and time.Now() is local too, so without this a collector
-// and an alerter in different zones, or one alerter restarted under a
-// different TZ, would bucket the same instant under different keys. The
-// keys are therefore UTC hours and UTC weekdays; a metric's diurnal
-// cycle is still captured, just keyed in UTC.
+// baselinePeriodKeys returns the UTC hour of day and weekday that key
+// the hourly and daily baseline rows; see anomaly.PeriodKeys.
 func baselinePeriodKeys(t time.Time) (hourOfDay, dayOfWeek int) {
-	u := t.UTC()
-	return u.Hour(), int(u.Weekday())
+	return anomaly.PeriodKeys(t)
 }
 
 // metricValues extracts the plain float values from historical samples,

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/anomaly"
 )
 
 // TestBuildClassificationPrompt tests the buildClassificationPrompt method
@@ -200,7 +201,7 @@ func TestIsBaselineWarm(t *testing.T) {
 				SampleCount:      tc.samples,
 				EarliestSampleAt: tc.earliest,
 			}
-			got := isBaselineWarm(b, useCfg, now)
+			got := anomaly.IsWarm(toAnomalyBaseline(b), useCfg, now)
 			if got != tc.want {
 				t.Errorf("name=%s: got %v, want %v",
 					tc.name, got, tc.want)
@@ -235,7 +236,7 @@ func TestEffectiveStdDev(t *testing.T) {
 				RelativePct:   tc.relPct,
 				AbsoluteFloor: tc.absFloor,
 			}
-			got := effectiveStdDev(b, cfg)
+			got := anomaly.EffectiveStdDev(toAnomalyBaseline(b), cfg, anomaly.MetricFloor{})
 			if math.Abs(got-tc.want) > 1e-9 {
 				t.Errorf("name=%s: got %v, want %v", tc.name, got, tc.want)
 			}
@@ -593,7 +594,7 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 	// effectiveStdDev = |mean| * RelativePct = 10 * 0.05 = 0.5.
 	// z = (12 - 10) / 0.5 = 4.0 with the default floor config.
 	flooredBaseline := database.MetricBaseline{Mean: 10, StdDev: 0.0001}
-	flooredStdDev := effectiveStdDev(flooredBaseline, floorCfg)
+	flooredStdDev := anomaly.EffectiveStdDev(toAnomalyBaseline(flooredBaseline), floorCfg, anomaly.MetricFloor{})
 	flooredZ := (12.0 - 10.0) / flooredStdDev
 
 	// Cap-asserting case: with the default 100.0 cap and the

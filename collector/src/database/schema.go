@@ -4199,6 +4199,29 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #31: the alerter publishes its effective Tier 1 anomaly
+	// scoring settings (issue #348), so that the server can score the
+	// anomaly comparison view the same way the alerter scores samples.
+	// NULL means the alerter has not published yet and the server uses
+	// the defaults. ADD COLUMN without a default is a catalog-only change.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     31,
+		Description: "Add alerter_settings.tier1_scoring for the published Tier 1 scoring settings",
+		Up: func(tx pgx.Tx) error {
+			_, err := tx.Exec(context.Background(), `
+				ALTER TABLE alerter_settings
+					ADD COLUMN IF NOT EXISTS tier1_scoring JSONB;
+
+				COMMENT ON COLUMN alerter_settings.tier1_scoring IS
+					'Effective Tier 1 anomaly scoring settings published by the alerter (warmup, variance floor, z cap, default sensitivity, per-metric floors); read by the server';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add alerter_settings.tier1_scoring: %w", err)
+			}
+			return nil
+		},
+	})
 }
 
 // statementTextUpdates holds, for each column that stores statement text,

@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
 func TestBuildOpenAPISpec(t *testing.T) {
@@ -417,5 +419,80 @@ func TestOpenAPIUserSchemasRequireAuthSource(t *testing.T) {
 					name)
 			}
 		})
+	}
+}
+
+// TestOpenAPIAlertSchemaMatchesStruct checks the Alert schema against the
+// JSON tags of database.Alert, which GET /api/v1/alerts returns directly:
+// every tag is a property and every property a tag, a field without
+// omitempty is required, and only a pointer without omitempty, which
+// encodes as null when unset, is nullable.
+func TestOpenAPIAlertSchemaMatchesStruct(t *testing.T) {
+	schema, ok := BuildOpenAPISpec().Components.Schemas["Alert"]
+	if !ok {
+		t.Fatal("the spec has no Alert schema")
+	}
+
+	alertType := reflect.TypeOf(database.Alert{})
+	var wantRequired []string
+	seen := make(map[string]bool, alertType.NumField())
+	for i := 0; i < alertType.NumField(); i++ {
+		field := alertType.Field(i)
+		name, opts, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		seen[name] = true
+		omitEmpty := slices.Contains(strings.Split(opts, ","), "omitempty")
+		if !omitEmpty {
+			wantRequired = append(wantRequired, name)
+		}
+
+		prop, ok := schema.Properties[name]
+		if !ok {
+			t.Errorf("Alert schema has no %q property for field %s", name, field.Name)
+			continue
+		}
+		wantNullable := field.Type.Kind() == reflect.Pointer && !omitEmpty
+		if prop.Nullable != wantNullable {
+			t.Errorf("Alert.%s nullable = %v, want %v", name, prop.Nullable, wantNullable)
+		}
+	}
+
+	for name := range schema.Properties {
+		if !seen[name] {
+			t.Errorf("Alert schema property %q matches no database.Alert field", name)
+		}
+	}
+
+	gotRequired := slices.Clone(schema.Required)
+	slices.Sort(gotRequired)
+	slices.Sort(wantRequired)
+	if !slices.Equal(gotRequired, wantRequired) {
+		t.Errorf("Alert required = %v, want %v", gotRequired, wantRequired)
+	}
+}
+
+// TestOpenAPINullableSchemasHaveNoEnum checks that no component schema,
+// at any depth, is both nullable and an enum: OpenAPI 3.0 applies the
+// enum to a nullable value too, and the string enums here cannot list
+// null, so a client validating against the spec would reject null.
+func TestOpenAPINullableSchemasHaveNoEnum(t *testing.T) {
+	var walk func(path string, s *OpenAPISchema)
+	walk = func(path string, s *OpenAPISchema) {
+		if s == nil {
+			return
+		}
+		if s.Nullable && len(s.Enum) > 0 {
+			t.Errorf("%s is nullable with enum %v", path, s.Enum)
+		}
+		for name, prop := range s.Properties {
+			walk(path+"."+name, prop)
+		}
+		walk(path+"[]", s.Items)
+		walk(path+"{}", s.AdditionalProperties)
+	}
+	for name, schema := range BuildOpenAPISpec().Components.Schemas {
+		walk(name, schema)
 	}
 }

@@ -80,6 +80,14 @@ vi.mock('../ConnectionsSection', () => ({
     ),
 }));
 
+vi.mock('../BaselineComparisonSection', () => ({
+    default: ({ connectionId }: { connectionId: number }) => (
+        <div data-testid="baseline-comparison-section" data-connection-id={connectionId}>
+            Baseline Comparison Content
+        </div>
+    ),
+}));
+
 vi.mock('../../TopQueriesSection', () => ({
     default: ({ connectionId }: { connectionId: number }) => (
         <div data-testid="top-queries-section" data-connection-id={connectionId}>
@@ -167,6 +175,20 @@ describe('ServerDashboard', () => {
         expect(screen.getByTestId('replication-slots-section')).toHaveAttribute(
             'data-connection-id',
             '42',
+        );
+    });
+
+    it('renders Baseline comparison last, for the selected server', () => {
+        const { container } = renderServerDashboard(createSelection(7));
+
+        const testIds = Array.from(
+            container.querySelectorAll('[data-testid]'),
+        ).map(el => el.getAttribute('data-testid'));
+
+        expect(testIds[testIds.length - 1]).toBe('baseline-comparison-section');
+        expect(screen.getByTestId('baseline-comparison-section')).toHaveAttribute(
+            'data-connection-id',
+            '7',
         );
     });
 

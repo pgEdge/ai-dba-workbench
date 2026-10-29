@@ -331,3 +331,120 @@ to 20 rows. The previous and next controls move
 between pages, and the "Showing X-Y of Z" indicator
 reports the range of rows on the current page and the
 total number of matching queries.
+
+## Baseline Comparison
+
+The baseline comparison section plots one metric against the
+band of normal values that the alerter's statistical anomaly
+detection (tier 1) uses for it. The section appears last on the
+dashboard, can be collapsed like the others, and follows the
+dashboard time range selector and refresh cycle. Use the section
+to see why an anomaly alert fired, or why a point that looks
+unusual did not raise one.
+
+The section offers the following controls:
+
+- The Metric selector chooses the baselined metric to plot; it
+  defaults to the processor time percentage when that metric is
+  available.
+- The Database selector appears only for a per-database metric,
+  and lists the databases known for the server.
+- The Baseline model selector chooses which baseline sets the
+  band, as described in the following list.
+- The Sensitivity selector chooses how wide the band is, in
+  standard deviations: 2σ, 3σ or 4σ.
+
+The Baseline model selector offers these choices:
+
+- As scored draws, for each point, the baseline that the alerter
+  would score the point against: the hour of day baseline, then
+  the day of week baseline, then the overall baseline, taking the
+  first one that has collected enough data.
+- Day of week uses only the baseline for the weekday of each
+  point, with the weekday computed in UTC.
+- Hour of day uses only the baseline for the hour of each point,
+  with the hour computed in UTC.
+- Overall uses only the baseline built from all of the samples.
+
+The sensitivity starts at the value the alerter is configured
+with (`anomaly.tier1.default_sensitivity`), rounded to the
+nearest of the three choices offered. The band around each point
+runs from the baseline mean minus the chosen number of standard
+deviations to the mean plus that number. The standard deviation
+is the one the alerter divides by, after it applies the variance
+floor and any per-metric floor, so a very steady metric still
+has a band of sensible width.
+
+The chart marks the following:
+
+- The solid line shows the metric value.
+- The shaded band shows the range of normal values.
+- A faded band and a dashed line show a stretch where the
+  baseline has not yet collected enough data to be scored; the
+  alerter does not raise anomaly alerts there.
+- A solid triangle marks a point at which the alerter raised an
+  anomaly alert for the metric.
+- A hollow circle marks a point outside the band for which no
+  anomaly alert exists.
+
+A point counts as alerted when an anomaly alert for the metric was
+raised at that point, or when the point falls between an alert's
+trigger time and the time the alert cleared. The section loads
+every anomaly alert that was open at some point in the window,
+including one that triggered before the window started, whether
+it cleared inside the window or is still active. For an alert
+that is still active, every point from its trigger time to the
+end of the window counts as alerted. The alerter raises nothing
+new for a metric whilst an alert for it is open, so a sustained
+excursion shows one triangle rather than a hollow circle on every
+later point.
+
+Some metrics, such as deadlocks and temporary files, are plotted
+as hourly totals. For these metrics, the first point sits at the
+start of the hour that contains the window start, which can be
+slightly before the window itself, so a short window is not left
+empty.
+
+Many metrics have a value floor below which the engine does not
+alert, so a point below its metric's floor is drawn outside the band
+without a marker. When such a point is in view, the chart caption and
+the point's tooltip say so. When no baselines exist yet for the
+metric, the chart shows the line and any engine alert triangles, with
+no band.
+
+A hollow circle is not necessarily a fault. The band drawn is the
+current one rather than the one the alerter used at the time, the
+chart may show a different baseline model or sensitivity from the
+alerter's, and a candidate that passes tier 1 can still be
+suppressed by a later tier. The alerter also raises nothing for a
+point in the five-minute cooldown after an anomaly alert for the
+metric clears, or for a point during a blackout. Hover over a
+point to see its value, the band limits, the baseline used and its
+z-score.
+
+The bands are the current baselines applied across the whole
+window. The alerter recalculates its baselines periodically, so
+the band drawn for an earlier point is the one the alerter would
+use now, which can differ from the one it used when the point
+was collected. The caption under the chart repeats this.
+
+The section shows the following notices when they apply:
+
+- The Scoring settings: defaults notice appears when the alerter
+  has not published its anomaly settings; the band then uses the
+  shipped defaults, which may differ from the alerter's
+  configuration. The alerter publishes its settings when it
+  starts and when it reloads its configuration.
+- A caption note appears when the anomaly alerts could not be
+  loaded; the chart then marks no engine alerts.
+- A caption note appears when the window holds more anomaly
+  alerts than the section loads (at most 1000, newest first);
+  points older than the oldest alert loaded are then not marked
+  as outside the band with no alert, because an alert for them
+  may exist.
+- A message appears when no samples of the metric were collected
+  in the selected period.
+
+The data comes from the
+`/api/v1/metrics/anomaly-comparison` endpoints, described in the
+[API reference](../../admin-guide/api/reference.md).

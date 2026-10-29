@@ -307,8 +307,9 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
 
 /**
  * Custom hook for fetching metric baselines.
- * Returns statistical baselines (mean, stddev, percentiles)
- * for the specified probe and connection.
+ * Returns the metric_baselines rows (one per period, database and
+ * metric) for the specified probe and connection. The p50, p95 and p99
+ * fields are approximations from the mean and stddev, not percentiles.
  */
 export const useBaselines = (
     probeName: string | null,

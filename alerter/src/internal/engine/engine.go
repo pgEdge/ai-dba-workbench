@@ -26,6 +26,7 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/alerter/internal/llm"
 	"github.com/pgedge/ai-workbench/alerter/internal/notifications"
+	"github.com/pgedge/ai-workbench/pkg/anomaly"
 	"github.com/pgedge/ai-workbench/pkg/worker"
 )
 
@@ -123,6 +124,23 @@ type Engine struct {
 	// completed pass. See anomaly_recovery.go (issue #611).
 	anomalyStreakMu sync.Mutex
 	anomalyStreaks  map[int64]anomalyStreak
+
+	// publishScoring, when set, replaces the datastore as the place the
+	// effective Tier 1 scoring settings are published; tests use it.
+	publishScoring func(context.Context, anomaly.ScoringSettings) error
+
+	// scoringMu lets one publication of the scoring settings run at a
+	// time, and guards scoringPending and scoringRetryLoops, the number
+	// of retry loops running, which is never more than one; see
+	// scoring_publish.go.
+	scoringMu         sync.Mutex
+	scoringPending    bool
+	scoringRetryLoops int
+
+	// scoringRetryTick, when set, replaces the retry timer, so that a
+	// test decides exactly when each retry happens; see
+	// scoring_publish.go.
+	scoringRetryTick <-chan time.Time
 
 	// Synchronization
 	mu sync.RWMutex
@@ -243,8 +261,12 @@ func (e *Engine) tier3Available(cfg *config.Config) bool {
 
 // Run starts the engine and runs until the context is canceled
 func (e *Engine) Run(ctx context.Context) error {
+	e.mu.Lock()
 	e.ctx = ctx
+	e.mu.Unlock()
 	e.log("Engine starting...")
+
+	e.publishScoringSettings(ctx, true)
 
 	// Start all background workers
 	var wg sync.WaitGroup
@@ -352,6 +374,27 @@ func (e *Engine) Run(ctx context.Context) error {
 
 // ReloadConfig updates the engine configuration
 func (e *Engine) ReloadConfig(cfg *config.Config) {
+	e.applyReloadedConfig(cfg)
+	e.log("Configuration reloaded")
+
+	// Publish outside the lock: it is a database write, and readers of
+	// the configuration must not wait for it. Before Run there is no
+	// engine context to bound a retry loop, and Run publishes anyway.
+	e.mu.RLock()
+	ctx := e.ctx
+	e.mu.RUnlock()
+	retry := ctx != nil
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	e.publishScoringSettings(ctx, retry)
+}
+
+// applyReloadedConfig validates and installs a reloaded configuration
+// under the engine lock. The deferred unlock means a panic while checking
+// the configuration cannot leave the lock held and block every reader of
+// it (issue #777).
+func (e *Engine) applyReloadedConfig(cfg *config.Config) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -369,7 +412,6 @@ func (e *Engine) ReloadConfig(cfg *config.Config) {
 	}
 
 	e.config = cfg
-	e.log("Configuration reloaded")
 }
 
 // unknownMetricFloorNames returns, sorted, the anomaly.tier1.metric_floors

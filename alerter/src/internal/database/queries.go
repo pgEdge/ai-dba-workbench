@@ -11,11 +11,13 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/pgedge/ai-workbench/pkg/anomaly"
 )
 
 // MonitoredConnection represents a connection and its error status
@@ -166,6 +168,24 @@ func (d *Datastore) GetAlerterSettings(ctx context.Context) (*AlerterSettings, e
 		return nil, fmt.Errorf("failed to get alerter settings: %w", err)
 	}
 	return &settings, nil
+}
+
+// PublishScoringSettings stores the alerter's effective Tier 1 scoring
+// settings in alerter_settings.tier1_scoring, where the server reads them
+// so that it scores the anomaly comparison view the same way.
+func (d *Datastore) PublishScoringSettings(ctx context.Context, settings anomaly.ScoringSettings) error {
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("failed to encode scoring settings: %w", err)
+	}
+	if _, err := d.pool.Exec(ctx, `
+		UPDATE alerter_settings
+		SET tier1_scoring = $1, updated_at = NOW()
+		WHERE id = 1
+	`, payload); err != nil {
+		return fmt.Errorf("failed to publish scoring settings: %w", err)
+	}
+	return nil
 }
 
 // GetEnabledAlertRules retrieves all enabled alert rules

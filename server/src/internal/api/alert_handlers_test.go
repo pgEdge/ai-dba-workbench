@@ -111,6 +111,29 @@ func TestAlertHandler_HandleAlerts_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestAlertHandler_HandleAlerts_InvertedActiveRange proves an
+// active_start after active_end is refused before any datastore or RBAC
+// work, which the nil dependencies would otherwise panic on.
+func TestAlertHandler_HandleAlerts_InvertedActiveRange(t *testing.T) {
+	handler := NewAlertHandler(nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/alerts?active_start=2026-03-01T11:00:00Z&active_end=2026-03-01T10:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleAlerts(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+	var body ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if body.Error != "active_start must not be after active_end" {
+		t.Errorf("unexpected error %q", body.Error)
+	}
+}
+
 func TestAlertHandler_HandleAlertCounts_MethodNotAllowed(t *testing.T) {
 	handler := NewAlertHandler(nil, nil, nil)
 

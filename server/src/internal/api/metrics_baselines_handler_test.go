@@ -11,8 +11,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -41,6 +43,7 @@ func TestHandleMetricsBaselines_RequestValidation(t *testing.T) {
 		{"invalid connection_id", http.MethodGet, "connection_id=abc&probe_name=pg_stat_activity", http.StatusBadRequest, "Invalid connection_id"},
 		{"missing probe_name", http.MethodGet, "connection_id=1", http.StatusBadRequest, "probe_name is required"},
 		{"invalid probe_name", http.MethodGet, "connection_id=1&probe_name=bad-name", http.StatusBadRequest, "Invalid probe_name"},
+		{"invalid period_type", http.MethodGet, "connection_id=1&probe_name=pg_stat_activity&period_type=overall", http.StatusBadRequest, "Invalid period_type"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -62,8 +65,9 @@ func TestHandleMetricsBaselines_RequestValidation(t *testing.T) {
 const baselinesTestSchema = "api_metrics_baselines_test"
 
 // TestHandleMetricsBaselines_Query drives the baselines query through
-// the handler: a datastore without the table answers 400 with the query
-// error, and one with it returns the requested probe's baselines only.
+// the handler: a datastore without the table answers an empty list, any
+// other query failure a generic 500 with the detail logged, and one with
+// the table returns the requested probe's baselines only.
 func TestHandleMetricsBaselines_Query(t *testing.T) {
 	if os.Getenv("SKIP_DB_TESTS") != "" {
 		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
@@ -112,25 +116,61 @@ func TestHandleMetricsBaselines_Query(t *testing.T) {
 		return rec
 	}
 
-	t.Run("query failure", func(t *testing.T) {
+	t.Run("missing table is an empty list", func(t *testing.T) {
 		rec := serve()
-		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "failed to query baselines") {
-			t.Fatalf("status = %d, body = %s; want 400 with the query error", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+			t.Fatalf("status = %d, body = %s; want 200 with []", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("query failure is a generic 500", func(t *testing.T) {
+		var logged bytes.Buffer
+		log.SetOutput(&logged)
+		defer log.SetOutput(os.Stderr)
+
+		// A canceled request context fails the query with an error
+		// that is neither a validation error nor a missing table.
+		cctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		req := withSuperuser(httptest.NewRequest(http.MethodGet,
+			"/api/v1/metrics/baselines?connection_id=1&probe_name=pg_stat_activity", nil)).WithContext(cctx)
+		rec := httptest.NewRecorder()
+		handler.handleMetricsBaselines(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusInternalServerError ||
+			!strings.Contains(body, "Failed to query metric baselines") {
+			t.Fatalf("status = %d, body = %s; want 500 with a generic message", rec.Code, body)
+		}
+		if strings.Contains(body, "failed to query baselines") || strings.Contains(body, "context") {
+			t.Errorf("body = %s, leaks the query error", body)
+		}
+		if !strings.Contains(logged.String(), "failed to query baselines") {
+			t.Errorf("log = %q, want the query error logged", logged.String())
 		}
 	})
 
 	exec(`CREATE TABLE metric_baselines (
         connection_id INTEGER NOT NULL,
+        database_name TEXT,
         metric_name TEXT NOT NULL,
         period_type TEXT NOT NULL,
-        mean DOUBLE PRECISION NOT NULL,
-        stddev DOUBLE PRECISION NOT NULL,
-        min DOUBLE PRECISION NOT NULL,
-        max DOUBLE PRECISION NOT NULL)`)
-	exec(`INSERT INTO metric_baselines VALUES
-        (1, 'pg_stat_activity.count', 'overall', 4, 1, 2, 7),
-        (1, 'pg_stat_database.xact_commit', 'overall', 9, 1, 8, 10),
-        (2, 'pg_stat_activity.count', 'overall', 40, 1, 20, 70)`)
+        day_of_week INTEGER,
+        hour_of_day INTEGER,
+        mean REAL NOT NULL,
+        stddev REAL NOT NULL,
+        min REAL NOT NULL,
+        max REAL NOT NULL,
+        sample_count BIGINT NOT NULL DEFAULT 0,
+        earliest_sample_at TIMESTAMPTZ)`)
+	exec(`INSERT INTO metric_baselines
+        (connection_id, database_name, metric_name, period_type, hour_of_day,
+         mean, stddev, min, max, sample_count)
+        VALUES
+        (1, NULL, 'pg_stat_activity.count', 'all', NULL, 4, 1, 2, 7, 10),
+        (1, NULL, 'pg_stat_activity.count', 'hourly', 5, 6, 1, 2, 7, 3),
+        (1, 'db1', 'pg_stat_database.xact_commit', 'all', NULL, 9, 1, 8, 10, 10),
+        (1, 'db2', 'pg_stat_database.xact_commit', 'all', NULL, 19, 1, 18, 20, 10),
+        (2, NULL, 'pg_stat_activity.count', 'all', NULL, 40, 1, 20, 70, 10)`)
 
 	t.Run("baselines returned", func(t *testing.T) {
 		rec := serve()
@@ -141,8 +181,33 @@ func TestHandleMetricsBaselines_Query(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatalf("decode response: %v", err)
 		}
-		if len(got) != 1 || got[0].Metric != "pg_stat_activity.count" || got[0].Mean != 4 {
-			t.Errorf("baselines = %+v, want connection 1's pg_stat_activity.count only", got)
+		if len(got) != 1 || got[0].Metric != "pg_stat_activity.count" || got[0].Mean != 4 ||
+			got[0].PeriodType != "all" || got[0].SampleCount != 10 {
+			t.Errorf("baselines = %+v, want connection 1's 'all' pg_stat_activity.count only", got)
+		}
+	})
+
+	t.Run("period and database parameters", func(t *testing.T) {
+		for _, tc := range []struct {
+			query   string
+			want    string
+			notWant string
+		}{
+			{"connection_id=1&probe_name=pg_stat_activity&period_type=hourly", `"hour_of_day":5`, ""},
+			{"connection_id=1&probe_name=pg_stat_database&database_name=db1",
+				`"database_name":"db1"`, `"database_name":"db2"`},
+		} {
+			req := withSuperuser(httptest.NewRequest(http.MethodGet,
+				"/api/v1/metrics/baselines?"+tc.query, nil))
+			rec := httptest.NewRecorder()
+			handler.handleMetricsBaselines(rec, req)
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), tc.want) {
+				t.Errorf("%s: status = %d, body = %s; want 200 containing %s",
+					tc.query, rec.Code, rec.Body.String(), tc.want)
+			}
+			if tc.notWant != "" && strings.Contains(rec.Body.String(), tc.notWant) {
+				t.Errorf("%s: body = %s; want no %s", tc.query, rec.Body.String(), tc.notWant)
+			}
 		}
 	})
 }

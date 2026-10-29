@@ -446,6 +446,11 @@ func TestAlertHandler_HandleAlerts_FiltersAndGrants(t *testing.T) {
 		{"status, severity and type filters",
 			"?status=active&severity=warning&alert_type=system&exclude_cleared=true", 1},
 		{"time window", "?start_time=2000-01-01T00:00:00Z&end_time=2999-01-01T00:00:00Z&limit=5&offset=0", 2},
+		{"active window", "?active_start=2000-01-01T00:00:00Z&active_end=2999-01-01T00:00:00Z", 2},
+		{"active window ending before every alert", "?active_end=2000-01-01T00:00:00Z", 0},
+		{"active window starting in the future keeps open alerts", "?active_start=2999-01-01T00:00:00Z", 2},
+		{"invalid active bounds are ignored", "?active_start=bogus&active_end=bogus", 2},
+		{"equal active bounds", "?active_start=2999-01-01T00:00:00Z&active_end=2999-01-01T00:00:00Z", 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

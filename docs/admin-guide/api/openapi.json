@@ -679,6 +679,22 @@
             }
           },
           {
+            "name": "active_start",
+            "in": "query",
+            "description": "Keep only alerts not cleared before this time (RFC3339); with active_end, alerts active at some instant in the range",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "active_end",
+            "in": "query",
+            "description": "Keep only alerts triggered at or before this time (RFC3339); with active_start, alerts active at some instant in the range",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "Maximum number of results (default 100)",
@@ -702,6 +718,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AlertListResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "active_start is after active_end",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -5988,10 +6014,199 @@
         ]
       }
     },
+    "/metrics/anomaly-comparison": {
+      "get": {
+        "summary": "Compare a metric with its anomaly baselines",
+        "description": "Returns a metric's values on one connection over a time window, each scored against the baseline row and Tier 1 scoring settings the alerter uses, bucketed so that no deviation is averaged away",
+        "operationId": "getAnomalyComparison",
+        "tags": [
+          "Metrics"
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "query",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "description": "Baselined metric name, as listed by /metrics/anomaly-comparison/metrics",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "description": "Database; required for a per-database metric and rejected for a server-level one",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default 24h); custom requires time_start and time_end",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_start",
+            "in": "query",
+            "description": "Window start as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_end",
+            "in": "query",
+            "description": "Window end as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "description": "Baseline model (default as_scored): as_scored applies the row the alerter would score each sample against; the others show that period's row whether or not it is warm",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "as_scored",
+                "daily",
+                "hourly",
+                "all"
+              ]
+            }
+          },
+          {
+            "name": "sensitivity",
+            "in": "query",
+            "description": "Band half-width in standard deviations, greater than 0 and at most 10 (default: the scoring settings' default sensitivity)",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "buckets",
+            "in": "query",
+            "description": "Maximum number of points, 1 to 500 (default 300)",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Anomaly comparison",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnomalyComparison"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameters, an unknown metric, or a database_name that does not match the metric's scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to load the comparison",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/metrics/anomaly-comparison/metrics": {
+      "get": {
+        "summary": "List anomaly comparison metrics",
+        "description": "Returns every baselined metric, sorted by name, with whether it is per database",
+        "operationId": "listAnomalyComparisonMetrics",
+        "tags": [
+          "Metrics"
+        ],
+        "responses": {
+          "200": {
+            "description": "Baselined metrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ComparisonMetric"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/metrics/baselines": {
       "get": {
         "summary": "Get metric baselines",
-        "description": "Returns baseline values for metrics on a specific connection",
+        "description": "Returns the stored baseline rows of one period type for a connection's metrics, one row per metric, database and period key, exactly as the alerter computed them; rows are never averaged across periods or databases",
         "operationId": "getMetricBaselines",
         "tags": [
           "Metrics"
@@ -6009,7 +6224,7 @@
           {
             "name": "probe_name",
             "in": "query",
-            "description": "Probe name",
+            "description": "Probe name; only metrics named after it with a dot (probe_name.column) are returned",
             "required": true,
             "schema": {
               "type": "string"
@@ -6022,15 +6237,39 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "period_type",
+            "in": "query",
+            "description": "Period type to return (default all): all is the whole lookback window, hourly one row per UTC hour of day, daily one row per UTC weekday",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "hourly",
+                "daily"
+              ]
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "description": "Return only this database's rows, which excludes server-level metrics; when omitted, the rows for every database and the server-level rows are returned, each tagged with database_name",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Baseline values",
+            "description": "Baseline rows",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BaselinesResult"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MetricBaseline"
+                  }
                 }
               }
             }
@@ -6047,6 +6286,26 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to query metric baselines",
             "content": {
               "application/json": {
                 "schema": {
@@ -10734,19 +10993,25 @@
         "properties": {
           "ack_message": {
             "type": "string",
-            "description": "Acknowledgement message",
-            "nullable": true
+            "description": "Acknowledgement message"
           },
           "acknowledged_at": {
             "type": "string",
             "format": "date-time",
-            "description": "When the alert was acknowledged",
-            "nullable": true
+            "description": "When the alert was acknowledged"
           },
           "acknowledged_by": {
             "type": "string",
-            "description": "Who acknowledged the alert",
-            "nullable": true
+            "description": "Who acknowledged the alert"
+          },
+          "ai_analysis": {
+            "type": "string",
+            "description": "Cached AI analysis report, with any password masked"
+          },
+          "ai_analysis_metric_value": {
+            "type": "number",
+            "format": "double",
+            "description": "Metric value the cached AI analysis was produced for"
           },
           "alert_type": {
             "type": "string",
@@ -10758,25 +11023,40 @@
               "system"
             ]
           },
+          "anomaly_details": {
+            "type": "string",
+            "description": "JSON-encoded detail of how an anomaly alert was scored"
+          },
+          "anomaly_score": {
+            "type": "number",
+            "format": "double",
+            "description": "Anomaly score of an anomaly alert"
+          },
           "cleared_at": {
             "type": "string",
             "format": "date-time",
-            "description": "When the alert was cleared",
-            "nullable": true
+            "description": "When the alert was cleared"
           },
           "connection_id": {
             "type": "integer",
             "description": "Associated connection ID; null for a system alert",
             "nullable": true
           },
+          "correlation_id": {
+            "type": "string",
+            "description": "Correlation identifier set by the alerter"
+          },
+          "database_name": {
+            "type": "string",
+            "description": "Database the alert concerns"
+          },
+          "description": {
+            "type": "string",
+            "description": "Alert description, with any password masked"
+          },
           "false_positive": {
             "type": "boolean",
-            "description": "Whether marked as false positive"
-          },
-          "fired_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "When the alert fired"
+            "description": "Whether the acknowledgement marked the alert a false positive"
           },
           "id": {
             "type": "integer",
@@ -10786,26 +11066,41 @@
           "last_updated": {
             "type": "string",
             "format": "date-time",
-            "description": "When the alert state was last updated by the alerter (severity changes, metric value updates, reactivation)",
-            "nullable": true
-          },
-          "message": {
-            "type": "string",
-            "description": "Alert message"
+            "description": "When the alert state was last updated by the alerter (severity changes, metric value updates, reactivation)"
           },
           "metric_name": {
             "type": "string",
-            "description": "Metric that triggered the alert",
-            "nullable": true
+            "description": "Metric that triggered the alert"
+          },
+          "metric_unit": {
+            "type": "string",
+            "description": "Unit of the metric value, taken from the alert rule"
           },
           "metric_value": {
             "type": "number",
-            "description": "Metric value when alert was triggered",
-            "nullable": true
+            "format": "double",
+            "description": "Metric value when the alert was triggered or last updated"
+          },
+          "object_name": {
+            "type": "string",
+            "description": "Database object the alert concerns"
+          },
+          "operator": {
+            "type": "string",
+            "description": "Comparison operator applied to the threshold"
+          },
+          "probe_name": {
+            "type": "string",
+            "description": "Probe whose data raised the alert"
+          },
+          "rule_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Alert rule that raised the alert"
           },
           "server_name": {
             "type": "string",
-            "description": "Server name; empty for a system alert"
+            "description": "Server name; absent for a system alert"
           },
           "severity": {
             "type": "string",
@@ -10827,14 +11122,29 @@
           },
           "threshold_value": {
             "type": "number",
-            "description": "Threshold that was exceeded",
-            "nullable": true
+            "format": "double",
+            "description": "Threshold that was exceeded"
           },
           "title": {
             "type": "string",
             "description": "Alert title"
+          },
+          "triggered_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the alert was triggered"
           }
-        }
+        },
+        "required": [
+          "id",
+          "alert_type",
+          "connection_id",
+          "severity",
+          "title",
+          "description",
+          "status",
+          "triggered_at"
+        ]
       },
       "AlertCountsResult": {
         "type": "object",
@@ -11117,6 +11427,75 @@
           }
         }
       },
+      "AnomalyComparison": {
+        "type": "object",
+        "description": "A metric's values against the band the alerter's Tier 1 anomaly detector scores them with",
+        "properties": {
+          "baselines_as_of": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Most recent recalculation of the metric's baselines; null when there are none",
+            "nullable": true
+          },
+          "connection_id": {
+            "type": "integer",
+            "description": "Connection ID"
+          },
+          "database_name": {
+            "type": "string",
+            "description": "Database of a per-database metric; null for a server-level metric",
+            "nullable": true
+          },
+          "default_sensitivity": {
+            "type": "number",
+            "description": "The scoring settings' default sensitivity"
+          },
+          "metric": {
+            "type": "string",
+            "description": "Metric name"
+          },
+          "model": {
+            "type": "string",
+            "description": "Baseline model the band shows",
+            "enum": [
+              "as_scored",
+              "daily",
+              "hourly",
+              "all"
+            ]
+          },
+          "points": {
+            "type": "array",
+            "description": "At most buckets points in time order; each bucket keeps the sample with the largest absolute z-score, or the largest value when none is scored. Never null.",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonPoint"
+            }
+          },
+          "scoring_source": {
+            "type": "string",
+            "description": "alerter when the settings the alerter published were used; defaults when none could be read and the shipped defaults were used",
+            "enum": [
+              "alerter",
+              "defaults"
+            ]
+          },
+          "sensitivity": {
+            "type": "number",
+            "description": "Band half-width in standard deviations used for outside"
+          }
+        },
+        "required": [
+          "metric",
+          "connection_id",
+          "database_name",
+          "model",
+          "sensitivity",
+          "default_sensitivity",
+          "scoring_source",
+          "baselines_as_of",
+          "points"
+        ]
+      },
       "AuditEvent": {
         "type": "object",
         "description": "One row of the RBAC audit log",
@@ -11219,26 +11598,6 @@
           "oidc_label": {
             "type": "string",
             "description": "Label for the federated login button, empty when oidc_enabled is false"
-          }
-        }
-      },
-      "BaselinesResult": {
-        "type": "object",
-        "properties": {
-          "baselines": {
-            "type": "object",
-            "description": "Baseline values per metric",
-            "additionalProperties": {
-              "type": "object"
-            }
-          },
-          "connection_id": {
-            "type": "integer",
-            "description": "Connection ID"
-          },
-          "probe_name": {
-            "type": "string",
-            "description": "Probe name"
           }
         }
       },
@@ -11891,6 +12250,82 @@
           }
         }
       },
+      "ComparisonMetric": {
+        "type": "object",
+        "description": "A baselined metric the anomaly comparison accepts",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Metric name, as used by alert rules and metric_baselines"
+          },
+          "per_database": {
+            "type": "boolean",
+            "description": "True when the metric is per database, so the comparison needs database_name"
+          },
+          "probe_name": {
+            "type": "string",
+            "description": "Collector probe whose table the metric is read from"
+          }
+        },
+        "required": [
+          "name",
+          "probe_name",
+          "per_database"
+        ]
+      },
+      "ComparisonPoint": {
+        "type": "object",
+        "description": "One sample scored against the baseline row the model selects at the sample's time; hourly and daily rows are keyed by UTC hour and weekday",
+        "properties": {
+          "cold": {
+            "type": "boolean",
+            "description": "True when the row shown has not passed the warmup gate (explicit models), or when rows apply to the sample but none is warm (as_scored); false when no row applies"
+          },
+          "mean": {
+            "type": "number",
+            "description": "Baseline mean; null when no row applies",
+            "nullable": true
+          },
+          "outside": {
+            "type": "boolean",
+            "description": "True when the sample is scored, not cold, and outside the band; never true for a cold or unscored sample"
+          },
+          "period_type": {
+            "type": "string",
+            "description": "Period of the baseline row applied (all, hourly or daily); null when no row applies",
+            "nullable": true
+          },
+          "stddev": {
+            "type": "number",
+            "description": "Effective standard deviation, after the variance and metric floors, used as the z-score divisor; null when no row applies",
+            "nullable": true
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Sample time (UTC)"
+          },
+          "value": {
+            "type": "number",
+            "description": "Sample value"
+          },
+          "z_score": {
+            "type": "number",
+            "description": "Clamped z-score; null when no row applies or the divisor is zero",
+            "nullable": true
+          }
+        },
+        "required": [
+          "time",
+          "value",
+          "period_type",
+          "mean",
+          "stddev",
+          "cold",
+          "z_score",
+          "outside"
+        ]
+      },
       "Connection": {
         "type": "object",
         "properties": {
@@ -12027,22 +12462,7 @@
           },
           "role": {
             "type": "string",
-            "description": "Cluster role for the connection",
-            "enum": [
-              "standalone",
-              "binary_primary",
-              "binary_standby",
-              "binary_cascading",
-              "logical_publisher",
-              "logical_subscriber",
-              "logical_bidirectional",
-              "spock_node",
-              "spock_standby",
-              "primary",
-              "replica",
-              "node",
-              "unknown"
-            ],
+            "description": "Cluster role for the connection, or null for none: one of standalone, binary_primary, binary_standby, binary_cascading, logical_publisher, logical_subscriber, logical_bidirectional, spock_node, spock_standby, primary, replica, node or unknown",
             "nullable": true
           }
         }
@@ -13146,6 +13566,78 @@
           "role",
           "content"
         ]
+      },
+      "MetricBaseline": {
+        "type": "object",
+        "description": "One stored metric_baselines row. Rows of different periods or databases are never averaged together.",
+        "properties": {
+          "database_name": {
+            "type": "string",
+            "description": "Database the row covers; null for a server-level metric",
+            "nullable": true
+          },
+          "day_of_week": {
+            "type": "integer",
+            "description": "UTC weekday (Sunday = 0) of a daily row; null otherwise",
+            "nullable": true
+          },
+          "earliest_sample_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Oldest sample behind the row; null when unknown",
+            "nullable": true
+          },
+          "hour_of_day": {
+            "type": "integer",
+            "description": "UTC hour (0-23) of an hourly row; null otherwise",
+            "nullable": true
+          },
+          "max": {
+            "type": "number",
+            "description": "Largest sample"
+          },
+          "mean": {
+            "type": "number",
+            "description": "Mean of the samples behind the row"
+          },
+          "metric": {
+            "type": "string",
+            "description": "Metric name"
+          },
+          "min": {
+            "type": "number",
+            "description": "Smallest sample"
+          },
+          "p50": {
+            "type": "number",
+            "description": "Not a percentile: the mean, kept for compatibility"
+          },
+          "p95": {
+            "type": "number",
+            "description": "Not a percentile: the approximation mean + 2 stddev, kept for compatibility"
+          },
+          "p99": {
+            "type": "number",
+            "description": "Not a percentile: the approximation mean + 3 stddev, kept for compatibility"
+          },
+          "period_type": {
+            "type": "string",
+            "description": "Period the row covers",
+            "enum": [
+              "all",
+              "hourly",
+              "daily"
+            ]
+          },
+          "sample_count": {
+            "type": "integer",
+            "description": "Number of raw samples behind the row"
+          },
+          "stddev": {
+            "type": "number",
+            "description": "Standard deviation of the samples behind the row"
+          }
+        }
       },
       "MetricDataPoint": {
         "type": "object",

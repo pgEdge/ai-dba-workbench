@@ -15,6 +15,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/anomaly"
 )
 
 // TestBaselinePeriodKeys pins the bucket keys to UTC so an alerter whose
@@ -179,7 +180,7 @@ func TestShippedWarmupTiersReachable(t *testing.T) {
 		{PeriodType: "daily", DayOfWeek: &weekday, SampleCount: int64(cfg.Daily.MinSamples), EarliestSampleAt: earliest},
 	}
 	for _, row := range rows {
-		if !isBaselineWarm(*row, cfg, now) {
+		if !anomaly.IsWarm(toAnomalyBaseline(*row), cfg, now) {
 			t.Errorf("%s row with earliest_sample_at at the shipped lookback is not warm", row.PeriodType)
 		}
 	}

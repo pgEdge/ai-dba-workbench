@@ -1081,7 +1081,21 @@ so several affected probes on one connection raise one alert each.
 ## Alerter Metric Registry (alerter)
 
 `alerter/src/internal/database/metric_registry.go` maps each alert rule's
-metric name to the SQL that produces its value. A query error there is
+metric name to the SQL that produces its value. Since #348 every
+historical query lives in `pkg/anomaly/metrics.go` (`metricDefs`, read
+through `anomaly.Metric` and `anomaly.BaselineMetrics`) so the server can
+run the same statement; `withBaselineQueries` copies each one onto its
+registry entry's `historicalSQL` and `historicalScan` at package init, so
+never set those fields on an entry. Adding a baselined metric means a
+`metricDefs` entry plus the registry entry.
+`TestRegistryMatchesSharedBaselineDefinitions` fails when a `metricDefs`
+entry has no registry entry (the baselined lists differ in length), or
+when a baselined metric's SQL, scan kind or probe name differs; a
+registry entry with no `metricDefs` entry is simply not baselined, and
+is allowed (several exist). The registry entry's comment still
+explains both queries. `historicalScanType` and its constants are
+aliases of `anomaly.HistoricalScan`, whose `PerDatabase()` is the only
+source of a definition's `PerDatabase`. A query error there is
 swallowed by `evaluateRuleForAllConnections` in
 `alerter/src/internal/engine/thresholds.go`, which logs at debug level and
 moves on, so a broken metric looks exactly like an idle one. The rules
@@ -1272,9 +1286,11 @@ that follow from that, most learned the hard way in #406 and #407:
   mount, which is the right threshold semantics, but a squashfs image is
   by construction 100% used, so on any host with a snap installed the
   metric was pinned at 100% and the disk alert fired permanently (#428).
-  The `pseudoFilesystemExclusion` constant in `metric_registry.go` holds
-  the predicate and both the `latestSQL` and the `historicalSQL` embed
-  it, so the two cannot drift. It is
+  The `anomaly.PseudoFilesystemExclusion` constant in
+  `pkg/anomaly/metrics.go` (aliased as `pseudoFilesystemExclusion` in
+  `metric_registry.go`) holds the predicate and both the `latestSQL` and
+  the `historicalSQL` embed it, so the two cannot drift;
+  `anomaly.CPUBusyPercentExpr` is shared the same way. It is
   `COALESCE(file_system_type, '') NOT IN (...)` and the COALESCE is
   load-bearing: the column is nullable and a bare `NOT IN` against NULL
   yields NULL rather than true, which would drop every mount whose type
@@ -1318,7 +1334,7 @@ conventions from that change hold across both:
   `calculateBaselines` and `detectAnomalies` both skip on it; there is no
   fallback path that builds a baseline from the latest sample, because
   such a row (one sample, zero stddev, NULL `earliest_sample_at`) can
-  never pass `isBaselineWarm`. `DeleteBaselinesForUnsupportedMetrics`
+  never pass `anomaly.IsWarm`. `DeleteBaselinesForUnsupportedMetrics`
   runs once per `calculateBaselines` cycle, binding
   `BaselineSupportedMetrics()` as a `text[]` and deleting
   `metric_name <> ALL($1)`, so rows the old fallback wrote disappear.
@@ -1384,6 +1400,42 @@ conventions from that change hold across both:
   `baselines[0]` as a preference. The server's `get_metric_baselines`
   tool is a separate implementation over the pool and is unaffected.
 
+- The Tier 1 rules themselves live in `pkg/anomaly`, shared with the
+  server (#348): `PeriodKeys`, `Candidates`, `IsWarm`, `Select`,
+  `EffectiveStdDev` (variance floor plus the metric's `MinStdDev`),
+  `ZScore` (cap, and `ok=false` on a zero divisor) and `InBand`, plus
+  the config structs and `DefaultScoringSettings()` with the built-in
+  per-metric floors. The alerter's `config.VarianceFloorConfig`,
+  `WarmupConfig`, `PerPeriodWarmupConfig` and `MetricFloor` are type
+  aliases of the pkg types, so YAML keys are unchanged, and
+  `Tier1Config.ScoringSettings()` returns the effective settings
+  (built-in floors with `metric_floors` overrides applied).
+  `TestDefaultScoringSettingsMatchConfigDefaults` pins
+  `DefaultScoringSettings()` to `config.NewConfig()`, so change a Tier 1
+  default in both places. The engine's `selectBaseline` and
+  `baselinePeriodKeys` are thin adapters over the pkg functions
+  (`toAnomalyBaseline` converts a `database.MetricBaseline`), and it
+  calls `anomaly.EffectiveStdDev` directly; warmth is `anomaly.IsWarm`
+  inside `anomaly.Select`. Change the rule in `pkg/anomaly`, never in
+  an adapter.
+
+- The alerter publishes `Tier1Config.ScoringSettings()` as JSON to
+  `alerter_settings.tier1_scoring` (collector migration 31) through
+  `Datastore.PublishScoringSettings`, called by
+  `Engine.publishScoringSettings` at start and after each reload (see
+  `alerter/src/internal/engine/scoring_publish.go`). A failure, such as the alerter
+  starting before the collector has applied migration 31, starts one
+  retry loop bound to the engine context that tries every 30 seconds
+  until a publication succeeds. Attempts hold `scoringMu` and read the
+  configuration current at that moment, so a reload during a pending
+  retry starts no second loop and is never overwritten by older
+  settings. A new Tier 1 setting must be added to
+  `anomaly.ScoringSettings` for the server to see it. The server's
+  `ParseScoringSettings` decodes the column over
+  `DefaultScoringSettings()`, so a missing key keeps its default, and
+  falls back to the defaults outright when the column is empty,
+  malformed or lacks a positive `default_sensitivity`.
+
 - Selection is in Go. `selectBaseline` prefers the `hourly` row for the
   current hour, then the `daily` row for the current weekday, then
   `all`, and returns the first candidate that is warm; a cold candidate
@@ -1411,7 +1463,8 @@ conventions from that change hold across both:
   cannot write. The walkthrough config keeps `lookback_days: 1` and
   shortens its hourly and daily spans to 24 to match.
 
-- Hour and weekday keys come from `baselinePeriodKeys`, used both when
+- Hour and weekday keys come from `baselinePeriodKeys` (which wraps
+  `anomaly.PeriodKeys`), used both when
   hourly and daily rows are written and when `selectBaseline` matches
   them, and it normalises to UTC first. pgx scans `timestamptz` into the
   process's local zone unless `ScanLocation` is set, and `time.Now()` is
@@ -1627,6 +1680,73 @@ acknowledged until retention deletes it, which the changelog states.
 Per-database baselines of a
 metric that became server-wide need no migration: the stale-baseline
 sweep (`DeleteStaleMetricBaselines`) deletes them on the next cycle.
+
+## Baselines Endpoint (server)
+
+`metrics.QueryBaselines` (`server/src/internal/metrics/query.go`)
+backs `GET /api/v1/metrics/baselines` and returns `metric_baselines`
+rows as stored, never averaged across periods or databases (#348; it
+once filtered `period_type = 'overall'`, a value nothing writes, and
+fell back to averaging every period). `BaselineQueryOptions.PeriodType`
+is `all` (default), `hourly` or `daily`; `DatabaseName` nil returns
+every database's rows plus the server-level ones, each tagged with its
+`database_name`, and a name returns only that database's rows. A row
+with a non-finite mean, stddev, min or max is skipped (`allFinite`), as
+the REAL columns can hold NaN/Inf. The probe filter is a literal
+`starts_with(metric_name, probe || '.')`, not `LIKE`. `p50`/`p95`/`p99`
+are mean, mean + 2 stddev and mean + 3 stddev. The test is
+`baselines_db_test.go`, against a scratch database migrated by the
+collector's `SchemaManager` (`newCollectorSchemaPool` in
+`collector_schema_db_test.go`).
+
+## Anomaly Comparison Endpoint (server)
+
+`GET /api/v1/metrics/anomaly-comparison` (#348) plots a metric against
+the band the alerter scores it with; the code is
+`server/src/internal/metrics/anomaly_comparison.go`. Rules:
+
+- Never reimplement selection or scoring: `BuildComparison` (pure, table
+  tested) calls `anomaly.Select`/`Candidates`/`IsWarm`/`EffectiveStdDev`/
+  `ZScore`/`InBand`, evaluating warmth and UTC period keys at each
+  sample's own time against the current baseline rows.
+- The series is the registry's `HistoricalSQL` wrapped as a subquery
+  (`comparisonSeriesQuery`) with `$1` lookback days and parameterised
+  connection, NULL-aware database and window predicates, so every
+  registry query must keep the output column names `connection_id`,
+  `database_name`, `value` and `collected_at`.
+  `TestQueryComparisonSeries_EveryMetric` runs the wrap for every
+  registered metric, and `TestLoadComparison_PerDatabase` checks the
+  database predicate keeps two databases apart. On PostgreSQL 18 the
+  planner pushes the connection predicate into the inner index condition
+  and the database predicate into the inner scan's filter, even through
+  a CTE with `LAG` (`TestComparisonSeriesQuery_Plan` logs the plan); the
+  window bounds stay outside the window function, as they must.
+- A registry query that aggregates into buckets (the hourly
+  `date_trunc('hour', ...)` deltas) stamps each row with its bucket's
+  start, so it must set `anomaly.MetricDef.BucketWidth`;
+  `QueryComparisonSeries` and `BuildComparison` start the window at
+  `def.BucketStart(window.Start)` so the bucket straddling the start is
+  kept (at its own, earlier time, in the first interval).
+  `TestBucketWidthMatchesSQL` in `pkg/anomaly` fails a definition whose
+  `date_trunc` and `BucketWidth` disagree.
+- The metric is validated with `ResolveComparisonMetric` (registry
+  lookup plus database scope) before any SQL is chosen.
+- Settings come from `alerter_settings.tier1_scoring`;
+  `ParseScoringSettings` falls back to `DefaultScoringSettings()` with
+  `scoring_source: "defaults"` for NULL, malformed JSON or a non-positive
+  `default_sensitivity`, and `LoadScoringSettings` does the same for no
+  row or a 42703/42P01 error (server upgraded before the collector ran
+  migration 31).
+- Non-finite values never reach the response: `QueryComparisonSeries`
+  drops NaN/Inf samples and `QueryComparisonBaselines` skips rows whose
+  mean or stddev is non-finite (they also do not count towards
+  `baselines_as_of`). `TestLoadComparison_NonFinite` seeds them through
+  the load average, as the CPU query clamps NaN to 0-100.
+- `as_scored` marks a point `cold` only when some row applies to it and
+  none is warm; with no applicable row the point has no band and is not
+  cold, as with the explicit models.
+- The handler has a `loadComparisonFn` test hook, and returns a generic
+  500 on load failure, never the database error.
 
 ## Time-Window Resolution (server)
 
@@ -2208,7 +2328,8 @@ failure, a statement timeout on a wide window above all, logs at
 generic message, because an empty success hides a persistent failure as
 a quiet database. `handleQueryStats`, `handleTopQueries`
 (`respondTopQueriesError`) and `handleDatabaseSummaries`
-(`respondDatabaseSummariesError`, issue #519) follow this;
+(`respondDatabaseSummariesError`, issue #519) and
+`handleMetricsBaselines` (`respondBaselinesError`) follow this;
 `handleConnectionGroups` and the performance-summary helpers
 (`queryCacheHit`, `queryTransactions` and the rest) still log at DEBUG
 and return empty.

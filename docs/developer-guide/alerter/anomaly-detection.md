@@ -106,11 +106,15 @@ Tier 1 settings are configured in the `anomaly.tier1` section:
 
 ### Supported Metrics
 
-Tier 1 scores a metric only when the metric's entry in the query
-registry (`alerter/src/internal/database/metric_registry.go`)
-carries a historical query, because the baseline calculator has
-nothing else to build a baseline from. The `SupportsBaselines`
-helper in the `database` package makes that check, and both the
+Tier 1 scores a metric only when the metric has a historical query,
+because the baseline calculator has nothing else to build a
+baseline from. The historical queries live in
+[`pkg/anomaly/metrics.go`][anomaly-metrics], which the server
+shares, and the alerter's query registry
+(`alerter/src/internal/database/metric_registry.go`) copies each
+one onto the matching registry entry when the package initialises.
+The `SupportsBaselines` helper in the `database` package makes
+that check, and both the
 baseline calculator and the detector skip any rule whose metric
 fails the check. Of the 31 registry metrics, 20 carry a historical
 query and 11 do not. Each historical query computes the same
@@ -210,11 +214,15 @@ refresh.
 
 ### Baseline Selection
 
-The `selectBaseline` helper in
-[`alerter/src/internal/engine/anomalies.go`][anomalies-go] picks
-the row to score a value against from the baselines for that
-connection, database and metric. The helper considers the
-candidates in this order of preference:
+The `Select` function in the shared
+[`pkg/anomaly`][anomaly-scoring] package picks the row to score a
+value against from the baselines for that connection, database and
+metric; the alerter's `selectBaseline` helper in
+[`alerter/src/internal/engine/anomalies.go`][anomalies-go] adapts
+the database rows to it. The server's baseline comparison view
+calls the same function, so the view cannot drift from the
+alerter. The function considers the candidates in this order of
+preference:
 
 1. The `hourly` baseline whose `hour_of_day` matches the current
    hour.
@@ -262,12 +270,21 @@ Tier 1 applies two pre-checks before the z-score comparison.
 The first protects the divisor from collapsing below a sensible
 floor; the second suppresses detection on baselines that have
 not yet observed enough data to be trustworthy. Both checks
-live in [`alerter/src/internal/engine/anomalies.go`][anomalies-go];
-the `effectiveStdDev` helper implements the floor, and the
-`isBaselineWarm` helper implements the warmup gate.
+live in [`pkg/anomaly/scoring.go`][anomaly-scoring]; the
+`EffectiveStdDev` function implements the floor, and the `IsWarm`
+function implements the warmup gate. The alerter in
+[`alerter/src/internal/engine/anomalies.go`][anomalies-go] calls
+`anomaly.EffectiveStdDev` and reaches `IsWarm` through
+`anomaly.Select`. The server's baseline comparison endpoint calls
+the same functions, so change a rule in `pkg/anomaly` and both
+callers pick it up.
 
 [anomalies-go]:
     https://github.com/pgEdge/ai-dba-workbench/blob/main/alerter/src/internal/engine/anomalies.go
+[anomaly-scoring]:
+    https://github.com/pgEdge/ai-dba-workbench/blob/main/pkg/anomaly/scoring.go
+[anomaly-metrics]:
+    https://github.com/pgEdge/ai-dba-workbench/blob/main/pkg/anomaly/metrics.go
 
 #### Motivating Failure Mode
 
@@ -284,8 +301,8 @@ scores.
 
 #### Hybrid Variance Floor
 
-The `effectiveStdDev` helper raises the divisor to a hybrid
-floor before the z-score is computed. The floor combines a
+The `anomaly.EffectiveStdDev` function raises the divisor to a
+hybrid floor before the z-score is computed. The floor combines a
 relative term, scaled by the absolute baseline mean, and an
 absolute term that acts as a safety net when the mean
 approaches zero.
@@ -373,7 +390,7 @@ useful `min_stddev` would.
 
 #### Warmup Gate Semantics
 
-The `isBaselineWarm` helper gates detection on two conditions
+The `IsWarm` function gates detection on two conditions
 per `period_type`: a minimum sample count and a minimum
 wall-clock span between the earliest recorded sample and now.
 Both must hold for the baseline to be considered warm. Each of
@@ -435,6 +452,31 @@ baseline was flat, and the Tier 3 prompt includes both. The cap
 applies when the alert is raised and when recovery refreshes
 an open alert; a candidate written before the key existed
 keeps the uncapped severity.
+
+### Published Scoring Settings
+
+The server's baseline comparison view scores samples with the
+alerter's own settings. The alerter writes its effective Tier 1
+scoring settings to the `alerter_settings.tier1_scoring` column,
+added by collector schema migration 31, when it starts and after
+each configuration reload. The settings cover the warmup
+thresholds, the variance floor, the z-score cap, the default
+sensitivity and the per-metric floors, with any
+`anomaly.tier1.metric_floors` overrides applied. When the write
+fails, for example because the collector has not yet applied
+migration 31, the alerter logs a warning, carries on and retries
+every 30 seconds until the write succeeds.
+
+The server reads the column on each request. When the column is
+empty, malformed or holds no positive `default_sensitivity`, the
+server uses `DefaultScoringSettings()` from `pkg/anomaly` and
+reports `scoring_source` as `defaults` in its response, which the
+dashboard shows as a notice. When the column is valid but lacks
+any other key, `ParseScoringSettings` keeps the default for that
+key.
+`TestDefaultScoringSettingsMatchConfigDefaults` pins those
+defaults to the alerter's configuration defaults, so change a
+Tier 1 default in both places.
 
 ## Tier 2: Embedding Similarity
 

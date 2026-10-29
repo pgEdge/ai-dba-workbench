@@ -157,16 +157,57 @@ type MetricSeries struct {
 	Unit   string            `json:"unit"`
 }
 
-// MetricBaseline holds aggregated baseline statistics for a metric.
+// MetricBaseline is one metric_baselines row as the baselines endpoint
+// returns it. P50, P95 and P99 are kept for compatibility with older
+// clients; they are not percentiles but the approximations mean,
+// mean + 2 stddev and mean + 3 stddev.
 type MetricBaseline struct {
-	Metric string  `json:"metric"`
-	Mean   float64 `json:"mean"`
-	Stddev float64 `json:"stddev"`
-	Min    float64 `json:"min"`
-	Max    float64 `json:"max"`
-	P50    float64 `json:"p50"`
-	P95    float64 `json:"p95"`
-	P99    float64 `json:"p99"`
+	Metric           string     `json:"metric"`
+	DatabaseName     *string    `json:"database_name"`
+	PeriodType       string     `json:"period_type"`
+	HourOfDay        *int       `json:"hour_of_day"`
+	DayOfWeek        *int       `json:"day_of_week"`
+	Mean             float64    `json:"mean"`
+	Stddev           float64    `json:"stddev"`
+	Min              float64    `json:"min"`
+	Max              float64    `json:"max"`
+	P50              float64    `json:"p50"`
+	P95              float64    `json:"p95"`
+	P99              float64    `json:"p99"`
+	SampleCount      int64      `json:"sample_count"`
+	EarliestSampleAt *time.Time `json:"earliest_sample_at"`
+}
+
+// BaselinePeriodTypes are the period types QueryBaselines accepts. The
+// table's CHECK constraint also allows 'weekly', but nothing writes it.
+var BaselinePeriodTypes = []string{"all", "hourly", "daily"}
+
+// DefaultBaselinePeriodType is the period type QueryBaselines reads when
+// BaselineQueryOptions.PeriodType is empty.
+const DefaultBaselinePeriodType = "all"
+
+// BaselineQueryOptions narrows QueryBaselines.
+//
+// PeriodType selects one period type; empty means
+// DefaultBaselinePeriodType. DatabaseName, when set, keeps only the rows
+// for that database, so server-level metrics (whose rows carry no
+// database) drop out; when nil, the rows for every database and the
+// server-level rows are all returned, each tagged with its
+// database_name.
+type BaselineQueryOptions struct {
+	PeriodType   string
+	DatabaseName *string
+}
+
+// IsValidBaselinePeriodType reports whether periodType is one of
+// BaselinePeriodTypes.
+func IsValidBaselinePeriodType(periodType string) bool {
+	for _, p := range BaselinePeriodTypes {
+		if p == periodType {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidTimeRanges maps dashboard time range strings to their duration.
@@ -1868,128 +1909,80 @@ func scanSeriesRows(
 	return rows.Err()
 }
 
-// QueryBaselines retrieves aggregated baseline statistics for the given
-// connection and probe metrics. It uses the 'overall' period type when
-// available and approximates percentiles from mean and stddev.
+// baselinesQuery reads the metric_baselines rows QueryBaselines returns.
+// $3 is the probe name (empty for any); a metric belongs to a probe when its
+// name starts with the probe name and a dot, compared literally so an
+// underscore in the probe name is not a LIKE wildcard. $4 is the database
+// (NULL for any) and $5 the requested metric names (empty for all).
+const baselinesQuery = `
+        SELECT metric_name, database_name, period_type, hour_of_day,
+               day_of_week, mean, stddev, min, max, sample_count,
+               earliest_sample_at
+          FROM metric_baselines
+         WHERE connection_id = $1
+           AND period_type = $2
+           AND ($3::text = '' OR starts_with(metric_name, $3::text || '.'))
+           AND ($4::text IS NULL OR database_name = $4::text)
+           AND (cardinality($5::text[]) = 0 OR metric_name = ANY($5::text[]))
+         ORDER BY metric_name, database_name NULLS FIRST,
+                  day_of_week NULLS FIRST, hour_of_day NULLS FIRST
+    `
+
+// QueryBaselines returns the stored baseline rows of one period type for
+// a connection, optionally restricted to a probe's metrics, a database
+// and a list of metric names. Every row is returned as stored: rows of
+// different periods or databases are never averaged together, since a
+// mean of hourly means is not the mean of anything. A row holding a
+// non-finite value is left out. See BaselineQueryOptions for the
+// defaults.
 func QueryBaselines(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	connectionID int,
 	probeName string,
 	requestedMetrics []string,
+	opts BaselineQueryOptions,
 ) ([]MetricBaseline, error) {
-	// Build the metric filter
-	var metricFilter string
-	var queryArgs []any
-	queryArgs = append(queryArgs, connectionID)
-
-	if probeName != "" {
-		// Filter to metrics that start with the probe name prefix
-		metricFilter = " AND metric_name LIKE $2 || '.%'"
-		queryArgs = append(queryArgs, probeName)
+	periodType := opts.PeriodType
+	if periodType == "" {
+		periodType = DefaultBaselinePeriodType
+	}
+	if !IsValidBaselinePeriodType(periodType) {
+		return nil, fmt.Errorf("invalid period_type %q: must be one of %s",
+			periodType, strings.Join(BaselinePeriodTypes, ", "))
+	}
+	if requestedMetrics == nil {
+		requestedMetrics = []string{}
 	}
 
-	// Query baselines, preferring 'overall' period type
-	query := fmt.Sprintf(`
-        SELECT metric_name, mean, stddev, min, max
-        FROM metric_baselines
-        WHERE connection_id = $1
-            AND period_type = 'overall'
-            %s
-        ORDER BY metric_name
-    `, metricFilter)
-
-	rows, err := pool.Query(ctx, query, queryArgs...)
+	rows, err := pool.Query(ctx, baselinesQuery, connectionID, periodType,
+		probeName, opts.DatabaseName, requestedMetrics)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query baselines: %w", err)
 	}
 	defer rows.Close()
 
-	baselineMap := make(map[string]*MetricBaseline)
+	result := []MetricBaseline{}
 	for rows.Next() {
-		var metricName string
-		var mean, stddev, minVal, maxVal float64
-		if err := rows.Scan(&metricName, &mean, &stddev, &minVal, &maxVal); err != nil {
+		var b MetricBaseline
+		if err := rows.Scan(&b.Metric, &b.DatabaseName, &b.PeriodType,
+			&b.HourOfDay, &b.DayOfWeek, &b.Mean, &b.Stddev, &b.Min, &b.Max,
+			&b.SampleCount, &b.EarliestSampleAt); err != nil {
 			return nil, fmt.Errorf("failed to scan baseline row: %w", err)
 		}
-
-		baselineMap[metricName] = &MetricBaseline{
-			Metric: metricName,
-			Mean:   mean,
-			Stddev: stddev,
-			Min:    minVal,
-			Max:    maxVal,
-			P50:    mean,
-			P95:    mean + 2*stddev,
-			P99:    mean + 3*stddev,
+		b.P50 = b.Mean
+		b.P95 = b.Mean + 2*b.Stddev
+		b.P99 = b.Mean + 3*b.Stddev
+		// A float column can hold NaN or +/-Inf, which encoding/json
+		// cannot marshal; such a row is treated as missing.
+		if !allFinite(b.Mean, b.Stddev, b.Min, b.Max, b.P95, b.P99) {
+			continue
 		}
+		result = append(result, b)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating baselines: %w", err)
 	}
-
-	// If no 'overall' baselines found, aggregate across all periods
-	if len(baselineMap) == 0 {
-		aggQuery := fmt.Sprintf(`
-            SELECT metric_name,
-                   AVG(mean) AS mean,
-                   AVG(stddev) AS stddev,
-                   MIN(min) AS min,
-                   MAX(max) AS max
-            FROM metric_baselines
-            WHERE connection_id = $1
-                %s
-            GROUP BY metric_name
-            ORDER BY metric_name
-        `, metricFilter)
-
-		rows2, err := pool.Query(ctx, aggQuery, queryArgs...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query aggregated baselines: %w", err)
-		}
-		defer rows2.Close()
-
-		for rows2.Next() {
-			var metricName string
-			var mean, stddev, minVal, maxVal float64
-			if err := rows2.Scan(&metricName, &mean, &stddev, &minVal, &maxVal); err != nil {
-				return nil, fmt.Errorf("failed to scan aggregated baseline: %w", err)
-			}
-
-			baselineMap[metricName] = &MetricBaseline{
-				Metric: metricName,
-				Mean:   mean,
-				Stddev: stddev,
-				Min:    minVal,
-				Max:    maxVal,
-				P50:    mean,
-				P95:    mean + 2*stddev,
-				P99:    mean + 3*stddev,
-			}
-		}
-		if err := rows2.Err(); err != nil {
-			return nil, fmt.Errorf("error iterating aggregated baselines: %w", err)
-		}
-	}
-
-	// Filter to requested metrics if specified
-	var result []MetricBaseline
-	if len(requestedMetrics) > 0 {
-		for _, m := range requestedMetrics {
-			if bl, ok := baselineMap[m]; ok {
-				result = append(result, *bl)
-			}
-		}
-	} else {
-		for _, bl := range baselineMap {
-			result = append(result, *bl)
-		}
-	}
-
-	if result == nil {
-		result = []MetricBaseline{}
-	}
-
 	return result, nil
 }
 
@@ -2466,6 +2459,17 @@ func finiteFloat(f float64) (float64, bool) {
 		return 0, false
 	}
 	return f, true
+}
+
+// allFinite reports whether every value is finite, so that a row holding
+// NaN or +/-Inf can be left out of a JSON response as a whole.
+func allFinite(vals ...float64) bool {
+	for _, v := range vals {
+		if _, ok := finiteFloat(v); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // toFloat64 converts a scanned database value to float64. It returns

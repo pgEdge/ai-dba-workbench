@@ -27,10 +27,13 @@ The check behaves as follows on each platform:
   a failed check stops `rpm` installing the new package and removing
   the old one.
 
-The check reads `/etc/pgedge/ai-dba-server.yaml` and runs from the
-server's working directory, `/var/lib/pgedge/ai-dba-server`, so
-relative paths resolve as they do for the running service. A fresh
-installation has no configuration file, so the check is skipped.
+The check reads `/etc/pgedge/ai-dba-server.yaml` and runs as the
+`pgedge` account from the server's working directory,
+`/var/lib/pgedge/ai-dba-server`, so relative paths and file permissions
+resolve as they do for the running service. The check does not read
+`/etc/pgedge/ai-dba-server.env`, so a setting supplied only through an
+environment variable in that file is not checked. A fresh installation
+has no configuration file, so the check is skipped.
 
 The first upgrade to a release that includes the check package installs
 the package as a new dependency. On Debian and Ubuntu, `apt-get
@@ -49,11 +52,15 @@ command prints `Configuration OK` and exits with status zero when the
 configuration is valid; otherwise the command prints the error the
 server would report at start-up and exits with status one.
 
-In the following example, the command checks the installed
-configuration with the installed server:
+Run the check as the `pgedge` account from the server's working
+directory, so that relative paths and file permissions resolve as they
+do for the service. In the following example, the command checks the
+installed configuration with the installed server:
 
 ```bash
-sudo ai-dba-server -check-config -config /etc/pgedge/ai-dba-server.yaml
+cd /var/lib/pgedge/ai-dba-server
+sudo -u pgedge -H ai-dba-server \
+    -check-config -config /etc/pgedge/ai-dba-server.yaml
 ```
 
 During a refused upgrade, the new server is already installed by the
@@ -62,7 +69,7 @@ configuration with the new server before you retry the upgrade:
 
 ```bash
 cd /var/lib/pgedge/ai-dba-server
-sudo /usr/libexec/pgedge-ai-dba-upgrade-check/ai-dba-server \
+sudo -u pgedge -H /usr/libexec/pgedge-ai-dba-upgrade-check/ai-dba-server \
     -check-config -config /etc/pgedge/ai-dba-server.yaml
 ```
 

@@ -19,9 +19,9 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/config"
 )
 
-// unprefixedCookieConfig is the deployment issue #784 is about: OIDC
-// behind a TLS-terminating proxy with no trusted_proxies, which 1.0.0
-// started with a warning and this release refuses.
+// unprefixedCookieConfig is the example issue #784 gives of a
+// configuration start-up refuses: OIDC behind a TLS-terminating proxy
+// with no trusted_proxies.
 const unprefixedCookieConfig = `
 http:
   auth:

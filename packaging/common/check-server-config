@@ -36,7 +36,23 @@ CHECKER=/usr/libexec/pgedge-ai-dba-upgrade-check/ai-dba-server
 # the configuration resolves as it does for the running server.
 cd /var/lib/pgedge/ai-dba-server 2>/dev/null || cd /
 
-if output=$("$CHECKER" -check-config -config "$CONFIG" 2>&1); then
+# Run as the account the service runs as, with its home directory, so
+# that file permissions and a "~" in a configured path resolve as they
+# do for the running server; a password_file only root can read would
+# otherwise pass the check and then stop the new server starting. The
+# server package creates the account, so it exists on any host that has
+# the configuration file, but fall back to running as root rather than
+# refuse an upgrade on a host where it does not.
+set -- "$CHECKER" -check-config -config "$CONFIG"
+if [ "$(id -u)" = 0 ] && command -v runuser >/dev/null 2>&1; then
+    home=$(getent passwd pgedge | cut -d: -f6)
+    if [ -n "$home" ]; then
+        set -- runuser -u pgedge -- env -u XDG_CONFIG_HOME \
+            HOME="$home" USER=pgedge LOGNAME=pgedge "$@"
+    fi
+fi
+
+if output=$("$@" 2>&1); then
     exit 0
 fi
 

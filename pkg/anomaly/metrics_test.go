@@ -117,7 +117,7 @@ func TestSharedFragmentsEmbedded(t *testing.T) {
 // lookbackPredicate matches a historical query's lookback on
 // collected_at, capturing the column as written.
 var lookbackPredicate = regexp.MustCompile(
-	`((?:\w+\.)?collected_at) > NOW\(\) - INTERVAL '1 day' \* \$1`)
+	`((?:\w+\.)?collected_at) > NOW\(\) - INTERVAL '1 day' \* \$1::int`)
 
 // TestHistoricalUpperBound checks that every lookback on collected_at is
 // followed at once by the $2 upper bound on the same column, so a reader
@@ -137,7 +137,7 @@ func TestHistoricalUpperBound(t *testing.T) {
 		for _, m := range matches {
 			column := sql[m[2]:m[3]]
 			rest := strings.TrimLeft(sql[m[1]:], " \t\n")
-			if !strings.HasPrefix(rest, "AND "+column+" <= $2") {
+			if !strings.HasPrefix(rest, "AND "+column+" <= $2::timestamptz") {
 				t.Errorf("%s HistoricalSQL lookback on %s has no $2 upper bound beside it",
 					def.Name, column)
 			}

@@ -242,6 +242,12 @@ baseline comparison series, so it must keep the output column
 names `connection_id`, `database_name`, `value` and
 `collected_at`.
 
+The query takes two parameters: `$1` is the lookback in days, and
+`$2` is an inclusive upper bound on `collected_at`. Place the
+upper bound beside every lookback predicate, so that a comparison
+window set in the past does not scan up to the present; the
+alerter passes `infinity` for `$2` when it calculates baselines.
+
 In the following example, a `metricDefs` entry holds a historical
 query that retrieves data for baseline calculations:
 
@@ -256,6 +262,7 @@ query that retrieves data for baseline calculations:
             AND c.deleted_at IS NULL
         WHERE m.collected_at > NOW()
             - INTERVAL '1 day' * $1
+          AND m.collected_at <= $2
         ORDER BY m.connection_id, m.collected_at
     `,
     HistoricalScan: HistoricalScanBasic,

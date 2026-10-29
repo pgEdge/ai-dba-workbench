@@ -511,6 +511,37 @@ func TestComparisonHelpers(t *testing.T) {
 	}
 }
 
+func TestComparisonUpperBound(t *testing.T) {
+	raw, ok := anomaly.Metric(cpuMetric)
+	if !ok || raw.BucketWidth != 0 {
+		t.Fatalf("%s is not a raw metric", cpuMetric)
+	}
+	hourly, ok := anomaly.Metric(deadlocksMetric)
+	if !ok || hourly.BucketWidth != time.Hour {
+		t.Fatalf("%s is not an hourly metric", deadlocksMetric)
+	}
+	hour := time.Date(2026, 3, 4, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name string
+		def  anomaly.MetricDef
+		end  time.Time
+		want time.Time
+	}{
+		{"raw metric ends at the window end", raw, hour.Add(10 * time.Minute), hour.Add(10 * time.Minute)},
+		{"raw metric in another zone", raw, hour.In(time.FixedZone("x", 3600)), hour},
+		{"hourly metric mid-bucket", hourly, hour.Add(10 * time.Minute), hour.Add(time.Hour)},
+		{"hourly metric on a boundary", hourly, hour, hour.Add(time.Hour)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := comparisonUpperBound(tt.def, tt.end)
+			if !got.Equal(tt.want) || got.Location() != time.UTC {
+				t.Errorf("comparisonUpperBound = %v, want %v in UTC", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsMissingSchemaError(t *testing.T) {
 	tests := []struct {
 		name string

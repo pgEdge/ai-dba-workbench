@@ -324,10 +324,58 @@ func TestLoadComparison_StraddlingHourlyBucket(t *testing.T) {
 	}
 }
 
+// TestLoadComparison_PastWindowBucketEnd proves the inner upper bound
+// for a window set in the past keeps the whole bucket holding the window
+// end: the window ends at 10 past the hour, yet the deadlocks counted at
+// 20 and 40 past still reach that bucket's value, and nothing after the
+// bucket is returned.
+func TestLoadComparison_PastWindowBucketEnd(t *testing.T) {
+	pool := newCollectorSchemaPool(t)
+	ctx := context.Background()
+
+	conn := insertTestConnection(t, pool, "comparison-past-window")
+	now := time.Now().UTC().Truncate(time.Second)
+	hour := now.Truncate(time.Hour).Add(-5 * time.Hour)
+	window := TimeWindow{Start: hour.Add(-time.Hour), End: hour.Add(10 * time.Minute)}
+
+	for _, s := range []struct {
+		at time.Duration
+		n  int
+	}{
+		{5 * time.Minute, 0}, {20 * time.Minute, 3}, {40 * time.Minute, 7},
+		{80 * time.Minute, 7}, {100 * time.Minute, 20},
+	} {
+		execSchema(t, pool, `
+            INSERT INTO metrics.pg_stat_database
+                (connection_id, database_name, datname, deadlocks, collected_at)
+            VALUES ($1, 'db_a', 'db_a', $2, $3)`, conn, s.n, hour.Add(s.at))
+	}
+
+	db := "db_a"
+	got, err := LoadComparison(ctx, pool, ComparisonRequest{
+		ConnectionID: conn,
+		Metric:       deadlocksMetric,
+		DatabaseName: &db,
+		Model:        ComparisonModelAll,
+		Window:       window,
+		Buckets:      DefaultComparisonBuckets,
+	}, now)
+	if err != nil {
+		t.Fatalf("LoadComparison: %v", err)
+	}
+	if len(got.Points) != 1 {
+		t.Fatalf("points = %+v, want only the bucket holding the window end", got.Points)
+	}
+	if p := got.Points[0]; !p.Time.Equal(hour) || p.Value != 7 {
+		t.Errorf("point = %+v, want the %v bucket with value 7", p, hour)
+	}
+}
+
 // TestComparisonSeriesQuery_Plan logs the plan of the wrapped series
 // query for a CTE and LAG metric with a connection and database bound,
-// to show whether those predicates reach the inner scan. It asserts only
-// that the query plans; the plan itself is evidence for review.
+// to show whether those predicates reach the inner scan, and checks that
+// the upper bound sits beside the lookback in the inner scan's condition
+// rather than only in the outer window predicate (GitHub issue #776).
 func TestComparisonSeriesQuery_Plan(t *testing.T) {
 	pool := newCollectorSchemaPool(t)
 	ctx := context.Background()
@@ -338,7 +386,7 @@ func TestComparisonSeriesQuery_Plan(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	rows, err := pool.Query(ctx, "EXPLAIN "+comparisonSeriesQuery(def),
-		2, 1, db, now.Add(-24*time.Hour), now)
+		2, now, 1, db, now.Add(-24*time.Hour), now)
 	if err != nil {
 		t.Fatalf("EXPLAIN: %v", err)
 	}
@@ -355,6 +403,16 @@ func TestComparisonSeriesQuery_Plan(t *testing.T) {
 		t.Fatalf("plan rows: %v", err)
 	}
 	t.Logf("plan:\n%s", strings.Join(plan, "\n"))
+
+	bounded := false
+	for _, line := range plan {
+		if strings.Contains(line, "(now() - ") && strings.Contains(line, "collected_at <= ") {
+			bounded = true
+		}
+	}
+	if !bounded {
+		t.Error("no inner scan bounds collected_at above alongside the lookback")
+	}
 }
 
 // TestLoadScoringSettings_MissingSchema checks that a server upgraded

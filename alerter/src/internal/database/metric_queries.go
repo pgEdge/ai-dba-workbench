@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
@@ -260,11 +261,16 @@ func (d *Datastore) MetricAbsenceWindow(metricName string) time.Duration {
 	return metricRegistry[metricName].absenceWindow
 }
 
+// noHistoricalUpperBound is the $2 upper bound the baseline calculator
+// passes to every historical query: +infinity, so the lookback alone
+// bounds the scan. See GitHub issue #776.
+var noHistoricalUpperBound = pgtype.Timestamptz{InfinityModifier: pgtype.Infinity, Valid: true}
+
 // queryHistoricalMetricValuesBasic executes a historical SQL query that returns rows with
 // (connection_id, database_name, value, collected_at) where database_name is scanned as-is
 // (typically NULL for basic metrics).
 func (d *Datastore) queryHistoricalMetricValuesBasic(ctx context.Context, sql string, lookbackDays int) ([]HistoricalMetricValue, error) {
-	rows, err := d.queryInternal(ctx, sql, lookbackDays)
+	rows, err := d.queryInternal(ctx, sql, lookbackDays, noHistoricalUpperBound)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +294,7 @@ func (d *Datastore) queryHistoricalMetricValuesBasic(ctx context.Context, sql st
 // queryHistoricalMetricValuesWithDB executes a historical SQL query that returns rows with
 // (connection_id, database_name, value, collected_at) where database_name is a non-null string.
 func (d *Datastore) queryHistoricalMetricValuesWithDB(ctx context.Context, sql string, lookbackDays int) ([]HistoricalMetricValue, error) {
-	rows, err := d.queryInternal(ctx, sql, lookbackDays)
+	rows, err := d.queryInternal(ctx, sql, lookbackDays, noHistoricalUpperBound)
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +331,7 @@ func (d *Datastore) queryHistoricalMetricValuesWithDB(ctx context.Context, sql s
 // error; when it is false database_name is scanned as-is, which is NULL
 // for the per-connection bucketed queries (GitHub issue #490).
 func (d *Datastore) queryHistoricalMetricValuesWithSamples(ctx context.Context, sql string, lookbackDays int, requireDB bool) ([]HistoricalMetricValue, error) {
-	rows, err := d.queryInternal(ctx, sql, lookbackDays)
+	rows, err := d.queryInternal(ctx, sql, lookbackDays, noHistoricalUpperBound)
 	if err != nil {
 		return nil, err
 	}

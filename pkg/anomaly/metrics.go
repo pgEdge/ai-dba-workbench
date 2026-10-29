@@ -61,7 +61,10 @@ type MetricDef struct {
 	ProbeName string
 
 	// HistoricalSQL reads the samples a baseline is computed from. $1 is
-	// the lookback in days; rows are (connection_id, database_name,
+	// the lookback in days and $2 an inclusive upper bound on
+	// collected_at, applied in the same predicate as the lookback so a
+	// caller reading a past window does not scan up to the present (the
+	// alerter passes +infinity); rows are (connection_id, database_name,
 	// value, collected_at), plus a trailing sample_count for the
 	// *WithSamples scan kinds, ordered by connection and time. Every
 	// query joins live connections only.
@@ -189,6 +192,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_activity psa
 				JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 				WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND psa.collected_at <= $2
 				  AND psa.backend_type = 'client backend'
 				GROUP BY psa.connection_id, psa.collected_at
 			),
@@ -225,6 +229,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.collected_at <= $2
 			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
@@ -240,6 +245,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_replication r
 			JOIN connections c ON c.id = r.connection_id AND c.deleted_at IS NULL
 			WHERE r.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND r.collected_at <= $2
 			  AND r.sent_lsn IS NOT NULL
 			  AND r.replay_lsn IS NOT NULL
 			GROUP BY r.connection_id, r.collected_at
@@ -257,6 +263,7 @@ var metricDefs = map[string]MetricDef{
 			  FROM metrics.pg_replication_slots s
 			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
+			   AND s.collected_at <= $2
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
@@ -272,6 +279,7 @@ var metricDefs = map[string]MetricDef{
 			  FROM metrics.spock_exception_log s
 			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
+			   AND s.collected_at <= $2
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
@@ -287,6 +295,7 @@ var metricDefs = map[string]MetricDef{
 			  FROM metrics.spock_resolutions s
 			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
+			   AND s.collected_at <= $2
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
@@ -300,6 +309,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.collected_at <= $2
 			  AND psa.wait_event_type = 'Lock'
 			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
@@ -316,6 +326,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.collected_at <= $2
 			  AND psa.state = 'idle in transaction'
 			  AND psa.xact_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
@@ -333,6 +344,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.collected_at <= $2
 			  AND psa.wait_event_type = 'Lock'
 			  AND psa.query_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
@@ -350,6 +362,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.collected_at <= $2
 			  AND psa.state = 'active'
 			  AND psa.query_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
@@ -367,6 +380,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.collected_at <= $2
 			  AND psa.xact_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
@@ -391,6 +405,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_checkpointer m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND m.collected_at <= $2
 			),
 			bucket_role AS (
 				SELECT DISTINCT ON (connection_id, date_trunc('hour', collected_at AT TIME ZONE 'UTC'))
@@ -399,6 +414,7 @@ var metricDefs = map[string]MetricDef{
 				       is_in_recovery
 				FROM metrics.pg_node_role
 				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND collected_at <= $2
 				ORDER BY connection_id,
 				         date_trunc('hour', collected_at AT TIME ZONE 'UTC'),
 				         collected_at DESC
@@ -448,6 +464,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_database m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND m.collected_at <= $2
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			),
@@ -492,6 +509,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_database m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND m.collected_at <= $2
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			)
@@ -524,6 +542,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_database m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND m.collected_at <= $2
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			)
@@ -558,6 +577,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_statements s
 				JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 				WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND s.collected_at <= $2
 				ORDER BY s.connection_id, s.queryid, s.userid, s.dbid,
 				         s.toplevel, s.collected_at, s.database_name
 			),
@@ -615,6 +635,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_sys_cpu_usage_info m
 			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND m.collected_at <= $2
 			ORDER BY m.connection_id, m.collected_at
 		`,
 	},
@@ -628,6 +649,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_sys_disk_info m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND m.collected_at <= $2
 				  AND m.total_space > 0
 				  AND ` + PseudoFilesystemExclusion + `
 				GROUP BY m.connection_id, m.collected_at
@@ -648,6 +670,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_sys_load_avg_info m
 			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND m.collected_at <= $2
 			ORDER BY m.connection_id, m.collected_at
 		`,
 	},
@@ -665,6 +688,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_sys_memory_info m
 			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND m.collected_at <= $2
 			ORDER BY m.connection_id, m.collected_at
 		`,
 	},

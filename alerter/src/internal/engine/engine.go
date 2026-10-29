@@ -374,7 +374,29 @@ func (e *Engine) Run(ctx context.Context) error {
 
 // ReloadConfig updates the engine configuration
 func (e *Engine) ReloadConfig(cfg *config.Config) {
+	e.applyReloadedConfig(cfg)
+	e.log("Configuration reloaded")
+
+	// Publish outside the lock: it is a database write, and readers of
+	// the configuration must not wait for it. Before Run there is no
+	// engine context to bound a retry loop, and Run publishes anyway.
+	e.mu.RLock()
+	ctx := e.ctx
+	e.mu.RUnlock()
+	retry := ctx != nil
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	e.publishScoringSettings(ctx, retry)
+}
+
+// applyReloadedConfig validates and installs a reloaded configuration
+// under the engine lock. The deferred unlock means a panic while checking
+// the configuration cannot leave the lock held and block every reader of
+// it (issue #777).
+func (e *Engine) applyReloadedConfig(cfg *config.Config) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	// Apply the startup rule in initLLMProviders to the new config, so a
 	// reload that leaves no usable tier after Tier 1 disables anomaly
@@ -390,20 +412,6 @@ func (e *Engine) ReloadConfig(cfg *config.Config) {
 	}
 
 	e.config = cfg
-	e.mu.Unlock()
-	e.log("Configuration reloaded")
-
-	// Publish outside the lock: it is a database write, and readers of
-	// the configuration must not wait for it. Before Run there is no
-	// engine context to bound a retry loop, and Run publishes anyway.
-	e.mu.RLock()
-	ctx := e.ctx
-	e.mu.RUnlock()
-	retry := ctx != nil
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	e.publishScoringSettings(ctx, retry)
 }
 
 // unknownMetricFloorNames returns, sorted, the anomaly.tier1.metric_floors

@@ -389,12 +389,21 @@ The chart marks the following:
 
 A point counts as alerted when an anomaly alert for the metric was
 raised at that point, or when the point falls between an alert's
-trigger time and the time the alert cleared. For an alert that is
-still active, including one that triggered before the window
-started, every point from its trigger time to the end of the
-window counts as alerted. The alerter raises nothing new for a metric whilst an
-alert for it is open, so a sustained excursion shows one triangle
-rather than a hollow circle on every later point.
+trigger time and the time the alert cleared. The section loads
+every anomaly alert that was open at some point in the window,
+including one that triggered before the window started, whether
+it cleared inside the window or is still active. For an alert
+that is still active, every point from its trigger time to the
+end of the window counts as alerted. The alerter raises nothing
+new for a metric whilst an alert for it is open, so a sustained
+excursion shows one triangle rather than a hollow circle on every
+later point.
+
+Some metrics, such as deadlocks and temporary files, are plotted
+as hourly totals. For these metrics, the first point sits at the
+start of the hour that contains the window start, which can be
+slightly before the window itself, so a short window is not left
+empty.
 
 Many metrics have a value floor below which the engine does not
 alert, so a point below its metric's floor is drawn outside the band

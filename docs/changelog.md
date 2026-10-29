@@ -33,8 +33,10 @@ project adheres to
   (as scored, day of week, hour of day or overall), faded stretches
   where a baseline is not yet warm, solid markers for points that
   raised an anomaly alert and hollow markers for points outside the
-  band with no alert. The server provides the data through the new
-  `GET /api/v1/metrics/anomaly-comparison` and
+  band with no alert. An alert raised before the window covers the
+  points up to where it cleared, and hourly metrics include the hour
+  that contains the window start. The server provides the data
+  through the new `GET /api/v1/metrics/anomaly-comparison` and
   `GET /api/v1/metrics/anomaly-comparison/metrics` endpoints, and
   scores with the alerter's own code, which moved to the shared
   `pkg/anomaly` package together with the baselined metrics'
@@ -46,7 +48,10 @@ project adheres to
   with, the alerter; an alerter upgraded first logs a warning that
   it could not publish its settings. The `GET
   /api/v1/metrics/baselines` endpoint also accepts the new
-  `period_type` and `database_name` parameters.
+  `period_type` and `database_name` parameters, and `GET
+  /api/v1/alerts` accepts the new `active_start` and `active_end`
+  parameters, which return the alerts active at any instant in a
+  range.
 
 - Configure reasoning effort, prompt caching and extra request body
   fields for LLM requests (#726). The server's `llm` section, and

@@ -653,6 +653,24 @@ The comparison applies the current baselines to every point in
 the window; it does not reconstruct the baselines that existed
 when each sample was collected.
 
+## Alert Time Filters
+
+The `/api/v1/alerts` endpoint accepts two pairs of optional time
+filters, each taking an RFC 3339 timestamp. The `start_time` and
+`end_time` parameters keep only the alerts triggered within the
+range. The `active_start` and `active_end` parameters keep the
+alerts that were active at any instant in the range; an alert
+qualifies when it triggered at or before `active_end` and did not
+clear before `active_start`. An alert that triggered before the
+range and cleared inside it therefore matches the second pair but
+not the first.
+
+Either bound of a pair may be given alone, and the endpoint
+ignores a timestamp it cannot parse, leaving that side of the
+range open. When `active_start` is later than `active_end`, the
+endpoint returns status 400; equal bounds are allowed. The
+`total` count and paging reflect the filtered set.
+
 ## Error Responses
 
 All API errors return a consistent JSON format.

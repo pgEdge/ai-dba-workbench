@@ -877,7 +877,10 @@ func scopeCondition(q *datastoreQuery, src datastoreSource, req datastoreRequest
 	if err != nil {
 		return "", err
 	}
-	visible := func() string { return q.bind(ids) + "::int[]" }
+	// The visible set is bound as one text list (metrics.IntArrayExpr):
+	// a pgEdge ColdFront datastore cannot type an array parameter
+	// (issue #755), and the same shape serves every source.
+	visible := func() string { return metrics.IntArrayExpr(q.bind(metrics.IntListArg(ids))) }
 
 	switch src.Scope {
 	case scopeAlert:
@@ -1125,15 +1128,21 @@ func filterCondition(q *datastoreQuery, src datastoreSource, f datastoreFilter, 
 		}
 		return column + " " + op, nil
 	case "in", "not in":
-		return listFilterCondition(q, c, f, column+" "+op, where)
+		return listFilterCondition(q, c, f, column, where)
 	default:
 		return scalarFilterCondition(q, c, f, column+" "+op, where)
 	}
 }
 
-// listFilterCondition renders an in or not in filter, binding each of
-// its values. lhs is the rendered column and operator.
-func listFilterCondition(q *datastoreQuery, c datastoreColumn, f datastoreFilter, lhs, where string) (string, error) {
+// listFilterCondition renders an in or not in filter on column, binding
+// each of its values. It is written as a chain of = (or <>) comparisons
+// rather than an IN list, because a pgEdge ColdFront datastore cannot
+// type an IN list of more than one integer parameter, nor of untyped
+// text parameters, and a comparison of a column with one parameter it
+// can (issue #755). The chain means exactly what the IN list did,
+// including for a NULL column: col NOT IN (a, b) and
+// (col <> a AND col <> b) are both NULL then.
+func listFilterCondition(q *datastoreQuery, c datastoreColumn, f datastoreFilter, column, where string) (string, error) {
 	if f.HasValue {
 		return "", fmt.Errorf("%s: operator %s takes values (an array), not value", where, f.Op)
 	}
@@ -1144,15 +1153,19 @@ func listFilterCondition(q *datastoreQuery, c datastoreColumn, f datastoreFilter
 	if len(list) > datastoreMaxInValues {
 		return "", fmt.Errorf("%s: operator %s takes at most %d values", where, f.Op, datastoreMaxInValues)
 	}
-	placeholders := make([]string, len(list))
+	compare, joiner := " = ", " OR "
+	if f.Op == "not in" {
+		compare, joiner = " <> ", " AND "
+	}
+	terms := make([]string, len(list))
 	for j, item := range list {
 		v, err := coerceFilterValue(c, item, where)
 		if err != nil {
 			return "", err
 		}
-		placeholders[j] = q.bind(v)
+		terms[j] = column + compare + q.bind(v)
 	}
-	return lhs + " (" + strings.Join(placeholders, ", ") + ")", nil
+	return "(" + strings.Join(terms, joiner) + ")", nil
 }
 
 // scalarFilterCondition renders a filter that compares the column with
@@ -1497,7 +1510,10 @@ func aggregateStatement(q *datastoreQuery, src datastoreSource, req datastoreReq
 			}
 		}
 		alias := req.Aggregation + "_" + name
-		selects = append(selects, req.Aggregation+"("+qualified(datastoreTableAlias, name)+") AS "+metrics.QuoteIdentifier(alias))
+		// AggregateExpr gives avg and an integer sum a type a ColdFront
+		// datastore describes as PostgreSQL does (issue #755).
+		selects = append(selects, metrics.AggregateExpr(req.Aggregation,
+			qualified(datastoreTableAlias, name), c.DataType)+" AS "+metrics.QuoteIdentifier(alias))
 		outputs = append(outputs, alias)
 	}
 	selects = append(selects, aggregateRawStatements(src, req)...)

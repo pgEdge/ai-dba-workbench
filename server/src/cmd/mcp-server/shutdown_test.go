@@ -46,8 +46,20 @@ func (f *fakeShutdowner) Shutdown(ctx context.Context) error {
 	return f.returnErr
 }
 
-// TestRunShutdown_FullSequence verifies the fallback path, taken when
-// main has not returned within cleanupGrace of the drain: HTTP server
+// skipCleanupWait sends a further signal once runShutdown has finished
+// the drain, so that it stops waiting for main's cleanup at once and
+// runs the fallback. Tests use it with a long cleanupGrace in place of
+// a short one, because cleanupGrace also bounds the closer: a short
+// bound can abandon the closer still running, racing the test's reads
+// of what it wrote (#778).
+func skipCleanupWait(h *shutdownHandle) {
+	go func() {
+		<-h.drained
+		h.sigCh <- syscall.SIGTERM
+	}()
+}
+
+// TestRunShutdown_FullSequence verifies the fallback path: HTTP server
 // drains, closer runs, coverage flush succeeds, exit(0) is called.
 func TestRunShutdown_FullSequence(t *testing.T) {
 	srv := &fakeShutdowner{}
@@ -56,9 +68,11 @@ func TestRunShutdown_FullSequence(t *testing.T) {
 	var writeErr error // nil = success
 	var logger bytes.Buffer
 	exitCode := -1
+	h := newShutdownHandle()
+	skipCleanupWait(h)
 
 	runShutdown(shutdownDeps{
-		cleanupGrace: time.Millisecond,
+		cleanupGrace: time.Hour,
 		server:       srv,
 		closer: func() {
 			atomic.AddInt32(&closerCalls, 1)
@@ -72,7 +86,7 @@ func TestRunShutdown_FullSequence(t *testing.T) {
 		exit: func(code int) {
 			exitCode = code
 		},
-	}, newShutdownHandle())
+	}, h)
 
 	if !srv.called {
 		t.Errorf("expected Shutdown to be called on the HTTP server")
@@ -104,16 +118,18 @@ func TestRunShutdown_ShutdownErrorLogged(t *testing.T) {
 	closerRan := false
 	var logger bytes.Buffer
 	exitCode := -1
+	h := newShutdownHandle()
+	skipCleanupWait(h)
 
 	runShutdown(shutdownDeps{
-		cleanupGrace: time.Millisecond,
+		cleanupGrace: time.Hour,
 		server:       srv,
 		closer:       func() { closerRan = true },
 		gocoverdir:   "",
 		writeCounts:  nil,
 		logger:       &logger,
 		exit:         func(code int) { exitCode = code },
-	}, newShutdownHandle())
+	}, h)
 
 	if !closerRan {
 		t.Error("closer should still run after shutdown error")
@@ -500,8 +516,7 @@ func auditRepeatCounts(t *testing.T, store *auth.AuthStore, action,
 // server's own dependencies, as the SIGTERM and SIGINT handler does,
 // and checks that the suppressed counts of an open failure window, and
 // of an open denial window, reach the audit log even though the
-// process exits, through the fallback after cleanupGrace, without
-// calling Server.Close.
+// process exits, through the fallback, without calling Server.Close.
 func TestRunShutdown_FlushesAuditFailures(t *testing.T) {
 	store, _ := newWrapperTestStore(t)
 	repeatGroupCreateFailure(t, store, "duplicate-group", 10)
@@ -517,8 +532,10 @@ func TestRunShutdown_FlushesAuditFailures(t *testing.T) {
 	deps.gocoverdir = ""
 	deps.exit = func(code int) { exitCode = code }
 
-	deps.cleanupGrace = time.Millisecond
-	runShutdown(deps, newShutdownHandle())
+	deps.cleanupGrace = time.Hour
+	h := newShutdownHandle()
+	skipCleanupWait(h)
+	runShutdown(deps, h)
 
 	if exitCode != 0 {
 		t.Errorf("exit code = %d, want 0", exitCode)

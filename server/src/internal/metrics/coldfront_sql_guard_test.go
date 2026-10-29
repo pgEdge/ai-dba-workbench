@@ -55,6 +55,27 @@ var coldFrontBadShapes = []struct {
 		"arithmetic on a parameter cannot be planned; compute the value in Go and bind it"},
 }
 
+// qualifiedTable matches a schema-qualified name after FROM or JOIN,
+// capturing the word before the keyword and the schema.
+var qualifiedTable = regexp.MustCompile(`(?i)(?:(\w+)\s+)?\b(?:from|join)\s+"?([a-z_][a-z0-9_]*)"?\s*\.\s*["a-z_%]`)
+
+// notARelation are the words before a FROM that is not a relation's:
+// IS DISTINCT FROM and EXTRACT(field FROM ...) take a column.
+var notARelation = map[string]bool{"distinct": true, "epoch": true, "year": true, "month": true,
+	"day": true, "hour": true, "minute": true, "second": true}
+
+// untypedJSONValue matches a string literal passed as a JSON builder's
+// value: a key literal, a comma and a second literal with no cast.
+var untypedJSONValue = regexp.MustCompile(`'[a-z_]+'\s*,\s*'[^']*'(\s*[,)\n]|\s*$)`)
+
+// reviewedQualifiedTableUnits are the units that hold a metrics read and
+// a schema-qualified ordinary table in different statements, never in
+// one, each reviewed.
+var reviewedQualifiedTableUnits = map[string]string{
+	"internal/tools/datastore_query_builder.go:fromClause": "returns metrics.<probe> for a metric " +
+		"source and public.<table> for a configuration source, never both in one statement",
+}
+
 // uncastCalls are the calls whose PostgreSQL type (numeric) differs from
 // DuckDB's (DOUBLE), so each must be followed by a cast that changes it.
 var uncastCalls = regexp.MustCompile(`(?i)\b(avg|extract)\s*\(`)
@@ -70,6 +91,19 @@ func coldFrontShapeProblems(sql string) []string {
 	for _, bad := range coldFrontBadShapes {
 		if m := bad.re.FindString(sql); m != "" {
 			problems = append(problems, strconv.Quote(m)+": "+bad.hint)
+		}
+	}
+	for _, m := range qualifiedTable.FindAllStringSubmatch(sql, -1) {
+		if !strings.EqualFold(m[2], "metrics") && !notARelation[strings.ToLower(m[1])] {
+			problems = append(problems, strconv.Quote(strings.TrimSpace(m[0]))+": ColdFront plans the "+
+				"whole statement in DuckDB, which cannot resolve a schema-qualified PostgreSQL table; "+
+				"name it unqualified, as the other metrics queries do")
+		}
+	}
+	if strings.Contains(sql, "_build_object") {
+		if m := untypedJSONValue.FindString(sql); m != "" {
+			problems = append(problems, strconv.Quote(strings.TrimSpace(m))+": DuckDB cannot type a "+
+				"string literal as a JSON builder's value; cast it to text")
 		}
 	}
 	for _, loc := range uncastCalls.FindAllStringIndex(sql, -1) {
@@ -158,6 +192,15 @@ func TestColdFrontShapeProblems(t *testing.T) {
 		{"float8 epoch", "MIN(EXTRACT(EPOCH FROM a - b)::float8) AS s", false},
 		{"bigint epoch", "GREATEST(EXTRACT(EPOCH FROM (a - b))::BIGINT, 0)", false},
 		{"open call", "SELECT avg(", false},
+		{"qualified table", "FROM public.connections c LEFT JOIN metrics.pg_connectivity l", true},
+		{"qualified join", `JOIN "public"."alerts" a ON true`, true},
+		{"unqualified table", "FROM connections c LEFT JOIN metrics.pg_connectivity l", false},
+		{"metrics table", `FROM metrics."pg_stat_database" t`, false},
+		{"distinct from a column", "x IS DISTINCT FROM changes.prev_setting", false},
+		{"extract from a column", "EXTRACT(EPOCH FROM p1.collected_at - p2.collected_at)::float8", false},
+		{"untyped JSON value", "jsonb_build_object('name', n, 'change_type', 'modified'\n)", true},
+		{"typed JSON value", "jsonb_build_object('name', n, 'change_type', 'modified'::text)", false},
+		{"JSON keys only", "jsonb_build_object('name', n, 'value', v)", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -305,6 +348,9 @@ func TestMetricsSQLAvoidsColdFrontShapes(t *testing.T) {
 		}
 		for i, lit := range u.literals {
 			for _, p := range coldFrontShapeProblems(lit) {
+				if _, ok := reviewedQualifiedTableUnits[u.unit]; ok && strings.Contains(p, "schema-qualified") {
+					continue
+				}
 				problems = append(problems, u.lines[i]+" ("+u.unit+"): "+p)
 			}
 		}

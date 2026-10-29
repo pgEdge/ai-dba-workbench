@@ -120,11 +120,36 @@ Verified against a live ColdFront datastore (main 16bdab9, pg_duckdb
   bigint, jsonb is json.
 - **No functions.** DuckDB execution is refused inside a PL/pgSQL or SQL
   function; the server defines none that read metrics.
+- **No schema-qualified ordinary tables.** DuckDB resolves an
+  unqualified `connections` (through the search_path, which the server
+  leaves at the default) but not `public.connections` ("relation does
+  not exist"). Every statement that reads a metrics view names its
+  ordinary tables unqualified, as the topology, cluster, estate and
+  timeline queries always have; `list_connections` and query_datastore's
+  live-connection check for a metric source were the exceptions.
+  query_datastore still qualifies `public.` for configuration sources,
+  which read ordinary tables only (`fromClause` is the reviewed unit that
+  holds both). Splitting such statements into two queries joined in Go
+  was rejected: it costs a round trip and the join's atomicity for no
+  gain, since the server already relies on the search_path everywhere
+  else.
+- **Type JSON builder literals.** ColdFront rewrites the JSON builders
+  for DuckDB, which cannot type an untyped string literal passed as a
+  value (`jsonb_build_object('change_type', 'modified')` fails with
+  "could not determine polymorphic type"): write `'modified'::text`.
+  Keys are fine.
+- **Text of a timestamp differs.** `collected_at::TEXT` renders in UTC
+  under DuckDB (`2026-10-29 14:30:28.338612+00`) but in the session
+  time zone on plain PostgreSQL, so the timeline's event IDs differ in
+  form between datastores; they stay stable within one, which is all
+  the client relies on.
 
 `TestMetricsSQLAvoidsColdFrontShapes` (`coldfront_sql_guard_test.go`)
 scans every server unit that reads `metrics.*` for an array parameter,
 an untyped or integer IN list, parameter arithmetic, an uncast `avg` or
-`EXTRACT`, an untyped run-time IN list and a bare `host(client_addr)`.
+`EXTRACT`, an untyped run-time IN list, a bare `host(client_addr)`, a
+schema-qualified table other than `metrics.` (allow-listed in
+`reviewedQualifiedTableUnits`) and an untyped JSON builder value.
 It cannot see column types, so an integer `sum` or `/` is left to
 review, and it does not see SQL assembled in a function that names no
 metrics relation itself (the timeline's connection filter, the

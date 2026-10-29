@@ -393,6 +393,12 @@ func buildWhereClause(connCondition, timeCondition, extraCondition string) strin
 // buildConfigChangeQuery creates the subquery for configuration changes.
 // Uses LAG() window functions directly on value columns to detect changes
 // in a single table scan without self-joins.
+//
+// A string literal passed as a jsonb_build_object value, here and in the
+// HBA and extension change queries, is cast to text: on a pgEdge
+// ColdFront datastore the JSON builders are rewritten for DuckDB, which
+// cannot resolve an untyped literal ("could not determine polymorphic
+// type because input has type unknown", issue #755).
 func buildConfigChangeQuery(whereClause string) string {
 	// Build filter for the outer query (uses changes.connection_id, changes.collected_at)
 	outerWhere := strings.ReplaceAll(whereClause, "event_time", "changes.collected_at")
@@ -425,7 +431,7 @@ func buildConfigChangeQuery(whereClause string) string {
                     'name', changes.name,
                     'old_value', %[4]s,
                     'new_value', %[5]s,
-                    'change_type', 'modified'
+                    'change_type', 'modified'::text
                 ) ORDER BY changes.name)
             )::TEXT AS details
         FROM (
@@ -543,7 +549,7 @@ func buildHBAChangeQuery(whereClause string) string {
                     'prev_user_name', changes.prev_user_name,
                     'prev_address', changes.prev_address,
                     'prev_auth_method', changes.prev_auth_method,
-                    'change_type', 'modified'
+                    'change_type', 'modified'::text
                 ) ORDER BY changes.rule_number)
             )::TEXT AS details
         FROM (
@@ -1027,7 +1033,7 @@ func buildExtensionChangeQuery(whereClause string) string {
                     'version', changes.extversion,
                     'old_version', changes.prev_extversion,
                     'database', changes.database_name,
-                    'change_type', 'modified'
+                    'change_type', 'modified'::text
                 ) ORDER BY changes.extname)
             )::TEXT AS details
         FROM (

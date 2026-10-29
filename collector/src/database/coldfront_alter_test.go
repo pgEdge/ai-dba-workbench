@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -240,13 +241,17 @@ func TestEnsureColdFrontInsertHelper(t *testing.T) {
 		"CREATE OR REPLACE FUNCTION workbench_coldfront.literal(",
 		"FROM PUBLIC;",
 		"'INSERT /* ai_dba_wb_internal */ INTO %s (%s) VALUES %s'",
-		"EXCEPTION WHEN OTHERS THEN",
-		"USING ERRCODE = SQLSTATE",
 		"SET DateStyle = 'ISO, YMD'",
 	} {
 		if !strings.Contains(functions, want) {
 			t.Errorf("helper functions lack %q", want)
 		}
+	}
+	// No function may catch an error: a PL/pgSQL EXCEPTION block runs its body
+	// in a subtransaction, and pg_duckdb refuses every write in one, which
+	// failed every probe on a live ColdFront datastore.
+	if regexp.MustCompile(`(?i)\bEXCEPTION\s+WHEN\b`).MatchString(functions) {
+		t.Error("a helper function has an EXCEPTION handler, which pg_duckdb refuses as a subtransaction")
 	}
 	if strings.Contains(functions, "@@MARKER@@") || strings.Contains(functions, "public.") {
 		t.Error("helper functions keep the marker placeholder or name the public schema")

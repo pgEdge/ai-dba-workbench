@@ -134,14 +134,25 @@ than in one transaction.
   functions are `SECURITY INVOKER` with `search_path = pg_catalog,
   pg_temp`. Neither may read the view: ColdFront refuses DuckDB reads
   inside a function.
-- `insert_rows` catches a failed EXECUTE and raises
-  `workbench_coldfront insert into metrics.<t> failed: <SQLERRM, 200
-  chars>` with the same SQLSTATE: otherwise the error's CONTEXT carries
-  the whole statement, and every value of the batch (credentials from
-  `pg_settings` or `pg_hba_file_rules` included), into the datastore
-  log (VULN-003). The handler is a PL/pgSQL subtransaction around a
-  DuckDB write. pgx's `PgError.Error()` gives only severity, message
-  and SQLSTATE, and the collector never logs `Where` or `InternalQuery`.
+- No helper function may have an `EXCEPTION` handler. A PL/pgSQL
+  `EXCEPTION` block runs its body in a subtransaction, and pg_duckdb
+  refuses every write in one ("SAVEPOINT and subtransactions are not
+  supported in DuckDB", XX000); wrapping the EXECUTE that way, to keep
+  values out of the log (VULN-003), failed every probe live.
+  `TestEnsureColdFrontInsertHelper` fails if one is added.
+- Residual risk (VULN-003): when the INSERT fails, the error's CONTEXT
+  carries the whole statement, and every value of the batch
+  (credentials from `pg_settings` or `pg_hba_file_rules` included),
+  into the datastore log; with the default `log_min_error_statement`
+  the top-level statement is logged too, though its jsonb parameter is
+  not unless `log_parameter_max_length_on_error` is raised. Nothing
+  short of a subtransaction or a superuser-only setting
+  (`log_error_verbosity = terse`, `log_min_error_statement`) avoids it,
+  so the datastore's log must be protected like its data.
+  `exerciseRejectedRows` pins the behaviour, so a change that removes
+  the exposure shows up. The collector itself logs only pgx's
+  `PgError.Error()` (severity, message, SQLSTATE), never `Where` or
+  `InternalQuery`.
 - DuckDB evaluates the rendered values, so they must be SQL it reads:
   - A scalar is `literal(v::text) || '::<type>'`: NULL or a standard
     literal with quotes doubled and backslashes left alone. (`E'...'`
@@ -183,11 +194,15 @@ than in one transaction.
   (VULN-002). 16 MiB keeps the helper's working copies well inside
   those limits; a single larger row is still sent on its own. There is
   no value truncation, in either mode.
-- `writeOrHalve` retries a batch that fails with a row-specific SQLSTATE
-  class (22, 23, 53, 54, XX, the last being how pg_duckdb reports a
-  conversion failure) in halves, so one refused row is dropped and
-  logged with only the table, its `connection_id` and the SQLSTATE,
-  never the values. Other errors are returned at once, and more than
+- `writeOrHalve` retries in halves a batch that fails with an error one
+  row's data can cause (`rowSpecificColdFrontError`): SQLSTATE class 22,
+  23 or 54, or an XX000 whose message is a DuckDB "Conversion Error".
+  Every other XX000 is systemic, and so is any message saying
+  something is not supported or naming a SAVEPOINT or subtransaction:
+  live, the subtransaction error (XX000) was mistaken for a row error
+  and rows were dropped one by one. Splitting lets one refused row be
+  dropped and logged with only the table, its `connection_id` and the
+  SQLSTATE, never the values. Other errors are returned at once, and more than
   `maxColdFrontDroppedRows` (10) dropped rows in one call is treated as
   systemic and returned, bounding statements and log lines.
 

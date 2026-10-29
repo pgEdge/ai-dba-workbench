@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -145,21 +146,33 @@ func writeOrHalve(ctx context.Context, tableName string, batch []coldFrontRow, w
 	return writeOrHalve(ctx, tableName, batch[mid:], write, dropped)
 }
 
-// rowSpecificColdFrontError returns the SQLSTATE of err and whether it
-// is of a class one bad row can cause: a data exception (22), an
-// integrity violation (23), insufficient resources (53), a program limit
-// such as jsonb's size (54), or an internal error (XX), which is how
-// pg_duckdb reports a value DuckDB cannot convert. A connection failure,
-// a missing function or a permission error affects every row, so
-// splitting the batch would only repeat it.
+// rowSpecificColdFrontError returns the SQLSTATE of err and whether one
+// bad row's data can cause it: a data exception (22), an integrity
+// violation (23), a program limit such as jsonb's size (54), or an
+// internal error (XX000) that is a DuckDB "Conversion Error", which is
+// how pg_duckdb reports a value DuckDB cannot convert.
+//
+// Everything else affects every row, and splitting the batch would only
+// repeat it once per row: a connection failure, a missing function, a
+// permission error, and every other XX000, such as pg_duckdb's "SAVEPOINT
+// and subtransactions are not supported", which live once made the
+// collector drop rows one by one for an error no row caused. A message
+// naming something as not supported is never treated as row-specific.
 func rowSpecificColdFrontError(err error) (string, bool) {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || len(pgErr.Code) < 2 {
 		return "", false
 	}
+	msg := strings.ToLower(pgErr.Message)
+	if strings.Contains(msg, "not supported") || strings.Contains(msg, "not implemented") ||
+		strings.Contains(msg, "savepoint") || strings.Contains(msg, "subtransaction") {
+		return pgErr.Code, false
+	}
 	switch pgErr.Code[:2] {
-	case "22", "23", "53", "54", "XX":
+	case "22", "23", "54":
 		return pgErr.Code, true
+	case "XX":
+		return pgErr.Code, pgErr.Code == "XX000" && strings.Contains(pgErr.Message, "Conversion Error")
 	}
 	return pgErr.Code, false
 }

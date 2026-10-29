@@ -63,11 +63,16 @@ import (
 // the 100-argument limit on function calls. Neither function reads the
 // view, which ColdFront refuses inside a function.
 //
-// insert_rows catches a failure of the INSERT and raises it again with
-// the same SQLSTATE but without the statement: the CONTEXT of an error
-// in an EXECUTE carries the whole statement, and with it every value of
-// the batch, some of which (pg_settings, pg_hba_file_rules) can be
-// credentials, into the datastore's log.
+// insert_rows must run its EXECUTE with no EXCEPTION handler: a PL/pgSQL
+// EXCEPTION block runs its body in a subtransaction, and pg_duckdb
+// refuses every write in one ("SAVEPOINT and subtransactions are not
+// supported in DuckDB"), which failed every probe live. The cost is that
+// the CONTEXT of a failed INSERT carries the whole statement, and with
+// it every value of the batch, some of which (pg_settings,
+// pg_hba_file_rules) can be credentials, into the datastore's log.
+// Nothing short of a subtransaction or a superuser-only setting
+// (log_error_verbosity, log_min_error_statement) can keep it out, so the
+// datastore's log must be protected like the datastore itself.
 const coldFrontHelperFunctionsTemplate = `
 CREATE OR REPLACE FUNCTION workbench_coldfront.literal(p_value text)
 RETURNS text
@@ -170,15 +175,9 @@ DECLARE
     v_sql text;
 BEGIN
     v_sql := workbench_coldfront.insert_rows_sql(p_table, p_rows);
-    IF v_sql IS NULL THEN
-        RETURN;
-    END IF;
-    BEGIN
+    IF v_sql IS NOT NULL THEN
         EXECUTE v_sql;
-    EXCEPTION WHEN OTHERS THEN
-        RAISE EXCEPTION 'workbench_coldfront insert into metrics.% failed: %', p_table, left(SQLERRM, 200)
-            USING ERRCODE = SQLSTATE;
-    END;
+    END IF;
 END
 $fn$;
 

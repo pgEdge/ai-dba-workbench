@@ -617,8 +617,14 @@ moved.
   under `metrics` accepted. The functions live in a schema the
   collector's role must own (startup refuses a schema or function
   owned by another role) with PUBLIC revoked, are `SECURITY INVOKER`
-  with a pinned `search_path`, and re-raise a failed INSERT without
-  the statement so values do not reach the datastore log. Batches are
+  with a pinned `search_path`, and have no `EXCEPTION` handler, because
+  pg_duckdb refuses the subtransaction one opens. Residual risk: when
+  the INSERT fails, the error CONTEXT, and with the default
+  `log_min_error_statement` the statement, can carry batch values,
+  including credentials from `pg_settings` and `pg_hba_file_rules`,
+  into the datastore log; avoiding it needs a subtransaction or a
+  superuser-only setting, so datastore log access must be restricted.
+  The collector logs only the error message and SQLSTATE. Batches are
   bounded by 16 MiB of JSON as well as 5,000 rows, and a row ColdFront
   refuses is dropped with only its table, connection and SQLSTATE
   logged. See `../golang-expert/coldfront-metrics.md`.

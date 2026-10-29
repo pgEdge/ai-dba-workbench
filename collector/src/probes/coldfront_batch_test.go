@@ -86,9 +86,14 @@ func TestRowSpecificColdFrontError(t *testing.T) {
 	}{
 		{&pgconn.PgError{Code: "22P02"}, "22P02", true},
 		{&pgconn.PgError{Code: "23505"}, "23505", true},
-		{&pgconn.PgError{Code: "53200"}, "53200", true},
+		{&pgconn.PgError{Code: "53200"}, "53200", false},
 		{&pgconn.PgError{Code: "54000"}, "54000", true},
-		{&pgconn.PgError{Code: "XX000"}, "XX000", true},
+		{&pgconn.PgError{Code: "XX000", Message: "(PGDuckDB/pgduckdb_raw_query_cpp) Conversion Error: Type VARCHAR with value 'x' can't be cast"}, "XX000", true},
+		// The live failure that a subtransaction caused: systemic, not a row.
+		{&pgconn.PgError{Code: "XX000", Message: "(PGDuckDB/pgduckdb_raw_query_cpp) Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB"}, "XX000", false},
+		{&pgconn.PgError{Code: "XX000", Message: "internal error"}, "XX000", false},
+		{&pgconn.PgError{Code: "XX001", Message: "Conversion Error"}, "XX001", false},
+		{&pgconn.PgError{Code: "22000", Message: "feature not supported here"}, "22000", false},
 		{fmt.Errorf("wrapped: %w", &pgconn.PgError{Code: "22003"}), "22003", true},
 		{&pgconn.PgError{Code: "42883"}, "42883", false},
 		{&pgconn.PgError{Code: "08006"}, "08006", false},
@@ -160,7 +165,7 @@ func TestWriteColdFrontBatchesReturnsSystemicErrors(t *testing.T) {
 	for i := 0; i < 64; i++ {
 		bad[i] = true
 	}
-	w = &failingWriter{bad: bad, err: &pgconn.PgError{Code: "XX000"}}
+	w = &failingWriter{bad: bad, err: &pgconn.PgError{Code: "XX000", Message: "Conversion Error: bad value"}}
 	err = writeColdFrontBatches(context.Background(), "pg_settings", testRows(64, 3), w.write)
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("more than %d rows", maxColdFrontDroppedRows)) {
 		t.Errorf("writeColdFrontBatches = %v", err)
@@ -181,6 +186,28 @@ func TestWriteColdFrontBatchesReturnsSystemicErrors(t *testing.T) {
 	}
 	if err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(4, 3), write); err == nil {
 		t.Error("a failure while retrying a half was not returned")
+	}
+}
+
+// TestWriteColdFrontBatchesSubtransactionErrorIsSystemic replays the
+// live failure: pg_duckdb refused every write with XX000 "SAVEPOINT and
+// subtransactions are not supported", and the collector dropped rows one
+// by one. It must return the error after the first attempt instead.
+func TestWriteColdFrontBatchesSubtransactionErrorIsSystemic(t *testing.T) {
+	bad := map[int]bool{}
+	for i := 0; i < 8; i++ {
+		bad[i] = true
+	}
+	w := &failingWriter{bad: bad, err: &pgconn.PgError{
+		Code:    "XX000",
+		Message: "(PGDuckDB/pgduckdb_raw_query_cpp) Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB",
+	}}
+	err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(8, 3), w.write)
+	if err == nil || !strings.Contains(err.Error(), "subtransactions are not supported") {
+		t.Errorf("writeColdFrontBatches = %v", err)
+	}
+	if len(w.batches) != 1 {
+		t.Errorf("issued %d statements, want the single failing batch", len(w.batches))
 	}
 }
 

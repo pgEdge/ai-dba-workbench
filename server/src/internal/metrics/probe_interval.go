@@ -132,13 +132,13 @@ func ObserveSampleSpacing(
             FROM (
                 SELECT DISTINCT connection_id, collected_at
                 FROM metrics.` + QuoteIdentifier(probeName) + `
-                WHERE connection_id = ANY($1)
+                WHERE connection_id = ANY(` + IntArrayExpr("$1") + `)
                     AND collected_at >= $2
                     AND collected_at <= $3
             ) distinct_samples
         ),
         per_connection AS (
-            SELECT MIN(EXTRACT(EPOCH FROM collected_at - prev_collected_at))
+            SELECT MIN(` + EpochSeconds("collected_at - prev_collected_at") + `)
                 AS spacing_sec
             FROM samples
             WHERE prev_collected_at IS NOT NULL
@@ -148,7 +148,10 @@ func ObserveSampleSpacing(
         SELECT MAX(spacing_sec) FROM per_connection`
 
 	var spacing *float64
-	err := pool.QueryRow(ctx, query, connectionIDs, window.Start, window.End).
+	// The connections are bound as one text list (IntArrayExpr) and the
+	// spacing read as float8 (EpochSeconds), shapes a ColdFront datastore
+	// can plan and describe (issue #755).
+	err := pool.QueryRow(ctx, query, IntListArg(connectionIDs), window.Start, window.End).
 		Scan(&spacing)
 	if err != nil {
 		return 0, fmt.Errorf(

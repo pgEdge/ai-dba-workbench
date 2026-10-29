@@ -686,8 +686,13 @@ func IsValidAggregation(agg string) bool {
 
 // GetAggSelectCols returns aggregated SELECT expressions with quoted
 // identifiers to prevent SQL injection. The aggregation must already have
-// passed IsValidAggregation; the builders enforce that.
-func GetAggSelectCols(metricCols []string, aggregation string) []string {
+// passed IsValidAggregation; the builders enforce that. colTypes gives
+// each column's data type, so the aggregate can take a form PostgreSQL
+// and a ColdFront datastore type alike (AggregateExpr). An interval
+// column is averaged or summed as seconds: DuckDB has no sum over an
+// interval, and the series reader converts an interval to seconds in any
+// case (toFloat64), so the values are unchanged.
+func GetAggSelectCols(metricCols []string, aggregation string, colTypes map[string]string) []string {
 	var cols []string
 	for _, col := range metricCols {
 		quotedCol := QuoteIdentifier(col)
@@ -695,10 +700,14 @@ func GetAggSelectCols(metricCols []string, aggregation string) []string {
 			cols = append(cols,
 				fmt.Sprintf("(array_agg(%s ORDER BY collected_at DESC))[1] AS %s",
 					quotedCol, quotedCol))
-		} else {
-			cols = append(cols,
-				fmt.Sprintf("%s(%s) AS %s", aggregation, quotedCol, quotedCol))
+			continue
 		}
+		expr, dataType := quotedCol, colTypes[col]
+		if dataType == "interval" && (aggregation == "avg" || aggregation == "sum") {
+			expr, dataType = EpochSeconds(quotedCol), "double precision"
+		}
+		cols = append(cols,
+			AggregateExpr(aggregation, expr, dataType)+" AS "+quotedCol)
 	}
 	return cols
 }
@@ -759,7 +768,7 @@ func BuildMetricsQuery(
         LEFT JOIN data_buckets ON all_buckets.bucket_time = data_buckets.bucket_time
         ORDER BY all_buckets.bucket_time
     `,
-		strings.Join(GetAggSelectCols(metricCols, aggregation), ", "),
+		strings.Join(GetAggSelectCols(metricCols, aggregation, colTypes), ", "),
 		QuoteIdentifier(probeName),
 		whereSQL,
 		strings.Join(GetQualifiedSelectCols(metricCols, "data_buckets"), ", "),
@@ -768,10 +777,12 @@ func BuildMetricsQuery(
 	return query, queryArgs, nil
 }
 
-// lookbackBound is the SQL interval expression bounding how far before the
-// window start the rate/delta lookback (metricQueryParts.lookbackWhere) may
-// reach for a predecessor sample. It is expressed in the query's own bucket
-// width ($1) so it needs no extra argument, and it is the larger of:
+// lookbackBound returns how far before the window start the rate/delta
+// lookback (metricQueryParts.lookbackWhere) may reach for a predecessor
+// sample, for a query whose bucket interval is bucketWidth. It is
+// computed here and the resulting bound bound as a plain timestamp,
+// because a ColdFront datastore cannot plan arithmetic on a bound
+// timestamp (issue #755). It is the larger of:
 //
 //   - Three bucket widths. The stale-predecessor harm scales with the
 //     bucket: a borrowed sample k widths back can inflate the first bucket
@@ -789,7 +800,18 @@ func BuildMetricsQuery(
 // At the 7d and 30d presets the bucket term dominates (67 minutes and 4.8
 // hours a bucket), so a collector outage of a day or more falls outside
 // the bound and the window starts from zero instead of a spike.
-const lookbackBound = "GREATEST($1::interval * 3, INTERVAL '30 minutes')"
+//
+// The width is truncated to whole seconds first, exactly as the bucket
+// interval argument ($1) is rendered, so the bound is the one the SQL
+// expression GREATEST($1::interval * 3, INTERVAL '30 minutes') gave.
+func lookbackBound(bucketWidth time.Duration) time.Duration {
+	const (
+		lookbackBuckets = 3
+		lookbackFloor   = 30 * time.Minute
+	)
+	width := time.Duration(int(bucketWidth.Seconds())) * time.Second
+	return max(lookbackBuckets*width, lookbackFloor)
+}
 
 // metricQueryParts holds the decomposed pieces of the shared metric query
 // WHERE clause, so that a caller needing a variant of it (notably the
@@ -843,13 +865,15 @@ func (p metricQueryParts) where() string {
 // still presents a multi-day average as the first bucket's rate. Beyond
 // the bound the first bucket under-reports by one probe interval instead,
 // which is the lesser harm. The bound also confines the MAX scan to at
-// most a couple of partitions of the probe table.
-func (p metricQueryParts) lookbackWhere(probeName string) string {
+// most a couple of partitions of the probe table. lowerParam is the
+// placeholder of that bound, the window start less lookbackBound,
+// computed by the caller.
+func (p metricQueryParts) lookbackWhere(probeName, lowerParam string) string {
 	priorClauses := make([]string, 0, len(p.filterClauses)+3)
 	priorClauses = append(priorClauses,
 		"connection_id = $2",
 		"collected_at < $3",
-		"collected_at >= $3 - "+lookbackBound)
+		"collected_at >= "+lowerParam)
 	priorClauses = append(priorClauses, p.filterClauses...)
 
 	lowerBound := fmt.Sprintf(
@@ -1139,8 +1163,12 @@ func BuildDerivedMetricsQuery(
 	// is only bound when a counter-derived metric references it, since
 	// PostgreSQL rejects an argument no placeholder uses.
 	maxElapsedArg := fmt.Sprintf("$%d::float8", len(parts.args)+1)
+	// The lookback's lower bound follows it, computed here rather than in
+	// SQL (see lookbackBound).
+	lookbackArg := fmt.Sprintf("$%d", len(parts.args)+2)
 	if len(counters) > 0 {
-		queryArgs = append(queryArgs, maxElapsed.Seconds())
+		queryArgs = append(queryArgs, maxElapsed.Seconds(),
+			timeStart.Add(-lookbackBound(bucketWidth)))
 	}
 
 	hasColumn := make(map[string]bool, len(allCols))
@@ -1282,7 +1310,7 @@ func BuildDerivedMetricsQuery(
                         %s,
                         EXTRACT(EPOCH FROM collected_at
                             - LAG(collected_at) OVER (%sORDER BY collected_at)
-                        ) AS elapsed_sec
+                        )::float8 AS elapsed_sec
                     FROM metrics.%s
                     WHERE %s
                     GROUP BY %s
@@ -1297,7 +1325,7 @@ func BuildDerivedMetricsQuery(
 			strings.Join(innerCols, ",\n                        "),
 			partition,
 			QuoteIdentifier(probeName),
-			parts.lookbackWhere(probeName),
+			parts.lookbackWhere(probeName, lookbackArg),
 			groupBy,
 		))
 
@@ -2151,14 +2179,13 @@ func buildLatestRowsQuery(
 	var args []any
 	argNum := 1
 
-	var connPlaceholders []string
-	for _, id := range connectionIDs {
-		connPlaceholders = append(connPlaceholders, fmt.Sprintf("$%d", argNum))
-		args = append(args, id)
-		argNum++
-	}
-	whereClauses = append(whereClauses,
-		fmt.Sprintf("connection_id IN (%s)", strings.Join(connPlaceholders, ", ")))
+	// The connections are bound as one text list (IntArrayExpr), which a
+	// ColdFront datastore can type where it cannot type an IN list of
+	// integer parameters.
+	whereClauses = append(whereClauses, fmt.Sprintf("connection_id = ANY(%s)",
+		IntArrayExpr(fmt.Sprintf("$%d", argNum))))
+	args = append(args, IntListArg(connectionIDs))
+	argNum++
 
 	if filters.DatabaseName != "" && filters.DatabaseColumn != "" {
 		whereClauses = append(whereClauses,

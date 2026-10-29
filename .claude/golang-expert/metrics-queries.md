@@ -22,6 +22,12 @@ stripping the joins out, because it costs nothing and the cascade is the
 only thing standing between a stale metric row and a foreign key
 violation downstream.
 
+Every alerter query that reads `metrics.*`, and every shared
+`HistoricalSQL` in `pkg/anomaly/metrics.go`, must also run on a pgEdge
+ColdFront datastore, where DuckDB executes it; `coldfront-queries.md`
+has the rules (cast every bound parameter, no arrays, no numeric result
+columns, no `pg_lsn`) and the tests that enforce them.
+
 ## Deleting a Connection
 
 Deleting a connection is two steps (issue #669), because the cascade
@@ -458,8 +464,8 @@ pruning job is more expensive than the join.
 SELECT m.connection_id, ...
 FROM metrics.pg_stat_activity m
 JOIN connections c ON c.id = m.connection_id
-WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
-  AND m.collected_at <= $2
+WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
+  AND m.collected_at <= $2::timestamptz
 ```
 
 For queries that use CTEs with window functions (LAG, partitioned by
@@ -475,8 +481,8 @@ WITH db_blocks AS (
            ) AS prev_blks_hit
     FROM metrics.pg_stat_database m
     JOIN connections c ON c.id = m.connection_id
-    WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
-      AND m.collected_at <= $2
+    WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
+      AND m.collected_at <= $2::timestamptz
 )
 SELECT ...
 FROM db_blocks
@@ -1849,8 +1855,8 @@ conventions from that change hold across both:
 
 - A tier is only reachable if its `min_span_hours` is at most
   `lookback_days * 24`. Every `historicalSQL` filters `collected_at >
-  NOW() - INTERVAL '1 day' * $1` (and `<= $2`, +infinity from the
-  alerter) and `UpsertMetricBaseline` rewrites
+  NOW() - INTERVAL '1 day' * $1::int` (and `<= $2::timestamptz`,
+  +infinity from the alerter) and `UpsertMetricBaseline` rewrites
   `earliest_sample_at` on every refresh, so a baseline's span never
   exceeds the lookback. At the original 7-day default the daily tier's
   336-hour span was unreachable and the documented three-step order was
@@ -2134,7 +2140,8 @@ the band the alerter scores it with; the code is
   `TestBucketWidthMatchesSQL` in `pkg/anomaly` fails a definition whose
   `date_trunc` and `BucketWidth` disagree.
 - Every `HistoricalSQL` lookback (`collected_at > NOW() - INTERVAL '1
-  day' * $1`) is followed at once by `AND <same column> <= $2`, because
+  day' * $1::int`) is followed at once by `AND <same column> <=
+  $2::timestamptz`, because
   the outer window predicate cannot pass a CTE's window function and a
   past window would otherwise scan up to now (#776).
   `TestHistoricalUpperBound` in `pkg/anomaly` enforces the pairing. The

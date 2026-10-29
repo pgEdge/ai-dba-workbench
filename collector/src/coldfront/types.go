@@ -51,6 +51,14 @@ const AttachProcedure = "coldfront.ensure_attached()"
 // ice.<p_schema>.<p_table>, and p_schema is always metrics.
 const IcebergNamespace = "metrics"
 
+// HelperSchema is the schema, owned by the collector's datastore role,
+// that holds the functions the collector writes ColdFront metrics
+// through.
+const HelperSchema = "workbench_coldfront"
+
+// InsertRowsFunction writes a JSON array of rows into a metrics view.
+const InsertRowsFunction = HelperSchema + ".insert_rows"
+
 // MinimumBuildDescription names the minimum ColdFront build in operator-
 // facing error messages.
 const MinimumBuildDescription = "a pgEdge ColdFront build that includes " +

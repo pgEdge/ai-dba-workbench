@@ -80,8 +80,13 @@ type falseRow struct{}
 
 func (falseRow) Scan(dest ...any) error {
 	if len(dest) == 1 {
-		if b, ok := dest[0].(*bool); ok {
-			*b = false
+		switch d := dest[0].(type) {
+		case *bool:
+			*d = false
+			return nil
+		case *[]string:
+			// The comment read before a ColdFront ALTER finds none.
+			*d = nil
 			return nil
 		}
 	}

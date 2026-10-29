@@ -76,6 +76,15 @@ func TestJSONValue(t *testing.T) {
 	}
 }
 
+// coldFrontRowsJSON encodes and joins a batch, as the write path does.
+func coldFrontRowsJSON(spec coldfront.Table, columns []string, values [][]any) ([]byte, error) {
+	rows, err := encodeColdFrontRows(spec, columns, values)
+	if err != nil {
+		return nil, err
+	}
+	return joinColdFrontRows(rows), nil
+}
+
 func TestColdFrontRowsJSON(t *testing.T) {
 	spec, _ := coldfront.Lookup("pg_node_role")
 	columns := []string{"connection_id", "role_details", "collected_at"}

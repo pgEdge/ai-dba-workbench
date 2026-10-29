@@ -179,6 +179,21 @@ type scriptedConn struct {
 	execs    []string
 	failExec int
 	execErr  error
+
+	// tx is what Begin returns; a fresh helperTx owned by the
+	// collector when nil. beginErr fails Begin.
+	tx       *helperTx
+	beginErr error
+}
+
+func (c *scriptedConn) Begin(context.Context) (pgx.Tx, error) {
+	if c.beginErr != nil {
+		return nil, c.beginErr
+	}
+	if c.tx == nil {
+		c.tx = &helperTx{owned: true}
+	}
+	return c.tx, nil
 }
 
 func (c *scriptedConn) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
@@ -238,8 +253,8 @@ func TestPrepareMetricsStorage(t *testing.T) {
 	if err := PrepareMetricsStorage(ctx, c, true); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.execs) != 3 {
-		t.Errorf("ColdFront mode issued %q, want the two namespace statements and the insert helper", c.execs)
+	if len(c.execs) != 2 || c.tx == nil || !c.tx.committed {
+		t.Errorf("ColdFront mode issued %q and committed the helper %v, want the two namespace statements and a committed helper", c.execs, c.tx != nil && c.tx.committed)
 	}
 
 	// A failed check stops before the namespace is created.

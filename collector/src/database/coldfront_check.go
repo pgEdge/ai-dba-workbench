@@ -44,6 +44,7 @@ const (
 type storageConn interface {
 	rowQuerier
 	ddlExecer
+	txBeginner
 }
 
 // PrepareMetricsStorage readies the datastore for the configured metrics

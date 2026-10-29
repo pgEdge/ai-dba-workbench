@@ -209,6 +209,7 @@ const coldFrontStub = `
 // dropColdFrontStub removes everything coldFrontStub created, including
 // the metrics views that depend on its backing tables.
 const dropColdFrontStub = `
+    DROP SCHEMA IF EXISTS workbench_coldfront CASCADE;
     DROP SCHEMA IF EXISTS coldfront_stub CASCADE;
     DROP SCHEMA IF EXISTS coldfront CASCADE;
     DROP SCHEMA IF EXISTS duckdb CASCADE;

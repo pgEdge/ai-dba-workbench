@@ -18,44 +18,48 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// commentsRow answers metricsCommentsQuery with fixed comments, or fails
-// with err.
+// commentsRow answers metricsCommentsQuery with fixed statements, or
+// fails with err.
 type commentsRow struct {
-	view       *string
-	cols, text []string
-	err        error
+	stmts []string
+	err   error
 }
 
 func (r commentsRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	if len(dest) != 3 {
-		return errors.New("commentsRow scans into three destinations")
+	if len(dest) != 1 {
+		return errors.New("commentsRow scans into one destination")
 	}
-	v, ok1 := dest[0].(**string)
-	c, ok2 := dest[1].(*[]string)
-	d, ok3 := dest[2].(*[]string)
-	if !ok1 || !ok2 || !ok3 {
-		return errors.New("commentsRow has unexpected destinations")
+	d, ok := dest[0].(*[]string)
+	if !ok {
+		return errors.New("commentsRow has an unexpected destination")
 	}
-	*v, *c, *d = r.view, r.cols, r.text
+	*d = r.stmts
 	return nil
+}
+
+// restoredComments is what the catalog reports for every view in
+// TestColdFrontAltersRestoreComments.
+var restoredComments = []string{
+	"COMMENT ON VIEW metrics.v IS 'it''s a view'",
+	"COMMENT ON COLUMN metrics.v.pid IS 'backend pid'",
 }
 
 // TestColdFrontAltersRestoreComments runs migrations 7, 10, 12 and 13
 // under ColdFront against a recordingTx whose catalog reports a view
-// comment and a column comment on every metrics view, and checks that
-// each ALTER TABLE is followed by statements setting both again.
-// ColdFront drops and recreates the view on ALTER TABLE, losing its
-// comments, which the stub-based test cannot reproduce.
+// comment and a column comment, and checks that each ALTER TABLE is
+// preceded by the read and followed by those statements. ColdFront drops
+// and recreates the view on ALTER TABLE, losing its comments.
 func TestColdFrontAltersRestoreComments(t *testing.T) {
 	sm := NewSchemaManager(WithColdFrontMetrics(true))
 	tx := &recordingTx{queryRow: func(sql string) pgx.Row {
-		if strings.Contains(sql, "obj_description") {
-			return commentsRow{view: strPtr("it's a view"), cols: []string{"pid"}, text: []string{"backend pid"}}
+		if strings.Contains(sql, "COMMENT ON VIEW %I.%I IS %L") {
+			return commentsRow{stmts: restoredComments}
 		}
 		return falseRow{}
 	}}
@@ -77,23 +81,16 @@ func TestColdFrontAltersRestoreComments(t *testing.T) {
 		}
 		view := m[1]
 		altered[view] = true
-		want := []string{
-			"COMMENT ON VIEW metrics." + view + " IS 'it''s a view'",
-			"COMMENT ON COLUMN metrics." + view + ".pid IS 'backend pid'",
-		}
-		if i == 0 || !strings.Contains(tx.stmts[i-1].sql, "obj_description") {
+		if i == 0 || !strings.Contains(tx.stmts[i-1].sql, "pg_description") ||
+			!reflect.DeepEqual(tx.stmts[i-1].args, []any{view}) {
 			t.Errorf("migration %d: comments of metrics.%s were not read before the ALTER", s.migration, view)
 		}
 		if i+2 >= len(tx.stmts) {
 			t.Fatalf("migration %d: nothing follows the ALTER of metrics.%s", s.migration, view)
 		}
-		got := []string{squash(tx.stmts[i+1].sql), squash(tx.stmts[i+2].sql)}
-		// pgx.Identifier quotes every part.
-		for j := range got {
-			got[j] = strings.ReplaceAll(got[j], `"`, "")
-		}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("migration %d: after the ALTER of metrics.%s got %q, want %q", s.migration, view, got, want)
+		got := []string{tx.stmts[i+1].sql, tx.stmts[i+2].sql}
+		if !reflect.DeepEqual(got, restoredComments) {
+			t.Errorf("migration %d: after the ALTER of metrics.%s got %q, want %q", s.migration, view, got, restoredComments)
 		}
 	}
 	wantAltered := map[string]bool{
@@ -122,16 +119,13 @@ func TestExecMetricsAlter(t *testing.T) {
 
 	cf := &SchemaManager{useColdFrontForMetrics: true}
 
-	// A view with no comments, or one the catalog does not know, has
-	// nothing to restore.
-	for _, row := range []commentsRow{{}, {err: pgx.ErrNoRows}} {
-		tx = &recordingTx{queryRow: func(string) pgx.Row { return row }}
-		if err := cf.execMetricsAlter(ctx, tx, block); err != nil {
-			t.Fatal(err)
-		}
-		if len(tx.stmts) != 3 {
-			t.Errorf("issued %d statements, want the read, the ALTER and the column comment", len(tx.stmts))
-		}
+	// A view with no comments has nothing to restore.
+	tx = &recordingTx{queryRow: func(string) pgx.Row { return commentsRow{} }}
+	if err := cf.execMetricsAlter(ctx, tx, block); err != nil {
+		t.Fatal(err)
+	}
+	if len(tx.stmts) != 3 {
+		t.Errorf("issued %d statements, want the read, the ALTER and the column comment", len(tx.stmts))
 	}
 
 	tests := []struct {
@@ -147,7 +141,7 @@ func TestExecMetricsAlter(t *testing.T) {
 			}
 			return nil
 		}, "boom"},
-		{"restore fails", commentsRow{view: strPtr("v")}, func(s string) error {
+		{"restore fails", commentsRow{stmts: []string{"COMMENT ON VIEW metrics.pg_stat_wal IS 'v'"}}, func(s string) error {
 			if strings.HasPrefix(s, "COMMENT ON VIEW") {
 				return errBoom
 			}
@@ -172,31 +166,116 @@ func TestExecMetricsAlter(t *testing.T) {
 	}
 }
 
-func TestMetricsCommentStatementsIgnoresUnpairedNames(t *testing.T) {
-	row := commentsRow{cols: []string{"a", "b"}, text: []string{"only a"}}
-	stmts, err := metricsCommentStatements(context.Background(),
-		&recordingTx{queryRow: func(string) pgx.Row { return row }}, "v")
-	if err != nil {
-		t.Fatal(err)
+// helperTx is the transaction EnsureColdFrontInsertHelper runs in: it
+// records each Exec, failing the one at position failExec, answers the
+// ownership query from owned and foreign, and records the commit.
+type helperTx struct {
+	pgx.Tx
+	execs     []string
+	failExec  int
+	owned     bool
+	foreign   []string
+	queryErr  error
+	commitErr error
+	committed bool
+}
+
+func (h *helperTx) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+	h.execs = append(h.execs, sql)
+	if len(h.execs) == h.failExec {
+		return pgconn.CommandTag{}, errors.New("permission denied for database")
 	}
-	if len(stmts) != 1 {
-		t.Errorf("metricsCommentStatements = %q, want one column comment", stmts)
+	return pgconn.CommandTag{}, nil
+}
+
+func (h *helperTx) QueryRow(context.Context, string, ...any) pgx.Row {
+	return ownersRow{h}
+}
+
+func (h *helperTx) Commit(context.Context) error {
+	if h.commitErr != nil {
+		return h.commitErr
 	}
+	h.committed = true
+	return nil
+}
+
+func (h *helperTx) Rollback(context.Context) error { return nil }
+
+// ownersRow answers coldFrontHelperOwnersQuery.
+type ownersRow struct{ h *helperTx }
+
+func (r ownersRow) Scan(dest ...any) error {
+	if r.h.queryErr != nil {
+		return r.h.queryErr
+	}
+	owner, ok1 := dest[0].(*string)
+	owned, ok2 := dest[1].(*bool)
+	foreign, ok3 := dest[2].(*[]string)
+	if !ok1 || !ok2 || !ok3 {
+		return errors.New("ownersRow has unexpected destinations")
+	}
+	*owner, *owned, *foreign = "intruder", r.h.owned, r.h.foreign
+	return nil
 }
 
 func TestEnsureColdFrontInsertHelper(t *testing.T) {
+	ctx := context.Background()
+
 	c := &scriptedConn{}
-	if err := EnsureColdFrontInsertHelper(context.Background(), c); err != nil {
+	if err := EnsureColdFrontInsertHelper(ctx, c); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.execs) != 1 || !strings.Contains(c.execs[0], "CREATE OR REPLACE FUNCTION public.workbench_coldfront_insert") {
-		t.Errorf("issued %q", c.execs)
+	if !c.tx.committed || len(c.tx.execs) != 3 {
+		t.Fatalf("issued %d statements, committed %v", len(c.tx.execs), c.tx.committed)
+	}
+	if c.tx.execs[0] != createColdFrontHelperSchemaSQL ||
+		!strings.Contains(c.tx.execs[1], "REVOKE ALL ON SCHEMA workbench_coldfront FROM PUBLIC") {
+		t.Errorf("statements = %q", c.tx.execs[:2])
+	}
+	functions := c.tx.execs[2]
+	for _, want := range []string{
+		"CREATE OR REPLACE FUNCTION workbench_coldfront.insert_rows(",
+		"CREATE OR REPLACE FUNCTION workbench_coldfront.insert_rows_sql(",
+		"CREATE OR REPLACE FUNCTION workbench_coldfront.literal(",
+		"FROM PUBLIC;",
+		"'INSERT /* ai_dba_wb_internal */ INTO %s (%s) VALUES %s'",
+		"EXCEPTION WHEN OTHERS THEN",
+		"USING ERRCODE = SQLSTATE",
+		"SET DateStyle = 'ISO, YMD'",
+	} {
+		if !strings.Contains(functions, want) {
+			t.Errorf("helper functions lack %q", want)
+		}
+	}
+	if strings.Contains(functions, "@@MARKER@@") || strings.Contains(functions, "public.") {
+		t.Error("helper functions keep the marker placeholder or name the public schema")
 	}
 
-	c = &scriptedConn{failExec: 1, execErr: errors.New("permission denied")}
-	err := EnsureColdFrontInsertHelper(context.Background(), c)
-	if err == nil || !strings.Contains(err.Error(), "workbench_coldfront_insert") || !strings.Contains(err.Error(), "permission denied") {
-		t.Errorf("EnsureColdFrontInsertHelper error = %v", err)
+	tests := []struct {
+		name string
+		conn *scriptedConn
+		want string
+	}{
+		{"begin fails", &scriptedConn{beginErr: errors.New("conn closed")}, "failed to begin"},
+		{"schema create fails", &scriptedConn{tx: &helperTx{owned: true, failExec: 1}}, "failed to create the workbench_coldfront schema"},
+		{"owner query fails", &scriptedConn{tx: &helperTx{queryErr: errors.New("boom")}}, "failed to check the owner"},
+		{"schema owned by another role", &scriptedConn{tx: &helperTx{}}, "owned by role intruder"},
+		{"foreign function", &scriptedConn{tx: &helperTx{owned: true, foreign: []string{"insert_rows(text, jsonb) owned by intruder"}}},
+			"functions owned by other roles (insert_rows(text, jsonb) owned by intruder)"},
+		{"function create fails", &scriptedConn{tx: &helperTx{owned: true, failExec: 3}}, "failed to create the functions"},
+		{"commit fails", &scriptedConn{tx: &helperTx{owned: true, commitErr: errors.New("boom")}}, "failed to commit"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := EnsureColdFrontInsertHelper(ctx, tt.conn)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("EnsureColdFrontInsertHelper error = %v, want one containing %q", err, tt.want)
+			}
+			if tt.conn.tx != nil && tt.conn.tx.committed {
+				t.Error("committed after a failure")
+			}
+		})
 	}
 
 	// PrepareMetricsStorage stops at a failed namespace step.
@@ -204,7 +283,7 @@ func TestEnsureColdFrontInsertHelper(t *testing.T) {
 		scriptedQuerier: scriptedQuerier{rows: []scriptedRow{extensionRow(true, true, true), relationsRow(nil, nil)}},
 		failExec:        1, execErr: errors.New("404"),
 	}
-	if err := PrepareMetricsStorage(context.Background(), c, true); err == nil || len(c.execs) != 1 {
+	if err := PrepareMetricsStorage(ctx, c, true); err == nil || len(c.execs) != 1 || c.tx != nil {
 		t.Errorf("PrepareMetricsStorage after a failed namespace step: err = %v, execs = %q", err, c.execs)
 	}
 }

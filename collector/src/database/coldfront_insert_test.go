@@ -13,14 +13,18 @@ package database
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -78,7 +82,7 @@ func bigInt(s string) *big.Int {
 	return n
 }
 
-// exerciseInsertHelper drives public.workbench_coldfront_insert, through
+// exerciseInsertHelper drives workbench_coldfront.insert_rows, through
 // StoreMetrics and directly, against the stub views: every column type
 // of every metrics table, a row of NULLs, awkward text, a NaN, and the
 // relations the helper must refuse.
@@ -146,17 +150,17 @@ func exerciseInsertHelper(t *testing.T, conn *pgxpool.Conn) {
 	// The helper refuses anything but a registered metrics view, before
 	// it looks at the relation, so a hostile name is never interpolated.
 	for _, table := range []string{"connections", "pg_stat_activity; DROP TABLE connections", "no_such_table"} {
-		_, err := conn.Exec(ctx, "SELECT public.workbench_coldfront_insert($1, $2::jsonb)",
+		_, err := conn.Exec(ctx, "SELECT workbench_coldfront.insert_rows($1, $2::jsonb)",
 			table, `[{"id": 1}]`)
 		if err == nil || !strings.Contains(err.Error(), "is not a ColdFront metrics table") {
 			t.Errorf("helper accepted %q: %v", table, err)
 		}
 	}
-	_, err := conn.Exec(ctx, "SELECT public.workbench_coldfront_insert('pg_connectivity', '{}'::jsonb)")
+	_, err := conn.Exec(ctx, "SELECT workbench_coldfront.insert_rows('pg_connectivity', '{}'::jsonb)")
 	if err == nil || !strings.Contains(err.Error(), "must be a JSON array") {
 		t.Errorf("helper accepted a non-array: %v", err)
 	}
-	if _, err := conn.Exec(ctx, "SELECT public.workbench_coldfront_insert('pg_connectivity', '[]'::jsonb)"); err != nil {
+	if _, err := conn.Exec(ctx, "SELECT workbench_coldfront.insert_rows('pg_connectivity', '[]'::jsonb)"); err != nil {
 		t.Errorf("helper refused an empty batch: %v", err)
 	}
 
@@ -166,6 +170,143 @@ func exerciseInsertHelper(t *testing.T, conn *pgxpool.Conn) {
 	}
 
 	exerciseArrayRendering(t, conn)
+	exerciseRejectedRows(t, conn)
+}
+
+// exerciseRejectedRows makes the stub refuse one pg_settings row, as
+// DuckDB might refuse a value, and checks that the helper's error
+// carries neither the statement nor any value of the batch, and that
+// StoreMetrics drops only that row.
+func exerciseRejectedRows(t *testing.T, conn *pgxpool.Conn) {
+	t.Helper()
+	ctx := context.Background()
+
+	if _, err := conn.Exec(ctx, `
+        CREATE FUNCTION coldfront_stub.refuse_boom() RETURNS trigger
+        LANGUAGE plpgsql AS $f$
+        BEGIN
+            RAISE EXCEPTION 'value rejected' USING ERRCODE = 'invalid_parameter_value';
+        END
+        $f$;
+        CREATE TRIGGER refuse_boom BEFORE INSERT ON coldfront_stub.pg_settings
+            FOR EACH ROW WHEN (NEW.name = 'boom') EXECUTE FUNCTION coldfront_stub.refuse_boom();
+    `); err != nil {
+		t.Fatal(err)
+	}
+
+	const secret = "SECRET-cred-123"
+	_, err := conn.Exec(ctx, "SELECT "+coldfront.InsertRowsFunction+"('pg_settings', $1::jsonb)",
+		`[{"connection_id": 900, "name": "boom", "setting": "`+secret+`"}]`)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("refused row: error = %v, want a PgError", err)
+	}
+	if pgErr.Code != "22023" || !strings.Contains(pgErr.Message, "workbench_coldfront insert into metrics.pg_settings failed: value rejected") {
+		t.Errorf("refused row: SQLSTATE %s, message %q", pgErr.Code, pgErr.Message)
+	}
+	for field, text := range map[string]string{
+		"message": pgErr.Message, "detail": pgErr.Detail, "where": pgErr.Where,
+		"internal query": pgErr.InternalQuery, "error": err.Error(),
+	} {
+		if strings.Contains(text, secret) || strings.Contains(text, "INSERT") {
+			t.Errorf("refused row: the %s exposes the statement or its values: %q", field, text)
+		}
+	}
+
+	columns := []string{"connection_id", "name", "setting", "collected_at"}
+	at := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	if err := probes.StoreMetrics(ctx, conn, "pg_settings", columns, [][]any{
+		{int32(901), "work_mem", "4MB", at},
+		{int32(902), "boom", secret, at},
+		{int32(903), "shared_buffers", "128MB", at},
+	}); err != nil {
+		t.Fatalf("StoreMetrics with one refused row: %v", err)
+	}
+	var stored []int32
+	if err := conn.QueryRow(ctx, `
+        SELECT COALESCE(array_agg(connection_id ORDER BY connection_id), '{}')
+        FROM metrics.pg_settings WHERE connection_id BETWEEN 900 AND 903
+    `).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(stored, []int32{901, 903}) {
+		t.Errorf("stored connections %v, want [901 903]", stored)
+	}
+}
+
+// TestColdFrontHelperSchemaOwnership checks that the helper schema is
+// created locked down, and that the collector refuses to start when the
+// schema, or a function in it, belongs to another role.
+func TestColdFrontHelperSchemaOwnership(t *testing.T) {
+	ctx := context.Background()
+	pool, conn := getTestConnection(t)
+	defer pool.Close()
+	defer conn.Release()
+
+	role := fmt.Sprintf("wb_intruder_%d", time.Now().UnixNano())
+	ident := pgx.Identifier{role}.Sanitize()
+	if _, err := conn.Exec(ctx, "DROP SCHEMA IF EXISTS workbench_coldfront CASCADE; CREATE ROLE "+ident); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS workbench_coldfront CASCADE; DROP OWNED BY "+ident+"; DROP ROLE "+ident); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	}()
+
+	// Created by the collector: no other role may use the schema or run
+	// its functions.
+	if err := EnsureColdFrontInsertHelper(ctx, conn); err != nil {
+		t.Fatalf("EnsureColdFrontInsertHelper: %v", err)
+	}
+	var usage, execute bool
+	if err := conn.QueryRow(ctx, `
+        SELECT has_schema_privilege($1, 'workbench_coldfront', 'USAGE'),
+               has_function_privilege($1, 'workbench_coldfront.insert_rows(text, jsonb)', 'EXECUTE')
+    `, role).Scan(&usage, &execute); err != nil {
+		t.Fatal(err)
+	}
+	if usage || execute {
+		t.Errorf("another role has USAGE %v on the schema and EXECUTE %v on insert_rows", usage, execute)
+	}
+	// A second start replaces the functions in place.
+	if err := EnsureColdFrontInsertHelper(ctx, conn); err != nil {
+		t.Fatalf("second EnsureColdFrontInsertHelper: %v", err)
+	}
+
+	// A function another role planted in the schema.
+	if _, err := conn.Exec(ctx, `
+        GRANT USAGE, CREATE ON SCHEMA workbench_coldfront TO `+ident+`;
+        SET ROLE `+ident+`;
+        CREATE FUNCTION workbench_coldfront.literal(p_value varchar) RETURNS text
+            LANGUAGE sql AS $f$ SELECT 'planted' $f$;
+        RESET ROLE;
+    `); err != nil {
+		t.Fatal(err)
+	}
+	err := EnsureColdFrontInsertHelper(ctx, conn)
+	if err == nil || !strings.Contains(err.Error(), "functions owned by other roles") || !strings.Contains(err.Error(), role) {
+		t.Errorf("planted function: error = %v", err)
+	}
+
+	// A schema another role created first.
+	if _, err := conn.Exec(ctx, "DROP SCHEMA workbench_coldfront CASCADE; CREATE SCHEMA workbench_coldfront AUTHORIZATION "+ident); err != nil {
+		t.Fatal(err)
+	}
+	err = EnsureColdFrontInsertHelper(ctx, conn)
+	if err == nil || !strings.Contains(err.Error(), "owned by role "+role) {
+		t.Errorf("foreign schema: error = %v", err)
+	}
+	var functions int
+	if err := conn.QueryRow(ctx, `
+        SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'workbench_coldfront'
+    `).Scan(&functions); err != nil {
+		t.Fatal(err)
+	}
+	if functions != 0 {
+		t.Errorf("%d functions were created in a schema another role owns", functions)
+	}
 }
 
 // exerciseArrayRendering checks how the helper renders array and
@@ -193,7 +334,7 @@ func exerciseArrayRendering(t *testing.T, conn *pgxpool.Conn) {
 	}
 
 	var rendered string
-	if err := conn.QueryRow(ctx, "SELECT public.workbench_coldfront_insert_sql('pg_hba_file_rules', $1::jsonb)",
+	if err := conn.QueryRow(ctx, "SELECT workbench_coldfront.insert_rows_sql('pg_hba_file_rules', $1::jsonb)",
 		string(doc)).Scan(&rendered); err != nil {
 		t.Fatalf("rendering the INSERT: %v", err)
 	}
@@ -248,7 +389,7 @@ func exerciseArrayRendering(t *testing.T, conn *pgxpool.Conn) {
 
 	// A multi-dimensional array would be flattened by ARRAY[...], so it
 	// is refused.
-	_, err = conn.Exec(ctx, "SELECT public.workbench_coldfront_insert('pg_hba_file_rules', $1::jsonb)",
+	_, err = conn.Exec(ctx, "SELECT workbench_coldfront.insert_rows('pg_hba_file_rules', $1::jsonb)",
 		`[{"connection_id": 505, "options": [["a"], ["b"]]}]`)
 	if err == nil || !strings.Contains(err.Error(), "multi-dimensional array") {
 		t.Errorf("helper accepted a two-dimensional array: %v", err)

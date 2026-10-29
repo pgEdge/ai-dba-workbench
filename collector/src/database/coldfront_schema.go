@@ -12,7 +12,6 @@ package database
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -133,24 +132,42 @@ func createColdFrontTable(ctx context.Context, tx ddlExecer, spec coldfront.Tabl
 // statement changes.
 var metricsAlterTarget = regexp.MustCompile(`(?is)^ALTER\s+TABLE\s+metrics\.(\w+)\s`)
 
-// metricsCommentsQuery reads the comment of a metrics relation and of
-// each of its columns, in attribute order.
+// metricsCommentsQuery returns the COMMENT statements that set a metrics
+// relation's current comment and its column comments again, view first
+// and then columns in attribute order. The statements are built on the
+// server with format(%I, %L), so the quoting is PostgreSQL's own and
+// does not depend on how a client escapes literals.
 const metricsCommentsQuery = `
-    SELECT obj_description(c.oid, 'pg_class'),
-           COALESCE(array_agg(a.attname ORDER BY a.attnum)
-                    FILTER (WHERE d.description IS NOT NULL), '{}'),
-           COALESCE(array_agg(d.description ORDER BY a.attnum)
-                    FILTER (WHERE d.description IS NOT NULL), '{}')
-    FROM pg_class c
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    LEFT JOIN pg_attribute a
-           ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-    LEFT JOIN pg_description d
-           ON d.objoid = c.oid AND d.classoid = 'pg_class'::regclass
-          AND d.objsubid = a.attnum
-    WHERE n.nspname = 'metrics' AND c.relname = $1
-    GROUP BY c.oid
+    SELECT COALESCE(array_agg(stmt ORDER BY ord), '{}')
+    FROM (
+        SELECT 0 AS ord,
+               format('COMMENT ON VIEW %I.%I IS %L', n.nspname, c.relname, d.description) AS stmt
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_description d
+          ON d.objoid = c.oid AND d.classoid = 'pg_class'::regclass AND d.objsubid = 0
+        WHERE n.nspname = 'metrics' AND c.relname = $1
+        UNION ALL
+        SELECT a.attnum,
+               format('COMMENT ON COLUMN %I.%I.%I IS %L', n.nspname, c.relname, a.attname, d.description)
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+        JOIN pg_description d
+          ON d.objoid = c.oid AND d.classoid = 'pg_class'::regclass AND d.objsubid = a.attnum
+        WHERE n.nspname = 'metrics' AND c.relname = $1
+    ) s
 `
+
+// metricsCommentStatements returns the COMMENT statements that set the
+// metrics view's current comment and column comments again.
+func metricsCommentStatements(ctx context.Context, q rowQuerier, view string) ([]string, error) {
+	var stmts []string
+	if err := q.QueryRow(ctx, metricsCommentsQuery, view).Scan(&stmts); err != nil {
+		return nil, fmt.Errorf("failed to read the comments on metrics.%s: %w", view, err)
+	}
+	return stmts, nil
+}
 
 // migrationTx is what execMetricsAlter needs from a migration
 // transaction.
@@ -198,36 +215,6 @@ func (sm *SchemaManager) execMetricsAlter(ctx context.Context, tx migrationTx, s
 		}
 	}
 	return nil
-}
-
-// metricsCommentStatements returns the COMMENT statements that set the
-// metrics view's current comment and column comments again.
-func metricsCommentStatements(ctx context.Context, q rowQuerier, view string) ([]string, error) {
-	var (
-		viewComment *string
-		cols, texts []string
-	)
-	err := q.QueryRow(ctx, metricsCommentsQuery, view).Scan(&viewComment, &cols, &texts)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to read the comments on metrics.%s: %w", view, err)
-	}
-
-	var stmts []string
-	if viewComment != nil {
-		stmts = append(stmts, fmt.Sprintf("COMMENT ON VIEW %s IS %s",
-			pgx.Identifier{"metrics", view}.Sanitize(), quoteSQLLiteral(*viewComment)))
-	}
-	for i := range cols {
-		if i >= len(texts) {
-			break
-		}
-		stmts = append(stmts, fmt.Sprintf("COMMENT ON COLUMN %s IS %s",
-			pgx.Identifier{"metrics", view, cols[i]}.Sanitize(), quoteSQLLiteral(texts[i])))
-	}
-	return stmts, nil
 }
 
 // addMetricsConstraint adds a constraint to a metrics table in the

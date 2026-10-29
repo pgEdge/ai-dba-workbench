@@ -303,6 +303,39 @@ func TestBuildComparison_Bucketing(t *testing.T) {
 // as the alerter's PeriodKeys does, across the Saturday to Sunday
 // midnight; the samples are given in a non-UTC zone to prove the zone
 // of the input does not matter.
+// TestBuildComparison_StraddlingBucket proves a bucketed metric keeps
+// the row for the bucket that starts before the window but covers its
+// start, in the first interval at its own time, whilst a raw metric
+// still drops a sample from before the window and a bucketed metric
+// drops the bucket before that.
+func TestBuildComparison_StraddlingBucket(t *testing.T) {
+	const hourly = "pg_stat_database.deadlocks_delta"
+	const raw = "pg_stat_activity.count"
+	// 22:30 to 23:30, six ten-minute intervals.
+	window := TimeWindow{Start: cmpNow.Add(-30 * time.Minute), End: cmpNow.Add(30 * time.Minute)}
+	samples := []ComparisonSample{
+		{Time: cmpNow.Add(-2 * time.Hour), Value: 1}, // 21:00 bucket: before the one covering the start
+		{Time: cmpNow.Add(-time.Hour), Value: 2},     // 22:00 bucket: covers 22:30
+		{Time: cmpNow, Value: 3},                     // 23:00 bucket: inside
+	}
+	describe := func(points []ComparisonPoint) string {
+		var parts []string
+		for _, p := range points {
+			parts = append(parts, p.Time.Format("15:04")+"="+jsonFloat(p.Value))
+		}
+		return strings.Join(parts, " ")
+	}
+
+	got := BuildComparison(hourly, samples, nil, noFloors(), ComparisonModelAll, 3, window, 6)
+	if want := "22:00=2 23:00=3"; describe(got) != want {
+		t.Errorf("hourly points = %s, want %s", describe(got), want)
+	}
+	got = BuildComparison(raw, samples, nil, noFloors(), ComparisonModelAll, 3, window, 6)
+	if want := "23:00=3"; describe(got) != want {
+		t.Errorf("raw points = %s, want %s", describe(got), want)
+	}
+}
+
 func TestBuildComparison_UTCBoundary(t *testing.T) {
 	zone := time.FixedZone("UTC+5", 5*3600)
 	before := time.Date(2026, 10, 24, 23, 59, 59, 0, time.UTC) // Saturday

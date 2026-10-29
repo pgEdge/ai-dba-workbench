@@ -281,6 +281,49 @@ func TestLoadComparison_PerDatabase(t *testing.T) {
 	}
 }
 
+// TestLoadComparison_StraddlingHourlyBucket proves a one-hour window
+// that starts mid-hour on an hourly metric returns the bucket that
+// started before the window but covers its first half hour; reading only
+// rows stamped inside the window would return nothing.
+func TestLoadComparison_StraddlingHourlyBucket(t *testing.T) {
+	pool := newCollectorSchemaPool(t)
+	ctx := context.Background()
+
+	conn := insertTestConnection(t, pool, "comparison-straddle")
+	now := time.Now().UTC().Truncate(time.Second)
+	hour := now.Truncate(time.Hour).Add(-3 * time.Hour)
+	window := TimeWindow{Start: hour.Add(30 * time.Minute), End: hour.Add(90 * time.Minute)}
+
+	for _, s := range []struct {
+		at time.Duration
+		n  int
+	}{{10 * time.Minute, 0}, {20 * time.Minute, 4}} {
+		execSchema(t, pool, `
+            INSERT INTO metrics.pg_stat_database
+                (connection_id, database_name, datname, deadlocks, collected_at)
+            VALUES ($1, 'db_a', 'db_a', $2, $3)`, conn, s.n, hour.Add(s.at))
+	}
+
+	db := "db_a"
+	got, err := LoadComparison(ctx, pool, ComparisonRequest{
+		ConnectionID: conn,
+		Metric:       deadlocksMetric,
+		DatabaseName: &db,
+		Model:        ComparisonModelAll,
+		Window:       window,
+		Buckets:      DefaultComparisonBuckets,
+	}, now)
+	if err != nil {
+		t.Fatalf("LoadComparison: %v", err)
+	}
+	if len(got.Points) != 1 {
+		t.Fatalf("points = %+v, want the one straddling bucket", got.Points)
+	}
+	if p := got.Points[0]; !p.Time.Equal(hour) || p.Value != 4 {
+		t.Errorf("point = %+v, want the %v bucket with value 4", p, hour)
+	}
+}
+
 // TestComparisonSeriesQuery_Plan logs the plan of the wrapped series
 // query for a CTE and LAG metric with a connection and database bound,
 // to show whether those predicates reach the inner scan. It asserts only

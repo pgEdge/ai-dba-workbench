@@ -10,7 +10,10 @@
 
 package anomaly
 
-import "sort"
+import (
+	"sort"
+	"time"
+)
 
 // HistoricalScan identifies the column layout of a historical query's
 // rows.
@@ -70,6 +73,27 @@ type MetricDef struct {
 	// PerDatabase is true when rows carry a non-NULL database_name; it
 	// is derived from HistoricalScan.
 	PerDatabase bool
+
+	// BucketWidth is the width of the buckets HistoricalSQL aggregates
+	// samples into, each row's collected_at being its bucket's start
+	// truncated in UTC; zero means each row is a raw sample. Every query
+	// that buckets by date_trunc('hour', ...) sets it to time.Hour.
+	BucketWidth time.Duration
+}
+
+// BucketStart returns the start of the bucket holding t, in UTC: t
+// truncated to BucketWidth, or t itself for raw samples. A row whose
+// collected_at is BucketStart(t) covers t, so a reader selecting rows
+// from t onwards must start there or lose the bucket straddling t.
+func (d MetricDef) BucketStart(t time.Time) time.Time {
+	t = t.UTC()
+	if d.BucketWidth <= 0 {
+		return t
+	}
+	// Truncate measures from the zero time, which is midnight UTC, so
+	// any width dividing a day aligns with the UTC buckets date_trunc
+	// produces.
+	return t.Truncate(d.BucketWidth)
 }
 
 // Metric returns the definition of a baselined metric. ok is false, and
@@ -352,6 +376,7 @@ var metricDefs = map[string]MetricDef{
 	"pg_stat_checkpointer.checkpoints_req_delta": {
 		ProbeName:      "pg_stat_checkpointer",
 		HistoricalScan: HistoricalScanBasicWithSamples,
+		BucketWidth:    time.Hour,
 		HistoricalSQL: `
 			WITH checkpointer_data AS (
 				SELECT m.connection_id,
@@ -454,6 +479,7 @@ var metricDefs = map[string]MetricDef{
 	"pg_stat_database.deadlocks_delta": {
 		ProbeName:      "pg_stat_database",
 		HistoricalScan: HistoricalScanWithDBAndSamples,
+		BucketWidth:    time.Hour,
 		HistoricalSQL: `
 			WITH db_deadlocks AS (
 				SELECT m.connection_id, m.database_name, m.deadlocks,
@@ -485,6 +511,7 @@ var metricDefs = map[string]MetricDef{
 	"pg_stat_database.temp_files_delta": {
 		ProbeName:      "pg_stat_database",
 		HistoricalScan: HistoricalScanWithDBAndSamples,
+		BucketWidth:    time.Hour,
 		HistoricalSQL: `
 			WITH db_temp_files AS (
 				SELECT m.connection_id, m.database_name, m.temp_files,

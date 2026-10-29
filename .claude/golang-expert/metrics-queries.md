@@ -1721,6 +1721,14 @@ the band the alerter scores it with; the code is
   and the database predicate into the inner scan's filter, even through
   a CTE with `LAG` (`TestComparisonSeriesQuery_Plan` logs the plan); the
   window bounds stay outside the window function, as they must.
+- A registry query that aggregates into buckets (the hourly
+  `date_trunc('hour', ...)` deltas) stamps each row with its bucket's
+  start, so it must set `anomaly.MetricDef.BucketWidth`;
+  `QueryComparisonSeries` and `BuildComparison` start the window at
+  `def.BucketStart(window.Start)` so the bucket straddling the start is
+  kept (at its own, earlier time, in the first interval).
+  `TestBucketWidthMatchesSQL` in `pkg/anomaly` fails a definition whose
+  `date_trunc` and `BucketWidth` disagree.
 - The metric is validated with `ResolveComparisonMetric` (registry
   lookup plus database scope) before any SQL is chosen.
 - Settings come from `alerter_settings.tier1_scoring`;

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestBaselineMetrics checks the shape of the definition list: sorted,
@@ -109,5 +110,55 @@ func TestSharedFragmentsEmbedded(t *testing.T) {
 		if !strings.Contains(def.HistoricalSQL, fragment) {
 			t.Errorf("%s HistoricalSQL does not embed its shared fragment", name)
 		}
+	}
+}
+
+// TestBucketWidthMatchesSQL keeps BucketWidth in step with the SQL: a
+// query that buckets by hour declares an hour, a query that buckets by
+// any other unit is caught until a width for it is declared, and a
+// query that does not bucket declares none.
+func TestBucketWidthMatchesSQL(t *testing.T) {
+	for _, def := range BaselineMetrics() {
+		hourly := strings.Contains(def.HistoricalSQL, "date_trunc('hour'")
+		buckets := strings.Contains(def.HistoricalSQL, "date_trunc(")
+		switch {
+		case hourly && def.BucketWidth != time.Hour:
+			t.Errorf("%s buckets by hour but BucketWidth = %v", def.Name, def.BucketWidth)
+		case buckets && !hourly:
+			t.Errorf("%s buckets with a unit BucketWidth does not yet cover", def.Name)
+		case !buckets && def.BucketWidth != 0:
+			t.Errorf("%s reads raw samples but BucketWidth = %v", def.Name, def.BucketWidth)
+		}
+	}
+}
+
+// TestBucketStart pins the bucket start for raw and hourly definitions,
+// including a time given in a zone other than UTC.
+func TestBucketStart(t *testing.T) {
+	plus530 := time.FixedZone("plus0530", 5*3600+1800)
+	tests := []struct {
+		name  string
+		width time.Duration
+		in    time.Time
+		want  time.Time
+	}{
+		{"raw keeps the time", 0, time.Date(2026, 3, 1, 10, 30, 15, 0, time.UTC),
+			time.Date(2026, 3, 1, 10, 30, 15, 0, time.UTC)},
+		{"hourly mid-hour", time.Hour, time.Date(2026, 3, 1, 10, 30, 0, 0, time.UTC),
+			time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)},
+		{"hourly on the hour", time.Hour, time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC),
+			time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)},
+		// 16:00 at +05:30 is 10:30 UTC, whose UTC hour starts at 10:00;
+		// a local truncation would give 09:30 UTC instead.
+		{"hourly in a half-hour zone", time.Hour, time.Date(2026, 3, 1, 16, 0, 0, 0, plus530),
+			time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MetricDef{BucketWidth: tt.width}.BucketStart(tt.in)
+			if !got.Equal(tt.want) || got.Location() != time.UTC {
+				t.Errorf("BucketStart(%v) = %v, want %v in UTC", tt.in, got, tt.want)
+			}
+		})
 	}
 }

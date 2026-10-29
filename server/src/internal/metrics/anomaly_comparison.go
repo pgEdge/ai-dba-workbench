@@ -158,7 +158,10 @@ type ComparisonRequest struct {
 // the window into equal intervals and keeping, per interval, the sample
 // with the largest |z| (the largest value when none is scored), so a
 // deviation is never averaged away. Samples outside the window are
-// dropped. The result is never nil.
+// dropped, except that for a metric whose rows are buckets the bucket
+// straddling the window start is kept in the first interval at its own
+// (earlier) time, since it covers part of the window. The result is
+// never nil.
 //
 // Warmth and the hourly and daily keys are evaluated at each sample's own
 // time, which is when the alerter would have scored it, against the
@@ -178,14 +181,16 @@ func BuildComparison(
 	}
 	floor := settings.MetricFloor(metric)
 	width := window.End.Sub(window.Start) / time.Duration(buckets)
+	def, _ := anomaly.Metric(metric)
+	lower := def.BucketStart(window.Start)
 
 	kept := make([]*ComparisonPoint, buckets)
 	for _, s := range samples {
-		if s.Time.Before(window.Start) || s.Time.After(window.End) {
+		if s.Time.Before(lower) || s.Time.After(window.End) {
 			continue
 		}
 		idx := 0
-		if width > 0 {
+		if width > 0 && s.Time.After(window.Start) {
 			idx = int(s.Time.Sub(window.Start) / width)
 		}
 		if idx >= buckets {
@@ -400,7 +405,9 @@ func QueryComparisonBaselines(
 // named connection_id, database_name, value and collected_at. $1 is the
 // historical query's lookback in days; the outer predicates narrow it to
 // one connection, one database (NULL for server-level metrics) and the
-// window. Only the registry's own SQL is spliced in, never request input.
+// window, whose start the caller has already moved back to the start of
+// the bucket that holds it for a bucketed metric. Only the registry's own
+// SQL is spliced in, never request input.
 func comparisonSeriesQuery(def anomaly.MetricDef) string {
 	return `SELECT h.value::float8, h.collected_at
         FROM (` + def.HistoricalSQL + `) AS h
@@ -423,8 +430,10 @@ func comparisonLookbackDays(window TimeWindow, now time.Time) int {
 }
 
 // QueryComparisonSeries returns the metric's finite raw values on one
-// connection and database within the window, oldest first. The metric is
-// looked up in the registry here, so an unknown name runs no SQL.
+// connection and database within the window, oldest first. For a metric
+// whose rows are buckets, the bucket that starts before the window but
+// covers its start is included. The metric is looked up in the registry
+// here, so an unknown name runs no SQL.
 func QueryComparisonSeries(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -438,9 +447,10 @@ func QueryComparisonSeries(
 	if !ok {
 		return nil, ErrUnknownComparisonMetric
 	}
+	queried := TimeWindow{Start: def.BucketStart(window.Start), End: window.End.UTC()}
 	rows, err := pool.Query(ctx, comparisonSeriesQuery(def),
-		comparisonLookbackDays(window, now), connectionID, databaseName,
-		window.Start.UTC(), window.End.UTC())
+		comparisonLookbackDays(queried, now), connectionID, databaseName,
+		queried.Start, queried.End)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query metric values: %w", err)
 	}

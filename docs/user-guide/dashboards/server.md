@@ -400,7 +400,8 @@ Many metrics have a value floor below which the engine does not
 alert, so a point below its metric's floor is drawn outside the band
 without a marker. When such a point is in view, the chart caption and
 the point's tooltip say so. When no baselines exist yet for the
-metric, the chart shows only the line.
+metric, the chart shows the line and any engine alert triangles, with
+no band.
 
 A hollow circle is not necessarily a fault. The band drawn is the
 current one rather than the one the alerter used at the time, the

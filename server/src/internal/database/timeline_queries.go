@@ -152,14 +152,14 @@ func buildConnectionFilter(filter TimelineFilter) (string, []any, int) {
 		argNum++
 	}
 
+	// The list is bound as one text parameter (metrics.IntArrayExpr):
+	// the condition also filters metrics views, and a ColdFront datastore
+	// cannot type an IN list of integer parameters (issue #755).
 	if len(filter.ConnectionIDs) > 0 {
-		placeholders := make([]string, len(filter.ConnectionIDs))
-		for i, id := range filter.ConnectionIDs {
-			placeholders[i] = fmt.Sprintf("$%d", argNum)
-			args = append(args, id)
-			argNum++
-		}
-		conditions = append(conditions, fmt.Sprintf("connection_id IN (%s)", strings.Join(placeholders, ", ")))
+		conditions = append(conditions, fmt.Sprintf("connection_id = ANY(%s)",
+			metrics.IntArrayExpr(fmt.Sprintf("$%d", argNum))))
+		args = append(args, metrics.IntListArg(filter.ConnectionIDs))
+		argNum++
 	}
 
 	if len(conditions) == 0 {
@@ -886,19 +886,27 @@ func buildAlertClearedQuery(whereClause string) string {
 //   - diff < 60       -> "Ns"
 //   - diff < 3600     -> "Nm Ms"
 //   - diff >= 3600    -> "Nh Mm"
+//
+// The divisions are written as floor(n::float8 / d)::BIGINT rather than
+// n / d. The timeline's UNION also reads metrics views, so on a pgEdge
+// ColdFront datastore DuckDB runs the whole statement, and DuckDB's /
+// is a floating-point division even between integers, which turned
+// 125 seconds into "2.0833333333333335m 5s" (issue #755). The floor
+// form gives the integer quotient on both datastores; the operands are
+// non-negative and far below 2^53, so float8 holds them exactly.
 const alertClearedDurationSQL = `
             CASE
                 WHEN GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) < 60 THEN
                     GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0)::TEXT || 's'
                 WHEN GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) < 3600 THEN
-                    (GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) / 60)::TEXT
+                    floor(GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0)::float8 / 60)::BIGINT::TEXT
                     || 'm '
                     || (GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) % 60)::TEXT
                     || 's'
                 ELSE
-                    (GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) / 3600)::TEXT
+                    floor(GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0)::float8 / 3600)::BIGINT::TEXT
                     || 'h '
-                    || ((GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) % 3600) / 60)::TEXT
+                    || floor((GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) % 3600)::float8 / 60)::BIGINT::TEXT
                     || 'm'
             END
         `

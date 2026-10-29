@@ -1231,9 +1231,11 @@ func TestBuildConnectionFilter(t *testing.T) {
 			filter: TimelineFilter{
 				ConnectionIDs: []int{1, 2, 3},
 			},
-			wantCondition: "connection_id IN ($1, $2, $3)",
-			wantArgCount:  3,
-			wantArgNum:    4,
+			// One text list, which a ColdFront datastore can type where it
+			// cannot type an IN list of integers (issue #755).
+			wantCondition: "connection_id = ANY(string_to_array($1, ',')::integer[])",
+			wantArgCount:  1,
+			wantArgNum:    2,
 		},
 		{
 			name: "both single and multiple IDs",
@@ -1241,9 +1243,9 @@ func TestBuildConnectionFilter(t *testing.T) {
 				ConnectionID:  intPtr(10),
 				ConnectionIDs: []int{20, 30},
 			},
-			wantCondition: "connection_id = $1 AND connection_id IN ($2, $3)",
-			wantArgCount:  3,
-			wantArgNum:    4,
+			wantCondition: "connection_id = $1 AND connection_id = ANY(string_to_array($2, ',')::integer[])",
+			wantArgCount:  2,
+			wantArgNum:    3,
 		},
 	}
 

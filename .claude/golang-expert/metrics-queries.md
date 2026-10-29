@@ -1702,11 +1702,17 @@ whose cost is linear in the window. `/metrics/top-queries`,
 therefore apply a tighter `maxAggregationTimeSpan` of 30 days, through
 the shared `checkAggregationTimeSpan` in
 `server/src/internal/api/time_span.go`, immediately after
-`ResolveTimeWindow` returns and before any SQL is built. The only
-backstop behind them is the datastore pool's `statement_timeout`
+`ResolveTimeWindow` returns and before any SQL is built. The backstop
+behind them is the datastore pool's `statement_timeout`
 (`database.DefaultDatastoreStatementTimeout`, 30 seconds unless the
-`database.statement_timeout` setting says otherwise), which the cap is
-meant to keep an ordinary request well inside: top-queries runs its
+`database.statement_timeout` setting says otherwise); top-queries
+additionally pins its own transaction to `topQueriesTimeout` (30
+seconds, shared with its context deadline) through
+`setTopQueriesStatementTimeout`, a `set_config(..., true)` issued right
+after `BeginTx`, because a `query_text` filter runs
+`metrics.RedactedText` over every statement in the window and the pool
+setting can be raised or disabled (issue #757). The cap is
+meant to keep an ordinary request well inside these: top-queries runs its
 whole CTE twice per request, once for the count and once for the page,
 and performance-summary runs five sub-queries for every connection in
 `connection_ids` inside one read-only transaction, so its cost is
@@ -1936,6 +1942,24 @@ The page statement resolves it instead with a lateral lookup outside the
 `LIMIT`, so it runs once per row returned, keyed on the raw
 `database_name` recorded on the sample rather than the name resolved
 through `db_names`. The join is `LEFT`, because the column is nullable.
+
+The optional `query_text` filter (#757) is the one text predicate, and it
+sits at the end of `deduped` (`queryTextClause`), once per statement,
+never in `readings` or `samples`: it filters whole statements, so it may
+follow `totals`, and it resolves the text with the same lookup the page
+lateral uses (latest sample in the window under `sample_database_name`,
+on `idx_pg_stat_statements_object`), so a statement is only kept for the
+text it displays. It is `strpos(lower(metrics.RedactedText(...)),
+lower($n::text)) > 0`: a plain substring (no `LIKE` wildcards), over the
+SQL-masked text so a secret the patterns mask cannot be searched for,
+with the term bound after `queryid` and `database_name`. Matching the
+SQL-masked rather than the Go-masked text leaves the same oracle as
+`query_datastore`'s statement filters, accepted on 2026-10-21 (PR #730);
+do not try to close it here. The handler rejects a term over
+`maxTopQueryTextLength` (1000) characters, or one that is invalid UTF-8
+or holds a NUL, with a 400 (`validateTopQueryText`). Tests:
+`perf_summary_top_queries_text_filter_test.go` and the query-text cases
+of `TestBuildTopQueriesSQL_ClauseCombinations`.
 
 On a 2.6-million-row, 30-day fixture the identity index plus the
 narrower `samples` took the page statement from 11.5 s to 5.5 s and the

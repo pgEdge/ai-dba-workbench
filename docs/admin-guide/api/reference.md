@@ -452,6 +452,16 @@ sample. The behaviour that follows from that is:
   counter once, and a `database_name` filter sums only
   the counters of the statements that ran in that
   database.
+- The optional `query_text` parameter keeps only the
+  statements whose text contains the term, ignoring case;
+  the term is a plain substring, so `%` and `_` match
+  themselves rather than acting as wildcards. The term is
+  matched against the text with passwords in known forms
+  already masked, as described under Masked Credentials
+  below, and `X-Total-Count` and paging reflect the
+  filtered set. A term longer than 1,000 characters, or one
+  that is not valid UTF-8 or contains a NUL character,
+  returns status 400.
 
 ### Query Response Envelope
 

@@ -12,6 +12,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -93,6 +95,17 @@ func newTopQueriesTestHandler(
 	t *testing.T,
 ) (*PerfSummaryHandler, *pgxpool.Pool, func()) {
 	t.Helper()
+	return newTopQueriesTestHandlerWithMaxConns(t, 0)
+}
+
+// newTopQueriesTestHandlerWithMaxConns is newTopQueriesTestHandler with
+// the pool capped at maxConns connections; zero keeps the pgxpool
+// default. A cap of one makes every pool query use the same backend, so
+// a test can observe session state the handler leaves behind.
+func newTopQueriesTestHandlerWithMaxConns(
+	t *testing.T, maxConns int32,
+) (*PerfSummaryHandler, *pgxpool.Pool, func()) {
+	t.Helper()
 
 	if os.Getenv("SKIP_DB_TESTS") != "" {
 		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
@@ -103,7 +116,14 @@ func newTopQueriesTestHandler(
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, connStr)
+	poolConfig, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		t.Fatalf("Failed to parse TEST_AI_WORKBENCH_SERVER: %v", err)
+	}
+	if maxConns > 0 {
+		poolConfig.MaxConns = maxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		t.Skipf("Could not connect to test database: %v", err)
 	}
@@ -312,6 +332,78 @@ func TestTopQueries_DefaultsAndTotalCount(t *testing.T) {
 	if rows[4].DatabaseName != "beta" {
 		t.Errorf("resolved database_name = %q, want \"beta\"",
 			rows[4].DatabaseName)
+	}
+}
+
+// TestTopQueries_StatementTimeoutIsTransactionLocal checks that the
+// handler's statement timeout takes effect inside the read-only
+// transaction it uses and matches the Go deadline, and that setting it
+// does not leak to the pooled session once the transaction ends. The
+// pool is capped at one connection so that the session value set before
+// the handler and read after it belong to the backend the transaction
+// ran on.
+func TestTopQueries_StatementTimeoutIsTransactionLocal(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandlerWithMaxConns(t, 1)
+	defer cleanup()
+	seedTopQueriesFixture(t, pool)
+
+	ctx := context.Background()
+	// Pin the session default to a value distinct from the handler's, so
+	// a leak is detectable whatever the pool's configured default is.
+	const sessionTimeout = "17s"
+	if _, err := pool.Exec(ctx,
+		`SELECT set_config('statement_timeout', $1, false)`, sessionTimeout); err != nil {
+		t.Fatalf("Failed to set session statement_timeout: %v", err)
+	}
+
+	var inTx string
+	h.topQueriesTimeoutFn = func(ctx context.Context, tx pgx.Tx) error {
+		if err := setTopQueriesStatementTimeout(ctx, tx); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SHOW statement_timeout`).Scan(&inTx)
+	}
+
+	rec := callTopQueries(t, h, "connection_id=4242&query_text=select")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	if inTx != "30s" {
+		t.Errorf("statement_timeout in transaction = %q, want \"30s\"", inTx)
+	}
+
+	var after string
+	if err := pool.QueryRow(ctx, `SHOW statement_timeout`).Scan(&after); err != nil {
+		t.Fatalf("Failed to read session statement_timeout: %v", err)
+	}
+	if after != sessionTimeout {
+		t.Errorf("session statement_timeout = %q after the handler, want %q",
+			after, sessionTimeout)
+	}
+}
+
+// TestTopQueries_StatementTimeoutFailureReportsError covers the branch
+// where the transaction-local statement timeout cannot be applied: the
+// handler must not go on to run the aggregation unbounded, and reports
+// the same 500 as a failure to begin the transaction.
+func TestTopQueries_StatementTimeoutFailureReportsError(t *testing.T) {
+	h, _, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+
+	h.topQueriesTimeoutFn = func(context.Context, pgx.Tx) error {
+		return errors.New("injected failure")
+	}
+
+	rec := callTopQueries(t, h, "connection_id=4242")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d (body %q)",
+			rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if got := decodeError(t, rec).Error; got != "Failed to query top queries" {
+		t.Errorf("error = %q, want %q", got, "Failed to query top queries")
+	}
+	if got := rec.Header().Get(headerTotalCount); got != "" {
+		t.Errorf("X-Total-Count = %q on a failed request, want unset", got)
 	}
 }
 

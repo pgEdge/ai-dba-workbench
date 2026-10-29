@@ -59,6 +59,17 @@ An AI Analysis button appears beside the tab bar.
 The analysis includes data across all sort categories
 and indicates the tab the user is currently viewing.
 
+## Top Queries
+
+The top queries section lists the statements recorded for the database you are
+viewing, ordered by total execution time. The section shares its controls with
+the Top Queries section of the [server dashboard](server.md#top-queries), so
+you can sort by the Calls, Total Time, Mean Time or Rows column, filter the
+list by query text, hide the Workbench's own monitoring queries and page
+through the results. The section has no database filter, because the dashboard
+already shows a single database. Selecting a row opens the query detail
+overlay.
+
 ## Index Leaderboard
 
 The index leaderboard ranks indexes using selectable

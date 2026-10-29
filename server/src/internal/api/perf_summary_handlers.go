@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -89,6 +90,12 @@ type PerfSummaryHandler struct {
 	// owned by whom. When nil the handler asks the datastore, as in
 	// production; tests whose fixtures hold no connections substitute one.
 	sharingLookupFn auth.ConnectionSharingLookupFunc
+
+	// topQueriesTimeoutFn applies the transaction-local statement_timeout
+	// for handleTopQueries. When nil the handler uses
+	// setTopQueriesStatementTimeout, as in production; tests substitute
+	// one to observe the setting or to cover its failure path.
+	topQueriesTimeoutFn func(ctx context.Context, tx pgx.Tx) error
 
 	// denialAuditor audits this handler's connection-access refusals.
 	denialAuditor
@@ -1546,9 +1553,10 @@ func isAllowedLiteral(whitelist map[string]string, v string) bool {
 // The only values interpolated into the statement text are orderCol and
 // orderDir, which callers must resolve through validTopQueryOrderColumns and
 // validTopQueryOrderDirections respectively, plus the generated placeholder
-// positions. Every caller-supplied value (connID, the window bounds,
-// queryID, databaseName, limit, offset) is bound as a parameter and appears
-// in the returned argument slices, never in the SQL.
+// positions and the constant masking expression from metrics.RedactedText.
+// Every caller-supplied value (connID, the window bounds, queryID,
+// databaseName, queryText, limit, offset) is bound as a parameter and
+// appears in the returned argument slices, never in the SQL.
 //
 // filterArgs serves the count statement; pageArgs is filterArgs followed by
 // the limit and offset, so the two statements share identical placeholder
@@ -1558,6 +1566,7 @@ func buildTopQueriesSQL(
 	window metrics.TimeWindow,
 	queryID *int64,
 	databaseName string,
+	queryText string,
 	excludeCollector bool,
 	orderCol, orderDir string,
 	limit, offset int,
@@ -1643,6 +1652,61 @@ func buildTopQueriesSQL(
                    OR pss.dbid NOT IN (SELECT datid FROM db_names))`,
 			databasePos)
 		filterArgs = append(filterArgs, databaseName)
+	}
+
+	// The optional query text filter keeps the statements whose text
+	// contains queryText, ignoring case, as a plain substring: strpos has
+	// no wildcards, so a % or _ in the term matches itself, as it would not
+	// under LIKE. It runs in deduped, once per statement, and so filters
+	// whole statements after their figures are summed; it cannot change any
+	// figure, only which statements are counted and paged, which is why it
+	// may sit after totals where the database filter may not. Nor should it
+	// sit any earlier: readings and samples deliberately never read the
+	// text (see the note on the query text below), and testing it there
+	// would cost the index-only scan the performance guard depends on. The
+	// text tested is the one the page shows, chosen exactly as the page's
+	// lateral chooses it (the latest sample in the window under the
+	// statement's probing database), so a statement is never kept for text
+	// it does not display. Each test is a single-row lookup on
+	// idx_pg_stat_statements_object, run once per statement in the window
+	// rather than once per page row, and only when a term is supplied; an
+	// unfiltered request plans exactly as before. A statement with no
+	// captured text never matches, since strpos of NULL is NULL.
+	//
+	// The term is matched against the text as metrics.RedactedText masks it
+	// in SQL, never against the text as stored, so a secret those patterns
+	// mask cannot be found by searching for it (GitHub issue #643). The
+	// response masks the stored text again in Go with
+	// metrics.RedactStatementText, whose lexer can mask a secret the SQL
+	// patterns miss (one after a quote they move, say); for such a secret
+	// the filter is an oracle that can confirm it one character at a time
+	// even though the returned text hides it. This resembles the risk
+	// accepted for query_datastore's filters on statement columns (PR
+	// #730, issue #724), but is wider: that tool needs a non-public MCP
+	// privilege, whereas this endpoint needs only read access to the
+	// connection. The exposure covers rows stored before #643 that the
+	// collector migration has not rewritten, and awaits explicit
+	// acceptance by the project owner. RedactedText also cuts the text to
+	// redact.MaxTextLength characters, so a term is only found within that
+	// prefix. Both sides are folded with lower() under the database
+	// collation, and the placeholder is cast to text so that lower()
+	// resolves to its text form.
+	queryTextClause := ""
+	if queryText != "" {
+		queryTextClause = fmt.Sprintf(
+			`WHERE strpos(lower(%s), lower($%d::text)) > 0`,
+			metrics.RedactedText(`(
+                SELECT pss.query
+                FROM metrics.pg_stat_statements pss
+                WHERE pss.connection_id = $1
+                  AND pss.database_name = ls.sample_database_name
+                  AND pss.queryid = t.queryid
+                  AND pss.collected_at >= $2
+                  AND pss.collected_at <= $3
+                ORDER BY pss.collected_at DESC
+                LIMIT 1)`),
+			len(filterArgs)+1)
+		filterArgs = append(filterArgs, queryText)
 	}
 
 	// latest is the most recent pg_stat_statements snapshot for the
@@ -1917,9 +1981,11 @@ func buildTopQueriesSQL(
                 ON ls.queryid = lc.query_id
                AND ls.dbid = lc.datid
                AND ls.userid = lc.usesysid
+            %s
         )`, statementDatabaseLookupSQL, nameLookupWindowSQL,
 		nameLookupWindowSQL, lastClientQueryIDClause, queryIDClause,
-		excludeCollectorClause, readingsDatabaseClause, databaseClause)
+		excludeCollectorClause, readingsDatabaseClause, databaseClause,
+		queryTextClause)
 
 	// The total is obtained with a separate COUNT(*) over the same CTE
 	// rather than a COUNT(*) OVER () window on the page query. A window
@@ -1985,6 +2051,27 @@ func buildTopQueriesSQL(
     `, cte, orderCol, orderDir, limitPos, limitPos+1)
 
 	return countSQL, pageSQL, filterArgs, pageArgs
+}
+
+// topQueriesTimeout bounds a top-queries request, both as the Go context
+// deadline and as the transaction-local statement_timeout on the
+// datastore, so that the two always agree.
+const topQueriesTimeout = 30 * time.Second
+
+// setTopQueriesStatementTimeout applies topQueriesTimeout to tx as a
+// transaction-local statement_timeout. A query_text filter makes the
+// aggregation run metrics.RedactedText, a regexp_replace chain over up to
+// 64 KiB of text, for every statement in the window, once for the count
+// and again for the page. The Go context deadline is not a guaranteed
+// server-side bound on that work, so this has PostgreSQL itself stop a
+// pathological statement rather than leave it pinning a datastore backend.
+// set_config with is_local true is equivalent to SET LOCAL, and its value
+// is derived from the constant, never from the request.
+func setTopQueriesStatementTimeout(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx,
+		`SELECT set_config('statement_timeout', $1, true)`,
+		strconv.FormatInt(topQueriesTimeout.Milliseconds(), 10))
+	return err
 }
 
 // handleTopQueries handles GET /api/v1/metrics/top-queries
@@ -2086,6 +2173,15 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// parameter, never interpolated into the SQL text.
 	databaseName := ParseQueryString(r, "database_name")
 
+	// Parse optional query_text filter, bound as a parameter like
+	// database_name; buildTopQueriesSQL describes how it matches. It is
+	// used exactly as given, untrimmed, and an empty value applies no
+	// filter.
+	queryText := ParseQueryString(r, "query_text")
+	if !validateTopQueryText(w, queryText) {
+		return // error already sent
+	}
+
 	// Parse time_range (default "1h"). A time_range of "custom" resolves
 	// against the explicit time_start and time_end timestamps, exactly as
 	// /metrics/query-stats and performance-summary do; ResolveTimeWindow is
@@ -2112,7 +2208,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), topQueriesTimeout)
 	defer cancel()
 
 	pool := h.datastore.GetPool()
@@ -2127,9 +2223,20 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	}
 	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
+	setTimeout := h.topQueriesTimeoutFn
+	if setTimeout == nil {
+		setTimeout = setTopQueriesStatementTimeout
+	}
+	if err := setTimeout(ctx, tx); err != nil {
+		log.Printf("[ERROR] Failed to set top queries statement timeout: %v", err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to query top queries")
+		return
+	}
+
 	countQuery, query, filterArgs, pageArgs := buildTopQueriesSQL(
-		connID, window, queryID, databaseName, excludeCollector, orderCol,
-		orderDir, limit, offset)
+		connID, window, queryID, databaseName, queryText, excludeCollector,
+		orderCol, orderDir, limit, offset)
 
 	var totalCount int64
 	if err := tx.QueryRow(ctx, countQuery, filterArgs...).Scan(
@@ -2185,6 +2292,25 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// OpenAPI spec and the web client both depend on that shape.
 	w.Header().Set(headerTotalCount, strconv.FormatInt(totalCount, 10))
 	RespondJSON(w, http.StatusOK, results)
+}
+
+// maxTopQueryTextLength is the longest query_text term, in characters,
+// that handleTopQueries accepts. It is far longer than any search a person
+// types, and short enough that a request cannot make the database fold and
+// scan an arbitrarily long term against every statement in the window.
+const maxTopQueryTextLength = 1000
+
+// validateTopQueryText checks a top-queries query_text term, sending a 400
+// and returning false when it is unusable. A term that is not valid UTF-8
+// or holds a NUL byte is refused here because PostgreSQL rejects either as
+// a text parameter, which would otherwise be reported as a 500.
+func validateTopQueryText(w http.ResponseWriter, queryText string) bool {
+	if !utf8.ValidString(queryText) || strings.ContainsRune(queryText, 0) {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid query_text: must be valid UTF-8 without NUL characters")
+		return false
+	}
+	return validateMaxLen(w, "query_text", queryText, maxTopQueryTextLength)
 }
 
 // headerTotalCount is the response header carrying the unpaginated row

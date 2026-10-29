@@ -282,6 +282,18 @@ Because `pg_stat_statements` collects data
 cluster-wide, the section deduplicates queries so
 each entry reflects a single database context.
 
+Clicking the Calls, Total Time, Mean Time or Rows column header sorts the list
+by that column. A newly chosen column sorts largest first, and clicking the
+same header again reverses the order; until the user picks a column, the list
+sorts by Total Time, largest first.
+
+The Filter queries field in the section header keeps only the queries whose
+text contains the term entered, ignoring case. The term is a plain substring
+rather than a pattern, so `%` and `_` match themselves. The filter applies once
+typing pauses, and the clear button inside the field removes the term. Sorting
+and filtering both apply to the whole result set rather than to the visible
+page, so each change returns the section to its first page.
+
 The "Hide monitoring queries" toggle filters out the
 workbench's own monitoring queries from the list. The
 toggle is on by default to focus on application

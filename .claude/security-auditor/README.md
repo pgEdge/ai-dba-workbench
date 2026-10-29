@@ -260,7 +260,15 @@ moved.
   output, so the Go pass does not protect them, and a `like` or
   range filter is an oracle for a secret the patterns miss, one
   character at a time; the user accepted this risk on 2026-10-21
-  (PR #730), so do not re-raise it as a new finding.
+  (PR #730), so do not re-raise it as a new finding. The
+  `query_text` filter of `GET /api/v1/metrics/top-queries` (#757)
+  matches the `RedactedText` output in the same way, but its exposure
+  is wider than #730 accepted: `query_datastore` needs a non-public MCP
+  privilege, whereas top-queries needs only read access to the
+  connection. The window is rows stored before #643 that the collector
+  migration has not rewritten. This wider exposure is NOT yet accepted;
+  it awaits explicit confirmation from the project owner, so raise it
+  until this line records that decision.
   `RedactedText` is
   `left(value, 65536)` under a chain of `regexp_replace` calls built from
   `textRedactions` (URI userinfo, JSON keys, ALTER SYSTEM SET of a

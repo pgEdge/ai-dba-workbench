@@ -146,9 +146,12 @@ const connectionGroupsQueryByUser = connectionGroupsQueryHead +
 // it is labeled "local" rather than treated as unknown. host() is used in
 // preference to a plain ::text cast because casting an inet to text appends
 // the netmask, which would label every client as "192.0.2.10/32" rather than
-// "192.0.2.10".
+// "192.0.2.10". client_addr is cast to inet first: on a pgEdge ColdFront
+// datastore it is stored as text, since DuckDB has no inet type, and
+// host() takes only an inet; on plain PostgreSQL the cast is a no-op
+// (issue #755).
 const connectionGroupsQueryByClient = connectionGroupsQueryHead +
-	`COALESCE(host(client_addr), 'local')` +
+	`COALESCE(host(client_addr::inet), 'local')` +
 	connectionGroupsQueryLabelSuffix +
 	`MIN(client_hostname)` +
 	connectionGroupsQueryTail

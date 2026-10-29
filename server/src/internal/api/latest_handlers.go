@@ -561,10 +561,12 @@ func queryLatestSnapshot(
 		outerWhereParts = append(outerWhereParts, systemSchemaPredicate)
 	}
 	if len(schemas.exclude) > 0 {
+		// Each name is typed: a ColdFront datastore cannot type an IN
+		// list of untyped parameters (issue #755).
 		var placeholders []string
 		for _, schema := range schemas.exclude {
 			placeholders = append(placeholders,
-				fmt.Sprintf("$%d", argNum))
+				fmt.Sprintf("$%d::text", argNum))
 			args = append(args, schema)
 			argNum++
 		}

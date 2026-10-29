@@ -97,10 +97,10 @@ func (s Settings) Validate(section string) error {
 			return fmt.Errorf("%s.extra_body must not set stream, which the server chooses for each request",
 				section)
 		}
-		if hasNonStringKey(reflect.ValueOf(s.ExtraBody[k])) {
+		if unencodable(reflect.ValueOf(s.ExtraBody[k]), map[visit]struct{}{}) {
 			return fmt.Errorf("%s.extra_body.%s cannot be encoded as JSON: "+
-				"check for a nested mapping with non-string keys, or a NaN "+
-				"or infinite number", section, k)
+				"check for a nested mapping with non-string keys or a "+
+				"reference cycle", section, k)
 		}
 		if _, err := json.Marshal(s.ExtraBody[k]); err != nil {
 			// Deliberately drop err: the encoder's message can quote
@@ -113,30 +113,85 @@ func (s Settings) Validate(section string) error {
 	return nil
 }
 
-// hasNonStringKey reports whether v holds, at any depth, a map whose key
-// type is not string. yaml.v3 decodes a mapping with any non-string key
-// (such as 1: x) to map[interface{}]interface{}, which Go 1.26's
-// encoding/json refuses but Go 1.27's encodes, so Validate checks for it
-// itself to behave the same on every Go version.
-func hasNonStringKey(v reflect.Value) bool {
+// visit identifies a map, pointer or slice on the path unencodable is
+// walking: the address, plus the length for a slice, as encoding/json uses
+// to detect cycles. The type stops a pointer and the map or slice it
+// shares an address with from being taken for the same value.
+type visit struct {
+	typ reflect.Type
+	ptr uintptr
+	len int
+}
+
+// unencodable reports whether v holds, at any depth, a map whose key type
+// is not string, or a reference cycle. yaml.v3 decodes a mapping with any
+// non-string key (such as 1: x) to map[interface{}]interface{}, which Go
+// 1.26's encoding/json refuses but Go 1.27's encodes, so Validate checks
+// for it itself to behave the same on every Go version. A cycle can only
+// come from a caller building Settings in code, but without this check
+// the walk would recurse until the stack ran out; active holds the maps,
+// pointers and slices on the current path only, so a value that merely
+// appears twice on separate paths is still accepted, as encoding/json
+// accepts it.
+func unencodable(v reflect.Value, active map[visit]struct{}) bool {
 	switch v.Kind() {
-	case reflect.Interface, reflect.Pointer:
-		return !v.IsNil() && hasNonStringKey(v.Elem())
+	case reflect.Interface:
+		return !v.IsNil() && unencodable(v.Elem(), active)
+	case reflect.Pointer:
+		if v.IsNil() {
+			return false
+		}
+		return walkOnce(v, 0, active, func() bool {
+			return unencodable(v.Elem(), active)
+		})
 	case reflect.Map:
 		if v.Type().Key().Kind() != reflect.String {
 			return true
 		}
-		iter := v.MapRange()
-		for iter.Next() {
-			if hasNonStringKey(iter.Value()) {
-				return true
-			}
+		if v.IsNil() {
+			return false
 		}
-	case reflect.Slice, reflect.Array:
-		for i := 0; i < v.Len(); i++ {
-			if hasNonStringKey(v.Index(i)) {
-				return true
+		return walkOnce(v, 0, active, func() bool {
+			iter := v.MapRange()
+			for iter.Next() {
+				if unencodable(iter.Value(), active) {
+					return true
+				}
 			}
+			return false
+		})
+	case reflect.Slice:
+		if v.Len() == 0 {
+			return false
+		}
+		return walkOnce(v, v.Len(), active, func() bool {
+			return elementsUnencodable(v, active)
+		})
+	case reflect.Array:
+		return elementsUnencodable(v, active)
+	}
+	return false
+}
+
+// walkOnce runs walk with v marked as on the current path, or reports
+// true without running it when v is already on the path, which means the
+// value refers back to itself.
+func walkOnce(v reflect.Value, n int, active map[visit]struct{}, walk func() bool) bool {
+	key := visit{typ: v.Type(), ptr: v.Pointer(), len: n}
+	if _, ok := active[key]; ok {
+		return true
+	}
+	active[key] = struct{}{}
+	defer delete(active, key)
+	return walk()
+}
+
+// elementsUnencodable reports whether any element of the slice or array v
+// is unencodable.
+func elementsUnencodable(v reflect.Value, active map[visit]struct{}) bool {
+	for i := 0; i < v.Len(); i++ {
+		if unencodable(v.Index(i), active) {
+			return true
 		}
 	}
 	return false

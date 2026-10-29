@@ -48,6 +48,17 @@ vi.mock('../../../contexts/useAuth', () => ({
 import AdminTokenScopes from '../AdminTokenScopes';
 import { ALL_CONNECTIONS_LABEL } from '../tokens/tokenTypes';
 
+/*
+ * The create-token tests open the dialog, fill in a name, pick an owner
+ * and add a connection through userEvent before they reach the behaviour
+ * under test. Each of those steps re-renders the MUI dialog, so the flow
+ * takes two to three seconds on an idle machine and breached Vitest's
+ * five-second default under the coverage suite's parallel load (#779).
+ * The same file-level ceiling as the other AdminTokenScopes suites
+ * applies (#422); a genuine hang still fails.
+ */
+vi.setConfig({ testTimeout: 20_000 });
+
 const theme = createTheme();
 
 const USERS = [{ id: 42, username: 'alice' }];
@@ -126,7 +137,10 @@ const fillCreate = async (user: ReturnType<typeof userEvent.setup>) => {
     });
     await user.click(screen.getByRole('button', { name: /create token/i }));
     const dialog = await screen.findByRole('dialog');
-    await user.type(within(dialog).getByLabelText(/^Name/i), 'scoped-token');
+    // The name is not under test, so paste it in one input event rather
+    // than typing it a keystroke (and a dialog re-render) at a time.
+    await user.click(within(dialog).getByLabelText(/^Name/i));
+    await user.paste('scoped-token');
     await user.click(within(dialog).getByRole('combobox', { name: /owner/i }));
     await user.click(await screen.findByRole('option', { name: 'alice' }));
     await waitFor(() => {

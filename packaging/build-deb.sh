@@ -68,6 +68,7 @@ prepare() {
   cp "${CWD}/${COMPONENT_NAME}/common/pgedge-ai-dba-collector.service" "$SRC_DIR/debian/"
   cp "${CWD}/${COMPONENT_NAME}/common/pgedge-ai-dba-alerter.service" "$SRC_DIR/debian/"
   cp "${CWD}/${COMPONENT_NAME}/common/pgedge-ai-dba-client.nginx" "$SRC_DIR/debian/pgedge-ai-dba-client.nginx"
+  cp "${CWD}/${COMPONENT_NAME}/common/check-server-config" "$SRC_DIR/debian/"
 
   echo "Installing build dependencies..."
   cd "$SRC_DIR"

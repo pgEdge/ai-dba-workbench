@@ -207,6 +207,7 @@ builtins:
 | Flag | Description |
 |------|-------------|
 | `-config string` | Path to configuration file |
+| `-check-config` | Validate the configuration as start-up does, then exit without starting the server |
 | `-debug` | Enable debug logging |
 | `-data-dir string` | Data directory for auth and conversations |
 | `-trace-file string` | Path to MCP trace file |

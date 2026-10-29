@@ -111,46 +111,36 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Handle -check-config: validate the configuration exactly as
+	// start-up would, without opening the auth store or any database,
+	// and exit with the error start-up would have logged.
+	if flags.CheckConfig {
+		if err := runCheckConfig(configPath, cliFlags, os.Stderr); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Handle CLI commands (token, user, group, privilege management)
 	if RunCLICommands(flags, dataDir, configSecretFile) {
 		return
 	}
 
-	// Load configuration. If --config was passed explicitly but
-	// points at a missing file, fail loudly. Otherwise, an empty or
-	// missing default just falls through to the compiled-in
-	// defaults; LoadConfig is tolerant of an empty path.
-	configPathForLoad := ""
-	if configPath != "" && config.ConfigFileExists(configPath) {
-		configPathForLoad = configPath
-		fmt.Fprintf(os.Stderr, "Config: %s\n", configPath)
-	} else if cliFlags.ConfigFileSet {
-		fmt.Fprintf(os.Stderr, "ERROR: configuration file not found: %s\n", configPath)
-		os.Exit(1)
-	} else {
-		fmt.Fprintf(os.Stderr,
-			"Config: no config file found in default search paths "+
-				"(per-user config dir, /etc/pgedge); using defaults\n")
-	}
-	fmt.Fprintf(os.Stderr, "Data directory: %s\n", dataDir)
-
-	cfg, err := config.LoadConfig(configPathForLoad, cliFlags)
+	// Load and validate the configuration. The same two calls serve
+	// -check-config above, so that the check cannot drift from what
+	// start-up refuses.
+	configPathForLoad, err := resolveConfigLoadPath(configPath, cliFlags.ConfigFileSet, os.Stderr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Fprintf(os.Stderr, "Data directory: %s\n", dataDir)
 
-	// Resolve the datastore password from a password_file when no
-	// password was supplied via CLI flag or inline YAML. LoadConfig has
-	// already applied those higher-priority sources, so a non-empty
-	// Password here means one of them won and
-	// LoadPassword is a no-op. This keeps the YAML password_file option
-	// consistent with the collector and alerter components.
-	if cfg.Database != nil {
-		if err := cfg.Database.LoadPassword(); err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-			os.Exit(1)
-		}
+	cfg, err := loadStartupConfig(configPathForLoad, cliFlags)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Create and initialize the server

@@ -20,6 +20,7 @@ Source10:       ai-dba-alerter.yaml
 Source11:       pgedge-ai-dba-client.nginx
 Source12:       LICENSE.md
 Source13:       README.md
+Source14:       check-server-config
 BuildArch:      %{_arch}
 
 %description
@@ -27,11 +28,28 @@ pgEdge AI DBA Workbench provides AI-powered monitoring, alerting, and
 management for PostgreSQL databases.
 
 # ============================================================================
+# Upgrade Check Package
+# ============================================================================
+# A copy of this release's server and the script that runs it with
+# -check-config. Every other package requires it before its %pre, which
+# runs the check, so an upgrade to a release that would refuse the
+# installed server configuration fails before any old package is
+# replaced (issue #784).
+%package -n pgedge-ai-dba-upgrade-check
+Summary:        pgEdge AI DBA Workbench upgrade configuration check
+
+%description -n pgedge-ai-dba-upgrade-check
+Checks the installed pgEdge AI DBA Server configuration with this
+release's server before any other package of the suite is upgraded,
+and stops the upgrade if this release would refuse to start with it.
+
+# ============================================================================
 # Server Package
 # ============================================================================
 %package -n pgedge-ai-dba-server
 Summary:        pgEdge AI DBA Server
 Requires:       openssl
+Requires(pre):  pgedge-ai-dba-upgrade-check = %{version}-%{release}
 
 %description -n pgedge-ai-dba-server
 Core AI DBA server providing REST API and AI-powered analysis for
@@ -43,6 +61,7 @@ PostgreSQL databases.
 %package -n pgedge-ai-dba-collector
 Summary:        pgEdge AI DBA Collector
 Requires:       pgedge-ai-dba-server = %{version}-%{release} openssl
+Requires(pre):  pgedge-ai-dba-upgrade-check = %{version}-%{release}
 
 %description -n pgedge-ai-dba-collector
 Metrics and data collector agent for the pgEdge AI DBA Workbench.
@@ -54,6 +73,7 @@ Collects PostgreSQL performance data and sends it to the AI DBA server.
 %package -n pgedge-ai-dba-alerter
 Summary:        pgEdge AI DBA Alerter
 Requires:       pgedge-ai-dba-server = %{version}-%{release}
+Requires(pre):  pgedge-ai-dba-upgrade-check = %{version}-%{release}
 
 %description -n pgedge-ai-dba-alerter
 Alerting agent for the pgEdge AI DBA Workbench. Monitors PostgreSQL
@@ -66,6 +86,7 @@ health and triggers AI-powered alerts based on configurable rules.
 Summary:        pgEdge AI DBA Web Client
 Requires:       pgedge-ai-dba-server = %{version}-%{release}
 Requires:       nginx
+Requires(pre):  pgedge-ai-dba-upgrade-check = %{version}-%{release}
 BuildArch:      noarch
 
 %description -n pgedge-ai-dba-client
@@ -93,7 +114,20 @@ tar -xzf %{SOURCE2} -C %{_builddir}/alerter
 tar -xzf %{SOURCE3} -C %{_builddir}/client
 #tar -xzf %%{SOURCE4} -C %%{_builddir}/docs
 
+%pre -n pgedge-ai-dba-collector
+%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config
+
+%pre -n pgedge-ai-dba-alerter
+%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config
+
+%pre -n pgedge-ai-dba-client
+%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config
+
+# Each package of the suite runs the upgrade check in its %pre, which
+# rpm runs before it unpacks any of the package's files. A failure
+# stops rpm installing the package and erasing the version it replaces.
 %pre -n pgedge-ai-dba-server
+%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config || exit 1
 getent group pgedge >/dev/null || groupadd -r pgedge
 getent passwd pgedge >/dev/null || \
     useradd -r -g pgedge -d /var/lib/pgedge -s /sbin/nologin \
@@ -148,6 +182,16 @@ mkdir -p %{buildroot}%{_datadir}/pgedge-ai-dba-server
 install -p -m 0644 %{_builddir}/pgedge-ai-dba-server-sbom.json %{buildroot}%{_datadir}/pgedge-ai-dba-server/pgedge-ai-dba-server-sbom.json
 install -p -m 0644 %{_builddir}/pgedge-ai-dba-server-sbom.json.asc %{buildroot}%{_datadir}/pgedge-ai-dba-server/pgedge-ai-dba-server-sbom.json.asc
 
+# Upgrade check: a copy of the server, run before an upgrade
+install -d %{buildroot}%{_libexecdir}/pgedge-ai-dba-upgrade-check
+install -m 755 %{_builddir}/server/ai-dba-server %{buildroot}%{_libexecdir}/pgedge-ai-dba-upgrade-check/ai-dba-server
+install -m 755 %{SOURCE14} %{buildroot}%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config
+install -d %{buildroot}%{_defaultdocdir}/pgedge-ai-dba-upgrade-check
+install -m 644 %{SOURCE12} %{buildroot}%{_defaultdocdir}/pgedge-ai-dba-upgrade-check/LICENSE.md
+mkdir -p %{buildroot}%{_datadir}/pgedge-ai-dba-upgrade-check
+install -p -m 0644 %{_builddir}/pgedge-ai-dba-server-sbom.json %{buildroot}%{_datadir}/pgedge-ai-dba-upgrade-check/pgedge-ai-dba-server-sbom.json
+install -p -m 0644 %{_builddir}/pgedge-ai-dba-server-sbom.json.asc %{buildroot}%{_datadir}/pgedge-ai-dba-upgrade-check/pgedge-ai-dba-server-sbom.json.asc
+
 # Collector
 install -m 755 %{_builddir}/collector/ai-dba-collector %{buildroot}%{_bindir}/
 install -m 644 %{SOURCE6} %{buildroot}%{_unitdir}/pgedge-ai-dba-collector.service
@@ -180,6 +224,14 @@ install -p -m 0644 %{_builddir}/pgedge-ai-dba-client-sbom.json.asc %{buildroot}%
 # Docs
 #install -d %%{buildroot}%%{_datadir}/pgedge/ai-dba-docs
 #cp -r %%{_builddir}/docs/. %%{buildroot}%%{_datadir}/pgedge/ai-dba-docs/
+
+%files -n pgedge-ai-dba-upgrade-check
+%license %{_defaultdocdir}/pgedge-ai-dba-upgrade-check/LICENSE.md
+%dir %{_libexecdir}/pgedge-ai-dba-upgrade-check
+%{_libexecdir}/pgedge-ai-dba-upgrade-check/ai-dba-server
+%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config
+%{_datadir}/pgedge-ai-dba-upgrade-check/pgedge-ai-dba-server-sbom.json
+%{_datadir}/pgedge-ai-dba-upgrade-check/pgedge-ai-dba-server-sbom.json.asc
 
 %files -n pgedge-ai-dba-server
 %license %{_defaultdocdir}/pgedge-ai-dba-server/LICENSE.md

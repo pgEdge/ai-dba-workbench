@@ -12,6 +12,23 @@ project adheres to
 
 ### Added
 
+- Refuse a Debian or RPM package upgrade whose installed server
+  configuration the new server would refuse at start-up (#784). A new
+  `pgedge-ai-dba-upgrade-check` package, which every other package of
+  the suite requires at the same version, checks
+  `/etc/pgedge/ai-dba-server.yaml` with the new server before any
+  installed files are replaced; on failure the upgrade stops with the
+  server's error, and the installed version stays in place and keeps
+  running. The check is skipped on a fresh installation, and protects
+  upgrades from this release onwards; release 1.0.0 predates federated
+  login, so an upgrade from 1.0.0 cannot meet the trusted proxy rule.
+  Unattended upgrades through `unattended-upgrades` or `dnf-automatic`
+  fail on every run until the configuration is corrected, and on
+  Debian and Ubuntu the first upgrade needs `apt upgrade` or
+  `apt-get dist-upgrade`, since `apt-get upgrade` keeps back an upgrade
+  that adds a package. The new `ai-dba-server -check-config` flag runs
+  the same check by hand. See the
+  [Upgrading the Workbench](admin-guide/upgrading.md) page.
 - Add column sorting and a query-text filter to the Top Queries section
   of the Server Dashboard and the Database Dashboard (#757). Clicking
   the Calls, Total Time, Mean Time or Rows header sorts the list by
@@ -794,6 +811,9 @@ project adheres to
     about the period before it ran. Verify with
     `-verify-audit-log` straight afterwards. A database
     created at this release or later needs no such step.
+    Release 1.0.0 had no RBAC audit log, so an upgrade from
+    1.0.0 never needs it either; the step applies only to a
+    database created by a pre-release build of this release.
 
     The command writes nothing in three cases. It refuses a log
     holding keyed and unkeyed events together, in whatever

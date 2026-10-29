@@ -107,18 +107,25 @@ are editing.
   `server/src/internal/api/cluster_handlers_test.go`, rather than the
   full collector schema. `internal/metrics` tests build a fixture probe
   table under the `metrics` schema and drop it on cleanup. The
-  exceptions are `internal/database`'s `newCollectorSchemaDatastore`
-  (`collector_schema_helpers_test.go`, scratch database suffix
-  `_db_schema`), used by the topology, estate and marked-connection
-  tests that need every real table, and
-  `internal/tools/datastore_catalog_schema_integration_test.go`
-  (#645). Both import the collector's `SchemaManager` (the server
-  `go.mod` requires the collector module through a `replace`, and
-  `server/Dockerfile` copies `collector/go.mod` for it) and migrate a
-  scratch database named after the test database plus their suffix
-  (for example `ai_workbench_pr652_catalog_schema`), so concurrent runs against per-session test databases do not
-  collide. The server builds the name and quotes it with
-  `format('%I')`, so the SQL text sent from Go stays constant.
+  exceptions need every real table: `internal/database`'s
+  topology, estate and marked-connection tests (scratch database suffix
+  `_db_schema`) and the `internal/tools` catalog and masking tests
+  (#645, suffix `_catalog_schema`). They share
+  `server/src/internal/testutil/scratchdb` (#775):
+  `scratchdb.NewCollectorSchema(t, suffix, maxConns)` creates a scratch
+  database named after the test database plus the suffix (for example
+  `ai_workbench_pr652_catalog_schema`), migrates it with the collector's
+  `SchemaManager` and drops it when the test ends, and
+  `scratchdb.AttachDefaultPartitions` gives the named metrics tables a
+  DEFAULT partition so fixture rows with any timestamp land. Use it
+  rather than copying the create/drop code, and pick a suffix no other
+  package uses, so concurrent runs and packages do not drop each other's
+  scratch database. Only test code may import it: it pulls in the
+  collector module (required through a `replace` in the server
+  `go.mod`; `server/Dockerfile` copies only `collector/go.mod`, so the
+  server binary must never import it). The server builds the name and
+  quotes it with `format('%I')`, so the SQL text sent from Go stays
+  constant.
 - Collector packages create a fresh database per run named
   `ai_workbench_test_<yyyymmdd_hhmmss>_<micros>` (see
   `collector/src/database/schema_test.go` and the probes package

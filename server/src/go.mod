@@ -19,7 +19,8 @@ require (
 
 replace github.com/pgedge/ai-workbench/pkg => ../../pkg
 
-// The collector module is required only by tests, which build the real
+// The collector module is required only by test code (the tests and the
+// test-only internal/testutil/scratchdb package), which builds the real
 // datastore schema with its SchemaManager (issue #645).
 replace github.com/pgedge/ai-workbench/collector => ../../collector
 

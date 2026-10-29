@@ -24,6 +24,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
+	"github.com/pgedge/ai-workbench/server/internal/testutil/scratchdb"
 )
 
 // maskedProbe is a probe table holding a credential in a column that
@@ -459,7 +460,7 @@ var connectionErrorMembers = []string{"manual-member", "persisted-member", "ungr
 // hierarchy (issue #683). It runs on the collector's real schema, since
 // the topology queries read most of it.
 func TestMaskedConnectionErrorOnEveryRouteIntegration(t *testing.T) {
-	pool := newCollectorSchemaPool(t)
+	pool := scratchdb.NewCollectorSchema(t, catalogSchemaSuffix, 2)
 	ctx := context.Background()
 	ds := database.NewTestDatastore(pool)
 	store, storeCleanup := newRBACRegressionTestStore(t)

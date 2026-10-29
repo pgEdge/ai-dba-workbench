@@ -11,14 +11,13 @@ package tools
 
 import (
 	"context"
-	"os"
 	"slices"
 	"sort"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	collectordb "github.com/pgedge/ai-workbench/collector/src/database"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
+	"github.com/pgedge/ai-workbench/server/internal/testutil/scratchdb"
 )
 
 // These tests check the query_datastore catalog against the schema the
@@ -29,28 +28,10 @@ import (
 // collector's SchemaManager in a database of its own and compares.
 
 // The collector schema is migrated into a scratch database of its own,
-// separate from the shared test database because other tests in this
-// package and module create tables with the same names but different
-// shapes there. The scratch name is the test database's name plus
-// catalogSchemaSuffix, so concurrent runs against per-session test
-// databases on one cluster do not drop each other's scratch database.
-// The server builds the name and quotes it with format('%I'), so the
-// SQL text sent from here stays constant.
+// named after the test database plus catalogSchemaSuffix, separate from
+// the shared test database because other tests in this package and
+// module create tables with the same names but different shapes there.
 const catalogSchemaSuffix = "_catalog_schema"
-
-// catalogSchemaStatementsQuery returns the scratch database's name and
-// the statements that drop and create it.
-const catalogSchemaStatementsQuery = `
-        SELECT n,
-            format('DROP DATABASE IF EXISTS %I WITH (FORCE)', n),
-            format('CREATE DATABASE %I', n)
-        FROM (SELECT current_database() || $1 AS n) s
-    `
-
-// maxIdentifierLength is PostgreSQL's NAMEDATALEN - 1; a longer name
-// would be truncated, and the pool below would connect to the wrong
-// database.
-const maxIdentifierLength = 63
 
 // catalogSchemaColumnsQuery lists every column of every ordinary or
 // partitioned table in the public schema.
@@ -81,72 +62,6 @@ var catalogOmittedColumns = map[string][]string{
 	"anomaly_candidates": {"embedding_id"},
 	// A secret; see TestConfigurationSourcesExposeNoSecrets.
 	"cluster_groups": {"owner_token"},
-}
-
-// newCollectorSchemaPool creates the scratch database, migrates it to the
-// collector's latest schema and returns a pool on it. The database is
-// dropped when the test ends.
-func newCollectorSchemaPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping catalog schema test")
-	}
-
-	ctx := context.Background()
-	admin, err := pgxpool.New(ctx, connStr)
-	if err != nil {
-		t.Fatalf("connect to test database: %v", err)
-	}
-	t.Cleanup(admin.Close)
-
-	var name, dropSQL, createSQL string
-	if err := admin.QueryRow(ctx, catalogSchemaStatementsQuery, catalogSchemaSuffix).
-		Scan(&name, &dropSQL, &createSQL); err != nil {
-		t.Fatalf("name the scratch database: %v", err)
-	}
-	if len(name) > maxIdentifierLength {
-		t.Fatalf("scratch database name %q is longer than %d bytes", name, maxIdentifierLength)
-	}
-	if _, err := admin.Exec(ctx, dropSQL); err != nil {
-		t.Fatalf("drop stale %s: %v", name, err)
-	}
-	if _, err := admin.Exec(ctx, createSQL); err != nil {
-		t.Fatalf("create %s: %v", name, err)
-	}
-
-	cfg, err := pgxpool.ParseConfig(connStr)
-	if err != nil {
-		t.Fatalf("parse test database URL: %v", err)
-	}
-	cfg.ConnConfig.Database = name
-	cfg.MaxConns = 2
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatalf("connect to %s: %v", name, err)
-	}
-	// Cleanups run last-in first-out: the pool closes before the drop,
-	// which runs before the admin pool closes.
-	t.Cleanup(func() {
-		pool.Close()
-		if _, err := admin.Exec(context.Background(), dropSQL); err != nil {
-			t.Logf("drop %s: %v", name, err)
-		}
-	})
-
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		t.Fatalf("acquire connection to %s: %v", name, err)
-	}
-	defer conn.Release()
-	if err := collectordb.NewSchemaManager().Migrate(conn); err != nil {
-		t.Fatalf("migrate collector schema: %v", err)
-	}
-	return pool
 }
 
 // collectorSchemaColumns returns the data type of every column of every
@@ -183,7 +98,7 @@ func collectorSchemaColumns(t *testing.T, pool *pgxpool.Pool) map[string]map[str
 // also checks that every collector column of a catalog table is either
 // cataloged or deliberately omitted.
 func TestConfigurationSourcesMatchCollectorSchema(t *testing.T) {
-	schema := collectorSchemaColumns(t, newCollectorSchemaPool(t))
+	schema := collectorSchemaColumns(t, scratchdb.NewCollectorSchema(t, catalogSchemaSuffix, 2))
 
 	for _, src := range configurationSources() {
 		actual, ok := schema[src.Table]
@@ -253,7 +168,7 @@ func TestConfigurationSourcesMatchCollectorSchema(t *testing.T) {
 // each be looked up, so the two discovery queries agree on the real
 // schema and no probe table lacks the bookkeeping columns.
 func TestMetricSourcesResolveAgainstCollectorSchema(t *testing.T) {
-	pool := newCollectorSchemaPool(t)
+	pool := scratchdb.NewCollectorSchema(t, catalogSchemaSuffix, 2)
 	ctx := context.Background()
 
 	summaries, err := listDatastoreSources(ctx, pool)
@@ -288,7 +203,7 @@ func TestMetricSourcesResolveAgainstCollectorSchema(t *testing.T) {
 // collector rename cannot leave a credential unmasked or quietly drop a
 // column.
 func TestMetricRedactionsMatchCollectorSchema(t *testing.T) {
-	pool := newCollectorSchemaPool(t)
+	pool := scratchdb.NewCollectorSchema(t, catalogSchemaSuffix, 2)
 	ctx := context.Background()
 
 	for name, rule := range metrics.ProbeRedactions {

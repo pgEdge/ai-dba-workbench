@@ -98,43 +98,23 @@ export const resolveComparisonWindow = (timeRange: TimeRangeState): ComparisonWi
     };
 };
 
-/** Build the request for a connection's anomaly alerts in a window. */
+/**
+ * Build the request for a connection's anomaly alerts that were active
+ * at some instant in the window: those raised inside it, and those
+ * raised before it that were still open at its start, whether they
+ * cleared inside the window or have not cleared at all. An alert
+ * raised before the window covers the points up to where it cleared,
+ * because the engine raises nothing new whilst it is open.
+ */
 export const buildAnomalyAlertsUrl = (connectionId: number, window: ComparisonWindow): string => {
     const params = new URLSearchParams({
         alert_type: 'anomaly',
         connection_id: connectionId.toString(),
-        start_time: new Date(window.startMs).toISOString(),
-        end_time: new Date(window.endMs).toISOString(),
+        active_start: new Date(window.startMs).toISOString(),
+        active_end: new Date(window.endMs).toISOString(),
         limit: ALERT_LIMIT.toString(),
     });
     return `/api/v1/alerts?${params.toString()}`;
-};
-
-/**
- * Build the request for a connection's anomaly alerts that were raised
- * before the window and have not cleared. The alerts endpoint filters
- * on `triggered_at` only, so an alert still open across the window's
- * start needs this second request. Its span covers the outside points
- * it held the engine back from alerting on.
- */
-export const buildOpenAnomalyAlertsUrl = (
-    connectionId: number,
-    window: ComparisonWindow
-): string => {
-    const params = new URLSearchParams({
-        alert_type: 'anomaly',
-        connection_id: connectionId.toString(),
-        exclude_cleared: 'true',
-        end_time: new Date(window.startMs).toISOString(),
-        limit: ALERT_LIMIT.toString(),
-    });
-    return `/api/v1/alerts?${params.toString()}`;
-};
-
-/** The alerts of both lists, keeping the first of any repeated id. */
-const mergeAlerts = (first: AnomalyAlert[], second: AnomalyAlert[]): AnomalyAlert[] => {
-    const seen = new Set(first.map((a) => a.id));
-    return [...first, ...second.filter((a) => !seen.has(a.id))];
 };
 
 /** A thrown value's message, or the fallback when it carries none. */
@@ -203,7 +183,9 @@ export const useComparisonMetrics = (): UseComparisonMetricsReturn => {
  * newest first, so when fewer were returned than `total`, every alert
  * at or after the oldest one returned was loaded and older ones may
  * not have been. Null means the list is complete; with no usable
- * time, nothing in the window is known to be complete.
+ * time, nothing in the window is known to be complete. An unloaded
+ * alert raised before that time could still be open after it, so the
+ * bound is only exact for when alerts were raised, not for their spans.
  */
 export const alertsCompleteFrom = (
     alerts: AnomalyAlert[],
@@ -224,8 +206,8 @@ export const alertsCompleteFrom = (
 export interface UseAnomalyComparisonReturn {
     data: AnomalyComparisonResponse | null;
     /**
-     * Every anomaly alert for the connection in the window, and those
-     * raised before it that are still open, unfiltered.
+     * Every anomaly alert for the connection that was active at some
+     * instant in the window, unfiltered.
      */
     alerts: AnomalyAlert[];
     window: ComparisonWindow | null;
@@ -277,28 +259,25 @@ const logFailures = (requests: [PromiseSettledResult<unknown>, string][]): void 
 };
 
 /**
- * Build the result of a comparison request from its three settled
- * requests: the comparison, the alerts in the window and the alerts
- * still open from before it. A failed alerts request leaves the
- * comparison shown with an alerts error; the alerts are complete from
- * the in-window request's cap only when that request succeeded.
+ * Build the result of a comparison request from its two settled
+ * requests: the comparison and the alerts active in the window. A
+ * failed alerts request leaves the comparison shown with an alerts
+ * error and no completeness bound, since no alerts were loaded.
  */
 export const settleComparison = (
     key: string,
     window: ComparisonWindow,
     comparison: PromiseSettledResult<AnomalyComparisonResponse>,
-    alerts: PromiseSettledResult<AlertsBody>,
-    openAlerts: PromiseSettledResult<AlertsBody>
+    alerts: PromiseSettledResult<AlertsBody>
 ): ComparisonResult => {
     const loadedAlerts = loadedAlertsOf(alerts);
-    const alertsFailure = alerts.status === 'rejected' ? alerts : openAlerts;
     return {
         key,
         window,
         data: comparison.status === 'fulfilled' ? comparison.value : null,
         error: failureOf(comparison, 'Failed to load the baseline comparison'),
-        alerts: mergeAlerts(loadedAlerts, loadedAlertsOf(openAlerts)),
-        alertsError: failureOf(alertsFailure, 'Failed to load anomaly alerts'),
+        alerts: loadedAlerts,
+        alertsError: failureOf(alerts, 'Failed to load anomaly alerts'),
         alertsCompleteFromMs:
             alerts.status === 'fulfilled'
                 ? alertsCompleteFrom(loadedAlerts, alerts.value.total, window)
@@ -376,10 +355,9 @@ export const useAnomalyComparison = (
         const window = resolveComparisonWindow(selectedRange);
         const isCurrent = beginRequest();
 
-        const [comparison, alerts, openAlerts] = await Promise.allSettled([
+        const [comparison, alerts] = await Promise.allSettled([
             apiGet<AnomalyComparisonResponse>(buildComparisonUrl(query, window)),
             apiGet<AlertsBody>(buildAnomalyAlertsUrl(query.connectionId, window)),
-            apiGet<AlertsBody>(buildOpenAnomalyAlertsUrl(query.connectionId, window)),
         ]);
         if (!isCurrent()) {
             return;
@@ -388,9 +366,8 @@ export const useAnomalyComparison = (
         logFailures([
             [comparison, 'baseline comparison'],
             [alerts, 'anomaly alerts'],
-            [openAlerts, 'open anomaly alerts'],
         ]);
-        setResult(settleComparison(key, window, comparison, alerts, openAlerts));
+        setResult(settleComparison(key, window, comparison, alerts));
     }, [key, range, customStart, customEnd, beginRequest, supersedeRequest]);
 
     useEffect(() => {

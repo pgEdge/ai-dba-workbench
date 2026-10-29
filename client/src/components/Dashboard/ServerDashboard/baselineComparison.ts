@@ -338,8 +338,9 @@ const strongerMarker = (existing: EngineMarker | null, marker: EngineMarker): En
  * indices of the points the markers were drawn on.
  *
  * An alert triggered outside a usable window gets no marker, since it
- * was not raised on any point shown. One still open from before the
- * window covers points through its span instead (see `alertSpans`).
+ * was not raised on any point shown. One raised before the window and
+ * still open at its start covers points through its span instead (see
+ * `alertSpans`).
  */
 const placeEngineAlerts = (
     alerts: AnomalyAlert[],
@@ -536,8 +537,9 @@ const isBelowFloor = (p: ComparisonPoint, sensitivity: number): boolean =>
  * point its marker is drawn on and the point before that, and every
  * point up to the bucket it cleared in (or the window's end whilst it
  * is open), since the engine raises nothing new whilst it is open.
- * Alerts triggered before the window that are still open belong in
- * `alerts` too: they cover points but draw no marker.
+ * Alerts triggered before the window that were still open at its
+ * start, whether cleared inside it or not at all, belong in `alerts`
+ * too: they cover points but draw no marker.
  *
  * `alertsCompleteFromMs` is set when the alerts were capped: no alert
  * older than it was loaded, so no point at or before it is marked as

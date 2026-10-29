@@ -13,7 +13,6 @@ import { renderHook, waitFor } from '@testing-library/react';
 import {
     COMPARISON_BUCKETS,
     buildAnomalyAlertsUrl,
-    buildOpenAnomalyAlertsUrl,
     alertsCompleteFrom,
     buildComparisonUrl,
     resolveComparisonWindow,
@@ -174,13 +173,12 @@ describe('settleComparison', () => {
         triggered_at: new Date(ms).toISOString(),
     });
 
-    it('merges both alert lists and marks a capped list incomplete', () => {
+    it('keeps the alerts as returned and marks a capped list incomplete', () => {
         const result = settleComparison(
             'k',
             WINDOW,
             ok(RESPONSE as AnomalyComparisonResponse),
-            ok({ alerts: [alert(1, 500), alert(2, 300)], total: 5 }),
-            ok({ alerts: [alert(2, 300), alert(3, -100)] })
+            ok({ alerts: [alert(1, 500), alert(2, 300), alert(3, -100)], total: 5 })
         );
         expect(result).toEqual({
             key: 'k',
@@ -189,29 +187,29 @@ describe('settleComparison', () => {
             error: null,
             alerts: [alert(1, 500), alert(2, 300), alert(3, -100)],
             alertsError: null,
-            alertsCompleteFromMs: 300,
+            alertsCompleteFromMs: -100,
         });
     });
 
-    it('treats null alert lists as empty', () => {
-        const result = settleComparison(
-            'k',
-            WINDOW,
-            ok(RESPONSE as AnomalyComparisonResponse),
-            ok({ alerts: null }),
-            ok({})
-        );
-        expect(result.alerts).toEqual([]);
-        expect(result.alertsCompleteFromMs).toBeNull();
+    it('treats a null or missing alert list as empty', () => {
+        for (const body of [{ alerts: null }, {}]) {
+            const result = settleComparison(
+                'k',
+                WINDOW,
+                ok(RESPONSE as AnomalyComparisonResponse),
+                ok(body)
+            );
+            expect(result.alerts).toEqual([]);
+            expect(result.alertsCompleteFromMs).toBeNull();
+        }
     });
 
-    it('reports the in-window alerts failure before the open alerts one', () => {
+    it('reports both failures', () => {
         const result = settleComparison(
             'k',
             WINDOW,
             failed(new Error('comparison down')),
-            failed(new Error('alerts down')),
-            failed(new Error('open down'))
+            failed(new Error('alerts down'))
         );
         expect(result.data).toBeNull();
         expect(result.error).toBe('comparison down');
@@ -220,16 +218,10 @@ describe('settleComparison', () => {
         expect(result.alertsCompleteFromMs).toBeNull();
     });
 
-    it('reports an open alerts failure, falling back to a default message', () => {
-        const result = settleComparison(
-            'k',
-            WINDOW,
-            failed(null),
-            ok({ alerts: [alert(1, 500)], total: 1 }),
-            failed({})
-        );
+    it('falls back to default messages for failures without one', () => {
+        const result = settleComparison('k', WINDOW, failed(null), failed({}));
         expect(result.error).toBe('Failed to load the baseline comparison');
-        expect(result.alerts).toEqual([alert(1, 500)]);
+        expect(result.alerts).toEqual([]);
         expect(result.alertsError).toBe('Failed to load anomaly alerts');
         expect(result.alertsCompleteFromMs).toBeNull();
     });
@@ -267,7 +259,7 @@ describe('resolveComparisonWindow', () => {
 });
 
 describe('buildAnomalyAlertsUrl', () => {
-    it("asks for the connection's anomaly alerts within the window", () => {
+    it("asks for the connection's anomaly alerts active at any time in the window", () => {
         const url = buildAnomalyAlertsUrl(7, {
             startMs: Date.parse('2026-10-28T00:00:00Z'),
             endMs: Date.parse('2026-10-28T01:00:00Z'),
@@ -277,27 +269,14 @@ describe('buildAnomalyAlertsUrl', () => {
         expect(url.startsWith('/api/v1/alerts?')).toBe(true);
         expect(params.get('alert_type')).toBe('anomaly');
         expect(params.get('connection_id')).toBe('7');
-        expect(params.get('start_time')).toBe('2026-10-28T00:00:00.000Z');
-        expect(params.get('end_time')).toBe('2026-10-28T01:00:00.000Z');
+        expect(params.get('active_start')).toBe('2026-10-28T00:00:00.000Z');
+        expect(params.get('active_end')).toBe('2026-10-28T01:00:00.000Z');
         expect(params.get('limit')).toBe('1000');
-    });
-});
-
-describe('buildOpenAnomalyAlertsUrl', () => {
-    it("asks for the connection's uncleared anomaly alerts raised before the window", () => {
-        const url = buildOpenAnomalyAlertsUrl(7, {
-            startMs: Date.parse('2026-10-28T00:00:00Z'),
-            endMs: Date.parse('2026-10-28T01:00:00Z'),
-            buckets: 10,
-        });
-        const params = new URL(url, 'http://x').searchParams;
-        expect(url.startsWith('/api/v1/alerts?')).toBe(true);
-        expect(params.get('alert_type')).toBe('anomaly');
-        expect(params.get('connection_id')).toBe('7');
-        expect(params.get('exclude_cleared')).toBe('true');
-        expect(params.get('start_time')).toBeNull();
-        expect(params.get('end_time')).toBe('2026-10-28T00:00:00.000Z');
-        expect(params.get('limit')).toBe('1000');
+        // The trigger-time filters would drop alerts raised before the
+        // window, and exclude_cleared those that cleared inside it.
+        expect(params.has('start_time')).toBe(false);
+        expect(params.has('end_time')).toBe(false);
+        expect(params.has('exclude_cleared')).toBe(false);
     });
 });
 
@@ -405,45 +384,46 @@ describe('useAnomalyComparison', () => {
         expect(result.current.alertsCompleteFromMs).toBe(Date.parse('2026-10-28T11:00:00Z'));
     });
 
-    it('adds alerts still open from before the window, once each', async () => {
-        const open = {
+    it('fetches the alerts active in the window with a single request', async () => {
+        const overlapping = {
             alerts: [
                 { id: 1, triggered_at: '2026-10-28T11:00:00Z' },
-                { id: 9, triggered_at: '2026-10-27T09:00:00Z', status: 'active' },
+                // Raised before the window and cleared inside it.
+                {
+                    id: 8,
+                    triggered_at: '2026-10-27T09:00:00Z',
+                    cleared_at: '2026-10-28T11:30:00Z',
+                    status: 'cleared',
+                },
+                // Raised before the window and still open.
+                { id: 9, triggered_at: '2026-10-27T08:00:00Z', status: 'active' },
             ],
-            total: 5000,
+            total: 3,
         };
-        mockApiGet.mockImplementation((url: string) => {
-            if (url.startsWith('/api/v1/metrics/anomaly-comparison')) {
-                return Promise.resolve(RESPONSE);
-            }
-            return Promise.resolve(url.includes('exclude_cleared=true') ? open : ALERTS);
+        routeApi({
+            '/api/v1/metrics/anomaly-comparison': () => Promise.resolve(RESPONSE),
+            '/api/v1/alerts': () => Promise.resolve(overlapping),
         });
         const { result } = renderHook(() => useAnomalyComparison(QUERY));
         await waitFor(() => {
             expect(result.current.loading).toBe(false);
         });
-        expect(result.current.alerts.map((a) => a.id)).toEqual([1, 9]);
-        // Completeness follows the in-window list alone.
+        expect(result.current.alerts.map((a) => a.id)).toEqual([1, 8, 9]);
         expect(result.current.alertsCompleteFromMs).toBeNull();
         expect(result.current.alertsError).toBeNull();
-    });
 
-    it('reports a failure to load the open alerts but keeps the window alerts', async () => {
-        mockApiGet.mockImplementation((url: string) => {
-            if (url.startsWith('/api/v1/metrics/anomaly-comparison')) {
-                return Promise.resolve(RESPONSE);
-            }
-            return url.includes('exclude_cleared=true')
-                ? Promise.reject(new Error('open alerts failed'))
-                : Promise.resolve(ALERTS);
-        });
-        const { result } = renderHook(() => useAnomalyComparison(QUERY));
-        await waitFor(() => {
-            expect(result.current.loading).toBe(false);
-        });
-        expect(result.current.alerts).toEqual(ALERTS.alerts);
-        expect(result.current.alertsError).toBe('open alerts failed');
+        const alertUrls = mockApiGet.mock.calls
+            .map(([url]) => url as string)
+            .filter((url) => url.startsWith('/api/v1/alerts'));
+        expect(alertUrls).toHaveLength(1);
+        const params = new URL(alertUrls[0], 'http://x').searchParams;
+        expect(params.get('connection_id')).toBe('7');
+        expect(params.get('active_start')).toBe(
+            new Date(result.current.window?.startMs ?? 0).toISOString()
+        );
+        expect(params.get('active_end')).toBe(
+            new Date(result.current.window?.endMs ?? 0).toISOString()
+        );
     });
 
     it('still charts the comparison when the alerts fail', async () => {
@@ -552,7 +532,7 @@ describe('useAnomalyComparison', () => {
         expect(result.current.loading).toBe(false);
         expect(result.current.data).toEqual(RESPONSE);
         await waitFor(() => {
-            expect(mockApiGet).toHaveBeenCalledTimes(6);
+            expect(mockApiGet).toHaveBeenCalledTimes(4);
         });
     });
 });

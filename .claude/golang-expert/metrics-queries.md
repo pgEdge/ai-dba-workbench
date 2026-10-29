@@ -77,6 +77,59 @@ columns read back as `json` there: `->`, `->>` and `::text`/`::jsonb`
 casts work, but `?`, `@>`, `jsonb_*` functions, `=`, `ORDER BY`,
 `min`/`max` on the raw column do not.
 
+### Writing metrics SQL that runs on ColdFront
+
+Every query that reads a ColdFront view is planned and run by DuckDB
+(pg_duckdb), the whole statement included, heap tables and other UNION
+branches too, but PostgreSQL has already described the result columns.
+Verified against a live ColdFront datastore (main 16bdab9, pg_duckdb
+1.1.0, PG 18.6); the helpers are in `internal/metrics/portable_sql.go`:
+
+- **Result types must agree.** A cast helps only when it changes the
+  PostgreSQL type; casting to the type PostgreSQL already infers is a
+  no-op and the bytes stay wrong. `avg()` and `EXTRACT(EPOCH ...)` are
+  numeric to PostgreSQL, DOUBLE to DuckDB (pgx: "numeric incomplete"):
+  cast to `::float8` (`EpochSeconds`). `sum()` of an `integer` column is
+  bigint to PostgreSQL, HUGEINT to DuckDB ("invalid length for int8";
+  `sum(x)::bigint` does not fix it): sum `x::bigint`. Integer and
+  numeric `/` are DOUBLE in DuckDB, silently (`bigint / int` scans as a
+  garbage int8): divide `x::float8 / y`, and use `floor(...)::BIGINT`
+  for an integer quotient (`alertClearedDurationSQL`). DuckDB has no
+  `sum(interval)` and no `div()`/`make_interval()`. `AggregateExpr` and
+  `GetAggSelectCols` apply these rules. `sum(bigint)` (numeric),
+  `count`, `min`/`max`, `(array_agg(...))[1]`, `round(float8 ...)` and
+  float arithmetic are fine.
+- **No array parameters.** `= ANY($1)`, `= ANY($1::int[])`,
+  `unnest($1)` and even a literal `'{2,3}'::int[]` fail ("Could not
+  convert DuckDB type: UNKNOWN"), as does an IN list of more than one
+  integer parameter, typed or not, and an IN list of untyped text
+  parameters. Bind integers as one text parameter with `IntListArg` and
+  compare with `col = ANY(IntArrayExpr("$n"))`; text lists as
+  `IN ($n::text, ...)`; query_datastore's in/not in filters are chains
+  of `=`/`<>` comparisons. A single parameter compared with a column
+  works untyped.
+- **No arithmetic on parameters.** `$1::timestamptz - INTERVAL '1 hour'`,
+  `now() - $1::interval`, `INTERVAL '1 day' * $1` and a bare
+  `$1::interval` in a select list fail. Compute bounds in Go and bind
+  them. `date_bin($1::interval, col, $2)`,
+  `generate_series($1::timestamptz, $2::timestamptz, $3::interval)`,
+  `col + $1::interval`, `NOW() - INTERVAL '5 minutes'` (no parameter)
+  and `(SELECT max(...)) - INTERVAL '1 hour'` work.
+- **Types read back differently.** `inet` is text, so write
+  `host(client_addr::inet)`; text is `character varying`, oid is
+  bigint, jsonb is json.
+- **No functions.** DuckDB execution is refused inside a PL/pgSQL or SQL
+  function; the server defines none that read metrics.
+
+`TestMetricsSQLAvoidsColdFrontShapes` (`coldfront_sql_guard_test.go`)
+scans every server unit that reads `metrics.*` for an array parameter,
+an untyped or integer IN list, parameter arithmetic, an uncast `avg` or
+`EXTRACT`, an untyped run-time IN list and a bare `host(client_addr)`.
+It cannot see column types, so an integer `sum` or `/` is left to
+review, and it does not see SQL assembled in a function that names no
+metrics relation itself (the timeline's connection filter, the
+datastore builder's visible set): keep those on the helpers by hand.
+
 Every reader must therefore filter `deleted_at IS NULL`: the server's
 connection, cluster, topology, estate and tool queries, the collector's
 connection loading, and the alerter's queries and metric registry all
@@ -595,8 +648,9 @@ between the last sample before the window start and it would be lost: a
 inner sample query therefore widens its lower bound with
 `metricQueryParts.lookbackWhere`, which replaces `collected_at >= $3` with
 `collected_at >= COALESCE((SELECT MAX(collected_at) FROM metrics.<probe>
-WHERE connection_id = $2 AND collected_at < $3 AND collected_at >= $3 -
-<lookbackBound> AND <same dimension filters>), $3)`, and the CTE's middle
+WHERE connection_id = $2 AND collected_at < $3 AND collected_at >= $N
+AND <same dimension filters>), $3)`, where `$N` is the window start less
+`lookbackBound`, and the CTE's middle
 `WHERE collected_at >= $3` then drops the borrowed sample again so it never
 becomes a bucket of its own. The `COALESCE` fallback means a window with
 no earlier sample within reach behaves exactly as it did before the
@@ -604,10 +658,13 @@ lookback existed. The collector stamps every entity of one probe run
 with the same `collected_at`, which is why one borrowed timestamp serves
 every partition.
 
-The search is bounded below by the `lookbackBound` constant,
-`GREATEST($1::interval * 3, INTERVAL '30 minutes')`: the larger of three
-bucket widths and a 30-minute floor, expressed in the query's own bucket
-argument so it adds nothing to the argument list. The bound exists
+The search is bounded below by `lookbackBound(bucketWidth)`: the larger
+of three bucket widths (truncated to whole seconds, as `$1` is rendered)
+and a 30-minute floor. It is computed in Go and bound as the last
+argument, after the gap bound, because a ColdFront datastore cannot plan
+arithmetic on a bound timestamp (issue #755); it was once the SQL
+expression `$3 - GREATEST($1::interval * 3, INTERVAL '30 minutes')`. The
+bound exists
 because a predecessor left behind by a long collection gap inflates the
 first bucket: a collector down for three days followed by a 1h window on
 `xact_commit_delta` reported three days of commits in the first bucket

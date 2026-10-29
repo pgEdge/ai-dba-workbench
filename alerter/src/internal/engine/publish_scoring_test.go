@@ -312,3 +312,86 @@ func TestRunPublishesScoringSettingsAtStart_Integration(t *testing.T) {
 		t.Errorf("published MaxZScore = %v, want 7.5", got.MaxZScore)
 	}
 }
+
+// TestRunRetriesFailedScoringPublish_Integration verifies Run keeps
+// retrying when its first publication fails, so settings are published
+// once the datastore recovers.
+func TestRunRetriesFailedScoringPublish_Integration(t *testing.T) {
+	ds, _, cleanup := newEngineIntegrationTestEnv(t)
+	defer cleanup()
+
+	rec := &scoringRecorder{err: errors.New("column tier1_scoring does not exist")}
+	tick := make(chan time.Time)
+	cfg := config.NewConfig()
+	cfg.Anomaly.Enabled = false
+	e := &Engine{config: cfg, datastore: ds, publishScoring: rec.publish,
+		scoringRetryTick: tick}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := e.Run(ctx); err != nil {
+			t.Errorf("Run returned %v", err)
+		}
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Error("Run did not return after its context was canceled")
+		}
+	}()
+
+	waitFor(t, "the first publication", func() bool { return rec.count() == 1 })
+	rec.setErr(nil)
+	sendTick(t, tick)
+	waitFor(t, "the retry loop to stop", func() bool { return e.retryLoops() == 0 })
+	if n := rec.count(); n != 2 {
+		t.Errorf("published %d times, want 2 (failed start, successful retry)", n)
+	}
+}
+
+// TestReloadConfigRetryDependsOnRunContext verifies a failed reload is
+// retried once Run has set the engine context, even after an earlier
+// success, and that before Run no retry loop is started.
+func TestReloadConfigRetryDependsOnRunContext(t *testing.T) {
+	t.Run("after Run starts", func(t *testing.T) {
+		rec := &scoringRecorder{}
+		tick := make(chan time.Time)
+		e := &Engine{config: configWithMaxZ(5), publishScoring: rec.publish,
+			scoringRetryTick: tick}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		e.ctx = ctx
+
+		e.publishScoringSettings(ctx, true)
+		if loops := e.retryLoops(); loops != 0 {
+			t.Fatalf("%d retry loops after a successful start, want 0", loops)
+		}
+		rec.setErr(errors.New("datastore down"))
+		e.ReloadConfig(configWithMaxZ(9))
+		if loops := e.retryLoops(); loops != 1 {
+			t.Fatalf("%d retry loops after a failed reload, want 1", loops)
+		}
+		rec.setErr(nil)
+		sendTick(t, tick)
+		waitFor(t, "the retry loop to stop", func() bool { return e.retryLoops() == 0 })
+		if got := rec.last().MaxZScore; got != 9 {
+			t.Errorf("retry published MaxZScore = %v, want 9", got)
+		}
+	})
+
+	t.Run("before Run", func(t *testing.T) {
+		rec := &scoringRecorder{err: errors.New("datastore down")}
+		tick := make(chan time.Time)
+		e := &Engine{config: configWithMaxZ(5), publishScoring: rec.publish,
+			scoringRetryTick: tick}
+		e.ReloadConfig(configWithMaxZ(9))
+		if loops := e.retryLoops(); loops != 0 {
+			t.Errorf("%d retry loops before Run, want 0", loops)
+		}
+		assertNoRetryLoop(t, tick)
+	})
+}

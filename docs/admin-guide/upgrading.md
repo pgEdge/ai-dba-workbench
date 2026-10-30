@@ -22,9 +22,9 @@ as follows on each platform:
   packages pre-depend on the check package at the same or a later
   version, and the check runs when the check package is configured;
   `dpkg` does not unpack the other packages until the check succeeds.
-  Since a later version satisfies the dependency, a downgrade leaves
-  the newer check package installed, and the check runs with the newer
-  server binary rather than the one being installed.
+  The installed check package already satisfies the dependency of an
+  older release, so a downgrade is not checked; see
+  [Checking Before a Downgrade](#checking-before-a-downgrade).
 - On RHEL-compatible systems, the server, collector, alerter and client
   packages require the check package at the same version, and each runs
   the check before `rpm` unpacks any of their files; a failed check
@@ -80,6 +80,28 @@ configuration with the new server before you retry the upgrade:
 ```bash
 cd /var/lib/pgedge/ai-dba-server
 sudo -u pgedge -H /usr/libexec/pgedge-ai-dba-upgrade-check/ai-dba-server \
+    -check-config -config /etc/pgedge/ai-dba-server.yaml
+```
+
+## Checking Before a Downgrade
+
+On Debian and Ubuntu, the packages do not check the configuration
+when you install an older release; `dpkg` replaces the installed
+server without running the older server against the configuration.
+Check the configuration with the older server by hand before you
+downgrade, using a release that includes the `-check-config` flag.
+
+In the following example, the commands extract the older server from
+its package and check the installed configuration with it; replace
+`VERSION` with the release you are downgrading to, as listed by
+`apt list -a pgedge-ai-dba-server`:
+
+```bash
+mkdir /tmp/ai-dba-downgrade && cd /tmp/ai-dba-downgrade
+apt-get download pgedge-ai-dba-server=VERSION
+dpkg-deb -x pgedge-ai-dba-server_*.deb root
+cd /var/lib/pgedge/ai-dba-server
+sudo -u pgedge -H /tmp/ai-dba-downgrade/root/usr/bin/ai-dba-server \
     -check-config -config /etc/pgedge/ai-dba-server.yaml
 ```
 

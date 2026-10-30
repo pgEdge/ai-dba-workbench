@@ -60,6 +60,7 @@
   - [Alert Rules & Thresholds](docs/admin-guide/alert-rules.md)
   - [Notification Channels](docs/admin-guide/notification-channels.md)
   - [Probe Configuration](docs/admin-guide/probes.md)
+  - [Upgrading the Workbench](docs/admin-guide/upgrading.md)
   - REST API:
     - [API Reference](docs/admin-guide/api/reference.md)
     - [API Browser](docs/admin-guide/api/browser.md)

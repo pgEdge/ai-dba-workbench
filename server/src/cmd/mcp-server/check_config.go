@@ -63,12 +63,14 @@ func loadStartupConfig(configPath string, cliFlags config.CLIFlags) (*config.Con
 // are replaced (issue #784). The error it returns is the one start-up
 // would have logged.
 //
-// It deliberately does not read the server secret. The secret's
-// presence is a property of the host, not of the configuration, so an
-// upgrade cannot change it; and the collector and alerter packages
-// depend on the server package, which ships the configuration file, so
-// a host that runs only the collector has a server configuration but no
-// server secret, and checking for one would refuse its upgrades.
+// It deliberately leaves out start-up's checks of the host: the server
+// secret, the existence of the TLS certificate and key files, and the
+// presence of a database section. The collector and alerter packages
+// depend on the server package, which ships the configuration file, so a
+// host that runs only the collector has a server configuration but none
+// of what the server needs to run there, and checking for it would
+// refuse that host's upgrades. Those checks also concern the host rather than the
+// configuration, so an upgrade does not change their outcome.
 func runCheckConfig(configPath string, cliFlags config.CLIFlags, w io.Writer) error {
 	configPathForLoad, err := resolveConfigLoadPath(configPath, cliFlags.ConfigFileSet, w)
 	if err != nil {

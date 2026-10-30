@@ -15,17 +15,20 @@ place and keeps running.
 The `pgedge-ai-dba-upgrade-check` package performs the check. The
 package holds a copy of the new `ai-dba-server` binary under
 `/usr/libexec/pgedge-ai-dba-upgrade-check/`, and every other package of
-the suite requires the package at the same version before installation.
-The check behaves as follows on each platform:
+the suite requires the package before installation. The check behaves
+as follows on each platform:
 
 - On Debian and Ubuntu, the server, collector, alerter and client
-  packages pre-depend on the check package, and the check runs when the
-  check package is configured; `dpkg` does not unpack the other
-  packages until the check succeeds.
+  packages pre-depend on the check package at the same or a later
+  version, and the check runs when the check package is configured;
+  `dpkg` does not unpack the other packages until the check succeeds.
+  Since a later version satisfies the dependency, a downgrade leaves
+  the newer check package installed, and the check runs with the newer
+  server binary rather than the one being installed.
 - On RHEL-compatible systems, the server, collector, alerter and client
-  packages each run the check before `rpm` unpacks any of their files;
-  a failed check stops `rpm` installing the new package and removing
-  the old one.
+  packages require the check package at the same version, and each runs
+  the check before `rpm` unpacks any of their files; a failed check
+  stops `rpm` installing the new package and removing the old one.
 
 The check reads `/etc/pgedge/ai-dba-server.yaml` and runs as the
 `pgedge` account from the server's working directory,
@@ -45,12 +48,19 @@ pgedge-ai-dba-server` for that first upgrade instead.
 
 Run the server with the `-check-config` flag to validate a
 configuration file without starting the server. The flag loads the
-file and the datastore password file and applies the configuration
-validation that start-up applies, but does not connect to the datastore
-or the identity provider, and does not open a listening socket. The
-command prints `Configuration OK` and exits with status zero when the
-configuration is valid; otherwise the command prints the error the
-server would report at start-up and exits with status one.
+file and the datastore password file and applies the validation that
+start-up applies to the configuration, but does not connect to the
+datastore or the identity provider, and does not open a listening
+socket. The command prints `Configuration OK` and exits with status
+zero when the configuration is valid; otherwise the command prints the
+error the server would report at start-up and exits with status one.
+
+The check covers the configuration file rather than the host. The
+check does not read the server secret, does not confirm that the TLS
+certificate and key files exist, and accepts a configuration with no
+`database` section. The server configuration file is also installed on
+hosts that run only the collector or the alerter, so a check of what
+the server needs on the host would refuse upgrades on those hosts.
 
 Run the check as the `pgedge` account from the server's working
 directory, so that relative paths and file permissions resolve as they
@@ -93,7 +103,8 @@ Use the following steps to complete the upgrade:
 On Debian and Ubuntu, the check package is left unconfigured until the
 check succeeds. Each later `apt` or `dpkg` run retries the check and
 reports an error while the configuration remains invalid, although
-unrelated packages still install. To defer the upgrade instead of
+unrelated packages still install. Once the configuration is corrected,
+`apt upgrade` completes the upgrade. To defer the upgrade instead of
 fixing the configuration, remove the check package with
 `sudo apt-get remove pgedge-ai-dba-upgrade-check`. Removal is
 possible only when the installed release predates the check package;
@@ -105,6 +116,21 @@ in the same way, and keep failing on each run until the configuration
 is corrected. The installed version continues to run throughout, but
 monitor the logs of the unattended upgrade tool so that a refused
 upgrade does not go unnoticed.
+
+## Removing the Workbench
+
+On RHEL-compatible systems, removing the server, collector, alerter
+and client packages with `dnf remove` leaves the check package
+installed, and `dnf autoremove` keeps the package, because the other
+packages require the check package only during installation. Remove the
+check package explicitly once the other packages are gone.
+
+In the following example, the command removes the check package on a
+RHEL-compatible system:
+
+```bash
+sudo dnf remove pgedge-ai-dba-upgrade-check
+```
 
 ## Resolving the Trusted Proxy Error
 

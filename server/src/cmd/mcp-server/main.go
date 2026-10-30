@@ -111,9 +111,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Handle -check-config: validate the configuration exactly as
-	// start-up would, without opening the auth store or any database,
-	// and exit with the error start-up would have logged.
+	// Handle -check-config: load and validate the configuration file as
+	// start-up does, without opening the auth store or any database, and
+	// exit with the error start-up would have logged. Start-up's checks
+	// of the host (TLS certificate files, the database section, the
+	// server secret) are not part of it; see runCheckConfig.
 	if flags.CheckConfig {
 		if err := runCheckConfig(configPath, cliFlags, os.Stderr); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)

@@ -13,12 +13,13 @@
 #
 # This script and the copy of the new ai-dba-server beside it are the
 # whole of the pgedge-ai-dba-upgrade-check package. Every other package
-# of the suite pre-depends on that package at the same version, so the
-# package manager installs it before it touches any of them: the Debian
-# postinst of this package runs this script, and a failure leaves the
-# package unconfigured, which stops dpkg unpacking anything that
-# pre-depends on it; the RPM %pre of each other package runs it, and a
-# failure stops rpm installing that package and erasing the old one.
+# of the suite requires that package at its own version (on Debian, at
+# that version or later), so the package manager installs it before it
+# touches any of them: the Debian postinst of this package runs this
+# script, and a failure leaves the package unconfigured, which stops
+# dpkg unpacking anything that pre-depends on it; the RPM %pre of each
+# other package runs it, and a failure stops rpm installing that package
+# and erasing the old one.
 # Either way the installed version stays in place and keeps running.
 #
 # A missing configuration file means a fresh install, or one that has

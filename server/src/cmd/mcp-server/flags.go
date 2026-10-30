@@ -27,9 +27,9 @@ type Flags struct {
 	TraceFile  string
 	OpenAPI    string
 	Debug      bool
-	// CheckConfig loads and validates the configuration as start-up
-	// does, then exits without starting the server. The packages run it
-	// before an upgrade replaces any files (issue #784).
+	// CheckConfig loads and validates the configuration file, then
+	// exits without starting the server. The packages run it before an
+	// upgrade replaces any files (issue #784).
 	CheckConfig bool
 
 	// TLS settings
@@ -163,7 +163,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.StringVar(&f.TraceFile, "trace-file", "", "Path to trace file for logging MCP requests/responses")
 	flag.StringVar(&f.OpenAPI, "openapi", "", "Write OpenAPI specification to file and exit")
 	flag.BoolVar(&f.CheckConfig, "check-config", false,
-		"Load and validate the configuration as start-up does, then exit without starting the server")
+		"Load and validate the configuration file, then exit without starting the server")
 
 	// Database connection flags
 	flag.StringVar(&f.DBHost, "db-host", "", "Database host")

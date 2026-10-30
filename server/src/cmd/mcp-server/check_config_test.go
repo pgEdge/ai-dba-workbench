@@ -11,7 +11,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"flag"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -174,6 +177,59 @@ func TestRunCheckConfigMissingFile(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "using defaults") || !strings.Contains(out.String(), "Configuration OK") {
 		t.Fatalf("unexpected output %q", out.String())
+	}
+}
+
+// checkConfigMainEnv names the environment variable that makes the test
+// binary, re-executed by TestMainCheckConfigExitStatus, run main() with
+// -check-config on the file it names instead of running the tests.
+const checkConfigMainEnv = "AI_DBA_TEST_CHECK_CONFIG_MAIN"
+
+// TestMainCheckConfigExitStatus runs main() with -check-config in a
+// child process and checks its exit status, which the Debian postinst
+// and RPM %pre rely on to refuse an upgrade: zero for a configuration
+// start-up accepts, one for one it refuses.
+func TestMainCheckConfigExitStatus(t *testing.T) {
+	if path := os.Getenv(checkConfigMainEnv); path != "" {
+		flag.CommandLine = flag.NewFlagSet("ai-dba-server", flag.ExitOnError)
+		os.Args = []string{"ai-dba-server", "-check-config", "-config", path}
+		main()
+		// main returns after a successful check; anything after that
+		// would start the server, so exit here as the real binary does.
+		os.Exit(0)
+	}
+
+	tests := []struct {
+		name     string
+		body     string
+		wantCode int
+		wantOut  string
+	}{
+		{name: "valid", body: "http:\n  address: \":8443\"\n", wantCode: 0, wantOut: "Configuration OK"},
+		{name: "refused", body: unprefixedCookieConfig, wantCode: 1, wantOut: "allow_unprefixed_state_cookie"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeCheckConfig(t, tt.body)
+			//nolint:gosec // G204: re-executes this test binary with a fixed test filter.
+			cmd := exec.Command(os.Args[0], "-test.run=^TestMainCheckConfigExitStatus$")
+			cmd.Env = append(os.Environ(), checkConfigMainEnv+"="+path)
+			out, err := cmd.CombinedOutput()
+
+			code := 0
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				code = exitErr.ExitCode()
+			} else if err != nil {
+				t.Fatalf("running the check: %v", err)
+			}
+			if code != tt.wantCode {
+				t.Fatalf("exit status %d, want %d; output:\n%s", code, tt.wantCode, out)
+			}
+			if !strings.Contains(string(out), tt.wantOut) {
+				t.Fatalf("output lacks %q:\n%s", tt.wantOut, out)
+			}
+		})
 	}
 }
 

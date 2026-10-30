@@ -16,7 +16,7 @@ Description: pgEdge AI DBA Workbench upgrade configuration check
 
 Package: pgedge-ai-dba-server
 Architecture: any
-Pre-Depends: pgedge-ai-dba-upgrade-check (= ${binary:Version})
+Pre-Depends: pgedge-ai-dba-upgrade-check (>= ${binary:Version})
 Depends: ${shlibs:Depends}, ${misc:Depends}, openssl
 Description: pgEdge AI DBA Server
  Core AI DBA server providing REST API and AI-powered analysis for
@@ -24,7 +24,7 @@ Description: pgEdge AI DBA Server
 
 Package: pgedge-ai-dba-collector
 Architecture: any
-Pre-Depends: pgedge-ai-dba-upgrade-check (= ${binary:Version})
+Pre-Depends: pgedge-ai-dba-upgrade-check (>= ${binary:Version})
 Depends: ${shlibs:Depends}, ${misc:Depends}, pgedge-ai-dba-server (= ${binary:Version}), openssl
 Description: pgEdge AI DBA Collector
  Metrics and data collector agent for the pgEdge AI DBA Workbench.
@@ -32,7 +32,7 @@ Description: pgEdge AI DBA Collector
 
 Package: pgedge-ai-dba-alerter
 Architecture: any
-Pre-Depends: pgedge-ai-dba-upgrade-check (= ${binary:Version})
+Pre-Depends: pgedge-ai-dba-upgrade-check (>= ${binary:Version})
 Depends: ${shlibs:Depends}, ${misc:Depends}, pgedge-ai-dba-server (= ${binary:Version})
 Description: pgEdge AI DBA Alerter
  Alerting agent for the pgEdge AI DBA Workbench. Monitors PostgreSQL
@@ -40,7 +40,7 @@ Description: pgEdge AI DBA Alerter
 
 Package: pgedge-ai-dba-client
 Architecture: all
-Pre-Depends: pgedge-ai-dba-upgrade-check (= ${source:Version})
+Pre-Depends: pgedge-ai-dba-upgrade-check (>= ${source:Version})
 Depends: ${misc:Depends}, pgedge-ai-dba-server (= ${source:Version}), nginx
 Description: pgEdge AI DBA Web Client
  React-based web interface for the pgEdge AI DBA Workbench. Provides

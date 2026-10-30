@@ -15,7 +15,7 @@ project adheres to
 - Refuse a Debian or RPM package upgrade whose installed server
   configuration the new server would refuse at start-up (#784). A new
   `pgedge-ai-dba-upgrade-check` package, which every other package of
-  the suite requires at the same version, checks
+  the suite requires before installation, checks
   `/etc/pgedge/ai-dba-server.yaml` with the new server before any
   installed files are replaced; on failure the upgrade stops with the
   server's error, and the installed version stays in place and keeps

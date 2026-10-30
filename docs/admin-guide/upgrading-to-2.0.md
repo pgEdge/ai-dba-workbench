@@ -116,6 +116,29 @@ to stay within the scope. See
 [Managing Tokens](managing-users-and-permissions/tokens.md) for the
 scope commands.
 
+### Connection Access Grants
+
+Release 2.0.0 decides connection access with one rule, under which
+only a grant that names a connection restricts the connection. This
+change can widen access on upgrade:
+
+- An `All Connections` grant no longer restricts every connection; in
+  release 1.0.0, a single such grant to any group refused every user
+  outside the group every connection.
+- An `All Connections` grant at `read` no longer caps the members of
+  the group, so a shared connection that no grant names stays open at
+  `read_write` to every account, subject only to an API token's own
+  scope.
+- The owner of a connection always holds `read_write` access to the
+  connection, whether or not a group restricts the connection.
+
+If you used a read-only `All Connections` grant to keep a group
+read-only, the members of the group gain write access when you
+upgrade. Before you upgrade, grant the group `read` on each such
+connection by name. See the
+[permission model](managing-users-and-permissions/permission_model.md)
+for the access rules.
+
 ### MCP Tool Changes
 
 Release 2.0.0 changes two MCP tools in ways that break an integration
@@ -159,6 +182,35 @@ Release 2.0.0 retires the `table_bloat_ratio` alert rule. The upgrade
 disables the rule, stops collecting the rule's metric and clears any
 active alert the rule raised. Use the `dead_tuple_ratio` rule to
 monitor table maintenance instead.
+
+### Changed Defaults
+
+Release 2.0.0 changes the following defaults, which apply to an
+installation that leaves the setting unset; to keep a 1.0.0 value, set
+the property explicitly:
+
+- The server's default Anthropic model, `llm.model`, changes from
+  `claude-sonnet-4-5` to `claude-sonnet-5`.
+- The alerter's default reasoning models change from `gpt-4o-mini` to
+  `gpt-6-luna` for OpenAI, from `claude-3-5-haiku-20241022` to
+  `claude-haiku-4-5` for Anthropic, and from `gemini-2.5-flash` to
+  `gemini-3.8-flash` for Gemini.
+- The server's datastore connection pool, `database.pool_max_conns`,
+  grows from 4 to 20 connections.
+- The new `database.statement_timeout` property limits each server
+  query on the datastore to 30 seconds by default.
+- The alerter's `baselines.lookback_days` property rises from 7 to 15
+  days; if you set the property explicitly, raise the value to at least
+  15.
+- A threshold alert is raised only after the threshold is breached on
+  2 consecutive samples, and cleared only after 3 consecutive samples
+  within the threshold; set `threshold.trigger_count` and
+  `threshold.clear_count` to `1` to restore the 1.0.0 behaviour.
+- Schema migration 21 retunes the built-in `cache_hit_ratio_low`
+  rule from a warning below 80 percent to information below 50
+  percent, and the `dead_tuple_ratio` rule from 20 percent to 50
+  percent; the migration leaves a default you changed, and every
+  override, unchanged.
 
 ### Changes That Do Not Affect an Upgrade from 1.0.0
 
@@ -387,23 +439,39 @@ a restart or a pull does not upgrade the installation unprepared.
     ```
 
 5. Update the clone to the 2.0.0 release, so that the Compose file and
-   the files under `docker/config` match release 2.0.0. If you edited
-   any tracked file, such as `docker/config/ai-dba-server.yaml`, save
-   your changes first and reapply them after the checkout:
+   the files under `docker/config` match release 2.0.0. Git refuses to
+   check out the release while a tracked file has local changes, and
+   the 1.0.0 Docker guide edits `docker/config/ai-dba-server.yaml` to
+   set the datastore password. Copy the file aside, discard the local
+   changes, and check out the release:
 
     ```bash
+    cp docker/config/ai-dba-server.yaml ~/ai-dba-server.yaml.1.0.0
+    git checkout -- docker/config
     git fetch --tags
     git checkout v2.0.0
     ```
 
-6. Pull the 2.0.0 images:
+6. Reapply your edits to the 2.0.0 copy of
+   `docker/config/ai-dba-server.yaml`, rather than copying the 1.0.0
+   file over the 2.0.0 file. The 1.0.0 file sets an `http.auth.enabled`
+   key that no release reads; the 2.0.0 file replaces the key with
+   `http.auth.local.enabled`, which controls local login and defaults
+   to `true`. The following command shows the differences between the
+   two files:
+
+    ```bash
+    diff ~/ai-dba-server.yaml.1.0.0 docker/config/ai-dba-server.yaml
+    ```
+
+7. Pull the 2.0.0 images:
 
     ```bash
     VERSION=2.0.0 docker compose \
         -f examples/docker-compose.production.yml pull
     ```
 
-7. Start the collector, and wait for the collector to finish migrating
+8. Start the collector, and wait for the collector to finish migrating
    the schema as described in
    [Confirming the Schema Migration](#confirming-the-schema-migration):
 
@@ -412,15 +480,15 @@ a restart or a pull does not upgrade the installation unprepared.
         -f examples/docker-compose.production.yml up -d collector
     ```
 
-8. Start the remaining services with the 2.0.0 images:
+9. Start the remaining services with the 2.0.0 images:
 
     ```bash
     VERSION=2.0.0 docker compose \
         -f examples/docker-compose.production.yml up -d
     ```
 
-9. Verify the upgrade as described in
-   [Verifying the Upgrade](#verifying-the-upgrade).
+10. Verify the upgrade as described in
+    [Verifying the Upgrade](#verifying-the-upgrade).
 
 ## Upgrading an RPM Installation
 
@@ -455,8 +523,12 @@ stay stopped until you start them.
     The upgrade installs the new `pgedge-ai-dba-upgrade-check` package,
     which checks the installed server configuration with the 2.0.0
     server before the other packages replace any files. If the check
-    fails, the upgrade stops and release 1.0.0 stays installed; see
+    fails, the upgrade stops and release 1.0.0 stays installed but
+    stopped; start the collector, the server and the alerter again, in
+    that order, whilst you fix the configuration as described in
     [Recovering from a Refused Upgrade](upgrading.md#recovering-from-a-refused-upgrade).
+    Stop the services again before you rerun the upgrade, so that the
+    collector migrates the schema first.
 
 4. Look for configuration files that the upgrade saved with the
    `.rpmnew` suffix. The packages keep a configuration file you edited,
@@ -522,8 +594,15 @@ stay stopped until you start them.
     The `pgedge-ai-dba-upgrade-check` package checks the installed
     server configuration with the 2.0.0 server before the other
     packages replace any files. If the check fails, the upgrade stops
-    and release 1.0.0 stays installed; see
-    [Recovering from a Refused Upgrade](upgrading.md#recovering-from-a-refused-upgrade).
+    and release 1.0.0 stays installed but stopped; start the collector,
+    the server and the alerter again, in that order, whilst you fix the
+    configuration. The check package stays unconfigured until the check
+    succeeds, and each later `apt` or `dpkg` run retries the check; once
+    the configuration is corrected, `apt upgrade` completes the upgrade.
+    Stop the services again before you run `apt upgrade`, so that the
+    collector migrates the schema first. See
+    [Recovering from a Refused Upgrade](upgrading.md#recovering-from-a-refused-upgrade)
+    for the recovery steps.
 
 4. Answer any prompt about a configuration file you edited. If you
    keep your version of the file, `dpkg` saves the 2.0.0 default beside
@@ -709,17 +788,38 @@ order:
 
 - For a binary installation, copy the binaries and the client back
   from `/opt/ai-workbench-1.0.0`.
-- For a Docker installation, check out the `v1.0.0` tag, reapply any
-  local changes to tracked files, and start the services with
-  `VERSION=1.0.0`.
-- For an RPM installation, list the available versions with
-  `dnf --showduplicates list 'pgedge-ai-dba-*'`, and downgrade the
-  server, collector, alerter and client packages to the 1.0.0 version
-  with `dnf downgrade`.
-- For a Debian installation, list the available versions with
-  `apt-cache policy pgedge-ai-dba-server`, and install the 1.0.0
-  version of the server, collector, alerter and client packages with
-  `apt install`, adding the `--allow-downgrades` option.
+- For a Docker installation, copy your edited configuration files
+  aside, discard the local changes with `git checkout -- docker/config`,
+  check out the `v1.0.0` tag, reapply your edits, and start the
+  services with `VERSION=1.0.0`.
+- For an RPM or Debian installation, downgrade the packages to the
+  1.0.0 version as the following examples show.
+
+Name the 1.0.0 version explicitly when you downgrade a package; without
+a version, `dnf downgrade` moves to the next lower version, which is
+not 1.0.0 once a later release exists. In the following example, the
+commands list the available versions and downgrade the RPM packages to
+release 1.0.0:
+
+```bash
+dnf --showduplicates list 'pgedge-ai-dba-*'
+sudo dnf downgrade pgedge-ai-dba-server-1.0.0 \
+    pgedge-ai-dba-collector-1.0.0 pgedge-ai-dba-alerter-1.0.0 \
+    pgedge-ai-dba-client-1.0.0
+```
+
+The `apt install` command needs the full package version that
+`apt-cache policy` reports. In the following example, the commands
+list the available versions and install release 1.0.0 with the
+version `1.0.0-1`; replace the version with the one that
+`apt-cache policy` shows:
+
+```bash
+apt-cache policy pgedge-ai-dba-server
+sudo apt install --allow-downgrades \
+    pgedge-ai-dba-server=1.0.0-1 pgedge-ai-dba-collector=1.0.0-1 \
+    pgedge-ai-dba-alerter=1.0.0-1 pgedge-ai-dba-client=1.0.0-1
+```
 
 The 1.0.0 packages do not require the `pgedge-ai-dba-upgrade-check`
 package; after the downgrade, you can remove the package with

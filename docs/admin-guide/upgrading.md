@@ -2,7 +2,10 @@
 
 This page describes how the Debian and RPM packages protect an
 existing installation during an upgrade, and what to do when an upgrade
-is refused because of the installed server configuration.
+is refused because of the installed server configuration. To upgrade
+from release 1.0.0, read [Upgrading to 2.0.0](upgrading-to-2.0.md)
+first; that release contains breaking changes and must be upgraded in
+a fixed order.
 
 ## Checking the Server Configuration Before an Upgrade
 

@@ -116,6 +116,7 @@ nav:
     - Notification Channels: admin-guide/notification-channels.md
     - Probe Configuration: admin-guide/probes.md
     - Upgrading the Workbench: admin-guide/upgrading.md
+    - Upgrading to 2.0.0: admin-guide/upgrading-to-2.0.md
     - REST API:
       - API Reference: admin-guide/api/reference.md
       - API Browser: admin-guide/api/browser.md

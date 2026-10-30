@@ -10,6 +10,13 @@ project adheres to
 
 ## [Unreleased]
 
+!!! warning "Breaking changes"
+
+    This release contains breaking changes, migrates the datastore and
+    the authentication database forward only, and must be upgraded in a
+    fixed order. Before upgrading from release 1.0.0, read
+    [Upgrading to 2.0.0](admin-guide/upgrading-to-2.0.md).
+
 ### Added
 
 - Refuse a Debian or RPM package upgrade whose installed server

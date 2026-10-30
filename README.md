@@ -61,6 +61,7 @@
   - [Notification Channels](docs/admin-guide/notification-channels.md)
   - [Probe Configuration](docs/admin-guide/probes.md)
   - [Upgrading the Workbench](docs/admin-guide/upgrading.md)
+  - [Upgrading to 2.0.0](docs/admin-guide/upgrading-to-2.0.md)
   - REST API:
     - [API Reference](docs/admin-guide/api/reference.md)
     - [API Browser](docs/admin-guide/api/browser.md)

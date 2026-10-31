@@ -87,7 +87,20 @@ failures in rule 3, so reproduce with pgx, never psql.
 5. **No functions over the views.** A PL/pgSQL or SQL function that
    reads a ColdFront view fails ("DuckDB execution is not supported
    inside functions").
-6. **Column types differ.** On the views text columns report as
+6. **No infinite timestamps.** Write no `'infinity'` or `'-infinity'`
+   literal, and no other infinite timestamp, as a range bound. DuckDB
+   may plan a range join that subtracts the bounds and then fails with
+   "Cannot subtract infinite timestamps"; whether it does depends on
+   the plan, so a query can pass many times and fail once (seen once
+   in about 45 hourly baseline runs on PostgreSQL 17). Leave an
+   open end NULL instead and test it in the join:
+   `(m.valid_from IS NULL OR a.collected_at >= m.valid_from) AND
+   (m.valid_to IS NULL OR a.collected_at < m.valid_to)`. The
+   `connection_utilization_percent` historical query bounds its
+   `max_connections` ranges this way, with `valid_from` NULL on a
+   connection's first `pg_settings` row (`LAG` is NULL) and `valid_to`
+   the bare `LEAD`.
+7. **Column types differ.** On the views text columns report as
    `character varying` and oid columns as `bigint`. Scanning
    `database_name` into a Go `string` works either way.
 
@@ -101,9 +114,15 @@ noted:
   every registry entry's latest and historical query (the latter from
   `pkg/anomaly`) and the readers in `queries.go`: an uncast `$n`,
   `ANY(`, `unnest(`, an array cast, `pg_lsn`, `make_interval(`,
-  `host(`, `::inet`, and an `avg(...)` not cast to float in place.
-  `TestColdFrontShapeViolations` pins the rules against the shapes that
-  failed live and the replacements that worked.
+  `host(`, `::inet`, `infinity`, and an `avg(...)` not cast to float
+  in place. `TestColdFrontShapeViolations` pins the rules against the
+  shapes that failed live and the replacements that worked.
+- `TestConnectionUtilizationHistoricalOpenBounds` in
+  `pkg/anomaly/metrics_test.go` (no database) pins the NULL-open
+  `valid_from`/`valid_to` ranges of the `connection_utilization_percent`
+  historical query; the alerter's `TestConnectionUtilizationPercent_*`
+  integration tests check that the first setting covers earlier samples
+  and the last covers later ones.
 - `TestMetricsSQLResultTypes` (database) builds every `metrics.*`
   table from the collector's DDL in `collector/src/database/schema.go`,
   prepares and runs each statement, and fails on a result column

@@ -241,6 +241,13 @@ var ReplicationLagBytesExpr = LSNDiffBytesSQL("r.sent_lsn", "r.replay_lsn")
 //
 // Name and PerDatabase are filled in by Metric.
 var metricDefs = map[string]MetricDef{
+	// The query gives each pg_settings row a validity range
+	// [valid_from, valid_to). The ends are open as NULL, not as
+	// -infinity and infinity: the first row's NULL valid_from covers
+	// every earlier sample and the last row's NULL valid_to every later
+	// one. On ColdFront DuckDB may plan the range join in a way that
+	// subtracts the bounds and fails on infinite timestamps (GitHub
+	// issue #755).
 	"connection_utilization_percent": {
 		ProbeName:      "pg_stat_activity",
 		HistoricalScan: HistoricalScanBasic,
@@ -257,11 +264,9 @@ var metricDefs = map[string]MetricDef{
 			max_conns AS (
 				SELECT ps.connection_id,
 				       ps.setting::float as max_connections,
-				       CASE WHEN LAG(ps.collected_at) OVER w IS NULL
-				            THEN '-infinity'::timestamptz
-				            ELSE ps.collected_at END as valid_from,
-				       COALESCE(LEAD(ps.collected_at) OVER w,
-				                'infinity'::timestamptz) as valid_to
+				       CASE WHEN LAG(ps.collected_at) OVER w IS NOT NULL
+				            THEN ps.collected_at END as valid_from,
+				       LEAD(ps.collected_at) OVER w as valid_to
 				FROM metrics.pg_settings ps
 				JOIN connections c ON c.id = ps.connection_id AND c.deleted_at IS NULL
 				WHERE ps.name = 'max_connections'
@@ -273,8 +278,8 @@ var metricDefs = map[string]MetricDef{
 			FROM activity_counts a
 			JOIN max_conns m
 			  ON a.connection_id = m.connection_id
-			 AND a.collected_at >= m.valid_from
-			 AND a.collected_at < m.valid_to
+			 AND (m.valid_from IS NULL OR a.collected_at >= m.valid_from)
+			 AND (m.valid_to IS NULL OR a.collected_at < m.valid_to)
 			ORDER BY a.connection_id, a.collected_at
 		`,
 	},

@@ -194,3 +194,29 @@ func TestBucketStart(t *testing.T) {
 		})
 	}
 }
+
+// TestConnectionUtilizationHistoricalOpenBounds pins the NULL-open
+// validity ranges of connection_utilization_percent's historical query.
+// It once bounded them with -infinity and infinity, which failed
+// intermittently on ColdFront with "Cannot subtract infinite timestamps"
+// when DuckDB chose a range join plan. GitHub issue #755.
+func TestConnectionUtilizationHistoricalOpenBounds(t *testing.T) {
+	def, ok := Metric("connection_utilization_percent")
+	if !ok {
+		t.Fatal("connection_utilization_percent is not defined")
+	}
+	sql := strings.Join(strings.Fields(def.HistoricalSQL), " ")
+	for _, want := range []string{
+		"CASE WHEN LAG(ps.collected_at) OVER w IS NOT NULL THEN ps.collected_at END as valid_from",
+		"LEAD(ps.collected_at) OVER w as valid_to",
+		"(m.valid_from IS NULL OR a.collected_at >= m.valid_from)",
+		"(m.valid_to IS NULL OR a.collected_at < m.valid_to)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("HistoricalSQL lacks %q:\n%s", want, sql)
+		}
+	}
+	if strings.Contains(strings.ToLower(sql), "infinity") {
+		t.Errorf("HistoricalSQL bounds a range with an infinite timestamp:\n%s", sql)
+	}
+}

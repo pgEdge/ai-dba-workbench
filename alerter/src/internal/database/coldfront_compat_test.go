@@ -83,6 +83,8 @@ var coldFrontForbidden = []struct {
 		"DuckDB has no host(); inet columns are text on ColdFront"},
 	{regexp.MustCompile(`(?i)::\s*inet\b`),
 		"DuckDB has no inet type; inet columns are text on ColdFront"},
+	{regexp.MustCompile(`(?i)\binfinity\b`),
+		"DuckDB may subtract infinite timestamps in a range join and fail; leave open bounds NULL"},
 }
 
 // floatCast matches a cast to double precision directly after a closing
@@ -147,8 +149,8 @@ func matchingParen(s string, open int) int {
 // TestMetricsSQLColdFrontShapes fails when any alerter query that reads
 // metrics.* reintroduces a shape DuckDB cannot run on a ColdFront
 // datastore: an uncast bound parameter, an array parameter or ANY(),
-// an uncast avg(), or a PostgreSQL-only type or function. GitHub issue
-// #755.
+// an uncast avg(), a PostgreSQL-only type or function, or an infinite
+// timestamp literal. GitHub issue #755.
 func TestMetricsSQLColdFrontShapes(t *testing.T) {
 	stmts := metricsSQLStatements()
 	if len(stmts) < len(metricRegistry) {
@@ -179,6 +181,8 @@ func TestColdFrontShapeViolations(t *testing.T) {
 		"make_interval":                `SELECT 1 FROM metrics.t WHERE collected_at > NOW() - make_interval(days => $1::int)`,
 		"host":                         `SELECT host(client_addr) FROM metrics.t`,
 		"inet cast":                    `SELECT client_addr::inet FROM metrics.t`,
+		"infinite upper bound":         `SELECT COALESCE(LEAD(collected_at) OVER w, 'infinity'::timestamptz) FROM metrics.t`,
+		"infinite lower bound":         `SELECT '-infinity'::timestamptz FROM metrics.t`,
 	}
 	for name, sql := range bad {
 		if len(coldFrontShapeViolations(sql)) == 0 {
@@ -193,6 +197,7 @@ func TestColdFrontShapeViolations(t *testing.T) {
 		"cast avg":                  `SELECT avg(numbackends)::float, AVG(x) :: float8 FROM metrics.t`,
 		"array_agg subscript":       `SELECT (array_agg(x ORDER BY y DESC))[1] FROM metrics.t`,
 		"uncast EXTRACT":            `SELECT MAX(EXTRACT(EPOCH FROM (collected_at - xact_start)))::float FROM metrics.t`,
+		"NULL-open range join":      `SELECT 1 FROM metrics.t a JOIN r m ON (m.valid_from IS NULL OR a.collected_at >= m.valid_from) AND (m.valid_to IS NULL OR a.collected_at < m.valid_to)`,
 	}
 	for name, sql := range good {
 		if p := coldFrontShapeViolations(sql); len(p) != 0 {

@@ -83,7 +83,18 @@ Every query that reads a ColdFront view is planned and run by DuckDB
 (pg_duckdb), the whole statement included, heap tables and other UNION
 branches too, but PostgreSQL has already described the result columns.
 Verified against a live ColdFront datastore (main 16bdab9, pg_duckdb
-1.1.0, PG 18.6); the helpers are in `internal/metrics/portable_sql.go`:
+1.1.0, PG 18.6), and the parameter, literal and `pg_lsn` rules again
+through pgx on PG 16, 17 and 18 (2026-11-02); the helpers are in
+`internal/metrics/portable_sql.go`.
+
+Test a statement the way pgx runs it: through pgx itself, or psql's
+`\bind` (unnamed) or, from psql 18, `\parse` and `\bind_named` (named,
+as pgx's statement cache does). SQL-level `PREPARE`/`EXECUTE` is not
+equivalent: it rejected the top-queries page with "query result type
+does not match portal result type" (text versus `character varying` in
+`database_name`) on PG 16, 17 and 18, while pgx, in both its
+cache-statement and exec modes, ran that page with rows under every
+filter. Do not "fix" a statement on the strength of `PREPARE` alone.
 
 - **Result types must agree.** A cast helps only when it changes the
   PostgreSQL type; casting to the type PostgreSQL already infers is a
@@ -100,21 +111,38 @@ Verified against a live ColdFront datastore (main 16bdab9, pg_duckdb
   `count`, `min`/`max`, `(array_agg(...))[1]`, `round(float8 ...)` and
   float arithmetic are fine.
 - **No array parameters.** `= ANY($1)`, `= ANY($1::int[])`,
-  `unnest($1)` and even a literal `'{2,3}'::int[]` fail ("Could not
-  convert DuckDB type: UNKNOWN"), as does an IN list of more than one
+  `unnest($1)` and even a literal `'{2,3}'::int[]` or `'{a,b}'::text[]`
+  fail ("Could not convert DuckDB type: UNKNOWN", or "Type VARCHAR ...
+  can't be cast to the destination type INTEGER[]"; `ARRAY[2, 3]` and a
+  JSON object literal such as `'{}'::jsonb` work), as does an IN list
+  of more than one
   integer parameter, typed or not, and an IN list of untyped text
   parameters. Bind integers as one text parameter with `IntListArg` and
   compare with `col = ANY(IntArrayExpr("$n"))`; text lists as
   `IN ($n::text, ...)`; query_datastore's in/not in filters are chains
   of `=`/`<>` comparisons. A single parameter compared with a column
   works untyped.
-- **No arithmetic on parameters.** `$1::timestamptz - INTERVAL '1 hour'`,
-  `now() - $1::interval`, `INTERVAL '1 day' * $1` and a bare
-  `$1::interval` in a select list fail. Compute bounds in Go and bind
-  them. `date_bin($1::interval, col, $2)`,
+- **No arithmetic on parameters, with one exception.** An interval
+  literal multiplied by an integer-typed parameter works, in either
+  order: `INTERVAL '1 day' * $1::int`, `$1::bigint * INTERVAL '1 day'`.
+  Everything else fails, cast or not: `INTERVAL '1 day' * $1` (untyped),
+  `INTERVAL '1 day' * $1::float8`, `$1::timestamptz - INTERVAL '1 hour'`,
+  `$1::timestamptz + INTERVAL '1 hour'`, `now() - $1::interval`,
+  `$1::int - 1`, `$1::int / 2`, `$1::bigint + 1` and a bare
+  `$1::interval` in a select list. Compute bounds in Go and bind them.
+  `date_bin($1::interval, col, $2)`,
   `generate_series($1::timestamptz, $2::timestamptz, $3::interval)`,
   `col + $1::interval`, `NOW() - INTERVAL '5 minutes'` (no parameter)
   and `(SELECT max(...)) - INTERVAL '1 hour'` work.
+- **No infinite timestamp literals.** `collected_at <= 'infinity'::timestamptz`
+  and `> '-infinity'::timestamptz` fail ("Cannot subtract infinite
+  timestamps"), though a `+infinity` timestamptz bound as a parameter
+  (`collected_at <= $2`) works. Bind the bound, or leave it open with a
+  NULL test.
+- **No `pg_lsn`.** DuckDB has no such type ("Type with name pg_lsn does
+  not exist"), so `sent_lsn::pg_lsn - replay_lsn::pg_lsn` fails even on
+  literals. pkg/anomaly's `pg_stat_replication.lag_bytes` historical
+  query used it; that SQL is the alerter branch's to change.
 - **Types read back differently.** `inet` is text, so write
   `host(client_addr::inet)`; text is `character varying`, oid is
   bigint, jsonb is json.
@@ -146,14 +174,25 @@ Verified against a live ColdFront datastore (main 16bdab9, pg_duckdb
 
 `TestMetricsSQLAvoidsColdFrontShapes` (`coldfront_sql_guard_test.go`)
 scans every server unit that reads `metrics.*` for an array parameter,
-an untyped or integer IN list, parameter arithmetic, an uncast `avg` or
-`EXTRACT`, an untyped run-time IN list, a bare `host(client_addr)`, a
-schema-qualified table other than `metrics.` (allow-listed in
-`reviewedQualifiedTableUnits`) and an untyped JSON builder value.
+an untyped or integer IN list, parameter arithmetic other than an
+interval times an integer-cast parameter (`intervalTimesIntParam`), an
+uncast `avg` or `EXTRACT`, an untyped run-time IN list, a bare
+`host(client_addr)`, a schema-qualified table other than `metrics.`
+(allow-listed in `reviewedQualifiedTableUnits`), an untyped JSON builder
+value, `pg_lsn`, an `'infinity'`/`'-infinity'` literal and a `'{...}'`
+literal not cast to json or jsonb.
 It cannot see column types, so an integer `sum` or `/` is left to
 review, and it does not see SQL assembled in a function that names no
 metrics relation itself (the timeline's connection filter, the
 datastore builder's visible set): keep those on the helpers by hand.
+The anomaly comparison is one such function, so
+`TestComparisonSeriesQueryAvoidsColdFrontShapes` runs the same check
+over `comparisonSeriesQuery(def)` for every metric in
+`anomaly.BaselineMetrics()`, with the registry's `HistoricalSQL` replaced
+by a stand-in, and also requires every wrapper placeholder to carry a
+cast. It checks only the server's wrapper: the historical SQL belongs to
+`pkg/anomaly`, whose untyped `INTERVAL '1 day' * $1` and `pg_lsn` fail on
+ColdFront until the alerter branch's `pkg/anomaly` changes land.
 
 Every reader must therefore filter `deleted_at IS NULL`: the server's
 connection, cluster, topology, estate and tool queries, the collector's
@@ -2252,7 +2291,7 @@ it takes `DISTINCT ON (query_id, datid, usesysid)` over the same window,
 ordered by `collected_at DESC`, and is `LEFT JOIN`ed on all three of
 `latest_sample`'s `queryid`, `dbid` and `userid` (the identity of each
 statement's most recent sample in the window) to fill the `client_addr`
-(via `host(client_addr)`, the repo's convention for rendering `inet`),
+(via `host(client_addr::inet)`, the repo's convention for rendering `inet`),
 `client_hostname` and `client_observed_at` columns of `TopQueryRow`.
 
 The three-way key is not optional. `pg_stat_statements` is keyed on
@@ -2270,7 +2309,7 @@ off, and on idle backends, so the join resolves nothing on such servers.
 Because `pg_stat_activity` is sampled, the attribution is the most
 recently observed client, not the only one; keep any UI wording to
 "last observed client". `client_addr` is rendered
-`COALESCE(host(client_addr), 'local')`, so it is non-null for every
+`COALESCE(host(client_addr::inet), 'local')`, so it is non-null for every
 observed row and a statement never caught in flight is signaled solely
 by a null `client_observed_at`; both the `TopQueryRow` doc comment and
 the OpenAPI descriptions say so, and any UI logic must test
@@ -2403,9 +2442,10 @@ Two further conventions matter when reading `metrics.pg_stat_activity`:
   `inet`, and the standard `inet` text output carries the netmask on
   every supported PostgreSQL version (it reproduces identically on 16
   and 18), so a cast yields `192.0.2.10/32` rather than `192.0.2.10`.
-  Use `host(client_addr)` instead. A NULL `client_addr` means the backend
-  arrived over a Unix-domain socket, which is worth labelling as local
-  rather than unknown.
+  Use `host(client_addr::inet)` instead (the cast is a no-op on
+  PostgreSQL and required on ColdFront, where the column is text). A
+  NULL `client_addr` means the backend arrived over a Unix-domain
+  socket, which is worth labelling as local rather than unknown.
 
 ### Compose query variants as compile-time constants, not with Sprintf
 

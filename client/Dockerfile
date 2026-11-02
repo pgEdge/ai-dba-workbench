@@ -40,6 +40,10 @@ RUN npm run build
 # image. See https://hub.docker.com/r/nginxinc/nginx-unprivileged
 FROM nginxinc/nginx-unprivileged:stable-alpine-slim
 
+# Drop the distrusted eMudhra emSign ECC Root CA - G3.
+USER root
+RUN apk upgrade --no-cache ca-certificates-bundle
+
 COPY --from=builder /build/client/dist /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 

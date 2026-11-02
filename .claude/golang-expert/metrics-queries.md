@@ -96,6 +96,16 @@ does not match portal result type" (text versus `character varying` in
 cache-statement and exec modes, ran that page with rows under every
 filter. Do not "fix" a statement on the strength of `PREPARE` alone.
 
+A harness that rolls back must also use a fresh connection, or exec
+mode, per statement. ColdFront attaches its Iceberg catalog (`ice`)
+inside the transaction that first plans a metrics statement; a rollback
+undoes the attach, and re-executing pgx's cached prepared statement on
+that connection then fails with 'Binder Error: Catalog "ice" does not
+exist!' (every other run, on PG 16, 17 and 18). Committing, autocommit
+and `QueryExecModeExec` were unaffected. The server's own read-only
+transactions that end in `rollback.Tx` may be exposed to the same
+failure on a pooled connection; this is unresolved (issue #755).
+
 - **Result types must agree.** A cast helps only when it changes the
   PostgreSQL type; casting to the type PostgreSQL already infers is a
   no-op and the bytes stay wrong. `avg()` and `EXTRACT(EPOCH ...)` are
@@ -134,11 +144,19 @@ filter. Do not "fix" a statement on the strength of `PREPARE` alone.
   `generate_series($1::timestamptz, $2::timestamptz, $3::interval)`,
   `col + $1::interval`, `NOW() - INTERVAL '5 minutes'` (no parameter)
   and `(SELECT max(...)) - INTERVAL '1 hour'` work.
-- **No infinite timestamp literals.** `collected_at <= 'infinity'::timestamptz`
+- **No infinite timestamps.** `collected_at <= 'infinity'::timestamptz`
   and `> '-infinity'::timestamptz` fail ("Cannot subtract infinite
-  timestamps"), though a `+infinity` timestamptz bound as a parameter
-  (`collected_at <= $2`) works. Bind the bound, or leave it open with a
-  NULL test.
+  timestamps"). A `+infinity` bound as a parameter ran in one test, but
+  whether DuckDB subtracts the bounds depends on the plan (the alerter
+  saw it fail once in about 45 runs), so never bind one either: to
+  leave a bound open, bind NULL and write
+  `col <= COALESCE($2::timestamptz, col)`.
+- **No NULL test on a parameter.** `$n IS NULL` and `$n::type IS NULL`
+  (or `IS NOT NULL`) fail at plan time with the UNKNOWN error on PG 16,
+  17 and 18, whatever is bound. Use the `COALESCE` form above. A NULL
+  test on a column is fine, and so is `col IS NOT DISTINCT FROM $n::text`
+  (the anomaly comparison's database filter, which ran live with NULL
+  bound).
 - **No `pg_lsn`.** DuckDB has no such type ("Type with name pg_lsn does
   not exist"), so `sent_lsn::pg_lsn - replay_lsn::pg_lsn` fails even on
   literals. pkg/anomaly's `pg_stat_replication.lag_bytes` historical
@@ -179,8 +197,14 @@ interval times an integer-cast parameter (`intervalTimesIntParam`), an
 uncast `avg` or `EXTRACT`, an untyped run-time IN list, a bare
 `host(client_addr)`, a schema-qualified table other than `metrics.`
 (allow-listed in `reviewedQualifiedTableUnits`), an untyped JSON builder
-value, `pg_lsn`, an `'infinity'`/`'-infinity'` literal and a `'{...}'`
-literal not cast to json or jsonb.
+value, `pg_lsn`, an `'infinity'`/`'-infinity'` literal, a `'{...}'`
+literal not cast to json or jsonb, and a `$n [::type] IS [NOT] NULL`
+test. These rules mirror `coldfrontsql.Violations`, the shared checker
+the alerter branch adds in `pkg/coldfrontsql`; once that lands, consider
+running server SQL through it too. The two still differ: the alerter's
+checker requires a cast on every parameter and rejects `host(` and
+`::inet` outright, whereas the server keeps untyped comparison
+parameters and `host(client_addr::inet)`, both of which ran live.
 It cannot see column types, so an integer `sum` or `/` is left to
 review, and it does not see SQL assembled in a function that names no
 metrics relation itself (the timeline's connection filter, the

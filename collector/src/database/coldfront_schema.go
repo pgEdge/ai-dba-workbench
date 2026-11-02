@@ -73,19 +73,33 @@ func (sm *SchemaManager) execMetricsDDL(ctx context.Context, tx ddlExecer, table
 		return fmt.Errorf("metrics.%s has no ColdFront column specification", table)
 	}
 
+	keep, err := translateMetricsDDL(ctx, tx, table, spec, ddl)
+	if err != nil {
+		return err
+	}
+	for _, stmt := range keep {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// translateMetricsDDL walks the statements of a metrics DDL block under
+// ColdFront, as execMetricsDDL describes. It creates the table when it
+// reaches the CREATE TABLE, and returns the statements still to be run
+// afterwards.
+func translateMetricsDDL(ctx context.Context, tx ddlExecer, table string, spec coldfront.Table, ddl string) ([]string, error) {
 	var keep []string
 	created := false
 	for _, stmt := range splitSQLStatements(ddl) {
 		switch kind := statementKind(stmt); kind {
 		case "CREATE TABLE":
 			if created {
-				return fmt.Errorf("metrics.%s: more than one CREATE TABLE in its DDL block", table)
+				return nil, fmt.Errorf("metrics.%s: more than one CREATE TABLE in its DDL block", table)
 			}
-			if err := checkCreateTableMatchesSpec(stmt, spec); err != nil {
-				return err
-			}
-			if err := createColdFrontTable(ctx, tx, spec); err != nil {
-				return err
+			if err := createTableFromDDL(ctx, tx, stmt, spec); err != nil {
+				return nil, err
 			}
 			created = true
 		case "COMMENT ON TABLE":
@@ -98,19 +112,23 @@ func (sm *SchemaManager) execMetricsDDL(ctx context.Context, tx ddlExecer, table
 		case "CREATE INDEX", "CREATE UNIQUE INDEX", "COMMENT ON INDEX":
 			// ColdFront views cannot be indexed.
 		default:
-			return fmt.Errorf("metrics.%s: unexpected %q statement in its DDL block under ColdFront", table, kind)
+			return nil, fmt.Errorf("metrics.%s: unexpected %q statement in its DDL block under ColdFront", table, kind)
 		}
 	}
 	if !created {
-		return fmt.Errorf("metrics.%s: no CREATE TABLE in its DDL block", table)
+		return nil, fmt.Errorf("metrics.%s: no CREATE TABLE in its DDL block", table)
 	}
+	return keep, nil
+}
 
-	for _, stmt := range keep {
-		if _, err := tx.Exec(ctx, stmt); err != nil {
-			return err
-		}
+// createTableFromDDL checks a metrics CREATE TABLE statement against the
+// table's column specification and then creates the table through
+// ColdFront.
+func createTableFromDDL(ctx context.Context, tx ddlExecer, stmt string, spec coldfront.Table) error {
+	if err := checkCreateTableMatchesSpec(stmt, spec); err != nil {
+		return err
 	}
-	return nil
+	return createColdFrontTable(ctx, tx, spec)
 }
 
 // createColdFrontTable creates the metrics table described by spec
@@ -248,24 +266,9 @@ func splitSQLStatements(sql string) []string {
 		c := sql[i]
 		switch {
 		case c == '\'' || c == '"':
-			// Copy the quoted text through its closing quote. A doubled
-			// quote is an escaped quote and keeps the literal open.
-			cur.WriteByte(c)
-			for i++; i < len(sql); i++ {
-				cur.WriteByte(sql[i])
-				if sql[i] == c {
-					if i+1 < len(sql) && sql[i+1] == c {
-						i++
-						cur.WriteByte(sql[i])
-						continue
-					}
-					break
-				}
-			}
+			i = copyQuoted(&cur, sql, i)
 		case c == '-' && i+1 < len(sql) && sql[i+1] == '-':
-			for i < len(sql) && sql[i] != '\n' {
-				i++
-			}
+			i = skipLineComment(sql, i)
 			cur.WriteByte('\n')
 		case c == ';':
 			flush()
@@ -275,6 +278,37 @@ func splitSQLStatements(sql string) []string {
 	}
 	flush()
 	return stmts
+}
+
+// copyQuoted copies the quoted text that opens at sql[i] to cur, through
+// its closing quote, and returns the index of the last byte copied. A
+// doubled quote is an escaped quote and keeps the literal open; an
+// unterminated literal is copied to the end of sql.
+func copyQuoted(cur *strings.Builder, sql string, i int) int {
+	q := sql[i]
+	cur.WriteByte(q)
+	for i++; i < len(sql); i++ {
+		cur.WriteByte(sql[i])
+		if sql[i] != q {
+			continue
+		}
+		if i+1 < len(sql) && sql[i+1] == q {
+			i++
+			cur.WriteByte(sql[i])
+			continue
+		}
+		return i
+	}
+	return i
+}
+
+// skipLineComment returns the index of the newline that ends the --
+// comment starting at sql[i], or len(sql) if the comment runs to the end.
+func skipLineComment(sql string, i int) int {
+	for i < len(sql) && sql[i] != '\n' {
+		i++
+	}
+	return i
 }
 
 // statementKindPattern captures the leading keywords that identify a
@@ -353,6 +387,29 @@ func parseCreateTableColumns(stmt string) ([]coldfront.Column, error) {
 		return nil, fmt.Errorf("CREATE TABLE has no column list")
 	}
 
+	items, err := splitColumnList(stmt[open+1:])
+	if err != nil {
+		return nil, err
+	}
+
+	var cols []coldfront.Column
+	for _, item := range items {
+		col, ok, err := parseColumnDefinition(item)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			cols = append(cols, col)
+		}
+	}
+	return cols, nil
+}
+
+// splitColumnList splits the text after the opening parenthesis of a
+// CREATE TABLE column list into its comma-separated items, up to the
+// matching closing parenthesis. Commas inside nested parentheses or
+// single-quoted literals do not separate items.
+func splitColumnList(body string) ([]string, error) {
 	var (
 		items   []string
 		cur     strings.Builder
@@ -360,7 +417,7 @@ func parseCreateTableColumns(stmt string) ([]coldfront.Column, error) {
 		done    bool
 		inQuote bool
 	)
-	for _, r := range stmt[open+1:] {
+	for _, r := range body {
 		if r == '\'' {
 			// A doubled quote toggles twice and so stays inside.
 			inQuote = !inQuote
@@ -373,9 +430,7 @@ func parseCreateTableColumns(stmt string) ([]coldfront.Column, error) {
 		case '(':
 			depth++
 		case ')':
-			if depth == 0 {
-				done = true
-			}
+			done = depth == 0
 			depth--
 		case ',':
 			if depth == 0 {
@@ -392,33 +447,31 @@ func parseCreateTableColumns(stmt string) ([]coldfront.Column, error) {
 	if !done {
 		return nil, fmt.Errorf("CREATE TABLE column list is not closed")
 	}
-	items = append(items, cur.String())
+	return append(items, cur.String()), nil
+}
 
-	var cols []coldfront.Column
-	for _, item := range items {
-		fields := strings.Fields(item)
-		if len(fields) == 0 {
-			continue
-		}
-		if tableConstraintKeywords[strings.ToUpper(fields[0])] {
-			continue
-		}
-		var typeWords []string
-		for _, f := range fields[1:] {
-			if columnOptionKeywords[strings.ToUpper(f)] {
-				break
-			}
-			typeWords = append(typeWords, f)
-		}
-		if len(typeWords) == 0 {
-			return nil, fmt.Errorf("column %s has no type", fields[0])
-		}
-		cols = append(cols, coldfront.Column{
-			Name:   fields[0],
-			PGType: normalizeDDLType(strings.Join(typeWords, " ")),
-		})
+// parseColumnDefinition parses one item of a CREATE TABLE column list as
+// a format_type()-normalised column. It reports false, with no error,
+// for an empty item or a table constraint.
+func parseColumnDefinition(item string) (coldfront.Column, bool, error) {
+	fields := strings.Fields(item)
+	if len(fields) == 0 || tableConstraintKeywords[strings.ToUpper(fields[0])] {
+		return coldfront.Column{}, false, nil
 	}
-	return cols, nil
+	var typeWords []string
+	for _, f := range fields[1:] {
+		if columnOptionKeywords[strings.ToUpper(f)] {
+			break
+		}
+		typeWords = append(typeWords, f)
+	}
+	if len(typeWords) == 0 {
+		return coldfront.Column{}, false, fmt.Errorf("column %s has no type", fields[0])
+	}
+	return coldfront.Column{
+		Name:   fields[0],
+		PGType: normalizeDDLType(strings.Join(typeWords, " ")),
+	}, true, nil
 }
 
 // checkCreateTableMatchesSpec verifies that a metrics CREATE TABLE

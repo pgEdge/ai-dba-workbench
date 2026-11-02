@@ -125,17 +125,27 @@ failures in rule 3, so reproduce with pgx, never psql.
 
 ## Tests That Enforce Them
 
-In `alerter/src/internal/database/coldfront_compat_test.go`, unless
-noted:
+The textual rules live in one place, `coldfrontsql.Violations` in
+`pkg/coldfrontsql/coldfrontsql.go`: an uncast `$n`, `ANY(`, `unnest(`,
+an array cast, `pg_lsn`, `make_interval(`, `host(`, `::inet`, a
+`$n [::type] IS [NOT] NULL` test, `infinity` (any case), and an
+`avg(...)` not cast to float in place.
+`TestViolations` in `pkg/coldfrontsql/coldfrontsql_test.go` pins them
+against the shapes that failed live and the replacements that worked.
+A module that adds a `metrics.*` reader runs its SQL through
+`Violations` in a test. In `alerter/src/internal/database/coldfront_compat_test.go`
+unless noted:
 
 - `TestMetricsSQLColdFrontShapes` (no database) runs
-  `coldFrontShapeViolations` over `metricsSQLStatements()`, which lists
+  `coldfrontsql.Violations` over `metricsSQLStatements()`, which lists
   every registry entry's latest and historical query (the latter from
-  `pkg/anomaly`) and the readers in `queries.go`: an uncast `$n`,
-  `ANY(`, `unnest(`, an array cast, `pg_lsn`, `make_interval(`,
-  `host(`, `::inet`, `infinity`, and an `avg(...)` not cast to float
-  in place. `TestColdFrontShapeViolations` pins the rules against the
-  shapes that failed live and the replacements that worked.
+  `pkg/anomaly`) and the readers in `queries.go`.
+- `TestHistoricalSQLColdFrontShapes` in `pkg/anomaly/coldfront_test.go`
+  (no database) runs `coldfrontsql.Violations` over every
+  `BaselineMetrics()` `HistoricalSQL` and the shared fragments
+  (`CPUBusyPercentExpr`, `PseudoFilesystemExclusion`,
+  `ReplicationLagBytesExpr`), so `pkg/anomaly` is guarded on its own,
+  whichever consumer runs the queries.
 - `TestConnectionUtilizationHistoricalOpenBounds` in
   `pkg/anomaly/metrics_test.go` (no database) pins the NULL-open
   `valid_from`/`valid_to` ranges of the `connection_utilization_percent`

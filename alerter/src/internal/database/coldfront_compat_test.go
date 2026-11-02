@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/pkg/anomaly"
+	"github.com/pgedge/ai-workbench/pkg/coldfrontsql"
 )
 
 // The tests in this file keep every alerter query that reads metrics.*
@@ -59,98 +60,13 @@ func metricsSQLStatements() []metricsSQLStatement {
 	)
 }
 
-// bindParam matches a bound parameter reference.
-var bindParam = regexp.MustCompile(`\$\d+`)
-
-// coldFrontForbidden lists SQL shapes that DuckDB cannot run, each with
-// the reason reported when one appears. Every one was tried live against
-// ColdFront with pgx bound parameters.
-var coldFrontForbidden = []struct {
-	pattern *regexp.Regexp
-	reason  string
-}{
-	{regexp.MustCompile(`(?i)\bANY\s*\(`),
-		"ANY(...) over an array fails with an UNKNOWN type in DuckDB, even with a literal or cast array"},
-	{regexp.MustCompile(`(?i)\bunnest\s*\(`),
-		"unnest of an array parameter fails with an UNKNOWN type in DuckDB"},
-	{regexp.MustCompile(`(?i)::\s*[a-z0-9_ ]+\[\]`),
-		"array casts fail in DuckDB; bind scalars or one text value instead"},
-	{regexp.MustCompile(`(?i)\bpg_lsn\b`),
-		"DuckDB has no pg_lsn type; use anomaly.LSNDiffBytesSQL on the text LSN"},
-	{regexp.MustCompile(`(?i)\bmake_interval\s*\(`),
-		"DuckDB has no make_interval(); use INTERVAL '1 day' * $1::int"},
-	{regexp.MustCompile(`(?i)\bhost\s*\(`),
-		"DuckDB has no host(); inet columns are text on ColdFront"},
-	{regexp.MustCompile(`(?i)::\s*inet\b`),
-		"DuckDB has no inet type; inet columns are text on ColdFront"},
-	{regexp.MustCompile(`(?i)\binfinity\b`),
-		"DuckDB may subtract infinite timestamps in a range join and fail; leave open bounds NULL"},
-}
-
-// floatCast matches a cast to double precision directly after a closing
-// parenthesis.
-var floatCast = regexp.MustCompile(`(?i)^\s*::\s*(float8|float|double precision)\b`)
-
-// avgCall matches the start of an avg() aggregate call.
-var avgCall = regexp.MustCompile(`(?i)\bavg\s*\(`)
-
-// coldFrontShapeViolations returns a description of every rule sql
-// breaks, or nil when it breaks none.
-func coldFrontShapeViolations(sql string) []string {
-	var problems []string
-
-	for _, loc := range bindParam.FindAllStringIndex(sql, -1) {
-		if !strings.HasPrefix(sql[loc[1]:], "::") {
-			problems = append(problems, sql[loc[0]:loc[1]]+
-				" has no cast; DuckDB types a bare parameter as UNKNOWN, so write "+
-				sql[loc[0]:loc[1]]+"::int (or ::text, ...)")
-		}
-	}
-
-	for _, f := range coldFrontForbidden {
-		if m := f.pattern.FindString(sql); m != "" {
-			problems = append(problems, strings.TrimSpace(m)+": "+f.reason)
-		}
-	}
-
-	// avg() over an integer column is numeric to PostgreSQL but DOUBLE
-	// to DuckDB, so pgx fails to scan it; the call must be cast where it
-	// stands. EXTRACT() has the same problem, but is legitimately used
-	// uncast inside predicates and larger expressions, so its output is
-	// policed by result type in TestMetricsSQLResultTypes instead.
-	for _, loc := range avgCall.FindAllStringIndex(sql, -1) {
-		end := matchingParen(sql, loc[1]-1)
-		if end < 0 || !floatCast.MatchString(sql[end+1:]) {
-			problems = append(problems,
-				"avg(...) must be cast to float directly: avg(x)::float")
-		}
-	}
-	return problems
-}
-
-// matchingParen returns the index of the parenthesis closing the one at
-// open, or -1 when it is unbalanced.
-func matchingParen(s string, open int) int {
-	depth := 0
-	for i := open; i < len(s); i++ {
-		switch s[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return -1
-}
-
 // TestMetricsSQLColdFrontShapes fails when any alerter query that reads
 // metrics.* reintroduces a shape DuckDB cannot run on a ColdFront
 // datastore: an uncast bound parameter, an array parameter or ANY(),
 // an uncast avg(), a PostgreSQL-only type or function, or an infinite
-// timestamp literal. GitHub issue #755.
+// timestamp literal. The rules live in pkg/coldfrontsql, whose own tests
+// pin them; pkg/anomaly runs the same check over its historical queries.
+// GitHub issue #755.
 func TestMetricsSQLColdFrontShapes(t *testing.T) {
 	stmts := metricsSQLStatements()
 	if len(stmts) < len(metricRegistry) {
@@ -158,50 +74,8 @@ func TestMetricsSQLColdFrontShapes(t *testing.T) {
 			len(stmts), len(metricRegistry))
 	}
 	for _, s := range stmts {
-		for _, p := range coldFrontShapeViolations(s.sql) {
+		for _, p := range coldfrontsql.Violations(s.sql) {
 			t.Errorf("%s: %s", s.name, p)
-		}
-	}
-}
-
-// TestColdFrontShapeViolations checks the rules themselves against the
-// shapes that failed live, and against the replacements that worked, so
-// the guard cannot quietly stop matching.
-func TestColdFrontShapeViolations(t *testing.T) {
-	bad := map[string]string{
-		"untyped parameter arithmetic": `SELECT 1 FROM metrics.t WHERE collected_at > NOW() - INTERVAL '1 day' * $1`,
-		"untyped parameter comparison": `SELECT 1 FROM metrics.t WHERE connection_id = $2`,
-		"ANY over a parameter":         `SELECT 1 FROM metrics.t WHERE connection_id = ANY($1::int[])`,
-		"ANY over a literal":           `SELECT 1 FROM metrics.t WHERE connection_id = ANY('{2,3}'::int[])`,
-		"unnest":                       `SELECT 1 FROM metrics.t WHERE connection_id IN (SELECT unnest($1::int[]))`,
-		"uncast avg":                   `SELECT avg(numbackends) FROM metrics.t`,
-		"avg cast too late":            `SELECT avg(numbackends) + 1 FROM metrics.t`,
-		"unbalanced avg":               `SELECT avg(numbackends FROM metrics.t`,
-		"pg_lsn":                       `SELECT (sent_lsn::pg_lsn - replay_lsn::pg_lsn) FROM metrics.t`,
-		"make_interval":                `SELECT 1 FROM metrics.t WHERE collected_at > NOW() - make_interval(days => $1::int)`,
-		"host":                         `SELECT host(client_addr) FROM metrics.t`,
-		"inet cast":                    `SELECT client_addr::inet FROM metrics.t`,
-		"infinite upper bound":         `SELECT COALESCE(LEAD(collected_at) OVER w, 'infinity'::timestamptz) FROM metrics.t`,
-		"infinite lower bound":         `SELECT '-infinity'::timestamptz FROM metrics.t`,
-	}
-	for name, sql := range bad {
-		if len(coldFrontShapeViolations(sql)) == 0 {
-			t.Errorf("%s: no violation reported for %q", name, sql)
-		}
-	}
-
-	good := map[string]string{
-		"cast parameter arithmetic": `SELECT 1 FROM metrics.t WHERE collected_at > NOW() - INTERVAL '1 day' * $1::int`,
-		"cast parameter comparison": `SELECT 1 FROM metrics.t WHERE connection_id = $1::int AND name = $2::text`,
-		"integer literal list":      `SELECT 1 FROM metrics.t WHERE connection_id IN (2, 3)`,
-		"cast avg":                  `SELECT avg(numbackends)::float, AVG(x) :: float8 FROM metrics.t`,
-		"array_agg subscript":       `SELECT (array_agg(x ORDER BY y DESC))[1] FROM metrics.t`,
-		"uncast EXTRACT":            `SELECT MAX(EXTRACT(EPOCH FROM (collected_at - xact_start)))::float FROM metrics.t`,
-		"NULL-open range join":      `SELECT 1 FROM metrics.t a JOIN r m ON (m.valid_from IS NULL OR a.collected_at >= m.valid_from) AND (m.valid_to IS NULL OR a.collected_at < m.valid_to)`,
-	}
-	for name, sql := range good {
-		if p := coldFrontShapeViolations(sql); len(p) != 0 {
-			t.Errorf("%s: unexpected violations %v for %q", name, p, sql)
 		}
 	}
 }

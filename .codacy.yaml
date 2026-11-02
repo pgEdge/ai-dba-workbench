@@ -67,6 +67,10 @@ engines:
   opengrep:
     exclude_paths:
       - 'alerter/src/internal/database/anomaly_queries.go'
+      # Test-only: the LSN difference check joins the fixed fragment
+      # from anomaly.LSNDiffBytesSQL over literal column names and
+      # binds both LSNs as $1 and $2.
+      - 'alerter/src/internal/database/coldfront_compat_test.go'
       - 'alerter/src/internal/engine/anomalies_test.go'
       - 'alerter/src/internal/engine/baselines_test.go'
       - 'collector/src/database/migration_v6_test.go'

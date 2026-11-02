@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/pkg/anomaly"
 )
 
 // The tests in this file keep metrics SQL in the shapes portable_sql.go
@@ -49,11 +51,33 @@ var coldFrontBadShapes = []struct {
 		"an IN list of untyped or integer parameters cannot be typed; use IntArrayExpr for integers, or $n::text for each text value"},
 	{bareHost,
 		"client_addr is text on ColdFront and host() takes an inet; write host(client_addr::inet)"},
-	{regexp.MustCompile(`\$(\d+|%d)(::[a-z ]+)?\s*[-+*/]\s`),
-		"arithmetic on a parameter cannot be planned; compute the value in Go and bind it"},
-	{regexp.MustCompile(`(?i)[-*/]\s*\$(\d+|%d)\b`),
-		"arithmetic on a parameter cannot be planned; compute the value in Go and bind it"},
+	{regexp.MustCompile(`\$(\d+|%d)(::[a-z ]+)?\s*[-+*/]\s`), paramArithmeticHint},
+	{regexp.MustCompile(`(?i)[-*/]\s*\$(\d+|%d)\b`), paramArithmeticHint},
+	{regexp.MustCompile(`(?i)\bpg_lsn\b`),
+		"DuckDB has no pg_lsn type; work in bigint byte positions or compute the difference in Go"},
+	{regexp.MustCompile(`(?i)'[-+]?infinity'`),
+		"DuckDB cannot compare with an infinite timestamp literal; bind the bound as a " +
+			"parameter, or leave the bound open with a NULL test"},
 }
+
+// paramArithmeticHint is the advice for arithmetic on a parameter.
+const paramArithmeticHint = "arithmetic on a parameter cannot be planned; compute the value " +
+	"in Go and bind it, or multiply an interval by an integer-typed parameter " +
+	"(INTERVAL '1 day' * $n::int)"
+
+// intervalTimesIntParam matches the one parameter arithmetic a ColdFront
+// datastore plans: an interval literal multiplied by a parameter cast to
+// an integer type, in either order. Every other parameter arithmetic
+// fails, a float8-cast multiplier and a cast parameter plus or minus
+// anything included.
+var intervalTimesIntParam = regexp.MustCompile(
+	`(?i)INTERVAL\s+'[^']*'\s*\*\s*\$(\d+|%d)::(int|integer|int4|int8|bigint)\b|` +
+		`\$(\d+|%d)::(int|integer|int4|int8|bigint)\s*\*\s*INTERVAL\s+'[^']*'`)
+
+// arrayLiteral matches a '{...}' literal and the cast that follows it,
+// if any. DuckDB cannot cast such a literal's text to an array, though a
+// JSON object literal cast to json or jsonb is fine.
+var arrayLiteral = regexp.MustCompile(`(?i)'\{[^']*\}'(\s*::\s*[a-z_]+)?`)
 
 // qualifiedTable matches a schema-qualified name after FROM or JOIN,
 // capturing the word before the keyword and the schema.
@@ -88,9 +112,17 @@ var castAfter = regexp.MustCompile(`(?i)^\s*::\s*(float8|double precision|bigint
 // shape in sql, which reads the metrics schema.
 func coldFrontShapeProblems(sql string) []string {
 	var problems []string
+	masked := intervalTimesIntParam.ReplaceAllString(sql, "interval_multiple")
 	for _, bad := range coldFrontBadShapes {
-		if m := bad.re.FindString(sql); m != "" {
+		if m := bad.re.FindString(masked); m != "" {
 			problems = append(problems, strconv.Quote(m)+": "+bad.hint)
+		}
+	}
+	for _, m := range arrayLiteral.FindAllStringSubmatch(sql, -1) {
+		cast := strings.ToLower(strings.TrimLeft(m[1], " \t\n:"))
+		if cast != "json" && cast != "jsonb" {
+			problems = append(problems, strconv.Quote(m[0])+": DuckDB cannot cast a '{...}' "+
+				"literal to an array; write ARRAY[...], or bind integers with IntListArg and IntArrayExpr")
 		}
 	}
 	for _, m := range qualifiedTable.FindAllStringSubmatch(sql, -1) {
@@ -183,6 +215,19 @@ func TestColdFrontShapeProblems(t *testing.T) {
 		{"inet host", "COALESCE(host(client_addr::inet), 'local')", false},
 		{"parameter minus interval", "collected_at >= $3 - INTERVAL '1 hour'", true},
 		{"interval times parameter", "INTERVAL '1 day' * $1", true},
+		{"interval times int parameter", "NOW() - INTERVAL '1 day' * $1::int", false},
+		{"bigint parameter times interval", "NOW() - $1::bigint * INTERVAL '1 day'", false},
+		{"interval times float parameter", "INTERVAL '1 day' * $1::float8", true},
+		{"int parameter minus one", "connection_id > $2::int - 1", true},
+		{"cast timestamp minus interval", "collected_at > $2::timestamptz - INTERVAL '1 hour'", true},
+		{"pg_lsn", "(sent_lsn::pg_lsn - replay_lsn::pg_lsn)::float", true},
+		{"infinity literal", "collected_at <= 'infinity'::timestamptz", true},
+		{"minus infinity literal", "THEN '-infinity'::timestamptz", true},
+		{"array literal", "connection_id = ANY('{1,2}'::int[])", true},
+		{"untyped array literal", "state = ANY('{active,idle}')", true},
+		{"array constructor", "connection_id = ANY(ARRAY[1, 2])", false},
+		{"jsonb object literal", "COALESCE(details, '{}'::jsonb)", false},
+		{"json object literal", `'{"a": 1}'::json ->> 'a'`, false},
 		{"now minus parameter", "collected_at > now() - $2::interval", true},
 		{"column plus parameter", "bucket_time + $1::interval", false},
 		{"comparison", "collected_at >= $3 AND collected_at <= $4", false},
@@ -310,6 +355,40 @@ func metricsSQLUnits(t *testing.T, root string) []metricsSQLUnit {
 	}
 	return units
 }
+
+// TestComparisonSeriesQueryAvoidsColdFrontShapes runs the shape check
+// over the anomaly comparison's statement for every baselined metric.
+// TestMetricsSQLAvoidsColdFrontShapes cannot see it: comparisonSeriesQuery
+// names no metrics relation itself, because the registry's historical
+// query supplies the reads. Only the wrapper this package adds is checked;
+// the historical query is pkg/anomaly's and is guarded there, so it is
+// replaced by a stand-in before the check (issue #755).
+func TestComparisonSeriesQueryAvoidsColdFrontShapes(t *testing.T) {
+	defs := anomaly.BaselineMetrics()
+	if len(defs) == 0 {
+		t.Fatal("no baselined metrics")
+	}
+	for _, def := range defs {
+		sql := comparisonSeriesQuery(def)
+		if def.HistoricalSQL == "" || strings.Count(sql, def.HistoricalSQL) != 1 {
+			t.Errorf("%s: the wrapper does not hold the historical query exactly once", def.Name)
+			continue
+		}
+		wrapper := strings.Replace(sql, def.HistoricalSQL, "SELECT * FROM metrics.historical", 1)
+		for _, p := range coldFrontShapeProblems(wrapper) {
+			t.Errorf("%s: %s", def.Name, p)
+		}
+		for _, m := range wrapperParam.FindAllStringSubmatch(wrapper, -1) {
+			if m[1] == "" {
+				t.Errorf("%s: wrapper parameter %s is untyped; cast it", def.Name, m[0])
+			}
+		}
+	}
+}
+
+// wrapperParam matches a placeholder and the cast that follows it, if
+// any.
+var wrapperParam = regexp.MustCompile(`\$\d+(::)?`)
 
 // TestMetricsSQLAvoidsColdFrontShapes fails when a server function, or a
 // package-level constant or variable, that reads the metrics schema

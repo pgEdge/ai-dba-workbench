@@ -149,6 +149,7 @@ func TestLSNDiffBytesSQLMatchesPgLSN(t *testing.T) {
 	}
 	for _, p := range pairs {
 		var got, want float64
+		//nosemgrep: go_sql_rule-concat-sqli -- fixed SQL fragment over literal column names; the LSNs are bound as $1 and $2
 		err := pool.QueryRow(context.Background(),
 			`SELECT `+anomaly.LSNDiffBytesSQL("r.sent_lsn", "r.replay_lsn")+`,
 			        (r.sent_lsn::pg_lsn - r.replay_lsn::pg_lsn)::float

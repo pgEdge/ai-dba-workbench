@@ -221,40 +221,17 @@ func joinColdFrontRows(rows []coldFrontRow) []byte {
 // cannot carry, are stored as NULL and reported in one log line per
 // column.
 func encodeColdFrontRows(spec coldfront.Table, columns []string, values [][]any) ([]coldFrontRow, error) {
-	types := make(map[string]string, len(spec.Columns))
-	for _, c := range spec.Columns {
-		types[c.Name] = c.PGType
-	}
-	connCol := -1
-	for i, name := range columns {
-		if _, ok := types[name]; !ok {
-			return nil, fmt.Errorf("metrics.%s has no column %s in its ColdFront specification", spec.Name, name)
-		}
-		if name == "connection_id" {
-			connCol = i
-		}
+	types, connCol, err := coldFrontColumnTypes(spec, columns)
+	if err != nil {
+		return nil, err
 	}
 
 	nonFinite := map[string]int{}
 	rows := make([]coldFrontRow, len(values))
 	for i, row := range values {
-		obj := make(map[string]any, len(columns))
-		for j, name := range columns {
-			if j >= len(row) {
-				break
-			}
-			v, err := jsonValue(types[name], row[j])
-			if errors.Is(err, errNonFinite) {
-				nonFinite[name]++
-				v = nil
-			} else if err != nil {
-				return nil, fmt.Errorf("metrics.%s.%s: %w", spec.Name, name, err)
-			}
-			obj[name] = v
-		}
-		b, err := json.Marshal(obj)
+		b, err := encodeColdFrontRow(spec.Name, types, columns, row, nonFinite)
 		if err != nil {
-			return nil, fmt.Errorf("metrics.%s: failed to encode rows: %w", spec.Name, err)
+			return nil, err
 		}
 		rows[i].json = b
 		if connCol >= 0 && connCol < len(row) {
@@ -266,6 +243,53 @@ func encodeColdFrontRows(spec coldfront.Table, columns []string, values [][]any)
 			n, spec.Name, name)
 	}
 	return rows, nil
+}
+
+// coldFrontColumnTypes returns the PostgreSQL type of each column in the
+// table's specification and the position of connection_id in columns, or
+// -1 if it is absent. A column missing from the specification is an
+// error.
+func coldFrontColumnTypes(spec coldfront.Table, columns []string) (map[string]string, int, error) {
+	types := make(map[string]string, len(spec.Columns))
+	for _, c := range spec.Columns {
+		types[c.Name] = c.PGType
+	}
+	connCol := -1
+	for i, name := range columns {
+		if _, ok := types[name]; !ok {
+			return nil, -1, fmt.Errorf("metrics.%s has no column %s in its ColdFront specification", spec.Name, name)
+		}
+		if name == "connection_id" {
+			connCol = i
+		}
+	}
+	return types, connCol, nil
+}
+
+// encodeColdFrontRow encodes one row of metrics.table as a JSON object
+// keyed by column name, ignoring columns beyond the end of the row. A
+// NaN or infinite float is stored as NULL and counted in nonFinite under
+// its column name.
+func encodeColdFrontRow(table string, types map[string]string, columns []string, row []any, nonFinite map[string]int) (json.RawMessage, error) {
+	obj := make(map[string]any, len(columns))
+	for j, name := range columns {
+		if j >= len(row) {
+			break
+		}
+		v, err := jsonValue(types[name], row[j])
+		if errors.Is(err, errNonFinite) {
+			nonFinite[name]++
+			v = nil
+		} else if err != nil {
+			return nil, fmt.Errorf("metrics.%s.%s: %w", table, name, err)
+		}
+		obj[name] = v
+	}
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return nil, fmt.Errorf("metrics.%s: failed to encode rows: %w", table, err)
+	}
+	return b, nil
 }
 
 // errInvalidJSON reports a json or jsonb value that is not a JSON document.
@@ -288,37 +312,54 @@ var errNonFinite = errors.New("non-finite float")
 //   - A NaN or infinite float returns errNonFinite.
 func jsonValue(pgType string, v any) (any, error) {
 	switch x := v.(type) {
-	case nil:
-		return nil, nil
 	case float64:
-		if math.IsNaN(x) || math.IsInf(x, 0) {
-			return nil, errNonFinite
-		}
+		return finiteFloat(v, x)
 	case float32:
-		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
-			return nil, errNonFinite
-		}
+		return finiteFloat(v, float64(x))
 	case time.Time:
 		return x.Format(time.RFC3339Nano), nil
 	case pgtype.Interval:
-		if !x.Valid {
-			return nil, nil
-		}
-		return fmt.Sprintf("%d months %d days %d microseconds", x.Months, x.Days, x.Microseconds), nil
+		return intervalText(x), nil
 	case string:
-		if pgType == "jsonb" || pgType == "json" {
-			if !json.Valid([]byte(x)) {
-				return nil, errInvalidJSON
-			}
-			return json.RawMessage(x), nil
+		if isJSONType(pgType) {
+			return jsonDocument([]byte(x))
 		}
 	case []byte:
-		if pgType == "jsonb" || pgType == "json" {
-			if !json.Valid(x) {
-				return nil, errInvalidJSON
-			}
-			return json.RawMessage(x), nil
+		if isJSONType(pgType) {
+			return jsonDocument(x)
 		}
 	}
 	return v, nil
+}
+
+// finiteFloat returns v, whose value is f, or errNonFinite if f is NaN
+// or infinite.
+func finiteFloat(v any, f float64) (any, error) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return nil, errNonFinite
+	}
+	return v, nil
+}
+
+// intervalText renders an interval as PostgreSQL interval input text in
+// months, days and microseconds, or nil for a NULL interval.
+func intervalText(x pgtype.Interval) any {
+	if !x.Valid {
+		return nil
+	}
+	return fmt.Sprintf("%d months %d days %d microseconds", x.Months, x.Days, x.Microseconds)
+}
+
+// isJSONType reports whether pgType is json or jsonb.
+func isJSONType(pgType string) bool {
+	return pgType == "jsonb" || pgType == "json"
+}
+
+// jsonDocument returns doc as a JSON document to embed, or
+// errInvalidJSON if it is not valid JSON.
+func jsonDocument(doc []byte) (any, error) {
+	if !json.Valid(doc) {
+		return nil, errInvalidJSON
+	}
+	return json.RawMessage(doc), nil
 }

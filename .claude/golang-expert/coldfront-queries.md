@@ -30,7 +30,13 @@ PostgreSQL and on ColdFront, with identical plain-PostgreSQL results.
   the server's anomaly comparison
   (`server/src/internal/metrics/anomaly_comparison.go`) wraps them in
   `comparisonSeriesQuery`. Each takes `$1::int` (lookback days) and
-  `$2::timestamptz` (inclusive upper bound on `collected_at`).
+  `$2::timestamptz`, an inclusive upper bound on `collected_at` written
+  `<col> <= COALESCE($2::timestamptz, <col>)` beside every lookback. A
+  NULL `$2` means no upper bound: the alerter binds a NULL
+  `pgtype.Timestamptz{}` (`noHistoricalUpperBound` in
+  `alerter/src/internal/database/metric_queries.go`); the server binds
+  a real timestamp, which PostgreSQL folds into a plain
+  `<col> <= const` index condition.
 - `alerter/src/internal/database/metric_registry.go`: `latestSQL` for
   every registry entry, which feeds threshold evaluation, anomaly
   scoring and recovery (`GetLatestMetricValues`).
@@ -99,8 +105,21 @@ failures in rule 3, so reproduce with pgx, never psql.
    `connection_utilization_percent` historical query bounds its
    `max_connections` ranges this way, with `valid_from` NULL on a
    connection's first `pg_settings` row (`LAG` is NULL) and `valid_to`
-   the bare `LEAD`.
-7. **Column types differ.** On the views text columns report as
+   the bare `LEAD`. The same goes for bound parameters: never bind
+   `pgtype.Infinity` or `-infinity` as an open end. Bind NULL and open
+   the bound with `COALESCE`, as in rule 7.
+7. **No NULL test on a parameter.** `$2::timestamptz IS NULL` (cast or
+   not, `IS NOT NULL` too, on either side of an `OR`) fails at DuckDB
+   plan time with the UNKNOWN error of rule 1, whatever `$2` is bound
+   to. A NULL test on a column (`m.valid_from IS NULL`) is fine. To let
+   NULL mean "no bound", write `col <= COALESCE($2::timestamptz, col)`;
+   `COALESCE(col <= $2::timestamptz, true)`,
+   `(col > $2::timestamptz) IS NOT TRUE` and
+   `col <= COALESCE($2::timestamptz, NOW())` also ran, but only the
+   first folds to an indexable `col <= const` when `$2` is a constant,
+   and the `NOW()` form drops rows stamped after the datastore's clock,
+   which an unbounded scan keeps.
+8. **Column types differ.** On the views text columns report as
    `character varying` and oid columns as `bigint`. Scanning
    `database_name` into a Go `string` works either way.
 
@@ -137,8 +156,10 @@ noted:
   above 2^31. `TestLSNHalfSQLWeights` and `TestLSNDiffBytesSQL` in
   `pkg/anomaly/lsn_test.go` check its shape without a database.
 - `TestHistoricalUpperBound` in `pkg/anomaly/metrics_test.go` pins the
-  cast `$1::int` lookback and `$2::timestamptz` bound on every
-  `HistoricalSQL`.
+  cast `$1::int` lookback and, directly after it, the
+  `AND <col> <= COALESCE($2::timestamptz, <col>)` bound on every
+  `HistoricalSQL`. The server's `TestComparisonSeriesQuery_Plan` checks
+  that a real `$2` still reaches the inner scan's condition.
 
 ## Live Verification
 
@@ -154,3 +175,26 @@ package (behind a build tag, never committed) that builds a
 `Datastore{pool: ...}` over the ColdFront DSN and loops over
 `metricRegistry` is the quickest harness. That run predates the move
 of the historical queries to `pkg/anomaly` and their `$2` bound.
+
+The `$2` bound was then checked through psql on ColdFront over
+PostgreSQL 16, 17 and 18, each query in its own `BEGIN READ ONLY`
+transaction. Every `BaselineMetrics()` query was run with `$1 = 15` and
+`$2` both NULL and a timestamp, and every registry latest query and both
+`queries.go` readers were run as well. Everything passed through the
+simple protocol and `\bind` (extended protocol, unnamed statement),
+and NULL `$2` through `PREPARE`/`EXECUTE`. The statements returning a
+text column also passed through psql 18's `\parse`/`\bind_named`
+(a named statement, as pgx uses by default, run seven times to pass
+PostgreSQL's switch to a generic plan). Rule 7 was found this way: the earlier
+`($2::timestamptz IS NULL OR ...)` bound failed every historical query
+at plan time. Two harness traps:
+
+- psql's `ON_ERROR_ROLLBACK` uses savepoints, which DuckDB rejects
+  ("SAVEPOINT and subtransactions are not supported"); end each query's
+  transaction instead.
+- SQL-level `PREPARE` and `EXECUTE` fail with "query result type does
+  not match portal result type" on any statement returning a text
+  column (rule 8). The protocol-level paths above do not fail, so this
+  is no evidence against a query. `\bind` cannot send NULL, so check a
+  NULL parameter through `PREPARE` where the result has no text column,
+  or by substituting `NULL::timestamptz` for it.

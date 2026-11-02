@@ -262,9 +262,12 @@ func (d *Datastore) MetricAbsenceWindow(metricName string) time.Duration {
 }
 
 // noHistoricalUpperBound is the $2 upper bound the baseline calculator
-// passes to every historical query: +infinity, so the lookback alone
-// bounds the scan. See GitHub issue #776.
-var noHistoricalUpperBound = pgtype.Timestamptz{InfinityModifier: pgtype.Infinity, Valid: true}
+// passes to every historical query: NULL, which each query reads as no
+// upper bound, so the lookback alone bounds the scan (GitHub issue
+// #776). It is not +infinity, because DuckDB on a ColdFront datastore
+// can fail with "Cannot subtract infinite timestamps" on an infinite
+// bound (GitHub issue #755).
+var noHistoricalUpperBound = pgtype.Timestamptz{}
 
 // queryHistoricalMetricValuesBasic executes a historical SQL query that returns rows with
 // (connection_id, database_name, value, collected_at) where database_name is scanned as-is

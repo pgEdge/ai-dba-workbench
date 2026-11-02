@@ -56,8 +56,11 @@ var coldFrontBadShapes = []struct {
 	{regexp.MustCompile(`(?i)\bpg_lsn\b`),
 		"DuckDB has no pg_lsn type; work in bigint byte positions or compute the difference in Go"},
 	{regexp.MustCompile(`(?i)'[-+]?infinity'`),
-		"DuckDB cannot compare with an infinite timestamp literal; bind the bound as a " +
-			"parameter, or leave the bound open with a NULL test"},
+		"DuckDB may subtract an infinite bound and fail; to leave a bound open, bind NULL " +
+			"and write col <= COALESCE($n::timestamptz, col)"},
+	{regexp.MustCompile(`(?i)\$(\d+|%d)(::[a-z_ ]+?)?\s+IS\s+(NOT\s+)?NULL\b`),
+		"a NULL test on a parameter cannot be planned, cast or not; write " +
+			"col <= COALESCE($n::timestamptz, col) or test a column instead"},
 }
 
 // paramArithmeticHint is the advice for arithmetic on a parameter.
@@ -226,6 +229,12 @@ func TestColdFrontShapeProblems(t *testing.T) {
 		{"array literal", "connection_id = ANY('{1,2}'::int[])", true},
 		{"untyped array literal", "state = ANY('{active,idle}')", true},
 		{"array constructor", "connection_id = ANY(ARRAY[1, 2])", false},
+		{"parameter is null", "($2 IS NULL OR collected_at <= $2)", true},
+		{"cast parameter is not null", "$2::timestamptz IS NOT NULL", true},
+		{"formatted parameter is null", "$%d::text IS NULL", true},
+		{"column is null", "m.valid_from IS NULL OR a.collected_at >= m.valid_from", false},
+		{"coalesced open bound", "collected_at <= COALESCE($2::timestamptz, collected_at)", false},
+		{"not distinct from parameter", "database_name IS NOT DISTINCT FROM $4::text", false},
 		{"jsonb object literal", "COALESCE(details, '{}'::jsonb)", false},
 		{"json object literal", `'{"a": 1}'::json ->> 'a'`, false},
 		{"now minus parameter", "collected_at > now() - $2::interval", true},

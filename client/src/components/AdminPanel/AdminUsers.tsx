@@ -129,10 +129,19 @@ interface EditUserBody {
 const AdminUsers: React.FC = () => {
     const theme = useTheme();
     const { user: currentUser } = useAuth();
+    // The server refuses any create or update that carries
+    // is_superuser from a caller who is not a superuser, so such a
+    // caller gets no Superuser switch in the dialogs and a disabled one
+    // in the list, where it still shows each row's status.
+    const callerIsSuperuser = currentUser?.isSuperuser === true;
     const [users, setUsers] = useState<RbacUser[]>([]);
     const [connections, setConnections] = useState<{ id: number; name: string }[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
+    // A failed row action (toggle or delete) is shown above the table
+    // rather than through `error`, which replaces the whole page and is
+    // reserved for a failure to load the list.
+    const [actionError, setActionError] = useState<string | null>(null);
     const [expandedUser, setExpandedUser] = useState<number | null>(null);
     const [permissions, setPermissions] = useState<UserPermissions | null>(null);
     const [permissionsLoading, setPermissionsLoading] = useState<boolean>(false);
@@ -326,12 +335,15 @@ const AdminUsers: React.FC = () => {
         if (!deleteUser) {return;}
         try {
             setDeleteLoading(true);
+            setActionError(null);
             await apiDelete(`/api/v1/rbac/users/${deleteUser.id}`);
             setDeleteOpen(false);
             setDeleteUser(null);
             fetchUsers();
         } catch (err: unknown) {
-            setError(extractErrorMessage(err));
+            setDeleteOpen(false);
+            setDeleteUser(null);
+            setActionError(extractErrorMessage(err));
         } finally {
             setDeleteLoading(false);
         }
@@ -341,6 +353,7 @@ const AdminUsers: React.FC = () => {
     const handleToggleSuperuser = async (e: React.MouseEvent, rowUser: RbacUser) => {
         e.stopPropagation();
         try {
+            setActionError(null);
             await apiPut(`/api/v1/rbac/users/${rowUser.id}`, {
                 is_superuser: !rowUser.is_superuser,
             });
@@ -350,13 +363,14 @@ const AdminUsers: React.FC = () => {
                 setPermissions(data);
             }
         } catch (err: unknown) {
-            setError(extractErrorMessage(err));
+            setActionError(extractErrorMessage(err));
         }
     };
 
     const handleToggleEnabled = async (e: React.MouseEvent, rowUser: RbacUser) => {
         e.stopPropagation();
         try {
+            setActionError(null);
             await apiPut(`/api/v1/rbac/users/${rowUser.id}`, {
                 enabled: !(rowUser.enabled !== false),
             });
@@ -366,7 +380,7 @@ const AdminUsers: React.FC = () => {
                 setPermissions(data);
             }
         } catch (err: unknown) {
-            setError(extractErrorMessage(err));
+            setActionError(extractErrorMessage(err));
         }
     };
 
@@ -439,6 +453,16 @@ const AdminUsers: React.FC = () => {
                     Create User
                 </Button>
             </Box>
+
+            {actionError && (
+                <Alert
+                    severity="error"
+                    onClose={() => { setActionError(null); }}
+                    sx={{ mb: 2, borderRadius: 1 }}
+                >
+                    {actionError}
+                </Alert>
+            )}
 
             <TableContainer
                 component={Paper}
@@ -572,6 +596,7 @@ const AdminUsers: React.FC = () => {
                                             size="small"
                                             onClick={(e) => handleToggleSuperuser(e, rowUser)}
                                             disabled={
+                                                !callerIsSuperuser ||
                                                 rowUser.is_service_account === true ||
                                                 rowUser.username === currentUser?.username
                                             }
@@ -745,17 +770,19 @@ const AdminUsers: React.FC = () => {
                             label="Enabled"
                             sx={{ ml: 0, gap: 1 }}
                         />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={createSuperuser}
-                                    onChange={(e) => { setCreateSuperuser(e.target.checked); }}
-                                    disabled={createLoading}
-                                />
-                            }
-                            label="Superuser"
-                            sx={{ ml: 0, gap: 1 }}
-                        />
+                        {callerIsSuperuser && (
+                            <FormControlLabel
+                                control={
+                                    <Switch
+                                        checked={createSuperuser}
+                                        onChange={(e) => { setCreateSuperuser(e.target.checked); }}
+                                        disabled={createLoading}
+                                    />
+                                }
+                                label="Superuser"
+                                sx={{ ml: 0, gap: 1 }}
+                            />
+                        )}
                     </Box>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
@@ -869,17 +896,19 @@ const AdminUsers: React.FC = () => {
                             label="Enabled"
                             sx={{ ml: 0, gap: 1 }}
                         />
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={editSuperuser}
-                                    onChange={(e) => { setEditSuperuser(e.target.checked); }}
-                                    disabled={editLoading}
-                                />
-                            }
-                            label="Superuser"
-                            sx={{ ml: 0, gap: 1 }}
-                        />
+                        {callerIsSuperuser && (
+                            <FormControlLabel
+                                control={
+                                    <Switch
+                                        checked={editSuperuser}
+                                        onChange={(e) => { setEditSuperuser(e.target.checked); }}
+                                        disabled={editLoading}
+                                    />
+                                }
+                                label="Superuser"
+                                sx={{ ml: 0, gap: 1 }}
+                            />
+                        )}
                     </Box>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>

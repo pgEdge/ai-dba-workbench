@@ -265,7 +265,12 @@ cascaded until the purge removes the row, so readers of those tables
 filter by connection too: `liveAlertConnectionCondition` in
 `alert_queries.go` (keeps system alerts with no connection) for
 `GetAlerts` and the alert counts, `timelineLiveConnectionCondition` in
-`timeline_queries.go` for the timeline total, and `deleted_at IS NULL`
+`timeline_queries.go` for the timeline total (written as
+`connection_id IN (SELECT id FROM connections WHERE deleted_at IS
+NULL)`, a test for liveness rather than for the marked IDs, because on
+ColdFront the purge leaves a view's rows behind after it removes the
+connection row, and the event queries' join to `connections` drops
+them; `TestTimeline_PurgedConnectionOnViews` pins it), and `deleted_at IS NULL`
 beside `cluster_id` in the cluster and group connection-ID lookups of
 `estate_queries.go`, as defence in depth against a racing update that
 re-sets `cluster_id`. Each reader is pinned by a marked-connection test:

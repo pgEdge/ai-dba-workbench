@@ -364,13 +364,19 @@ func buildCountQuery(connCondition, timeCondition, typeCondition string, filter 
 	return fmt.Sprintf("SELECT %s AS total_count", strings.Join(countQueries, " + "))
 }
 
-// timelineLiveConnectionCondition keeps a connection marked for deletion
-// out of the event counts, as the event queries keep it out by joining
-// live connections, so TotalCount matches the events it totals (issue
-// #668). The count builders rewrite connection_id with their own table
-// alias, which is why the subquery names no column of that spelling;
-// connections.id is NOT NULL, so NOT IN is safe here.
-const timelineLiveConnectionCondition = "connection_id NOT IN (SELECT id FROM connections WHERE deleted_at IS NOT NULL)"
+// timelineLiveConnectionCondition keeps the events of any connection that
+// is not live out of the event counts, as the event queries keep them out
+// by joining live connections, so TotalCount matches the events it
+// totals (issue #668). That covers a connection marked for deletion and
+// also one the purge has already removed: on a pgEdge ColdFront
+// datastore the purge leaves a metrics view's rows in place (issue
+// #755), so events can outlive their connection row, and a test for
+// marked rows alone (NOT IN the marked IDs) would still count them.
+// The count builders rewrite connection_id with their own table alias,
+// which is why the subquery names no column of that spelling. It names
+// connections unqualified and joins no catalog, so DuckDB can plan it
+// when the statement also reads metrics views.
+const timelineLiveConnectionCondition = "connection_id IN (SELECT id FROM connections WHERE deleted_at IS NULL)"
 
 // buildWhereClause combines conditions into a WHERE clause
 func buildWhereClause(connCondition, timeCondition, extraCondition string) string {

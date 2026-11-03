@@ -10,6 +10,7 @@
 package tsv
 
 import (
+	"math"
 	"math/big"
 	"testing"
 	"time"
@@ -45,6 +46,41 @@ func TestFormatValue(t *testing.T) {
 			result := FormatValue(tt.input)
 			if result != tt.expected {
 				t.Errorf("FormatValue(%v) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatValue_Floats checks that floats print in plain decimal with
+// the fewest digits that round-trip, never in exponent form, so a
+// float8 avg() reads as the numeric one did (issue #755), and that NaN
+// and the infinities print as %v printed them.
+func TestFormatValue_Floats(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    any
+		expected string
+	}{
+		{"float64 whole number past 1e+06", float64(1431655765), "1431655765"},
+		{"float64 fraction", 1431655765.5, "1431655765.5"},
+		{"float64 small", 0.000001, "0.000001"},
+		{"float64 negative", -2.5e7, "-25000000"},
+		{"float64 zero", float64(0), "0"},
+		{"float64 large", 1e21, "1000000000000000000000"},
+		{"float64 NaN", math.NaN(), "NaN"},
+		{"float64 +Inf", math.Inf(1), "+Inf"},
+		{"float64 -Inf", math.Inf(-1), "-Inf"},
+		{"float32 keeps its own precision", float32(0.1), "0.1"},
+		{"float32 whole number past 1e+06", float32(16777216), "16777216"},
+		{"pgtype.Float8 past 1e+06", pgtype.Float8{Valid: true, Float64: 1431655765}, "1431655765"},
+		{"pgtype.Float8 NaN", pgtype.Float8{Valid: true, Float64: math.NaN()}, "NaN"},
+		{"pgtype.Float4 keeps its own precision", pgtype.Float4{Valid: true, Float32: 0.1}, "0.1"},
+		{"pgtype.Float4 -Inf", pgtype.Float4{Valid: true, Float32: float32(math.Inf(-1))}, "-Inf"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FormatValue(tt.input); got != tt.expected {
+				t.Errorf("FormatValue(%v) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
 	}

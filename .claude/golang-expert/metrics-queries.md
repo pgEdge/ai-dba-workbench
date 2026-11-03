@@ -150,6 +150,25 @@ failure on a pooled connection; this is unresolved (issue #755).
   `GetAggSelectCols` apply these rules. `sum(bigint)` (numeric),
   `count`, `min`/`max`, `(array_agg(...))[1]`, `round(float8 ...)` and
   float arithmetic are fine.
+  Two output consequences on plain PostgreSQL. A float8 `avg` scans as
+  a Go `float64`, so `tsv.FormatValue` prints floats with
+  `strconv.FormatFloat(v, 'f', -1, bitSize)` (plain decimal, shortest
+  round-trip; NaN, `+Inf`, `-Inf` as before) and query_datastore still
+  prints `1431655765` rather than `%v`'s `1.431655765e+09`; that applies
+  to every FormatValue caller (query_database, query_metrics, the API's
+  query results), so a float8 of 1e300 now prints all 301 digits. And an
+  interval sum, computed as `sum(EXTRACT(EPOCH ...)::float8) * INTERVAL
+  '1 second'`, carries the whole duration in the time field:
+  `50:00:00.100003` where PostgreSQL's own `sum(interval)` printed
+  `1 day 26:00:00.100003`. The duration is equal, and the only interval
+  columns the collector stores (pg_stat_replication's `write_lag`,
+  `flush_lag`, `replay_lag`) never carry a day field, so real sums are
+  unchanged. Summing the month, day and time fields apart would restore
+  PostgreSQL's form, but DuckDB's `EXTRACT(SECOND FROM interval)` and
+  `date_trunc` on an interval are unverified on ColdFront and epoch
+  arithmetic treats months differently in the two engines, so it was
+  not done. `TestQueryDatastoreAggregateFormatIntegration` pins both
+  outputs.
 - **No array parameters.** `= ANY($1)`, `= ANY($1::int[])`,
   `unnest($1)` and even a literal `'{2,3}'::int[]` or `'{a,b}'::text[]`
   fail ("Could not convert DuckDB type: UNKNOWN", or "Type VARCHAR ...

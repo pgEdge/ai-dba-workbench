@@ -250,7 +250,9 @@ than in one transaction.
   ColdFront.
 
 - `database.PrepareMetricsStorage` runs in `initializeSchema` before
-  `Migrate`. It calls `CheckMetricsStorage`, which under ColdFront
+  `Migrate`, bounded by `prepareMetricsStorageTimeout`: 10 seconds in
+  the default mode, 60 under ColdFront, whose attach and namespace
+  steps go over the network to the catalog and object storage. It calls `CheckMetricsStorage`, which under ColdFront
   requires `coldfront.create_iceberg_table(text,text,jsonb,text[])`
   (its presence is how "installed" is judged, rather than the
   `pg_extension` row, so the stub below passes) plus both

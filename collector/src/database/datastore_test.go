@@ -11,6 +11,7 @@ package database
 
 import (
 	"testing"
+	"time"
 )
 
 // mockConfig implements the Config interface for testing
@@ -191,6 +192,18 @@ func TestConfigValidation(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestPrepareMetricsStorageTimeout checks that ColdFront, whose startup
+// attaches a remote Iceberg catalog, gets a longer bound than the
+// default mode, which keeps its 10 seconds.
+func TestPrepareMetricsStorageTimeout(t *testing.T) {
+	if got := prepareMetricsStorageTimeout(false); got != 10*time.Second {
+		t.Errorf("default mode: timeout %v, want 10s", got)
+	}
+	if got := prepareMetricsStorageTimeout(true); got != 60*time.Second {
+		t.Errorf("ColdFront: timeout %v, want 60s", got)
 	}
 }
 

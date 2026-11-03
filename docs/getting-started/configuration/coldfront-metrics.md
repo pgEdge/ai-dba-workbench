@@ -290,20 +290,51 @@ The data lifecycle belongs to ColdFront and to the operator. The
 ColdFront compactor expires old snapshots and data files, as the
 [Scheduling the ColdFront Compactor](#scheduling-the-coldfront-compactor)
 section describes. Deleting old metrics rows remains the operator's
-responsibility.
+responsibility; a `DELETE` statement with a `collected_at` condition
+removes old rows in the way that the
+[Purging Deleted Connections](#purging-deleted-connections) section
+describes.
 
 ### Purging Deleted Connections
 
 When a user deletes a connection, the server's background purge still
 removes the connection itself, but leaves the connection's metrics
 rows in place in every ColdFront view. The server logs one line for
-each purge that names the metrics views in which it left rows. The
-operator can remove those rows with the methods that ColdFront
-provides.
+each purge that names the connection ID and the metrics views in which
+it left rows. The rows stay in those views until an operator removes
+them, and no Workbench retention removes them later. The
+`metrics.pg_settings` and `metrics.pg_hba_file_rules` views can hold
+sensitive values that the collector read from the deleted server.
 
 In ColdFront mode, the collector also creates no foreign keys from the
 metrics tables to the `connections` table. Deleting a connection
 therefore never cascades to the connection's metrics rows.
+
+ColdFront rewrites a `DELETE` statement on a metrics view into a
+delete on the Iceberg table. In the following example, the statement
+removes the rows of the deleted connection with ID `42` from the
+`metrics.pg_settings` view:
+
+```sql
+DELETE FROM metrics.pg_settings WHERE connection_id = 42;
+```
+
+Run one such statement for each view that the purge log line names,
+as the collector's datastore role or another role with `DELETE`
+privilege on the views. Run each statement on its own, outside any
+transaction block that also writes an ordinary PostgreSQL table,
+because pg_duckdb refuses a transaction that writes both kinds of
+table.
+
+Iceberg records a delete in delete files and does not rewrite the
+existing data files, so the deleted values remain in object storage
+for a time. The values leave object storage only after the compactor
+rewrites the affected data files and snapshot expiry deletes the files
+that only expired snapshots reference. The
+[Scheduling the ColdFront Compactor](#scheduling-the-coldfront-compactor)
+section describes both steps, and the
+[ColdFront compaction guide](https://github.com/pgEdge/ColdFront/blob/main/docs/compaction.md)
+lists the conditions under which the compactor rewrites a data file.
 
 ### Storing Column Types
 

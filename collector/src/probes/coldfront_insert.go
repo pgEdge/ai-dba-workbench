@@ -110,10 +110,45 @@ func writeColdFrontBatches(ctx context.Context, tableName string, rows []coldFro
 	dropped := 0
 	for _, batch := range splitColdFrontBatches(rows, coldFrontBatchRows, coldFrontBatchBytes) {
 		if err := writeOrHalve(ctx, tableName, batch, write, &dropped); err != nil {
+			var refused *ColdFrontRowsRefusedError
+			if errors.As(err, &refused) {
+				refused.Rows = len(rows)
+			}
 			return fmt.Errorf("failed to execute INSERT: %w", err)
 		}
 	}
 	return nil
+}
+
+// ColdFrontRowsRefusedError is returned by StoreMetrics under ColdFront
+// when more than maxColdFrontDroppedRows rows of one call were refused
+// one by one. It carries the SQLSTATE of the refusal that hit the limit
+// but not the database's message, which can quote the rejected value
+// (`invalid input syntax for type integer: "<value>"`), so it
+// deliberately does not wrap the *pgconn.PgError: errors.As for one does
+// not match it. A caller that needs the code calls SQLState, the method
+// pgx-aware code looks for through errors.As on
+// interface{ SQLState() string }.
+type ColdFrontRowsRefusedError struct {
+	// Table is the metrics table, without the schema.
+	Table string
+	// Code is the SQLSTATE of the refusal that hit the limit.
+	Code string
+	// Dropped is how many rows were dropped before the limit was hit.
+	Dropped int
+	// Rows is how many rows the StoreMetrics call was given.
+	Rows int
+}
+
+// Error describes the failure without any value from the rows.
+func (e *ColdFrontRowsRefusedError) Error() string {
+	return fmt.Sprintf("ColdFront refused more than %d rows of metrics.%s one by one "+
+		"(SQLSTATE %s, %d of %d rows dropped)", e.Dropped, e.Table, e.Code, e.Dropped, e.Rows)
+}
+
+// SQLState returns the SQLSTATE of the refusal that hit the limit.
+func (e *ColdFrontRowsRefusedError) SQLState() string {
+	return e.Code
 }
 
 // writeOrHalve writes batch, splitting it in two and retrying each half
@@ -129,8 +164,9 @@ func writeOrHalve(ctx context.Context, tableName string, batch []coldFrontRow, w
 	}
 	if len(batch) == 1 {
 		if *dropped >= maxColdFrontDroppedRows {
-			return fmt.Errorf("ColdFront refused more than %d rows of metrics.%s one by one: %w",
-				maxColdFrontDroppedRows, tableName, err)
+			// The database's message is left out, as in the log line
+			// below: it can quote the rejected value.
+			return &ColdFrontRowsRefusedError{Table: tableName, Code: code, Dropped: *dropped}
 		}
 		*dropped++
 		// Only the table, the connection and the SQLSTATE are logged:

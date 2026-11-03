@@ -209,7 +209,13 @@ than in one transaction.
   dropped and logged with only the table, its `connection_id` and the
   SQLSTATE, never the values. Other errors are returned at once, and more than
   `maxColdFrontDroppedRows` (10) dropped rows in one call is treated as
-  systemic and returned, bounding statements and log lines.
+  systemic and returned, bounding statements and log lines. That error
+  is a `*probes.ColdFrontRowsRefusedError` (table, SQLSTATE, dropped and
+  total rows, `SQLState()` method) and deliberately does not wrap the
+  `*pgconn.PgError`, whose message can quote the rejected value
+  (`invalid input syntax for type ...: "<value>"`); `errors.As` for a
+  `PgError` does not match it, and no caller of `StoreMetrics` needs it
+  to. `TestWriteColdFrontBatchesDropLimitErrorHidesValues` pins this.
 
 ## Startup and Runtime
 

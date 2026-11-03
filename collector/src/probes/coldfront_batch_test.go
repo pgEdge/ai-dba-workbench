@@ -224,6 +224,54 @@ func TestWriteColdFrontBatchesDropLimitIsExact(t *testing.T) {
 
 }
 
+// TestWriteColdFrontBatchesDropLimitErrorHidesValues checks that the
+// error returned at the drop limit, which the collector logs, carries
+// the table, the SQLSTATE and the row counts but not the database's
+// message, which quotes the rejected value.
+func TestWriteColdFrontBatchesDropLimitErrorHidesValues(t *testing.T) {
+	const secret = "SECRET-cred-123"
+	bad := map[int]bool{}
+	for i := 0; i < 32; i++ {
+		bad[i] = true
+	}
+	w := &failingWriter{bad: bad, err: &pgconn.PgError{
+		Severity: "ERROR",
+		Code:     "22P02",
+		Message:  `invalid input syntax for type integer: "` + secret + `"`,
+	}}
+	err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(32, 3), w.write)
+	if err == nil {
+		t.Fatal("writeColdFrontBatches returned no error at the drop limit")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "invalid input syntax") {
+		t.Errorf("the returned error exposes the database message: %q", err.Error())
+	}
+	for _, want := range []string{"metrics.pg_settings", "SQLSTATE 22P02",
+		fmt.Sprintf("%d of 32 rows dropped", maxColdFrontDroppedRows)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the returned error %q does not contain %q", err.Error(), want)
+		}
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		t.Errorf("the returned error still wraps the PgError %v", pgErr)
+	}
+	var refused *ColdFrontRowsRefusedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("errors.As(%v, *ColdFrontRowsRefusedError) = false", err)
+	}
+	want := ColdFrontRowsRefusedError{Table: "pg_settings", Code: "22P02",
+		Dropped: maxColdFrontDroppedRows, Rows: 32}
+	if *refused != want {
+		t.Errorf("refused = %+v, want %+v", *refused, want)
+	}
+	var coded interface{ SQLState() string }
+	if !errors.As(err, &coded) || coded.SQLState() != "22P02" {
+		t.Errorf("the SQLSTATE is not exposed through SQLState(): %v", err)
+	}
+}
+
 // TestWriteColdFrontBatchesSubtransactionErrorIsSystemic replays the
 // live failure: pg_duckdb refused every write with XX000 "SAVEPOINT and
 // subtransactions are not supported", and the collector dropped rows one

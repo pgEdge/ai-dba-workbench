@@ -211,18 +211,7 @@ func TestMainCheckConfigExitStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := writeCheckConfig(t, tt.body)
-			//nolint:gosec // G204: re-executes this test binary with a fixed test filter.
-			cmd := exec.Command(os.Args[0], "-test.run=^TestMainCheckConfigExitStatus$")
-			cmd.Env = append(os.Environ(), checkConfigMainEnv+"="+path)
-			out, err := cmd.CombinedOutput()
-
-			code := 0
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
-				code = exitErr.ExitCode()
-			} else if err != nil {
-				t.Fatalf("running the check: %v", err)
-			}
+			code, out := runMainChild(t, "TestMainCheckConfigExitStatus", checkConfigMainEnv, path)
 			if code != tt.wantCode {
 				t.Fatalf("exit status %d, want %d; output:\n%s", code, tt.wantCode, out)
 			}
@@ -230,6 +219,92 @@ func TestMainCheckConfigExitStatus(t *testing.T) {
 				t.Fatalf("output lacks %q:\n%s", tt.wantOut, out)
 			}
 		})
+	}
+}
+
+// runMainChild re-executes this test binary, running only testName,
+// with envName set to value, and returns the child's exit status and
+// combined output.
+func runMainChild(t *testing.T, testName, envName, value string) (int, string) {
+	t.Helper()
+	//nolint:gosec // G204: re-executes this test binary with a fixed test filter.
+	cmd := exec.Command(os.Args[0], "-test.run=^"+testName+"$")
+	cmd.Env = append(os.Environ(), envName+"="+value)
+	out, err := cmd.CombinedOutput()
+
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), string(out)
+	}
+	if err != nil {
+		t.Fatalf("running main: %v", err)
+	}
+	return 0, string(out)
+}
+
+// startupMainEnv names the environment variable that makes the test
+// binary, re-executed by TestMainStartupRefusesWhatCheckRefuses, run
+// main() without -check-config, as the server starts, on the
+// configuration file and data directory it names, separated by a
+// newline.
+const startupMainEnv = "AI_DBA_TEST_STARTUP_MAIN"
+
+// errorLine returns the line of out that main() writes for a fatal
+// error, or "" if there is none.
+func errorLine(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "ERROR: ") {
+			return line
+		}
+	}
+	return ""
+}
+
+// TestMainStartupRefusesWhatCheckRefuses runs main() as the server
+// starts, without -check-config, on a configuration whose password_file
+// cannot be read, and checks that start-up exits with status 1 and the
+// error -check-config gives for the same file. It pins start-up to
+// loadStartupConfig: were start-up to call config.LoadConfig directly,
+// it would no longer read password_file whilst the check still did, and
+// the two would drift apart.
+//
+// Start-up fails at loadStartupConfig, before NewServer, so it reads no
+// secret and opens no auth store, database or socket. The file names a
+// secret_file that does not exist, and the data directory is a fresh
+// temporary one, so that a start-up which did get past the configuration
+// would stop at the server secret rather than reach a database.
+func TestMainStartupRefusesWhatCheckRefuses(t *testing.T) {
+	if spec := os.Getenv(startupMainEnv); spec != "" {
+		path, dataDir, _ := strings.Cut(spec, "\n")
+		flag.CommandLine = flag.NewFlagSet("ai-dba-server", flag.ExitOnError)
+		os.Args = []string{"ai-dba-server", "-config", path, "-data-dir", dataDir}
+		main()
+		// main only returns here if start-up went wrong; say so rather
+		// than let the child pass as a test.
+		os.Exit(2)
+	}
+
+	dir := t.TempDir()
+	missingPasswordFile := filepath.Join(dir, "missing-password")
+	path := writeCheckConfig(t, "secret_file: "+filepath.Join(dir, "missing-secret")+
+		"\ndatabase:\n  user: workbench\n  password_file: "+missingPasswordFile+"\n")
+
+	checkCode, checkOut := runMainChild(t, "TestMainCheckConfigExitStatus", checkConfigMainEnv, path)
+	if checkCode != 1 {
+		t.Fatalf("-check-config exit status %d, want 1; output:\n%s", checkCode, checkOut)
+	}
+	checkErr := errorLine(checkOut)
+	if !strings.Contains(checkErr, missingPasswordFile) {
+		t.Fatalf("-check-config error does not name the password file:\n%s", checkOut)
+	}
+
+	startCode, startOut := runMainChild(t, "TestMainStartupRefusesWhatCheckRefuses",
+		startupMainEnv, path+"\n"+t.TempDir())
+	if startCode != 1 {
+		t.Fatalf("start-up exit status %d, want 1; output:\n%s", startCode, startOut)
+	}
+	if startErr := errorLine(startOut); startErr != checkErr {
+		t.Fatalf("errors differ:\nstart-up: %s\ncheck:    %s", startErr, checkErr)
 	}
 }
 

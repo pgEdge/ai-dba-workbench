@@ -129,19 +129,15 @@ Container Registry.
    least 12 characters long.
 
     In the following example, the `exec` subcommand creates a user
-    named `admin` inside the server container.
+    named `admin` inside the server container. The container image has
+    no shell, so the command runs the server binary directly.
 
     ```bash
-    echo '1safePassword!' > /tmp/pw.txt
-    docker compose \
-        -f examples/docker-compose.production.yml exec \
-        -T server sh -c 'cat > /tmp/pw.txt' < /tmp/pw.txt
     docker compose \
         -f examples/docker-compose.production.yml exec \
         server /usr/local/bin/ai-dba-server \
         -config /etc/pgedge/ai-dba-server.yaml \
         -add-user -username admin \
-        -password-file /tmp/pw.txt \
         -full-name "Admin User" \
         -email "admin@example.com"
     docker compose \
@@ -149,17 +145,16 @@ Container Registry.
         server /usr/local/bin/ai-dba-server \
         -config /etc/pgedge/ai-dba-server.yaml \
         -set-superuser -username admin
-    docker compose \
-        -f examples/docker-compose.production.yml exec \
-        server rm /tmp/pw.txt
-    rm /tmp/pw.txt
     ```
 
-    The server prompts for optional notes and then confirms the user
-    creation. The confirmation output resembles the following.
+    The server prompts for the password twice, without echoing it, and
+    for optional notes, and then confirms the user creation. The
+    confirmation output resembles the following.
 
     ```text
     Auth store: /data/auth.db
+    Enter password:
+    Confirm password:
     Enter notes for this user (optional):
 
     ======================================================================

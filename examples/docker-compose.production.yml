@@ -91,7 +91,9 @@ services:
         ports:
             - "${SERVER_PORT:-8080}:8080"
         healthcheck:
-            test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8080'"]
+            # The image has no shell, so the server binary probes its
+            # own port.
+            test: ["CMD", "/usr/local/bin/ai-dba-server", "-health-check", "localhost:8080"]
             interval: 30s
             timeout: 5s
             retries: 3

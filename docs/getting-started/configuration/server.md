@@ -210,6 +210,7 @@ builtins:
 | `-check-config` | Validate the configuration file, then exit without starting the server; see [Upgrading the Workbench](../../admin-guide/upgrading.md#checking-a-configuration-by-hand) |
 | `-debug` | Enable debug logging |
 | `-data-dir string` | Data directory for auth and conversations |
+| `-health-check host:port` | Check that a TCP listener accepts connections at the given address, then exit with status 0, or 1 if it does not; the example Docker Compose files use it as the server health check, as the server image has no shell |
 | `-trace-file string` | Path to MCP trace file |
 
 ### HTTP Server Options

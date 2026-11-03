@@ -262,7 +262,7 @@ if docker ps --filter "name=wt-" --format "{{.Names}}" 2>/dev/null | grep -q "wt
 
       elapsed=0
       while [[ $elapsed -lt 30 ]]; do
-        if docker exec wt-server bash -c 'echo > /dev/tcp/localhost/8080' 2>/dev/null; then
+        if docker exec wt-server ai-dba-server -health-check localhost:8080 >/dev/null 2>&1; then
           break
         fi
         sleep 2
@@ -475,9 +475,15 @@ echo ""
 
 explain "Creating admin user..."
 
-echo "DemoPass2026" | docker exec -i wt-server sh -c \
-  'cat > /tmp/pw && ai-dba-server -add-user -username admin -password-file /tmp/pw -full-name "Demo Admin" -email "admin@demo.local" -user-note "Walkthrough admin" -data-dir /data -config /etc/pgedge/ai-dba-server.yaml && rm /tmp/pw' \
-  2>/dev/null || warn "Admin user may already exist (continuing)."
+# The server image has no shell to write a password file inside the
+# container, so a one-off server container reads it from a bind mount.
+echo "DemoPass2026" > "$SCRIPT_DIR/secret/admin-password"
+chmod 600 "$SCRIPT_DIR/secret/admin-password"
+(cd "$SCRIPT_DIR" && docker compose run --rm --no-deps -T \
+  -v "$SCRIPT_DIR/secret/admin-password:/tmp/admin-password:ro" \
+  server -add-user -username admin -password-file /tmp/admin-password -full-name "Demo Admin" -email "admin@demo.local" -user-note "Walkthrough admin" -data-dir /data -config /etc/pgedge/ai-dba-server.yaml) \
+  >/dev/null 2>&1 || warn "Admin user may already exist (continuing)."
+rm -f "$SCRIPT_DIR/secret/admin-password"
 
 docker exec wt-server \
   ai-dba-server -set-superuser -username admin -data-dir /data -config /etc/pgedge/ai-dba-server.yaml \

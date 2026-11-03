@@ -30,22 +30,28 @@ RUN go mod download
 # Build the binary (pure Go, no CGO required)
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /build/ai-dba-server ./cmd/mcp-server
 
-# Stage 2: Runtime image
-FROM debian:bookworm-slim
+# Create the runtime image's writable directories here, as the distroless
+# runtime image has no shell or mkdir to create them itself
+RUN mkdir -p /rootfs/etc/pgedge /rootfs/data /rootfs/usr/local/bin/data
 
-# hadolint ignore=DL3008
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+# Stage 2: Runtime image. The binary is static (CGO_ENABLED=0), so it runs
+# on distroless/static, which carries only CA certificates, tzdata and
+# /etc/passwd: no shell, package manager or libc, and so none of the
+# Debian packages whose unfixed CVEs a bookworm-slim base accumulates.
+# It runs as UID/GID 999, the "appuser" of the earlier Debian images, so
+# volumes written by those releases stay writable after an upgrade. The
+# distroless /etc/passwd has no entry for UID 999, so ENV USER supplies the
+# name that Go's os/user falls back to.
+FROM gcr.io/distroless/static-debian13
 
-RUN mkdir -p /etc/pgedge /data
+ENV USER=appuser
 
 COPY --from=builder /build/ai-dba-server /usr/local/bin/ai-dba-server
+COPY --from=builder --chown=999:999 /rootfs/etc/pgedge /etc/pgedge
+COPY --from=builder --chown=999:999 /rootfs/data /data
+COPY --from=builder --chown=999:999 /rootfs/usr/local/bin/data /usr/local/bin/data
 
-RUN mkdir -p /usr/local/bin/data && \
-    groupadd -r appuser && useradd -r -g appuser -d /nonexistent -s /usr/sbin/nologin appuser && \
-    chown -R appuser:appuser /etc/pgedge /data /usr/local/bin/data
-USER appuser
+USER 999:999
 
 EXPOSE 8080
 VOLUME /data

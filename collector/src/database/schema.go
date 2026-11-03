@@ -2625,10 +2625,14 @@ func (sm *SchemaManager) registerMigrations() {
 			// =====================================================================
 
 			// Check if pgvector extension is available. Under ColdFront
-			// the optional setup is skipped altogether: it runs inside
+			// the optional setup is skipped here: it runs inside
 			// SAVEPOINTs, which pg_duckdb does not allow in a
 			// transaction that has already written to Iceberg, as this
-			// one has by creating the metrics tables.
+			// one has by creating the metrics tables in PART 2, and it
+			// cannot move ahead of them because it needs
+			// anomaly_candidates (PART 5) and chat_memories (below).
+			// EnsureColdFrontEmbeddings creates the same objects after
+			// the migrations, each in a transaction of its own.
 			var vectorAvailable bool
 			if !sm.useColdFrontForMetrics {
 				err = tx.QueryRow(ctx, `
@@ -2641,7 +2645,9 @@ func (sm *SchemaManager) registerMigrations() {
 
 			switch {
 			case sm.useColdFrontForMetrics:
-				logger.Info("pgvector setup skipped: metrics are stored in ColdFront")
+				logger.Info("pgvector setup deferred: metrics are stored in " +
+					"ColdFront, so the anomaly and chat memory embeddings are " +
+					"created after the migrations")
 			case vectorAvailable:
 				// pgvector setup runs inside its own SAVEPOINT so a
 				// failure here (extension actually missing despite
@@ -3096,7 +3102,8 @@ func (sm *SchemaManager) registerMigrations() {
 
 			// Under ColdFront migration #1 skipped the pgvector setup, so
 			// there is no embedding column to widen, and the upgrade's
-			// SAVEPOINT is avoided.
+			// SAVEPOINT is avoided. EnsureColdFrontEmbeddings creates the
+			// columns at halfvec(4000) directly.
 			if sm.useColdFrontForMetrics {
 				return nil
 			}
@@ -4671,47 +4678,53 @@ func runSavepointed(
 // just turns off).
 func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 	return runSavepointed(ctx, tx, "pgvector_setup", func() error {
-		// CREATE EXTENSION IF NOT EXISTS, CREATE TABLE IF NOT
-		// EXISTS, the comment, and the HNSW index are issued in a
-		// single Exec so failures roll back atomically inside the
-		// SAVEPOINT. The error from any one of them propagates
-		// unchanged; the SAVEPOINT wrapper records the failure and
-		// the caller logs at Info level. candidate_id needs no index
-		// of its own: UNIQUE(candidate_id) already creates one, and
-		// migration #20 drops the duplicate that older installs
-		// were given (GitHub issue #615).
-		if _, err := tx.Exec(ctx, `
-			CREATE EXTENSION IF NOT EXISTS vector;
-
-			CREATE TABLE IF NOT EXISTS public.anomaly_embeddings (
-				id BIGSERIAL PRIMARY KEY,
-				candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
-				embedding halfvec(4000),
-				model_name TEXT NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				UNIQUE(candidate_id)
-			);
-
-			COMMENT ON TABLE public.anomaly_embeddings IS
-				'Embeddings for anomaly candidates used in Tier 2 similarity matching';
-
-			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector
-				ON public.anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops);
-		`); err != nil {
-			return fmt.Errorf("pgvector schema setup: %w", err)
-		}
-
-		// fk_anomaly_candidates_embedding was the original failure
-		// mode: re-running migration #1 against a database where it
-		// already exists raised duplicate_object and aborted the
-		// migration. The idempotent helper checks pg_constraint first
-		// so the constraint is added once and re-runs become a no-op.
-		return addConstraintIfMissing(ctx, tx,
-			"anomaly_candidates",
-			"fk_anomaly_candidates_embedding",
-			"FOREIGN KEY (embedding_id) REFERENCES anomaly_embeddings(id) ON DELETE SET NULL",
-		)
+		return createAnomalyEmbeddings(ctx, tx)
 	})
+}
+
+// createAnomalyEmbeddings is the body of runPgVectorSetup: it installs
+// pgvector and creates anomaly_embeddings, its HNSW index and the
+// foreign key from anomaly_candidates. Every statement is idempotent.
+// Migration #1 runs it under a SAVEPOINT; under ColdFront
+// EnsureColdFrontEmbeddings runs it in a transaction of its own.
+func createAnomalyEmbeddings(ctx context.Context, tx pgx.Tx) error {
+	// CREATE EXTENSION IF NOT EXISTS, CREATE TABLE IF NOT EXISTS, the
+	// comment, and the HNSW index are issued in a single Exec so
+	// failures roll back atomically. candidate_id needs no index of its
+	// own: UNIQUE(candidate_id) already creates one, and migration #20
+	// drops the duplicate that older installs were given (GitHub issue
+	// #615).
+	if _, err := tx.Exec(ctx, `
+		CREATE EXTENSION IF NOT EXISTS vector;
+
+		CREATE TABLE IF NOT EXISTS public.anomaly_embeddings (
+			id BIGSERIAL PRIMARY KEY,
+			candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
+			embedding halfvec(4000),
+			model_name TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(candidate_id)
+		);
+
+		COMMENT ON TABLE public.anomaly_embeddings IS
+			'Embeddings for anomaly candidates used in Tier 2 similarity matching';
+
+		CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector
+			ON public.anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops);
+	`); err != nil {
+		return fmt.Errorf("pgvector schema setup: %w", err)
+	}
+
+	// fk_anomaly_candidates_embedding was the original failure mode:
+	// re-running migration #1 against a database where it already
+	// exists raised duplicate_object and aborted the migration. The
+	// idempotent helper checks pg_constraint first so the constraint is
+	// added once and re-runs become a no-op.
+	return addConstraintIfMissing(ctx, tx,
+		"anomaly_candidates",
+		"fk_anomaly_candidates_embedding",
+		"FOREIGN KEY (embedding_id) REFERENCES anomaly_embeddings(id) ON DELETE SET NULL",
+	)
 }
 
 // runChatMemoryEmbeddingSetup adds the embedding column and HNSW index
@@ -4722,22 +4735,29 @@ func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 // keeps that failure from aborting the parent transaction.
 func runChatMemoryEmbeddingSetup(ctx context.Context, tx pgx.Tx) error {
 	return runSavepointed(ctx, tx, "chat_memories_embedding_setup", func() error {
-		_, err := tx.Exec(ctx, `
-			ALTER TABLE public.chat_memories
-				ADD COLUMN IF NOT EXISTS embedding halfvec(4000);
-
-			COMMENT ON COLUMN public.chat_memories.embedding IS
-				'Vector embedding for similarity search, zero-padded to a fixed width';
-
-			CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding
-				ON public.chat_memories USING hnsw (embedding halfvec_cosine_ops);
-		`)
-		if err != nil {
-			return fmt.Errorf(
-				"add chat_memories embedding column/index: %w", err)
-		}
-		return nil
+		return addChatMemoryEmbedding(ctx, tx)
 	})
+}
+
+// addChatMemoryEmbedding is the body of runChatMemoryEmbeddingSetup;
+// like createAnomalyEmbeddings it is idempotent and shared with
+// EnsureColdFrontEmbeddings.
+func addChatMemoryEmbedding(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, `
+		ALTER TABLE public.chat_memories
+			ADD COLUMN IF NOT EXISTS embedding halfvec(4000);
+
+		COMMENT ON COLUMN public.chat_memories.embedding IS
+			'Vector embedding for similarity search, zero-padded to a fixed width';
+
+		CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding
+			ON public.chat_memories USING hnsw (embedding halfvec_cosine_ops);
+	`)
+	if err != nil {
+		return fmt.Errorf(
+			"add chat_memories embedding column/index: %w", err)
+	}
+	return nil
 }
 
 // rowQuerier is the minimal QueryRow contract embeddingColumnTypeName

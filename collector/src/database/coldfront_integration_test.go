@@ -412,6 +412,12 @@ func TestColdFrontMigrationsAgainstStub(t *testing.T) {
 		t.Error("the pgvector setup ran under ColdFront")
 	}
 
+	// The startup step after the migrations creates them instead, in
+	// transactions of their own, and is a no-op the second time.
+	EnsureColdFrontEmbeddings(ctx, conn)
+	EnsureColdFrontEmbeddings(ctx, conn)
+	checkColdFrontEmbeddings(t, conn)
+
 	// A second start finds views, recreates nothing and applies nothing.
 	if err := PrepareMetricsStorage(ctx, conn, true); err != nil {
 		t.Fatalf("second PrepareMetricsStorage failed: %v", err)
@@ -432,6 +438,46 @@ func TestColdFrontMigrationsAgainstStub(t *testing.T) {
 
 	exerciseInsertHelper(t, conn)
 	storeConvertedValues(t, conn)
+}
+
+// checkColdFrontEmbeddings asserts that, where pgvector is available,
+// EnsureColdFrontEmbeddings left the same pgvector objects migration 1
+// creates in the default mode, at the halfvec(4000) width migration 6
+// gives them, and none where it is not.
+func checkColdFrontEmbeddings(t *testing.T, conn *pgxpool.Conn) {
+	t.Helper()
+	var available bool
+	var chatType, anomalyType string
+	var foreignKey, chatIndex, anomalyIndex bool
+	if err := conn.QueryRow(context.Background(), `
+        SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector'),
+               COALESCE((SELECT format_type(atttypid, atttypmod) FROM pg_attribute
+                         WHERE attrelid = 'public.chat_memories'::regclass
+                           AND attname = 'embedding'), ''),
+               COALESCE((SELECT format_type(atttypid, atttypmod) FROM pg_attribute
+                         WHERE attrelid = to_regclass('public.anomaly_embeddings')
+                           AND attname = 'embedding'), ''),
+               EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conname = 'fk_anomaly_candidates_embedding'),
+               to_regclass('public.idx_chat_memories_embedding') IS NOT NULL,
+               to_regclass('public.idx_anomaly_embeddings_vector') IS NOT NULL
+    `).Scan(&available, &chatType, &anomalyType, &foreignKey, &chatIndex, &anomalyIndex); err != nil {
+		t.Fatal(err)
+	}
+	if !available {
+		if chatType != "" || anomalyType != "" {
+			t.Errorf("without pgvector the embedding columns exist: %q, %q", chatType, anomalyType)
+		}
+		return
+	}
+	if chatType != "halfvec(4000)" || anomalyType != "halfvec(4000)" {
+		t.Errorf("embedding columns are %q (chat_memories) and %q (anomaly_embeddings), want halfvec(4000)",
+			chatType, anomalyType)
+	}
+	if !foreignKey || !chatIndex || !anomalyIndex {
+		t.Errorf("foreign key %v, chat_memories index %v, anomaly_embeddings index %v; want all",
+			foreignKey, chatIndex, anomalyIndex)
+	}
 }
 
 // storeConvertedValues writes values of every mapped type, decoded by

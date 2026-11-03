@@ -70,11 +70,16 @@ RANGE`: the server's `column_kinds_test.go` parses it.
 
 Other migrations that skip work under ColdFront: v1 pgvector and
 chat-memory embedding setup (SAVEPOINTs are not allowed after an
-Iceberg write in the same transaction), v4's metrics `DROP INDEX`, v6
-(embedding widening, SAVEPOINT), v15 (index), v24 entirely, and the
-row rewrites of v25 and v26 (their comments still run). The rewrites
-are safe to skip because a datastore cannot be switched to ColdFront,
-so its metrics tables were created empty in the same startup.
+Iceberg write in the same transaction, and the setup cannot move ahead
+of PART 2's metrics tables because it needs `anomaly_candidates` and
+`chat_memories`), v4's metrics `DROP INDEX`, v6 (embedding widening,
+SAVEPOINT), v15 (index), v24 entirely, and the row rewrites of v25 and
+v26 (their comments still run). The rewrites are safe to skip because
+a datastore cannot be switched to ColdFront, so its metrics tables were
+created empty in the same startup. The skipped pgvector objects are
+created after the migrations by `EnsureColdFrontEmbeddings` (see
+Startup and Runtime), so alerter Tier 2 and chat memory embeddings work
+under ColdFront as in the default mode.
 
 v7, v10, v12 and v13 run their SQL through `sm.execMetricsAlter`. In
 the default mode that is the block verbatim. Under ColdFront each
@@ -207,6 +212,24 @@ than in one transaction.
   systemic and returned, bounding statements and log lines.
 
 ## Startup and Runtime
+
+- After `Migrate`, under ColdFront only, `initializeSchema` calls
+  `database.EnsureColdFrontEmbeddings` (`coldfront_embeddings.go`). It
+  creates what v1 skipped, already at v6's `halfvec(4000)` width:
+  `anomaly_embeddings` with its HNSW index and the
+  `fk_anomaly_candidates_embedding` key (`createAnomalyEmbeddings`),
+  then `chat_memories.embedding` and its index
+  (`addChatMemoryEmbedding`); migration 1's savepointed
+  `runPgVectorSetup`/`runChatMemoryEmbeddingSetup` share those bodies.
+  Each runs in its own transaction with no SAVEPOINT and no Iceberg
+  statement, and only when its object is missing, so a normal startup
+  takes no lock and an existing ColdFront datastore gains the objects
+  on its next start. Failures are logged (always shown, naming alerter
+  Tier 2 and chat memory embeddings as disabled), never returned. It
+  relies on pg_duckdb allowing the subtransaction that
+  `addConstraintIfMissing`'s `EXCEPTION` block opens in a transaction
+  that has not touched DuckDB; that is unverified against live
+  ColdFront.
 
 - `database.PrepareMetricsStorage` runs in `initializeSchema` before
   `Migrate`. It calls `CheckMetricsStorage`, which under ColdFront

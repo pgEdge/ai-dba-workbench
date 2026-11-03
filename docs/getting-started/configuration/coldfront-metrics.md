@@ -106,7 +106,8 @@ collector creates and needs no further grant on those views. Re-run
 the function for each separate server and alerter role after the
 collector's first start, and again after each Workbench upgrade,
 because an upgrade can add metrics tables. The function is idempotent,
-so a repeated call is safe.
+so a repeated call is safe. ColdFront revokes the function from
+`PUBLIC`, so a superuser or another operator role must run each call.
 
 The function grants each role `SELECT`, `INSERT`, `UPDATE`, and
 `DELETE` on every view registered in ColdFront at the time of the call.
@@ -315,8 +316,9 @@ describes.
 When a user deletes a connection, the server's background purge still
 removes the connection itself, but leaves the connection's metrics
 rows in place in every ColdFront view. The server logs one line for
-each purge that names the connection ID and the metrics views in which
-it left rows. The rows stay in those views until an operator removes
+each purge that names the connection ID and every metrics view that
+the purge skipped; a skipped view may hold no rows for that connection.
+The rows stay in those views until an operator removes
 them, and no Workbench retention removes them later. The
 `metrics.pg_settings` and `metrics.pg_hba_file_rules` views can hold
 sensitive values that the collector read from the deleted server.
@@ -419,8 +421,8 @@ error for each failure. The alerter passes every such candidate on as
 if Tier 2 had found no match, so Tier 2 never suppresses a candidate,
 and Tier 3 classifies each candidate without any similar past
 anomalies. When Tier 3 is not available, every candidate that passes
-Tier 1 becomes an alert, subject to the usual checks for blackouts and
-for an open alert on the same metric.
+Tier 1 becomes an alert, subject to the usual suppression checks, such
+as an active blackout or an open alert on the same metric.
 
 On a ColdFront datastore with Tier 3 configured, set
 `anomaly.tier2.enabled` to `false` in the alerter configuration. The

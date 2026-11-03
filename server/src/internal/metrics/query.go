@@ -494,19 +494,36 @@ func EntityKeyColumns(cols []string, colTypes map[string]string) []string {
 	return keys
 }
 
-// ProbeExistsQuery counts the relations named $1 in the metrics schema
-// that can hold a probe's rows, so a count of zero means there is no such
-// probe. On a plain PostgreSQL datastore each probe is a partitioned
-// table, which information_schema.tables reports as a BASE TABLE; on a
-// pgEdge ColdFront datastore each one is a VIEW over Apache Iceberg
-// storage (issue #755). Both kinds are accepted, and the server needs no
-// setting to tell the datastores apart.
-const ProbeExistsQuery = `
-        SELECT COUNT(*) FROM information_schema.tables
+// probeRelationQuery reports whether the relation named $1 in the metrics
+// schema, if there is one that can hold a probe's rows, is a view. On a
+// plain PostgreSQL datastore each probe is a partitioned table, which
+// information_schema.tables reports as a BASE TABLE; on a pgEdge
+// ColdFront datastore each one is a VIEW over Apache Iceberg storage
+// (issue #755). The server needs no setting to tell the datastores apart.
+const probeRelationQuery = `
+        SELECT table_type = 'VIEW' FROM information_schema.tables
         WHERE table_schema = 'metrics'
             AND table_name = $1
             AND table_type IN ('BASE TABLE', 'VIEW')
     `
+
+// ProbeExists reports whether probeName is a probe the server may read:
+// a table in the metrics schema, or a view there that carries a known
+// probe's name (AdmitsProbeRelation). A view under any other name is
+// reported missing, because the read-side masking is keyed by probe name
+// and could not protect its rows. An error means the check itself
+// failed.
+func ProbeExists(ctx context.Context, pool *pgxpool.Pool, probeName string) (bool, error) {
+	var isView bool
+	err := pool.QueryRow(ctx, probeRelationQuery, probeName).Scan(&isView)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return AdmitsProbeRelation(probeName, isView), nil
+}
 
 // IsValidIdentifier checks whether a string is a valid SQL identifier.
 func IsValidIdentifier(s string) bool {
@@ -1710,11 +1727,11 @@ func QueryTimeSeries(
 	timeStart, timeEnd := window.Start, window.End
 
 	// Verify probe exists
-	var count int
-	if err := pool.QueryRow(ctx, ProbeExistsQuery, probeName).Scan(&count); err != nil {
+	exists, err := ProbeExists(ctx, pool, probeName)
+	if err != nil {
 		return nil, fmt.Errorf("failed to verify probe: %w", err)
 	}
-	if count == 0 {
+	if !exists {
 		return nil, fmt.Errorf("probe %q not found", probeName)
 	}
 
@@ -2323,11 +2340,11 @@ func discoverLatestRowColumns(
 	orderBy string,
 	filters *MetricFilters,
 ) ([]string, map[string]string, string, error) {
-	var count int
-	if err := pool.QueryRow(ctx, ProbeExistsQuery, probeName).Scan(&count); err != nil {
+	exists, err := ProbeExists(ctx, pool, probeName)
+	if err != nil {
 		return nil, nil, "", fmt.Errorf("failed to verify probe: %w", err)
 	}
-	if count == 0 {
+	if !exists {
 		return nil, nil, "", fmt.Errorf("probe %q not found", probeName)
 	}
 

@@ -686,9 +686,11 @@ var errUnknownDatastoreSource = errors.New("unknown source: call describe_datast
 // schema. Partitions are excluded by relispartition rather than by name,
 // so a probe whose name happens to contain "_p" is still found. A view
 // (relkind 'v') is a probe too: on a pgEdge ColdFront datastore every
-// probe is a view over Apache Iceberg storage (issue #755).
+// probe is a view over Apache Iceberg storage (issue #755). The second
+// column says whether the relation is a view, which lookupMetricTable
+// admits only under a known probe's name (metrics.AdmitsProbeRelation).
 const datastoreMetricTableQuery = `
-        SELECT COALESCE(obj_description(c.oid, 'pg_class'), '')
+        SELECT COALESCE(obj_description(c.oid, 'pg_class'), ''), c.relkind = 'v'
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'metrics'
@@ -761,17 +763,24 @@ func metricDescription(name, comment string) string {
 
 // lookupMetricTable returns the comment on the parent probe table name
 // in the metrics schema, or errUnknownDatastoreSource when there is no
-// such table.
+// such table, or when name is a view that does not carry a known probe's
+// name: the masking of statement text and settings is keyed by probe
+// name, so such a view could return them in clear
+// (metrics.AdmitsProbeRelation).
 func lookupMetricTable(ctx context.Context, pool *pgxpool.Pool, name string) (string, error) {
 	// A relation name is unique within a schema, so there is at most one
 	// row.
 	var description string
-	err := pool.QueryRow(ctx, datastoreMetricTableQuery, name).Scan(&description)
+	var isView bool
+	err := pool.QueryRow(ctx, datastoreMetricTableQuery, name).Scan(&description, &isView)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errUnknownDatastoreSource
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to look up source: %w", err)
+	}
+	if !metrics.AdmitsProbeRelation(name, isView) {
+		return "", errUnknownDatastoreSource
 	}
 	return description, nil
 }
@@ -819,9 +828,11 @@ func lookupMetricColumns(ctx context.Context, pool *pgxpool.Pool, name string) (
 // metrics schema that carries the bookkeeping columns
 // lookupDatastoreSource requires, so describe_datastore lists exactly the
 // metric sources query_datastore accepts. It takes the same relkinds as
-// datastoreMetricTableQuery, ColdFront views included.
+// datastoreMetricTableQuery, ColdFront views included, and likewise
+// reports whether each is a view, for listDatastoreSources to apply
+// metrics.AdmitsProbeRelation as lookupMetricTable does.
 const datastoreMetricSourcesQuery = `
-        SELECT c.relname, COALESCE(obj_description(c.oid, 'pg_class'), '')
+        SELECT c.relname, COALESCE(obj_description(c.oid, 'pg_class'), ''), c.relkind = 'v'
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'metrics'
@@ -874,13 +885,16 @@ func listDatastoreSources(ctx context.Context, pool *pgxpool.Pool) ([]datastoreS
 	defer rows.Close()
 	for rows.Next() {
 		var name, description string
-		if err := rows.Scan(&name, &description); err != nil {
+		var isView bool
+		if err := rows.Scan(&name, &description, &isView); err != nil {
 			return nil, fmt.Errorf("failed to list metric sources: %w", err)
 		}
 		// lookupDatastoreSource resolves a configuration source first, so
 		// a probe table sharing a configuration source's name could never
-		// be read as a metric source; listing it would be misleading.
-		if !metrics.IsValidIdentifier(name) || configNames[name] {
+		// be read as a metric source; listing it would be misleading. Nor
+		// does it accept a view under a name that is not a known probe's.
+		if !metrics.IsValidIdentifier(name) || configNames[name] ||
+			!metrics.AdmitsProbeRelation(name, isView) {
 			continue
 		}
 		description = metricDescription(name, description)

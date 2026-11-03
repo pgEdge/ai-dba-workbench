@@ -224,7 +224,96 @@ func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 					t.Errorf("%s should show the masked value:\n%s", route, out)
 				}
 			}
+
+			checkRenamedViewRefused(t, f, mux, p.name)
 		})
+	}
+}
+
+// checkRenamedViewRefused creates a view of probe under another name and
+// checks that no route lists or reads it. The masking is keyed by probe
+// name, so such a view would return the probe's credentials in clear
+// were it admitted; every route must refuse it, as it refused any
+// unknown view before ColdFront support (issue #755).
+func checkRenamedViewRefused(t *testing.T, f *datastoreFixture, mux *http.ServeMux, probe string) {
+	t.Helper()
+	ctx := context.Background()
+	view := probe + "_report"
+	// The server quotes both names with format('%I'), so the SQL text
+	// sent is never assembled here.
+	var create, drop string
+	if err := f.pool.QueryRow(ctx, `
+        SELECT format('CREATE VIEW metrics.%I AS SELECT * FROM metrics.%I', $1::text, $2::text),
+               format('DROP VIEW IF EXISTS metrics.%I', $1::text)`, view, probe).Scan(&create, &drop); err != nil {
+		t.Fatalf("build the renamed view's DDL: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, create); err != nil {
+		t.Fatalf("create renamed view: %v", err)
+	}
+	// The probe's drop has no CASCADE, so the view must go first;
+	// cleanups run last-registered first.
+	t.Cleanup(func() {
+		if _, err := f.pool.Exec(context.Background(), drop); err != nil {
+			t.Logf("drop renamed view: %v", err)
+		}
+	})
+
+	refusals := map[string]string{}
+	latest := map[string]any{"source": view, "shape": "latest"}
+	if probe == "pg_stat_activity" || probe == "pg_stat_statements" {
+		// The shape a restricted user would ask for to read statements.
+		latest["columns"] = []any{"datname", "query"}
+	}
+	for name, args := range map[string]map[string]any{
+		"query_datastore rows":   {"source": view, "shape": "rows"},
+		"query_datastore latest": latest,
+	} {
+		text, isErr := call(t, f.tool(), f.userCtx(), args)
+		if !isErr || !strings.Contains(text, "unknown source") {
+			t.Errorf("%s on %s = %q (error %v), want unknown source", name, view, text, isErr)
+		}
+		refusals[name] = text
+	}
+	for name, tool := range map[string]Tool{
+		"describe_probe": DescribeProbeTool(f.pool),
+		"query_metrics":  QueryMetricsTool(f.pool, f.checker, nil),
+	} {
+		text, isErr := call(t, tool, superuserContext(),
+			map[string]any{"probe_name": view, "connection_id": float64(f.visible)})
+		if !isErr || !strings.Contains(text, "not found") {
+			t.Errorf("%s on %s = %q (error %v), want not found", name, view, text, isErr)
+		}
+		refusals[name] = text
+	}
+	for name, tool := range map[string]Tool{
+		"describe_datastore": DescribeDatastoreTool(f.pool),
+		"list_probes":        ListProbesTool(f.pool),
+	} {
+		text, isErr := call(t, tool, superuserContext(), map[string]any{})
+		if isErr {
+			t.Fatalf("%s: %s", name, text)
+		}
+		if strings.Contains(text, view) {
+			t.Errorf("%s lists %s:\n%s", name, view, text)
+		}
+	}
+	params := "probe_name=" + view + "&connection_id=" + strconv.Itoa(f.visible)
+	for route, target := range map[string]string{
+		"metrics/latest": "/api/v1/metrics/latest?" + params,
+		"metrics/query":  "/api/v1/metrics/query?limit=10&" + params,
+	} {
+		req := httptest.NewRequest(http.MethodGet, target, nil).WithContext(superuserContext())
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "not found") {
+			t.Errorf("%s on %s returned %d, want 400 not found: %s", route, view, rec.Code, rec.Body.String())
+		}
+		refusals[route] = rec.Body.String()
+	}
+	for route, out := range refusals {
+		if strings.Contains(out, "example-secret") {
+			t.Errorf("%s returned a credential through %s:\n%s", route, view, out)
+		}
 	}
 }
 

@@ -13,6 +13,7 @@ package metrics
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,12 +26,18 @@ import (
 // to prove that probe discovery accepts views: the catalog reports both
 // the same way (relkind 'v', table_type VIEW).
 
-// createProbeView creates metrics.<view> as SELECT * FROM metrics.<table>.
-// The view is dropped with the table, whose fixture cleanup cascades.
+// createProbeView creates metrics.<view> as SELECT * FROM metrics.<table>,
+// replacing any view of that name a failed run left behind. The view is
+// dropped with the table, whose fixture cleanup cascades.
 func createProbeView(t *testing.T, pool *pgxpool.Pool, view, table string) {
 	t.Helper()
 	// Both names are compile-time test constants, QuoteIdentifier-wrapped;
-	// CREATE VIEW cannot bind an identifier as a placeholder.
+	// DROP VIEW and CREATE VIEW cannot bind an identifier as a placeholder.
+	// nosemgrep: go_sql_rule-concat-sqli
+	drop := "DROP VIEW IF EXISTS metrics." + QuoteIdentifier(view)
+	if _, err := pool.Exec(context.Background(), drop); err != nil {
+		t.Fatalf("failed to drop stale probe view %s: %v", view, err)
+	}
 	// nosemgrep: go_sql_rule-concat-sqli
 	ddl := "CREATE VIEW metrics." + QuoteIdentifier(view) +
 		" AS SELECT * FROM metrics." + QuoteIdentifier(table)
@@ -38,6 +45,17 @@ func createProbeView(t *testing.T, pool *pgxpool.Pool, view, table string) {
 		t.Fatalf("failed to create probe view %s: %v", view, err)
 	}
 }
+
+// The views the latest-row and time-series tests read take the names of
+// real probes, because a view is served only under a known probe's name
+// (AdmitsProbeRelation); probes no other test in the package seeds were
+// chosen. renamedViewSuffix names a view of a fixture that is not a known
+// probe, which must be refused.
+const (
+	latestViewProbe     = "pg_sys_process_info"
+	timeSeriesViewProbe = "pg_stat_user_functions"
+	renamedViewSuffix   = "_report"
+)
 
 // entityViewStore holds the rows behind the pg_stat_database view
 // TestQueryTimeSeries_ViewRatesPerEntity reads. The view takes the real
@@ -169,36 +187,62 @@ func TestGetProbeEntityKeyColumns_QueryError(t *testing.T) {
 	}
 }
 
-func TestProbeExistsQuery_AcceptsViews(t *testing.T) {
+// TestProbeExists checks that a table is a probe whatever its name, a
+// view only under a known probe's name, and that a renamed view of a
+// probe is refused, since the masking keyed by probe name could not
+// protect it.
+func TestProbeExists(t *testing.T) {
 	pool, closePool := newLatestRowsTestPool(t)
 	defer closePool()
 	cleanup := setupLatestRowsFixture(t, pool)
 	defer cleanup()
 
-	const view = latestRowsTestProbe + "_cf"
-	createProbeView(t, pool, view, latestRowsTestProbe)
+	createProbeView(t, pool, latestViewProbe, latestRowsTestProbe)
+	const renamed = latestRowsTestProbe + renamedViewSuffix
+	createProbeView(t, pool, renamed, latestRowsTestProbe)
 
 	ctx := context.Background()
 	tests := []struct {
 		name  string
 		probe string
-		want  int
+		want  bool
 	}{
-		{"partitioned or plain table", latestRowsTestProbe, 1},
-		{"ColdFront view", view, 1},
-		{"missing probe", "does_not_exist_probe", 0},
+		{"partitioned or plain table", latestRowsTestProbe, true},
+		{"ColdFront view under a probe's name", latestViewProbe, true},
+		{"view under another name", renamed, false},
+		{"missing probe", "does_not_exist_probe", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var got int
-			if err := pool.QueryRow(ctx, ProbeExistsQuery, tt.probe).Scan(&got); err != nil {
-				t.Fatalf("ProbeExistsQuery: %v", err)
+			got, err := ProbeExists(ctx, pool, tt.probe)
+			if err != nil {
+				t.Fatalf("ProbeExists: %v", err)
 			}
 			if got != tt.want {
-				t.Errorf("ProbeExistsQuery(%s) = %d, want %d", tt.probe, got, tt.want)
+				t.Errorf("ProbeExists(%s) = %v, want %v", tt.probe, got, tt.want)
 			}
 		})
 	}
+
+	t.Run("a failing check is an error", func(t *testing.T) {
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		if got, err := ProbeExists(canceled, pool, latestRowsTestProbe); err == nil || got {
+			t.Errorf("ProbeExists with a canceled context = %v, %v; want an error", got, err)
+		}
+	})
+
+	t.Run("the readers refuse a renamed view", func(t *testing.T) {
+		if _, err := QueryLatestRows(ctx, pool, renamed, []int{1}, MetricFilters{}, "", "desc", 10); err == nil ||
+			!strings.Contains(err.Error(), "not found") {
+			t.Errorf("QueryLatestRows on a renamed view = %v, want not found", err)
+		}
+		if _, err := queryTimeSeriesData(ctx, pool, renamed, []int{1}, lastHourWindow(),
+			MetricFilters{}, 60, "avg", []string{"n_live_tup"}); err == nil ||
+			!strings.Contains(err.Error(), "not found") {
+			t.Errorf("QueryTimeSeries on a renamed view = %v, want not found", err)
+		}
+	})
 }
 
 func TestQueryLatestRows_View(t *testing.T) {
@@ -207,7 +251,7 @@ func TestQueryLatestRows_View(t *testing.T) {
 	cleanup := setupLatestRowsFixture(t, pool)
 	defer cleanup()
 
-	const view = latestRowsTestProbe + "_cf"
+	const view = latestViewProbe
 	createProbeView(t, pool, view, latestRowsTestProbe)
 
 	ctx := context.Background()
@@ -233,7 +277,7 @@ func TestQueryTimeSeries_View(t *testing.T) {
 	_, cleanup := setupTimeSeriesFixture(t, pool)
 	defer cleanup()
 
-	const view = timeSeriesTestProbe + "_cf"
+	const view = timeSeriesViewProbe
 	createProbeView(t, pool, view, timeSeriesTestProbe)
 
 	series, err := queryTimeSeriesData(context.Background(), pool, view,

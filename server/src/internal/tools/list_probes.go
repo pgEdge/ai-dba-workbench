@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // ProbeInfo represents metadata about a metrics probe
@@ -98,13 +99,18 @@ Returns a TSV table with:
 			// (relkind 'v') over Apache Iceberg storage (issue #755). A view
 			// is listed when it carries the connection_id and collected_at
 			// bookkeeping columns every probe has, so an unrelated view in
-			// the schema is not mistaken for one. A view has no statistics,
-			// and count(*) would scan the probe's whole history in object
-			// storage, so its row count is NULL and reported as unknown.
+			// the schema is not mistaken for one, and only under a known
+			// probe's name (metrics.AdmitsProbeRelation, applied below to
+			// is_view): the masking of statement text and settings is keyed
+			// by probe name, so a view under another name could not be
+			// read safely. A view has no statistics, and count(*) would
+			// scan the probe's whole history in object storage, so its row
+			// count is NULL and reported as unknown.
 			query := `
 				SELECT
 					c.relname::text AS table_name,
 					COALESCE(obj_description(c.oid, 'pg_class'), '') AS description,
+					c.relkind = 'v' AS is_view,
 					CASE WHEN c.relkind = 'v' THEN NULL
 					WHEN c.relkind = 'p' THEN (
 						SELECT COALESCE(SUM(ps.n_live_tup), 0)
@@ -140,8 +146,12 @@ Returns a TSV table with:
 			var probes []ProbeInfo
 			for rows.Next() {
 				var probe ProbeInfo
-				if err := rows.Scan(&probe.Name, &probe.Description, &probe.RowCount); err != nil {
+				var isView bool
+				if err := rows.Scan(&probe.Name, &probe.Description, &isView, &probe.RowCount); err != nil {
 					return mcp.NewToolError(fmt.Sprintf("Failed to scan probe: %v", err))
+				}
+				if !metrics.AdmitsProbeRelation(probe.Name, isView) {
+					continue
 				}
 				// Determine scope based on probe name patterns
 				probe.Scope = determineProbeScope(probe.Name)

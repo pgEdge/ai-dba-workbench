@@ -201,7 +201,8 @@ func TestListProbes_ExcludesPartitionsNotProbes(t *testing.T) {
 // TestListProbes_ListsColdFrontViews checks that on a pgEdge ColdFront
 // datastore, where every probe is a view (issue #755), a view carrying
 // the probe bookkeeping columns is listed with an unknown row count,
-// whilst a view without them is still left out.
+// whilst a view without them, or under a name that is not a known
+// probe's, is still left out.
 func TestListProbes_ListsColdFrontViews(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
@@ -215,7 +216,12 @@ func TestListProbes_ListsColdFrontViews(t *testing.T) {
 		COMMENT ON VIEW metrics.pg_stat_wal IS 'WAL statistics';
 
 		CREATE VIEW metrics.pg_helper_view AS
-		    SELECT 1::integer AS connection_id;`); err != nil {
+		    SELECT 1::integer AS connection_id;
+
+		CREATE VIEW metrics.activity_report AS
+		    SELECT 1::integer AS connection_id,
+		           now() AS collected_at,
+		           'ALTER ROLE app PASSWORD ''example-secret'''::text AS query;`); err != nil {
 		t.Fatalf("failed to create probe views: %v", err)
 	}
 
@@ -238,6 +244,11 @@ func TestListProbes_ListsColdFrontViews(t *testing.T) {
 	}
 	if _, ok := probes["pg_helper_view"]; ok {
 		t.Errorf("a view without collected_at should not be listed:\n%s", text)
+	}
+	// The masking is keyed by probe name, so a view under any other name
+	// is not a probe, bookkeeping columns or not.
+	if _, ok := probes["activity_report"]; ok {
+		t.Errorf("a view under a name that is not a known probe's should not be listed:\n%s", text)
 	}
 	if len(probes) != len(want) {
 		t.Errorf("got %d probes, want %d:\n%s", len(probes), len(want), text)

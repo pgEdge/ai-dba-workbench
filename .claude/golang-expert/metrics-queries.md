@@ -62,15 +62,45 @@ On a ColdFront datastore every `metrics.*` relation is a view (relkind
 `'v'`, `table_type` `VIEW`) over Apache Iceberg storage; on plain
 PostgreSQL they are partitioned tables. The server has no setting for
 this, so every probe-discovery query must accept both:
-`metrics.ProbeExistsQuery` (shared by `QueryTimeSeries`,
+`metrics.ProbeExists` (shared by `QueryTimeSeries`,
 `discoverLatestRowColumns`, the latest-snapshot handler, `query_metrics`
-and `describe_probe`) takes `BASE TABLE` and `VIEW`; the datastore
+and `describe_probe`) reads `BASE TABLE` and `VIEW`; the datastore
 catalog's `pg_class` lookups take relkinds `'r', 'p', 'v'`;
 `list_probes` lists a view only when it has `connection_id` and
 `collected_at`, and reports its `row_count` as `unknown` (never run
 `count(*)` against an Iceberg view). Do not add a new
 `table_type = 'BASE TABLE'` or `relkind IN ('r', 'p')` filter over
-`metrics`. A view has no primary key, so `GetProbeEntityKeyColumns`
+`metrics`.
+
+A view is admitted only under a known probe's name, and this is a
+security rule, not a tidiness one. The read-side masking
+(`ProbeRedactions`, `RedactProbeRows`, `statementTextColumns`) is keyed
+by probe name, so `CREATE VIEW metrics.activity_report AS SELECT * FROM
+metrics.pg_stat_activity` would otherwise serve stored statement text
+and credentials in clear. Every route that resolves a caller's source or
+probe name decides through `metrics.AdmitsProbeRelation(name, isView)`
+(`internal/metrics/known_probes.go`): a table under any name, as before,
+and a view only when `IsKnownProbe(name)`. The catalog queries return
+whether the relation is a view (`table_type = 'VIEW'` in
+`probeRelationQuery`, `c.relkind = 'v'` in
+`datastoreMetricTableQuery`, `datastoreMetricSourcesQuery` and
+`list_probes`) and the Go side applies the rule, so listing and lookup
+cannot disagree. A new route that takes a probe or source name must use
+`ProbeExists` or `AdmitsProbeRelation`. `knownProbes` must hold every
+probe the collector creates: `TestKnownProbesMatchCollectorSchema`
+migrates a scratch database and fails in either direction, and
+`TestKnownProbesCoverMaskedAndKeyedProbes` checks that every
+`ProbeRedactions` and `probeEntityKeyFallback` entry is known.
+`checkRenamedViewRefused` in `TestMaskedProbesOnEveryRouteIntegration`
+creates `<probe>_report` over each masked probe and fails if
+query_datastore, describe_datastore, list_probes, describe_probe,
+query_metrics, `/metrics/latest` or `/metrics/query` admits it. Test
+fixtures that stand a view in for ColdFront must therefore take a real
+probe's name (`pg_sys_process_info`, `pg_stat_user_functions`,
+`pg_stat_recovery_prefetch`, `pg_statio_all_sequences` and
+`pg_stat_subscription` are used because no other fixture seeds them).
+
+A view has no primary key, so `GetProbeEntityKeyColumns`
 falls back to `probeEntityKeyFallback` on ColdFront (see the entity-key
 section below). JSONB
 columns read back as `json` there: `->`, `->>` and `::text`/`::jsonb`

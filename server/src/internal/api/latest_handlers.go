@@ -230,13 +230,13 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 	pool := h.datastore.GetPool()
 
 	// Verify the probe table (or ColdFront view) exists
-	var tableCount int
-	if err := pool.QueryRow(ctx, metrics.ProbeExistsQuery, probeName).Scan(&tableCount); err != nil {
+	exists, err := metrics.ProbeExists(ctx, pool, probeName)
+	if err != nil {
 		RespondError(w, http.StatusInternalServerError,
 			"Failed to verify probe table")
 		return
 	}
-	if tableCount == 0 {
+	if !exists {
 		RespondError(w, http.StatusBadRequest,
 			fmt.Sprintf("Probe %q not found", probeName))
 		return

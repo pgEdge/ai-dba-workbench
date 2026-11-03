@@ -434,9 +434,11 @@ func TestLatestSnapshot_OrderingAndLimits(t *testing.T) {
 
 // latestViewProbe is a view over the latest-tables fixture, standing in
 // for a pgEdge ColdFront datastore, where every probe is a view over
-// Apache Iceberg storage (issue #755).
+// Apache Iceberg storage (issue #755). A view is served only under a
+// known probe's name (metrics.AdmitsProbeRelation), so it takes the name
+// of a real probe no other fixture in this package seeds.
 const (
-	latestViewProbe     = latestTablesProbe + "_cf"
+	latestViewProbe     = "pg_stat_subscription"
 	latestViewCreateSQL = `CREATE VIEW metrics."` + latestViewProbe +
 		`" AS SELECT * FROM metrics."` + latestTablesProbe + `"`
 	latestViewDropSQL = `DROP VIEW IF EXISTS metrics."` + latestViewProbe + `"`
@@ -476,7 +478,31 @@ func TestLatestSnapshot_View(t *testing.T) {
 	if got != want {
 		t.Errorf("view rows = %s, want %s", got, want)
 	}
+
+	// The same view under a name that is not a known probe's is refused:
+	// the masking is keyed by probe name and could not protect it.
+	if _, err := pool.Exec(ctx, latestRenamedViewCreateSQL); err != nil {
+		t.Fatalf("failed to create the renamed view: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), latestRenamedViewDropSQL); err != nil {
+			t.Logf("failed to drop the renamed view: %v", err)
+		}
+	})
+	rec := getLatest(t, h, "connection_id=1&probe_name="+latestRenamedView+params)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "not found") {
+		t.Errorf("renamed view returned %d, want 400 not found: %s", rec.Code, rec.Body.String())
+	}
 }
+
+// latestRenamedView is a view over the latest-tables fixture under a
+// name that is not a known probe's.
+const (
+	latestRenamedView          = latestTablesProbe + "_report"
+	latestRenamedViewCreateSQL = `CREATE VIEW metrics."` + latestRenamedView +
+		`" AS SELECT * FROM metrics."` + latestTablesProbe + `"`
+	latestRenamedViewDropSQL = `DROP VIEW IF EXISTS metrics."` + latestRenamedView + `"`
+)
 
 // TestLatestSnapshot_RequestErrors covers the validation failures that need
 // a real datastore to reach.

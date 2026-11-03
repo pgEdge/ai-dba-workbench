@@ -112,16 +112,36 @@ sudo -u pgedge -H /tmp/ai-dba-downgrade/root/usr/bin/ai-dba-server \
     -check-config -config /etc/pgedge/ai-dba-server.yaml
 ```
 
-Once the check succeeds, install the older packages from their local
-files with `sudo apt install --allow-downgrades ./<file>.deb` or with
-`sudo dpkg -i <file>.deb`. Do not include the
-`pgedge-ai-dba-upgrade-check` package in a downgrade. If the package is
+Once the check succeeds, install every older package of the suite from
+its local file in a single command; the collector, the alerter and the
+client require the server at exactly their own version, so a server
+downgraded on its own leaves their dependencies unsatisfied. In the
+following example, the command downgrades the four packages together:
+
+```bash
+sudo apt install --allow-downgrades \
+    ./pgedge-ai-dba-server_VERSION_*.deb \
+    ./pgedge-ai-dba-collector_VERSION_*.deb \
+    ./pgedge-ai-dba-alerter_VERSION_*.deb \
+    ./pgedge-ai-dba-client_VERSION_*.deb
+```
+
+The `sudo dpkg -i` command accepts the same list of files. Do not
+include the `pgedge-ai-dba-upgrade-check` package in a downgrade. If the
+package is
 included, `apt` unpacks the older server and collector before the older
 check refuses the configuration; the packages are left unpacked but
 not configured (shown as `iU` by `dpkg -l`), and `apt` reports broken
 packages until they are repaired. Leave the installed check package in
 place, since the package already satisfies the dependency of the older
 release, and rely on the manual check instead.
+
+An upgrade back to the release of the installed check package does not
+run the check again, since the check package is already installed at
+that version. If you change the configuration after a downgrade, check
+it with the newer server by hand, as described in
+[Checking a Configuration by Hand](#checking-a-configuration-by-hand),
+before you upgrade again.
 
 ## Recovering from a Refused Upgrade
 

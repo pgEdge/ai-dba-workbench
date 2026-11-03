@@ -2840,6 +2840,11 @@ project adheres to
 
 ### Security
 
+- Update `golang.org/x/crypto` to v0.58.0 in every Go module, fixing
+  the advisories against its `ssh`, `ssh/agent` and `ssh/knownhosts`
+  packages, along with `golang.org/x/text` v0.43.0 and, in the server,
+  `github.com/go-jose/go-jose/v4` v4.1.8.
+
 - Record audit events for the group and superuser changes a federated
   login makes (#743). Reconciliation granted and revoked the superuser
   flag and mapped group memberships at every OIDC sign-in without

@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -82,23 +83,28 @@ func TestMetricsSQLColdFrontShapes(t *testing.T) {
 
 // infiniteBind reports whether arg is a pgtype timestamp or date value
 // carrying +infinity or -infinity, which pgx would send to the database
-// as an infinite bound.
+// as an infinite bound. A pointer is followed; a nil one is NULL.
 func infiniteBind(arg any) bool {
+	if v := reflect.ValueOf(arg); v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return false
+		}
+		arg = v.Elem().Interface()
+	}
 	switch v := arg.(type) {
 	case pgtype.Timestamptz:
-		return v.Valid && v.InfinityModifier != pgtype.Finite
-	case *pgtype.Timestamptz:
-		return v != nil && infiniteBind(*v)
+		return isInfinite(v.Valid, v.InfinityModifier)
 	case pgtype.Timestamp:
-		return v.Valid && v.InfinityModifier != pgtype.Finite
-	case *pgtype.Timestamp:
-		return v != nil && infiniteBind(*v)
+		return isInfinite(v.Valid, v.InfinityModifier)
 	case pgtype.Date:
-		return v.Valid && v.InfinityModifier != pgtype.Finite
-	case *pgtype.Date:
-		return v != nil && infiniteBind(*v)
+		return isInfinite(v.Valid, v.InfinityModifier)
 	}
 	return false
+}
+
+// isInfinite reports whether a non-NULL pgtype value is +/-infinity.
+func isInfinite(valid bool, m pgtype.InfinityModifier) bool {
+	return valid && m != pgtype.Finite
 }
 
 // TestInfiniteBind pins the detector TestMetricsSQLArgsFinite relies on,
@@ -116,7 +122,7 @@ func TestInfiniteBind(t *testing.T) {
 	var nilPlain *pgtype.Timestamp
 	var nilDate *pgtype.Date
 	for _, arg := range []any{pgtype.Timestamptz{}, pgtype.Timestamp{},
-		pgtype.Date{}, nilTS, nilPlain, nilDate, 7, "spock", nil,
+		pgtype.Date{}, nilTS, nilPlain, nilDate, new(int), 7, "spock", nil,
 		pgtype.Timestamptz{InfinityModifier: pgtype.Infinity}} {
 		if infiniteBind(arg) {
 			t.Errorf("infiniteBind(%#v) = true, want false", arg)

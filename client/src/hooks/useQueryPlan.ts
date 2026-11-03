@@ -158,13 +158,32 @@ const EXPLAINABLE_LEADING_KEYWORDS =
 const PLANLESS_PATTERN =
     /^refresh\s+materialized\s+view\b/i;
 
-/** CREATE MATERIALIZED VIEW ... AS <query>. */
+/**
+ * CREATE MATERIALIZED VIEW ... AS <query>.  Matched against
+ * whitespace-collapsed text (see collapseWhitespace) so that no
+ * quantifier sits inside an optional group, which keeps the
+ * pattern free of nested repetition.
+ */
 const CREATE_MATVIEW_PATTERN =
-    /^create\s+(?:or\s+replace\s+)?materialized\s+view\b/i;
+    /^create (?:or replace )?materialized view\b/i;
 
-/** CREATE [GLOBAL|LOCAL] [TEMP|UNLOGGED] TABLE prefix. */
+/**
+ * CREATE [GLOBAL|LOCAL] [TEMP|UNLOGGED] TABLE prefix, matched
+ * against whitespace-collapsed text like CREATE_MATVIEW_PATTERN.
+ */
 const CREATE_TABLE_PATTERN =
-    /^create\s+(?:global\s+|local\s+)?(?:temp(?:orary)?\s+|unlogged\s+)?table\b/i;
+    /^create (?:global |local )?(?:temporary |temp |unlogged )?table\b/i;
+
+/** Runs of whitespace, for collapseWhitespace. */
+const WHITESPACE_RUN_PATTERN = /\s+/g;
+
+/**
+ * Collapse every run of whitespace to a single space, so that the
+ * CREATE prefix patterns can match literal spaces between words.
+ */
+function collapseWhitespace(text: string): string {
+    return text.replace(WHITESPACE_RUN_PATTERN, ' ');
+}
 
 /** Every occurrence of the AS keyword within a statement. */
 const AS_KEYWORD_PATTERN = /\bas\b/gi;
@@ -241,7 +260,7 @@ function stripLeadingNoise(query: string): string {
  * cannot skip nested block comments.
  */
 function isCreateTableAs(text: string): boolean {
-    if (!CREATE_TABLE_PATTERN.test(text)) {
+    if (!CREATE_TABLE_PATTERN.test(collapseWhitespace(text))) {
         return false;
     }
     for (const match of text.matchAll(AS_KEYWORD_PATTERN)) {
@@ -276,7 +295,7 @@ export function classifyExplainSupport(
     }
     if (
         EXPLAINABLE_LEADING_KEYWORDS.test(text)
-        || CREATE_MATVIEW_PATTERN.test(text)
+        || CREATE_MATVIEW_PATTERN.test(collapseWhitespace(text))
         || isCreateTableAs(text)
     ) {
         return 'plan';

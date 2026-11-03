@@ -920,11 +920,20 @@ func (s *AuthStore) initSchema() error {
     );
     CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
     CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
-    ` + auditSchemaDDL
+    `
 
 		_, err = s.db.Exec(schema)
 		if err != nil {
 			return fmt.Errorf("failed to create schema: %w", err)
+		}
+
+		// The audit schema runs as its own batch rather than being
+		// concatenated onto the DDL above: static analysis reports any
+		// concatenated string passed to Exec as possible SQL injection,
+		// even when, as here, every part is a constant.
+		_, err = s.db.Exec(auditSchemaDDL)
+		if err != nil {
+			return fmt.Errorf("failed to create audit schema: %w", err)
 		}
 
 		// Set schema version

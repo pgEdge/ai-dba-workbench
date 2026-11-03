@@ -74,11 +74,19 @@ function buildQuery(filters: AuditFilters, limit: number, offset: number): strin
 async function readErrorMessage(response: Response): Promise<string> {
     const fallback = `Request failed with status ${String(response.status)}`;
     const body = await response.text();
+    return truncateMessage(parseErrorField(body) ?? (body || fallback));
+}
+
+/**
+ * Return the `error` field of a JSON error body, or undefined when the
+ * body is not JSON or carries no such field.
+ */
+function parseErrorField(body: string): string | undefined {
     try {
         const parsed = JSON.parse(body) as { error?: string };
-        return truncateMessage(parsed.error ?? body ?? fallback);
+        return parsed.error;
     } catch {
-        return truncateMessage(body || fallback);
+        return undefined;
     }
 }
 

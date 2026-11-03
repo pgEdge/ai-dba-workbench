@@ -32,12 +32,16 @@ func formatFloat(f float64, bitSize int) string {
 }
 
 // formatGoFloat renders a Go float32 or float64 with formatFloat at its
-// own precision; v must be one of the two.
+// own precision; any other value falls back to %v.
 func formatGoFloat(v any) string {
-	if f, ok := v.(float32); ok {
+	switch f := v.(type) {
+	case float32:
 		return formatFloat(float64(f), 32)
+	case float64:
+		return formatFloat(f, 64)
+	default:
+		return fmt.Sprintf("%v", v)
 	}
-	return formatFloat(v.(float64), 64)
 }
 
 // FormatValue converts a value to a TSV-safe string.

@@ -86,6 +86,12 @@ func TestFormatValue_Floats(t *testing.T) {
 	}
 }
 
+func TestFormatGoFloat_OtherType(t *testing.T) {
+	if got := formatGoFloat(int64(7)); got != "7" {
+		t.Errorf("formatGoFloat(int64(7)) = %q, want %q", got, "7")
+	}
+}
+
 func TestFormatValue_Time(t *testing.T) {
 	testTime := time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)
 	result := FormatValue(testTime)

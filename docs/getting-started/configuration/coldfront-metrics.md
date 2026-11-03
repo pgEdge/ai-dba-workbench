@@ -134,12 +134,27 @@ The `grant_app_access` function reads ColdFront's view registry when
 you call the function, so the call covers only the views that exist at
 that moment. Before the collector's first start, no metrics views
 exist yet. The collector's role owns the metrics views that the
-collector creates and needs no further grant on those views. Re-run
-the function for each separate server and alerter role after the
-collector's first start, and again after each Workbench upgrade,
-because an upgrade can add metrics tables. The function is idempotent,
-so a repeated call is safe. ColdFront revokes the function from
-`PUBLIC`, so a superuser or another operator role must run each call.
+collector creates and needs no further grant on those views. The
+function is idempotent, so a repeated call is safe. ColdFront revokes
+the function from `PUBLIC`, so a superuser or another operator role
+must run each call.
+
+Start the Workbench components on a new ColdFront datastore in the
+following order:
+
+1. Run `grant_app_access` for the collector's datastore role.
+2. Start the collector, which creates the metrics views during its
+   first schema migration.
+3. Run `grant_app_access` again for the server's role and the
+   alerter's role when either role differs from the collector's role.
+4. Start the server and the alerter.
+
+The order matters because the server's startup check reads the
+`metrics.pg_settings` view. A server role that differs from the
+collector's role cannot read that view until the grant runs after the
+view exists, so the server fails to start until you re-run the grant.
+Repeat the third step after each Workbench upgrade, because an upgrade
+can add metrics tables.
 
 The function grants each role `SELECT`, `INSERT`, `UPDATE`, and
 `DELETE` on every view registered in ColdFront at the time of the call.

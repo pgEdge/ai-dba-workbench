@@ -10,7 +10,11 @@ enabled states through the admin panel or the REST API.
 The Collector includes 36 built-in probes that cover
 the most important PostgreSQL statistics views. Each
 probe runs on an independent schedule and stores
-results in partitioned metrics tables.
+results in partitioned metrics tables. A datastore
+created with ColdFront storage keeps the metrics
+tables as Iceberg tables behind views instead; the
+[Storing Metrics in pgEdge ColdFront](../getting-started/configuration/coldfront-metrics.md)
+document describes that mode.
 
 ## Probe Types
 
@@ -390,6 +394,13 @@ Reduce retention days for high-volume probes to manage
 storage consumption. Manually drop old partitions if
 immediate space reclamation is needed. Consider
 sampling strategies for high-frequency data.
+
+A datastore that stores metrics in ColdFront has no
+partitions to drop, and the collector ignores the
+retention days of every probe. The
+[Storing Metrics in pgEdge ColdFront](../getting-started/configuration/coldfront-metrics.md#managing-metrics-retention)
+document describes how to delete old rows and how the
+ColdFront compactor reclaims space in that mode.
 
 ## REST API
 

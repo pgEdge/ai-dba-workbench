@@ -349,6 +349,41 @@ including the index that a standard datastore keeps on
 `metrics.pg_stat_statements`. Iceberg relies on partition pruning and
 on per-file column statistics to limit the data that each query reads.
 
+### Understanding the Missing pgvector Objects
+
+In ColdFront mode, the collector skips the optional pgvector setup
+during its schema migration, even when the `vector` extension is
+available. The setup runs inside savepoints, and pg_duckdb does not
+allow a savepoint in a transaction that has already written to
+Iceberg. The collector logs one line to say that the setup was
+skipped.
+
+The skipped setup leaves out the following pgvector objects:
+
+- the `embedding` column of the `chat_memories` table, so chat memories
+  are stored without vector embeddings.
+- the `anomaly_embeddings` table, which holds the embeddings that the
+  alerter's Tier 2 similarity matching compares.
+
+When Tier 2 is enabled and an embedding provider is configured, the
+alerter still generates an embedding for each anomaly candidate. The
+similarity search and the embedding insert then fail because the
+`anomaly_embeddings` table does not exist, and the alerter logs an
+error for each failure. The alerter passes every such candidate on as
+if Tier 2 had found no match, so Tier 2 never suppresses a candidate,
+and Tier 3 classifies each candidate without any similar past
+anomalies. When Tier 3 is not available, every candidate that passes
+Tier 1 becomes an alert, subject to the usual checks for blackouts and
+for an open alert on the same metric.
+
+On a ColdFront datastore with Tier 3 configured, set
+`anomaly.tier2.enabled` to `false` in the alerter configuration. The
+setting avoids an embedding request and two logged errors for every
+anomaly candidate, and every candidate still reaches Tier 3. When no
+Tier 3 provider is configured either, the alerter disables anomaly
+detection altogether at startup, because no AI tier remains to filter
+the Tier 1 candidates.
+
 ### Reporting Probe Row Counts
 
 The `list_probes` tool reports an approximate row count for each probe.
@@ -385,7 +420,11 @@ ColdFront mode has the following limitations:
 - The collector refuses to start when the `use_coldfront_for_metrics`
   value does not match the kind of metrics tables already in the
   datastore.
-- The optional pgvector chat-memory embedding feature is disabled.
+- The collector skips the optional pgvector setup, so the datastore has
+  no `chat_memories.embedding` column and no `anomaly_embeddings`
+  table; the
+  [Understanding the Missing pgvector Objects](#understanding-the-missing-pgvector-objects)
+  section describes the effect on the alerter.
 - The collector refuses to start on a ColdFront build that lacks the
   `coldfront._partition_clause` or `coldfront.ensure_attached`
   function.

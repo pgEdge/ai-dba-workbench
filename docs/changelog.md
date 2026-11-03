@@ -128,10 +128,13 @@ project adheres to
   until reads slow and object-store errors can crash the
   datastore. A rejected write can put batch values, including
   credentials, into the datastore's server log, so protect that
-  log like the data.
-  Some column types are stored differently, metrics tables have
-  no indexes or foreign keys, the pgvector chat-memory
-  embedding feature is disabled, `list_probes` shows `unknown`
+  log like the data. Some column types are stored differently,
+  and metrics tables have no indexes or foreign keys. The
+  collector skips the pgvector setup, so chat memories have no
+  embeddings and the `anomaly_embeddings` table does not exist;
+  the alerter's Tier 2 similarity matching then logs errors and
+  never suppresses a candidate, so disable Tier 2 when Tier 3
+  is configured. Also, `list_probes` shows `unknown`
   as the row count of a probe stored as a view, and
   `query_datastore` cannot filter, sort, group or take the
   minimum or maximum of `pg_node_role.role_details`. The

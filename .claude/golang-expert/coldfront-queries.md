@@ -50,8 +50,9 @@ Probe staleness, connection errors and everything else read ordinary
 tables (`probe_availability`, `connections`, ...) and run in PostgreSQL.
 
 The server's own `metrics.*` readers, including the outer predicates
-`comparisonSeriesQuery` adds (`$3`, `$5` and `$6` are uncast), are not
-yet held to these rules.
+`comparisonSeriesQuery` adds, are not held to these rules by a test in
+this module. Rule 1 applies to them all the same: the outer `$3`, `$5`
+and `$6` must read `$3::int`, `$5::timestamptz` and `$6::timestamptz`.
 
 ## Rules
 

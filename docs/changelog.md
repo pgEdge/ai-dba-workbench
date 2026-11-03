@@ -134,8 +134,9 @@ project adheres to
   minimum or maximum of `pg_node_role.role_details`. The
   datastore needs `pg_duckdb`, a writable Lakekeeper
   warehouse, and a ColdFront build that includes
-  `coldfront._partition_clause` and `coldfront.ensure_attached`
-  (`1.0.0-rc1` or later; `v1.0.0-beta2` is too old), with
+  the `coldfront._partition_clause(jsonb,text[])` and
+  `coldfront.ensure_attached()` functions (pgEdge ColdFront pull
+  request #92; the `v1.0.0-beta2` tag is too old), with
   `coldfront.grant_app_access` run for each Workbench role and
   `CREATE` on the database for the collector's role. Choose the
   mode when creating the datastore: switching an existing

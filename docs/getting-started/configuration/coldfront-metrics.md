@@ -59,13 +59,29 @@ must meet the following requirements:
 - The collector's datastore role can create a schema in the datastore
   database.
 
-The `coldfront._partition_clause` function arrived in pgEdge ColdFront
-pull request #92, which also contains the read support from pull
-request #85 that the server relies on. Use ColdFront `1.0.0-rc1` or
-later; the `v1.0.0-beta2` release is too old. ColdFront reports the
-same extension version in every build, so the collector checks for the
-functions instead of a version number. The collector refuses to start
-when the installed ColdFront build lacks either function.
+ColdFront reports the same extension version in every build, so the
+collector checks for two functions instead of a version number. The
+`coldfront._partition_clause(jsonb,text[])` function arrived in pgEdge
+ColdFront pull request #92, which also contains the read support from
+pull request #85 that the server relies on. The collector also calls
+the `coldfront.ensure_attached()` function to attach the Lakekeeper
+catalog. The ColdFront tags up to and including `v1.0.0-beta2` predate
+pull request #92, so install a ColdFront build that includes that
+change. The collector refuses to start when the installed ColdFront
+build lacks either function.
+
+In the following example, the query reports whether the installed
+ColdFront build provides each function that the collector requires:
+
+```sql
+SELECT
+    to_regprocedure('coldfront._partition_clause(jsonb,text[])')
+        IS NOT NULL AS has_partition_clause,
+    to_regprocedure('coldfront.ensure_attached()')
+        IS NOT NULL AS has_ensure_attached;
+```
+
+Both columns must return `t` before you enable ColdFront storage.
 
 ### Granting ColdFront Access to Workbench Roles
 

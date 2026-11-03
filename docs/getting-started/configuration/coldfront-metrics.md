@@ -370,10 +370,10 @@ removes the connection itself, but leaves the connection's metrics
 rows in place in every ColdFront view. The server logs one line for
 each purge that names the connection ID and every metrics view that
 the purge skipped; a skipped view may hold no rows for that connection.
-The rows stay in those views until an operator removes
-them, and no Workbench retention removes them later. The
-`metrics.pg_settings` and `metrics.pg_hba_file_rules` views can hold
-sensitive values that the collector read from the deleted server.
+The rows stay in those views until an operator removes them, and no
+Workbench retention removes them later. The `metrics.pg_settings` and
+`metrics.pg_hba_file_rules` views can hold sensitive values that the
+collector read from the deleted server.
 
 In ColdFront mode, the collector also creates no foreign keys from the
 metrics tables to the `connections` table. Deleting a connection
@@ -389,11 +389,17 @@ DELETE FROM metrics.pg_settings WHERE connection_id = 42;
 ```
 
 Run one such statement for each view that the purge log line names,
-as the collector's datastore role or another role with `DELETE`
-privilege on the views. Run each statement on its own, outside any
-transaction block that also writes an ordinary PostgreSQL table,
-because pg_duckdb refuses a transaction that writes both kinds of
-table.
+as the collector's datastore role, a superuser, or a role that
+`coldfront.grant_app_access` covers. The `DELETE` privilege alone is
+not enough, because the statement also needs the DuckDB role
+membership and the `coldfront` schema access that the grant provides.
+Run each statement on its own, outside any transaction block that also
+writes an ordinary PostgreSQL table, because pg_duckdb refuses a
+transaction that writes both kinds of table.
+
+The Workbench's tests have not yet run this `DELETE` path against a
+ColdFront view that is partitioned by day. Run the statements for one
+connection first, and confirm the result before you purge others.
 
 Iceberg records a delete in delete files and does not rewrite the
 existing data files, so the deleted values remain in object storage

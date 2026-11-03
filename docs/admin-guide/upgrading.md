@@ -91,19 +91,37 @@ server without running the older server against the configuration.
 Check the configuration with the older server by hand before you
 downgrade, using a release that includes the `-check-config` flag.
 
+The pgEdge Debian repository keeps only the latest version of each
+package, so `apt` cannot download an older release from the repository.
+A Debian or Ubuntu downgrade needs a locally kept `.deb` file of the
+older release, such as a file in `/var/cache/apt/archives/` or a copy
+that you saved before upgrading. On RHEL-compatible systems, the pgEdge
+RPM repository keeps older versions, and this section does not apply.
+
 In the following example, the commands extract the older server from
-its package and check the installed configuration with it; replace
-`VERSION` with the release you are downgrading to, as listed by
-`apt list -a pgedge-ai-dba-server`:
+a locally kept package and check the installed configuration with the
+older server; replace `VERSION` with the release you are downgrading
+to:
 
 ```bash
 mkdir /tmp/ai-dba-downgrade && cd /tmp/ai-dba-downgrade
-apt-get download pgedge-ai-dba-server=VERSION
-dpkg-deb -x pgedge-ai-dba-server_*.deb root
+dpkg-deb -x \
+    /var/cache/apt/archives/pgedge-ai-dba-server_VERSION_*.deb root
 cd /var/lib/pgedge/ai-dba-server
 sudo -u pgedge -H /tmp/ai-dba-downgrade/root/usr/bin/ai-dba-server \
     -check-config -config /etc/pgedge/ai-dba-server.yaml
 ```
+
+Once the check succeeds, install the older packages from their local
+files with `sudo apt install --allow-downgrades ./<file>.deb` or with
+`sudo dpkg -i <file>.deb`. Do not include the
+`pgedge-ai-dba-upgrade-check` package in a downgrade. If the package is
+included, `apt` unpacks the older server and collector before the older
+check refuses the configuration; the packages are left unpacked but
+not configured (shown as `iU` by `dpkg -l`), and `apt` reports broken
+packages until they are repaired. Leave the installed check package in
+place, since the package already satisfies the dependency of the older
+release, and rely on the manual check instead.
 
 ## Recovering from a Refused Upgrade
 

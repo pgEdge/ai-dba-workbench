@@ -176,8 +176,25 @@ func TestWriteColdFrontBatchesReturnsSystemicErrors(t *testing.T) {
 		t.Errorf("issued %d statements for a systemic failure", len(w.batches))
 	}
 
-	// The limit is exact: maxColdFrontDroppedRows bad rows are all
-	// dropped and the rest stored, and one more is returned.
+	// The failure of a later half is returned too.
+	w = &failingWriter{bad: map[int]bool{3: true}, err: &pgconn.PgError{Code: "22P02"}}
+	calls := 0
+	write := func(ctx context.Context, rows []coldFrontRow) error {
+		calls++
+		if calls == 3 {
+			return errors.New("connection lost")
+		}
+		return w.write(ctx, rows)
+	}
+	if err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(4, 3), write); err == nil {
+		t.Error("a failure while retrying a half was not returned")
+	}
+}
+
+// TestWriteColdFrontBatchesDropLimitIsExact checks the boundary of the
+// drop limit: maxColdFrontDroppedRows bad rows are all dropped without
+// an error, and one more is returned after that many drops.
+func TestWriteColdFrontBatchesDropLimitIsExact(t *testing.T) {
 	for _, tt := range []struct {
 		bad     int
 		wantErr bool
@@ -205,19 +222,6 @@ func TestWriteColdFrontBatchesReturnsSystemicErrors(t *testing.T) {
 		}
 	}
 
-	// The failure of a later half is returned too.
-	w = &failingWriter{bad: map[int]bool{3: true}, err: &pgconn.PgError{Code: "22P02"}}
-	calls := 0
-	write := func(ctx context.Context, rows []coldFrontRow) error {
-		calls++
-		if calls == 3 {
-			return errors.New("connection lost")
-		}
-		return w.write(ctx, rows)
-	}
-	if err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(4, 3), write); err == nil {
-		t.Error("a failure while retrying a half was not returned")
-	}
 }
 
 // TestWriteColdFrontBatchesSubtransactionErrorIsSystemic replays the

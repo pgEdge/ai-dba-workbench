@@ -146,6 +146,13 @@ unless noted:
   (`CPUBusyPercentExpr`, `PseudoFilesystemExclusion`,
   `ReplicationLagBytesExpr`), so `pkg/anomaly` is guarded on its own,
   whichever consumer runs the queries.
+- `TestMetricsSQLArgsFinite` (no database) fails when any statement in
+  `metricsSQLStatements()` is bound with an infinite
+  `pgtype.Timestamptz`, `pgtype.Timestamp` or `pgtype.Date`, and
+  `TestNoHistoricalUpperBoundIsNull` pins `noHistoricalUpperBound` to
+  NULL. Plain PostgreSQL accepts an infinite bind and `Violations` sees
+  only SQL text, so these are the only guards on rule 6's bound
+  parameters.
 - `TestConnectionUtilizationHistoricalOpenBounds` in
   `pkg/anomaly/metrics_test.go` (no database) pins the NULL-open
   `valid_from`/`valid_to` ranges of the `connection_utilization_percent`

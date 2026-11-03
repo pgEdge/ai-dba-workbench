@@ -80,6 +80,77 @@ func TestMetricsSQLColdFrontShapes(t *testing.T) {
 	}
 }
 
+// infiniteBind reports whether arg is a pgtype timestamp or date value
+// carrying +infinity or -infinity, which pgx would send to the database
+// as an infinite bound.
+func infiniteBind(arg any) bool {
+	switch v := arg.(type) {
+	case pgtype.Timestamptz:
+		return v.Valid && v.InfinityModifier != pgtype.Finite
+	case *pgtype.Timestamptz:
+		return v != nil && infiniteBind(*v)
+	case pgtype.Timestamp:
+		return v.Valid && v.InfinityModifier != pgtype.Finite
+	case *pgtype.Timestamp:
+		return v != nil && infiniteBind(*v)
+	case pgtype.Date:
+		return v.Valid && v.InfinityModifier != pgtype.Finite
+	case *pgtype.Date:
+		return v != nil && infiniteBind(*v)
+	}
+	return false
+}
+
+// TestInfiniteBind pins the detector TestMetricsSQLArgsFinite relies on,
+// so it cannot quietly stop matching.
+func TestInfiniteBind(t *testing.T) {
+	inf := pgtype.Timestamptz{InfinityModifier: pgtype.Infinity, Valid: true}
+	ts := pgtype.Timestamp{InfinityModifier: pgtype.NegativeInfinity, Valid: true}
+	date := pgtype.Date{InfinityModifier: pgtype.Infinity, Valid: true}
+	for _, arg := range []any{inf, &inf, ts, &ts, date, &date} {
+		if !infiniteBind(arg) {
+			t.Errorf("infiniteBind(%#v) = false, want true", arg)
+		}
+	}
+	var nilTS *pgtype.Timestamptz
+	var nilPlain *pgtype.Timestamp
+	var nilDate *pgtype.Date
+	for _, arg := range []any{pgtype.Timestamptz{}, pgtype.Timestamp{},
+		pgtype.Date{}, nilTS, nilPlain, nilDate, 7, "spock", nil,
+		pgtype.Timestamptz{InfinityModifier: pgtype.Infinity}} {
+		if infiniteBind(arg) {
+			t.Errorf("infiniteBind(%#v) = true, want false", arg)
+		}
+	}
+}
+
+// TestMetricsSQLArgsFinite fails when any alerter query that reads
+// metrics.* is bound with an infinite timestamp or date. Plain
+// PostgreSQL accepts one, so only this test catches it; DuckDB on a
+// ColdFront datastore may plan a range join that subtracts the bound and
+// fails with "Cannot subtract infinite timestamps" (rule 6 in
+// .claude/golang-expert/coldfront-queries.md). GitHub issue #755.
+func TestMetricsSQLArgsFinite(t *testing.T) {
+	for _, s := range metricsSQLStatements() {
+		for i, arg := range s.args {
+			if infiniteBind(arg) {
+				t.Errorf("%s: $%d is bound to an infinite value %#v; bind NULL "+
+					"and open the bound with COALESCE instead", s.name, i+1, arg)
+			}
+		}
+	}
+}
+
+// TestNoHistoricalUpperBoundIsNull pins the baseline calculator's open
+// upper bound to NULL, which each historical query reads as no bound
+// through COALESCE($2::timestamptz, col). GitHub issues #755 and #776.
+func TestNoHistoricalUpperBoundIsNull(t *testing.T) {
+	if noHistoricalUpperBound.Valid {
+		t.Errorf("noHistoricalUpperBound = %#v, want NULL (Valid false)",
+			noHistoricalUpperBound)
+	}
+}
+
 // metricsReader matches SQL that reads a metrics.* relation. It is case
 // sensitive because the package writes SQL keywords in capitals, and
 // prose such as "from metrics.pg_node_role" in a comment is not a query.

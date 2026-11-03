@@ -775,9 +775,13 @@ snapshots and small data files have accumulated in the metrics tables.
 Take the following steps:
 
 - Schedule the ColdFront compactor with the `--expire-snapshots`
-  option for every metrics table, as the
+  option and a lowered `--expire-older-than` value for every metrics
+  table, as the
   [Scheduling the ColdFront Compactor](coldfront-metrics.md#scheduling-the-coldfront-compactor)
   section describes.
+- Reduce the number of monitored connections or the probe frequency
+  when the snapshot count grows faster than the compactor expires
+  snapshots.
 - Check that the object storage is healthy, reachable from the
   datastore, and not rejecting or throttling requests.
 - Lengthen the collection interval of high-frequency probes when the

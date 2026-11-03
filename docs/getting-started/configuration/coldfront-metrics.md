@@ -184,19 +184,72 @@ Each metrics write by the collector is one Iceberg append, which adds
 one small Parquet file and one snapshot to the table. The Workbench
 does not compact or expire this data.
 
+### Estimating the Snapshot Rate
+
+The collector schedules every probe separately for each monitored
+connection. Each execution of a probe against one connection stores
+that connection's rows in one write, so a metrics table gains one
+snapshot for each probe execution on each monitored connection. A
+database-scoped probe collects rows from every database on the
+connection before the single write. The number of snapshots that a
+table gains per hour is therefore the number of probe executions per
+hour multiplied by the number of monitored connections. A probe run
+that returns more than 5,000 rows, or more than 16 MiB of JSON, writes
+more than one batch and adds one snapshot for each batch.
+
 Without compaction, snapshots and small files accumulate quickly. In
-testing, each metrics table reached about 900 snapshots after 16 hours
-of one-minute probe intervals. Reads then slow down, and object-store
-errors followed that caused pg_duckdb to abort backends and PostgreSQL
-to restart after a crash. Shorter probe intervals multiply the rate at
-which files accumulate.
+testing against a datastore that monitored a single connection, each
+metrics table reached about 900 snapshots after 16 hours of one-minute
+probe intervals. Reads then slowed down, and object-store errors
+followed that caused pg_duckdb to abort backends and PostgreSQL to
+restart after a crash. A datastore that monitors ten connections at
+the same interval reaches the same snapshot count in about 90 minutes.
+
+### Running the Compactor
 
 Schedule ColdFront's `cmd/compactor` tool to run regularly against each
 metrics table, with the `--expire-snapshots` option so that the
-compactor also expires old snapshots. The
+compactor also expires old snapshots. The compactor names a table as
+`<schema>.<name>`, and a bare table name refers to the `public` schema;
+always pass the `metrics.` prefix for the Workbench's metrics tables.
+
+The `--expire-older-than` option sets the age at which the compactor
+expires a snapshot, and defaults to `168h`. At the default, a table
+written by one-minute probes keeps about 10,080 snapshots for each
+monitored connection, which is more than ten times the count at which
+the test datastore failed. Lower `--expire-older-than` so that the
+retained snapshots stay well below that count.
+
+The retained snapshots for a table approach the expiry age plus the
+interval between compactor runs, divided by the probe interval and
+multiplied by the number of monitored connections. An expiry age of
+`1h` with an hourly compactor run keeps at most about 120 snapshots for
+each connection on a one-minute probe. Shorten both values when the
+datastore monitors many connections. Keep the expiry age longer than
+the longest transaction that reads a metrics view, because ColdFront
+holds a transaction's snapshot until the transaction ends; the
+Workbench's own metrics queries are short, but a query that an
+operator holds open in `psql` can last longer.
+
+The following example lists the metrics views that ColdFront has
+registered, and runs the compactor against each one with a one-hour
+snapshot expiry and orphan-file removal:
+
+```bash
+for table in $(psql -At -c "SELECT relname FROM coldfront.tiered_views
+                            WHERE schema_name = 'metrics'
+                            ORDER BY relname"); do
+    compactor --table "metrics.${table}" \
+        --expire-snapshots --expire-older-than 1h --orphans
+done
+```
+
+The `psql` client and the compactor both read the connection settings
+from the libpq environment variables, such as `PGHOST` and
+`PGDATABASE`. The
 [ColdFront compaction guide](https://github.com/pgEdge/ColdFront/blob/main/docs/compaction.md)
-describes how to build, configure, and schedule the compactor, and the
-options that remove orphaned files.
+describes how to build and configure the compactor, and every option
+that the compactor accepts.
 
 ## Protecting the Datastore Log
 

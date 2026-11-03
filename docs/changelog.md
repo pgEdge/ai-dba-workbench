@@ -120,12 +120,15 @@ project adheres to
   collector and ignores `retention_days`; purging a connection
   removes the connection but leaves its metrics rows in place
   and logs the views it skipped. Every write adds one Iceberg
-  snapshot and data file, so the operator must schedule
-  ColdFront's compactor with `--expire-snapshots` for each
-  metrics table; without it, files accumulate until reads slow
-  and object-store errors can crash the datastore. A rejected
-  write can put batch values, including credentials, into the
-  datastore's server log, so protect that log like the data.
+  snapshot and data file, one per probe execution on each
+  monitored connection, so the operator must schedule
+  ColdFront's compactor for each `metrics.<name>` table with
+  `--expire-snapshots` and an `--expire-older-than` value well
+  below the 168-hour default; without it, files accumulate
+  until reads slow and object-store errors can crash the
+  datastore. A rejected write can put batch values, including
+  credentials, into the datastore's server log, so protect that
+  log like the data.
   Some column types are stored differently, metrics tables have
   no indexes or foreign keys, the pgvector chat-memory
   embedding feature is disabled, `list_probes` shows `unknown`

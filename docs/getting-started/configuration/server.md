@@ -207,6 +207,7 @@ builtins:
 | Flag | Description |
 |------|-------------|
 | `-config string` | Path to configuration file |
+| `-check-config` | Validate the configuration file, then exit without starting the server; see [Upgrading the Workbench](../../admin-guide/upgrading.md#checking-a-configuration-by-hand) |
 | `-debug` | Enable debug logging |
 | `-data-dir string` | Data directory for auth and conversations |
 | `-trace-file string` | Path to MCP trace file |

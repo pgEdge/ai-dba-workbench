@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+# Check the installed server configuration with this release's server.
+# On failure this package stays unconfigured, and dpkg will not unpack
+# the server, collector, alerter or client, which all pre-depend on it,
+# so the installed versions stay in place and keep running (issue #784).
+case "$1" in
+    configure)
+        /usr/libexec/pgedge-ai-dba-upgrade-check/check-server-config
+        ;;
+esac
+
+#DEBHELPER#

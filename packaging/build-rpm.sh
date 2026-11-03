@@ -51,6 +51,7 @@ prepare() {
   cp ${COMPONENT_NAME}/common/pgedge-ai-dba-collector.service ~/rpmbuild/SOURCES/
   cp ${COMPONENT_NAME}/common/pgedge-ai-dba-alerter.service ~/rpmbuild/SOURCES/
   cp ${COMPONENT_NAME}/common/pgedge-ai-dba-client.nginx ~/rpmbuild/SOURCES/
+  cp ${COMPONENT_NAME}/common/check-server-config ~/rpmbuild/SOURCES/
 
   # This function is for debugging purpose if you have your own keys. GH workflow does not need it.
   #import_gpg_keys

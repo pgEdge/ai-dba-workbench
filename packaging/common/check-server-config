@@ -1,0 +1,70 @@
+#!/bin/sh
+#-------------------------------------------------------------------------
+#
+# pgEdge AI DBA Workbench
+#
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+#-------------------------------------------------------------------------
+#
+# Refuse an upgrade whose installed server configuration the new server
+# would reject at start-up (issue #784).
+#
+# This script and the copy of the new ai-dba-server beside it are the
+# whole of the pgedge-ai-dba-upgrade-check package. Every other package
+# of the suite requires that package at its own version (on Debian, at
+# that version or later), so the package manager installs it before it
+# touches any of them: the Debian postinst of this package runs this
+# script, and a failure leaves the package unconfigured, which stops
+# dpkg unpacking anything that pre-depends on it; the RPM %pre of each
+# other package runs it, and a failure stops rpm installing that package
+# and erasing the old one.
+# Either way the installed version stays in place and keeps running.
+#
+# A missing configuration file means a fresh install, or one that has
+# never had a server configuration, and there is nothing to check.
+#-------------------------------------------------------------------------
+
+set -u
+
+CONFIG=/etc/pgedge/ai-dba-server.yaml
+CHECKER=/usr/libexec/pgedge-ai-dba-upgrade-check/ai-dba-server
+
+[ -f "$CONFIG" ] || exit 0
+
+# Run from the service's working directory, so that a relative path in
+# the configuration resolves as it does for the running server.
+cd /var/lib/pgedge/ai-dba-server 2>/dev/null || cd /
+
+# Run as the account the service runs as, with its home directory, so
+# that file permissions and a "~" in a configured path resolve as they
+# do for the running server; a password_file only root can read would
+# otherwise pass the check and then stop the new server starting. The
+# server package creates the account, so it exists on any host that has
+# the configuration file, but fall back to running as root rather than
+# refuse an upgrade on a host where it does not.
+set -- "$CHECKER" -check-config -config "$CONFIG"
+if [ "$(id -u)" = 0 ] && command -v runuser >/dev/null 2>&1; then
+    home=$(getent passwd pgedge | cut -d: -f6)
+    if [ -n "$home" ]; then
+        set -- runuser -u pgedge -- env -u XDG_CONFIG_HOME \
+            HOME="$home" USER=pgedge LOGNAME=pgedge "$@"
+    fi
+fi
+
+if output=$("$@" 2>&1); then
+    exit 0
+fi
+
+{
+    echo "$output"
+    echo
+    echo "pgEdge AI DBA Workbench: the new server would refuse to start"
+    echo "with $CONFIG, for the reason given above."
+    echo "The upgrade has been stopped before the installed packages were"
+    echo "replaced, so the installed version is unchanged and still running."
+    echo "Correct the configuration, then run the upgrade again; see the"
+    echo "Upgrading page of the Administrator's Guide for details."
+} >&2
+exit 1

@@ -35,6 +35,13 @@ override_dh_auto_install:
 	install -d debian/pgedge-ai-dba-server/var/lib/pgedge/ai-dba-server
 	install -d debian/pgedge-ai-dba-server/var/log/pgedge/ai-dba-server
 
+	# --- Upgrade check: a copy of the server, run before an upgrade ---
+	install -D -m 755 server/ai-dba-server debian/pgedge-ai-dba-upgrade-check/usr/libexec/pgedge-ai-dba-upgrade-check/ai-dba-server
+	install -D -m 755 debian/check-server-config debian/pgedge-ai-dba-upgrade-check/usr/libexec/pgedge-ai-dba-upgrade-check/check-server-config
+	install -D -m 644 LICENSE.md debian/pgedge-ai-dba-upgrade-check/usr/share/doc/pgedge-ai-dba-upgrade-check/LICENSE.md
+	install -D -m 644 debian/tmp/sbom/pgedge-ai-dba-server-sbom.json debian/pgedge-ai-dba-upgrade-check/usr/share/pgedge-ai-dba-upgrade-check/pgedge-ai-dba-server-sbom.json
+	install -D -m 644 debian/tmp/sbom/pgedge-ai-dba-server-sbom.json.asc debian/pgedge-ai-dba-upgrade-check/usr/share/pgedge-ai-dba-upgrade-check/pgedge-ai-dba-server-sbom.json.asc
+
 	# --- Collector ---
 	syft dir:$(CURDIR)/collector -o cyclonedx-json > debian/tmp/sbom/pgedge-ai-dba-collector-sbom.json || exit 1
 	KEY_ID=$$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $$5}' | head -n 1); export KEY_ID; \

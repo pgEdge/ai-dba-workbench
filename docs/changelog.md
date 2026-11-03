@@ -100,62 +100,22 @@ project adheres to
   The server and alerter now use `pgedge-go-llm-lib` v0.6.0, which
   requires Go 1.26.10, so the collector, server and alerter now build
   with Go 1.26.10.
-- Store metrics in pgEdge ColdFront (#755). The new collector
-  option `use_coldfront_for_metrics` (default `false`), or the
-  `-use-coldfront-for-metrics` flag, creates each `metrics.*`
-  table through `coldfront.create_iceberg_table`, as a
-  PostgreSQL view over an Apache Iceberg table on object
-  storage partitioned by day of `collected_at`; operational
-  tables stay ordinary PostgreSQL tables. The server's and the
-  alerter's metrics queries now run on either kind of
-  datastore, so neither needs a setting. At startup the
-  collector creates the `metrics` Iceberg namespace and a
-  `workbench_coldfront` schema of insert helper functions,
-  which its datastore role must own, and writes each probe's
-  rows through them in batches of at most 5,000 rows and
-  16 MiB, dropping and logging a single row ColdFront refuses
-  and storing NaN or infinite values as NULL. In this mode the
-  Workbench performs no metrics retention: it creates and drops
-  no partitions, deletes no old rows, does not run the garbage
-  collector and ignores `retention_days`; purging a connection
-  removes the connection but leaves its metrics rows in place
-  and logs the views it skipped. Every write adds one Iceberg
-  snapshot and data file, one per probe execution on each
-  monitored connection, so the operator must schedule
-  ColdFront's compactor for each `metrics.<name>` table with
-  `--expire-snapshots` and an `--expire-older-than` value well
-  below the 168-hour default; without it, files accumulate
-  until reads slow and object-store errors can crash the
-  datastore. A rejected write can put batch values, including
-  credentials, into the datastore's server log, so protect that
-  log like the data. Some column types are stored differently,
-  and metrics tables have no indexes or foreign keys. When
-  pgvector is installed on the datastore, Tier 2 anomaly
-  matching and chat memory embeddings work: migration 1 defers
-  the pgvector setup, and the collector creates the `vector`
-  extension, the `anomaly_embeddings` table and the
-  `chat_memories.embedding` column at each startup when they
-  are missing, so existing ColdFront datastores receive them at
-  the next start. A failure is logged and never stops the
-  collector; while the table cannot be created, Tier 2 logs
-  errors and never suppresses a candidate, so disable Tier 2
-  when Tier 3 is configured. Also, `list_probes` shows `unknown`
-  as the row count of a probe stored as a view, and
-  `query_datastore` cannot filter, sort, group or take the
-  minimum or maximum of `pg_node_role.role_details`. The
-  datastore needs `pg_duckdb`, a writable Lakekeeper
-  warehouse, and a ColdFront build that includes
-  the `coldfront._partition_clause(jsonb,text[])` and
-  `coldfront.ensure_attached()` functions (pgEdge ColdFront pull
-  request #92; the `v1.0.0-beta2` tag is too old), with
-  `coldfront.grant_app_access` run for each Workbench role
-  (again for the server and alerter roles after the collector
-  creates the metrics views and after each upgrade) and
-  `CREATE` on the database for the collector's role. Choose the
-  mode when creating the datastore: switching an existing
-  datastore is not supported, and the collector refuses to
-  start when the extension is missing or too old, or when the
-  setting does not match the existing metrics tables.
+- Store metrics in pgEdge ColdFront (#755). The new collector option
+  `use_coldfront_for_metrics` (default `false`), or the
+  `-use-coldfront-for-metrics` flag, creates each `metrics.*` table as a
+  PostgreSQL view over an Apache Iceberg table on object storage; the
+  server and alerter need no setting. The datastore needs `pg_duckdb`,
+  a writable Lakekeeper warehouse, the `duckdb.postgres_role` setting,
+  a ColdFront build that provides
+  `coldfront._partition_clause(jsonb,text[])` and
+  `coldfront.ensure_attached()`, `coldfront.grant_app_access` for each
+  Workbench role, and `CREATE` on the database for the collector's
+  role. Each write adds one Iceberg snapshot, so the operator must
+  schedule ColdFront's compactor with snapshot expiry for every metrics
+  table. The Workbench performs no metrics retention in this mode, and
+  an existing datastore cannot switch between storage modes.
+  The [Storing Metrics in pgEdge ColdFront](getting-started/configuration/coldfront-metrics.md)
+  page describes the setup, the start-up order and every difference.
 
 - Classify tier 3 anomaly candidates with an optional decision
   model (#626). The new `llm.decision_provider` option selects

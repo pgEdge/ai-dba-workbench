@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -286,5 +287,65 @@ func TestServerInfoQueries(t *testing.T) {
 	}
 	if got := h.queryKeySettings(ctx, closed, id); len(got) != 0 {
 		t.Errorf("settings on a closed pool = %+v", got)
+	}
+
+	// The remaining cases replace metrics.pg_settings with a view over its
+	// rows, as a pgEdge ColdFront datastore does (issue #755), shaped to
+	// fail part-way through reading. The scratch database is dropped when
+	// the test ends.
+	if _, err := pool.Exec(ctx, `
+        CREATE TABLE pg_settings_rows AS SELECT * FROM metrics.pg_settings;
+        DROP TABLE metrics.pg_settings CASCADE`); err != nil {
+		t.Fatalf("move the settings rows aside: %v", err)
+	}
+	for _, tc := range []struct {
+		name, view string
+		want       []string
+	}{
+		{
+			// work_mem's category cannot scan into a string, and it sorts
+			// first (shared_buffers' NULL category sorts last). pgx closes
+			// the rows on a scan error, so the read ends there and the
+			// list is empty, not nil.
+			name: "a row that does not scan ends the read",
+			view: `CREATE OR REPLACE VIEW metrics.pg_settings AS
+                SELECT connection_id, collected_at, name, setting, unit,
+                       CASE WHEN name = 'work_mem' THEN ARRAY[category] END AS category
+                FROM pg_settings_rows`,
+			want: []string{},
+		},
+		{
+			// work_mem's division by zero fails at execution, which
+			// surfaces through rows.Err, not Query; the sort reads every
+			// row first, so none is returned.
+			name: "an execution failure gives an empty list",
+			view: `CREATE OR REPLACE VIEW metrics.pg_settings AS
+                SELECT connection_id, collected_at, name,
+                       CASE WHEN name = 'work_mem' THEN (1 / (length(name) - 8))::text
+                            ELSE setting END AS setting,
+                       unit, category
+                FROM pg_settings_rows`,
+			want: []string{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := pool.Exec(ctx, `DROP VIEW IF EXISTS metrics.pg_settings`); err != nil {
+				t.Fatalf("drop the view: %v", err)
+			}
+			if _, err := pool.Exec(ctx, tc.view); err != nil {
+				t.Fatalf("create the view: %v", err)
+			}
+			// Drop the connections' cached statements, planned against the
+			// old relation's result type.
+			pool.Reset()
+			got := h.queryKeySettings(ctx, pool, id)
+			names := []string{}
+			for _, s := range got {
+				names = append(names, s.Name)
+			}
+			if got == nil || strings.Join(names, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("key settings = %#v, want %v", got, tc.want)
+			}
+		})
 	}
 }

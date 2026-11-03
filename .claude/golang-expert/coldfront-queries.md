@@ -183,3 +183,17 @@ unless noted:
   `AND <col> <= COALESCE($2::timestamptz, <col>)` bound on every
   `HistoricalSQL`. The server's `TestComparisonSeriesQuery_Plan` checks
   that a real `$2` still reaches the inner scan's condition.
+
+## Known Trade-offs
+
+Both were measured on plain PostgreSQL 17 and accepted for one SQL text
+that runs on both engines; neither changes results.
+
+- `LSNDiffBytesSQL` decodes each LSN half with one `strpos` per hex
+  digit, so the `lag_bytes` historical query ran about 6.3 times slower
+  than with `pg_lsn` subtraction (4.4 ms to 27.6 ms over 10,200 rows).
+- With `$2` NULL, as the alerter binds it, the planner cannot fold
+  `collected_at <= COALESCE($2::timestamptz, collected_at)` and keeps it
+  as a filter at the default 1/3 selectivity, cutting row estimates by
+  two thirds on 16 of the 20 historical queries. A real `$2`, as the
+  server binds, folds to a plain index condition.

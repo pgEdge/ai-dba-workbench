@@ -32,8 +32,12 @@ func TestViolations(t *testing.T) {
 		"unbalanced avg":               `SELECT avg(numbackends FROM metrics.t`,
 		"pg_lsn":                       `SELECT (sent_lsn::pg_lsn - replay_lsn::pg_lsn) FROM metrics.t`,
 		"make_interval":                `SELECT 1 FROM metrics.t WHERE collected_at > NOW() - make_interval(days => $1::int)`,
-		"host":                         `SELECT host(client_addr) FROM metrics.t`,
+		"host over text":               `SELECT host(client_addr) FROM metrics.t`,
+		"host over a text cast":        `SELECT HOST(client_addr::text) FROM metrics.t`,
+		"inet cast before host ends":   `SELECT host(client_addr::inet || '') FROM metrics.t`,
+		"unbalanced host":              `SELECT host(client_addr::inet FROM metrics.t`,
 		"inet cast":                    `SELECT client_addr::inet FROM metrics.t`,
+		"inet cast beside host":        `SELECT host(client_addr::inet), server_addr::inet FROM metrics.t`,
 		"infinite upper bound":         `SELECT COALESCE(LEAD(collected_at) OVER w, 'infinity'::timestamptz) FROM metrics.t`,
 		"infinite lower bound":         `SELECT '-infinity'::timestamptz FROM metrics.t`,
 		"capitalised infinity":         `SELECT 1 FROM metrics.t WHERE collected_at < 'Infinity'`,
@@ -53,6 +57,7 @@ func TestViolations(t *testing.T) {
 		"cast avg":                  `SELECT avg(numbackends)::float, AVG(x) :: float8 FROM metrics.t`,
 		"array_agg subscript":       `SELECT (array_agg(x ORDER BY y DESC))[1] FROM metrics.t`,
 		"uncast EXTRACT":            `SELECT MAX(EXTRACT(EPOCH FROM (collected_at - xact_start)))::float FROM metrics.t`,
+		"host over an inet cast":    `SELECT host(client_addr::inet), Host ( s.server_addr :: INET ) FROM metrics.t s`,
 		"NULL-open range join":      `SELECT 1 FROM metrics.t a JOIN r m ON (m.valid_from IS NULL OR a.collected_at >= m.valid_from) AND (m.valid_to IS NULL OR a.collected_at < m.valid_to)`,
 	}
 	for name, sql := range good {
@@ -68,6 +73,16 @@ func TestViolationsReportsEach(t *testing.T) {
 	sql := `SELECT avg(x), sent_lsn::pg_lsn FROM metrics.t WHERE id = $1 AND c < 'infinity'`
 	if got := len(Violations(sql)); got != 4 {
 		t.Errorf("Violations reported %d problems, want 4: %v", got, Violations(sql))
+	}
+}
+
+// TestViolationsExcusesOnlyHostInetArgs checks that an inet cast is
+// excused only where it is the argument of host(), so a second cast in
+// the same statement is still reported, once.
+func TestViolationsExcusesOnlyHostInetArgs(t *testing.T) {
+	sql := `SELECT host(a::inet), b::inet, host(c::inet) FROM metrics.t`
+	if got := Violations(sql); len(got) != 1 {
+		t.Errorf("Violations reported %d problems, want 1: %v", len(got), got)
 	}
 }
 

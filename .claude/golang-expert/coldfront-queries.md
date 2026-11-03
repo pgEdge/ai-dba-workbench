@@ -83,12 +83,16 @@ failures in rule 3, so reproduce with pgx, never psql.
    incomplete". Cast to `::float` before the value leaves the query
    (`MAX(EXTRACT(...))::float` is fine; so is an uncast EXTRACT inside
    a predicate). sum/min/max of bigint are fine.
-4. **No PostgreSQL-only types or functions.** DuckDB has no `pg_lsn`,
-   `inet`, `host()` or `make_interval()`. LSNs and inet columns are
-   stored as text. `LSNDiffBytesSQL` in `pkg/anomaly/metrics.go` computes
-   `from - to` in bytes from two text LSNs with `split_part`, `lpad`,
-   `upper`, `substr` and `strpos`, all present in both engines; it is
-   exactly equal to `(from::pg_lsn - to::pg_lsn)::float`. Do not use
+4. **No PostgreSQL-only types or functions.** DuckDB has no `pg_lsn`
+   or `make_interval()`. LSNs and inet columns are stored as text.
+   `host()` runs only over an inet cast: `host(client_addr::inet)`
+   works on ColdFront, but `host()` over the text (varchar) column
+   fails. Cast to `inet` nowhere else; it is unverified there and an
+   inet result column is not one the Workbench scans.
+   `LSNDiffBytesSQL` in `pkg/anomaly/metrics.go` computes `from - to`
+   in bytes from two text LSNs with `split_part`, `lpad`, `upper`,
+   `substr` and `strpos`, all present in both engines; it is exactly
+   equal to `(from::pg_lsn - to::pg_lsn)::float`. Do not use
    `('0x' || h)::bigint`: DuckDB accepts it but PostgreSQL 14 and 15,
    which the datastore still supports, do not.
 5. **No functions over the views.** A PL/pgSQL or SQL function that
@@ -128,7 +132,8 @@ failures in rule 3, so reproduce with pgx, never psql.
 
 The textual rules live in one place, `coldfrontsql.Violations` in
 `pkg/coldfrontsql/coldfrontsql.go`: an uncast `$n`, `ANY(`, `unnest(`,
-an array cast, `pg_lsn`, `make_interval(`, `host(`, `::inet`, a
+an array cast, `pg_lsn`, `make_interval(`, a `host(` whose argument
+does not end in `::inet`, an `::inet` that is not such an argument, a
 `$n [::type] IS [NOT] NULL` test, `infinity` (any case), and an
 `avg(...)` not cast to float in place.
 `TestViolations` in `pkg/coldfrontsql/coldfrontsql_test.go` pins them

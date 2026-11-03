@@ -43,15 +43,19 @@ var forbidden = []struct {
 		"DuckDB has no pg_lsn type; use anomaly.LSNDiffBytesSQL on the text LSN"},
 	{regexp.MustCompile(`(?i)\bmake_interval\s*\(`),
 		"DuckDB has no make_interval(); use INTERVAL '1 day' * $1::int"},
-	{regexp.MustCompile(`(?i)\bhost\s*\(`),
-		"DuckDB has no host(); inet columns are text on ColdFront"},
-	{regexp.MustCompile(`(?i)::\s*inet\b`),
-		"DuckDB has no inet type; inet columns are text on ColdFront"},
 	{regexp.MustCompile(`(?i)\$\d+(\s*::\s*[a-z0-9_ ]+?)?\s+IS\s+(NOT\s+)?NULL\b`),
 		"DuckDB cannot plan a NULL test on a parameter, cast or not; open a bound with COALESCE($2::timestamptz, col) instead"},
 	{regexp.MustCompile(`(?i)\binfinity\b`),
 		"DuckDB may subtract infinite timestamps in a range join and fail; leave open bounds NULL"},
 }
+
+// hostCall matches the start of a host() call, inetCast a cast to inet,
+// and inetArg a host() argument that ends in a cast to inet.
+var (
+	hostCall = regexp.MustCompile(`(?i)\bhost\s*\(`)
+	inetCast = regexp.MustCompile(`(?i)::\s*inet\b`)
+	inetArg  = regexp.MustCompile(`(?i)::\s*inet\s*$`)
+)
 
 // floatCast matches a cast to double precision directly after a closing
 // parenthesis.
@@ -62,9 +66,9 @@ var avgCall = regexp.MustCompile(`(?i)\bavg\s*\(`)
 
 // Violations returns a description of every ColdFront rule sql breaks,
 // or nil when it breaks none: an uncast bound parameter, ANY(), unnest(),
-// an array cast, pg_lsn, make_interval(), host(), an inet cast, a NULL
-// test on a parameter, an infinite timestamp, or an avg() not cast to
-// float where it stands.
+// an array cast, pg_lsn, make_interval(), host() over anything but an
+// inet cast, an inet cast outside host(), a NULL test on a parameter, an
+// infinite timestamp, or an avg() not cast to float where it stands.
 //
 // It is a textual check and does not parse SQL, so it also reports a
 // forbidden word inside a string literal or comment; keep such words out
@@ -86,6 +90,8 @@ func Violations(sql string) []string {
 		}
 	}
 
+	problems = append(problems, inetViolations(sql)...)
+
 	// avg() over an integer column is numeric to PostgreSQL but DOUBLE
 	// to DuckDB, so pgx fails to scan it; the call must be cast where it
 	// stands. EXTRACT() has the same problem, but is legitimately used
@@ -97,6 +103,36 @@ func Violations(sql string) []string {
 		if end < 0 || !floatCast.MatchString(sql[end+1:]) {
 			problems = append(problems,
 				"avg(...) must be cast to float directly: avg(x)::float")
+		}
+	}
+	return problems
+}
+
+// inetViolations reports each host() call whose argument is not cast to
+// inet, and each inet cast that is not such an argument. inet columns are
+// text on ColdFront, and DuckDB rejects host() over text but runs
+// host(col::inet); an inet cast anywhere else is unverified there, and
+// would return a result type the Workbench does not scan.
+func inetViolations(sql string) []string {
+	var problems []string
+	excused := map[int]bool{}
+	for _, loc := range hostCall.FindAllStringIndex(sql, -1) {
+		end := matchingParen(sql, loc[1]-1)
+		if end >= 0 {
+			if m := inetArg.FindStringIndex(sql[loc[1]:end]); m != nil {
+				excused[loc[1]+m[0]] = true
+				continue
+			}
+		}
+		problems = append(problems, "host(...) without an inet cast: "+
+			"DuckDB rejects host() over text, which inet columns are on "+
+			"ColdFront; write host(col::inet)")
+	}
+	for _, loc := range inetCast.FindAllStringIndex(sql, -1) {
+		if !excused[loc[0]] {
+			problems = append(problems, "::inet outside host(...::inet): "+
+				"inet columns are text on ColdFront; cast to inet only as "+
+				"the argument of host()")
 		}
 	}
 	return problems

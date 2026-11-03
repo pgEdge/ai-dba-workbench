@@ -57,6 +57,8 @@ func TestSplitColdFrontBatches(t *testing.T) {
 		{"byte cap", testRows(5, 9), 100, 25, []int{2, 2, 1}},
 		{"exact byte cap", testRows(4, 9), 100, 20, []int{2, 2}},
 		{"oversized row alone", append(testRows(1, 9), append(testRows(1, 500), testRows(1, 9)...)...), 100, 50, []int{1, 1, 1}},
+		// An oversized first row starts no empty batch before it.
+		{"oversized first row", append(testRows(1, 500), testRows(2, 9)...), 100, 50, []int{1, 2}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -172,6 +174,35 @@ func TestWriteColdFrontBatchesReturnsSystemicErrors(t *testing.T) {
 	}
 	if len(w.batches) > 2*64 {
 		t.Errorf("issued %d statements for a systemic failure", len(w.batches))
+	}
+
+	// The limit is exact: maxColdFrontDroppedRows bad rows are all
+	// dropped and the rest stored, and one more is returned.
+	for _, tt := range []struct {
+		bad     int
+		wantErr bool
+	}{
+		{maxColdFrontDroppedRows, false},
+		{maxColdFrontDroppedRows + 1, true},
+	} {
+		badRows := map[int]bool{}
+		for i := 0; i < tt.bad; i++ {
+			badRows[i] = true
+		}
+		bw := &failingWriter{bad: badRows, err: &pgconn.PgError{Code: "22P02"}}
+		bErr := writeColdFrontBatches(context.Background(), "pg_settings", testRows(32, 3), bw.write)
+		if (bErr != nil) != tt.wantErr {
+			t.Errorf("%d bad rows: writeColdFrontBatches = %v, want error %v", tt.bad, bErr, tt.wantErr)
+		}
+		singles := 0
+		for _, b := range bw.batches {
+			if len(b) == 1 && badRows[b[0]] {
+				singles++
+			}
+		}
+		if want := min(tt.bad, maxColdFrontDroppedRows+1); singles != want {
+			t.Errorf("%d bad rows: %d rows tried alone, want %d", tt.bad, singles, want)
+		}
 	}
 
 	// The failure of a later half is returned too.

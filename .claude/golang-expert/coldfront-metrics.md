@@ -286,9 +286,11 @@ every column type of every table through `StoreMetrics` and the helper,
 with a NULL row, awkward quoting, a NaN and refused relations; asserts
 the rendered SQL for arrays (`exerciseArrayRendering`), since plain
 PostgreSQL also accepts `'{...}'`; and, through a trigger that refuses
-one `pg_settings` row, that the helper's error exposes neither the
-statement nor a value and that `StoreMetrics` drops only that row
-(`exerciseRejectedRows`). `TestColdFrontHelperSchemaOwnership` uses a
+one `pg_settings` row, that the error text the collector logs
+(`err.Error()`) carries no value, that the error's CONTEXT
+(`pgErr.Where`) still carries the INSERT (the residual VULN-003
+exposure, so its removal shows up), and that `StoreMetrics` drops only
+that row (`exerciseRejectedRows`). `TestColdFrontHelperSchemaOwnership` uses a
 second role to check the schema is locked down and that a schema or
 function another role owns is refused. `TestColdFrontAltersRestoreComments`
 asserts the restore statements without a database. None of this verifies ColdFront's own behaviour (its

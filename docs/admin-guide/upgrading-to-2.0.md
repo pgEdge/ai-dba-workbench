@@ -110,9 +110,9 @@ sudo -u pgedge -H ai-dba-server -show-token-scope -token-id 3 \
     -data-dir /var/lib/pgedge/ai-dba-server
 ```
 
-If a token is refused after the upgrade, add the missing connection or
-tool to the token's scope, or change the integration to stay within the
-scope. Avoid clearing the scope instead; a token without a scope holds
+If a token is refused after the upgrade, add the missing connection,
+tool or administrative permission to the token's scope, or change the
+integration to stay within the scope. Avoid clearing the scope instead; a token without a scope holds
 the whole access of the token's owner, and a cleared token that a
 superuser owns reaches every connection, tool and administrative
 permission. See

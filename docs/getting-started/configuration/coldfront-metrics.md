@@ -51,6 +51,10 @@ must meet the following requirements:
   describes.
 - The Lakekeeper warehouse named in the `coldfront.warehouse` setting
   is reachable from the datastore and writable.
+- The `duckdb.postgres_role` setting names a role whose members may run
+  DuckDB, as the
+  [Configuring the DuckDB Role](#configuring-the-duckdb-role) section
+  describes.
 - The installed ColdFront build includes the
   `coldfront._partition_clause(jsonb,text[])` and
   `coldfront.ensure_attached()` functions.
@@ -82,6 +86,34 @@ SELECT
 ```
 
 Both columns must return `t` before you enable ColdFront storage.
+
+### Configuring the DuckDB Role
+
+The `duckdb.postgres_role` setting names the role whose members may run
+DuckDB. Without the setting, only superusers can run DuckDB, and the
+`coldfront.grant_app_access` function fails. The collector should run as
+a role that is not a superuser, so the datastore needs this setting.
+
+In the following example, the `CREATE ROLE` statement creates the role
+that the setting names; create the role before you grant ColdFront
+access to any Workbench role:
+
+```sql
+CREATE ROLE coldfront_duckdb NOLOGIN;
+```
+
+In the following example, the `postgresql.conf` line names that role;
+restart PostgreSQL after you add the line:
+
+```ini
+duckdb.postgres_role = 'coldfront_duckdb'
+```
+
+The `grant_app_access` function makes each role it covers a member of
+the DuckDB role. The
+[ColdFront configuration guide](https://github.com/pgEdge/ColdFront/blob/main/docs/configuration.md)
+lists this setting with the other PostgreSQL settings that ColdFront
+requires.
 
 ### Granting ColdFront Access to Workbench Roles
 

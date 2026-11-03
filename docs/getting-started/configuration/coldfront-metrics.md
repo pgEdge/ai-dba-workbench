@@ -192,6 +192,11 @@ The collector creates the Iceberg namespace itself because
 Lakekeeper catalog in the same call that creates a table. Every step
 is safe to repeat on each startup.
 
+After the schema migrations, the collector also creates any missing
+pgvector objects; the
+[Creating the pgvector Objects](#creating-the-pgvector-objects)
+section describes that step.
+
 ## Scheduling the ColdFront Compactor
 
 ColdFront storage adds one operational task that the operator must
@@ -397,40 +402,73 @@ including the index that a standard datastore keeps on
 `metrics.pg_stat_statements`. Iceberg relies on partition pruning and
 on per-file column statistics to limit the data that each query reads.
 
-### Understanding the Missing pgvector Objects
+### Creating the pgvector Objects
 
-In ColdFront mode, the collector skips the optional pgvector setup
-during its schema migration, even when the `vector` extension is
-available. The setup runs inside savepoints, and pg_duckdb does not
+Alerter Tier 2 anomaly matching and chat memory embeddings work in
+ColdFront mode when the `vector` extension is available on the
+datastore. Migration 1 defers the optional pgvector setup in ColdFront
+mode, because the setup runs inside savepoints and pg_duckdb does not
 allow a savepoint in a transaction that has already written to
-Iceberg. The collector logs one line to say that the setup was
-skipped.
+Iceberg. The collector logs a `pgvector setup deferred` line when
+migration 1 runs.
 
-The skipped setup leaves out the following pgvector objects:
+At every startup, after the schema migrations, the collector creates
+any of the following pgvector objects that are missing:
 
-- the `embedding` column of the `chat_memories` table, so chat memories
-  are stored without vector embeddings.
-- the `anomaly_embeddings` table, which holds the embeddings that the
+- the `vector` extension, when the extension is available but not yet
+  installed.
+- the `anomaly_embeddings` table, with its HNSW index and its foreign
+  key to `anomaly_candidates`, which holds the embeddings that the
   alerter's Tier 2 similarity matching compares.
+- the `embedding` column of the `chat_memories` table, at
+  `halfvec(4000)`, which stores the vector embedding of each chat
+  memory.
 
-When Tier 2 is enabled and an embedding provider is configured, the
-alerter still generates an embedding for each anomaly candidate. The
-similarity search and the embedding insert then fail because the
-`anomaly_embeddings` table does not exist, and the alerter logs an
-error for each failure. The alerter passes every such candidate on as
-if Tier 2 had found no match, so Tier 2 never suppresses a candidate,
-and Tier 3 classifies each candidate without any similar past
-anomalies. When Tier 3 is not available, every candidate that passes
-Tier 1 becomes an alert, subject to the usual suppression checks, such
-as an active blackout or an open alert on the same metric.
+The collector creates the table and the column in separate
+transactions that touch no Iceberg table and take no savepoint. The
+collector skips any object that already exists, so a normal startup
+takes no lock on either table. A ColdFront datastore that the
+collector set up before this step existed receives the objects at the
+next collector start, as does a datastore on which an administrator
+installs pgvector later. The collector allows the step 30 seconds to
+complete.
 
-On a ColdFront datastore with Tier 3 configured, set
-`anomaly.tier2.enabled` to `false` in the alerter configuration. The
-setting avoids an embedding request and two logged errors for every
-anomaly candidate, and every candidate still reaches Tier 3. When no
-Tier 3 provider is configured either, the alerter disables anomaly
-detection altogether at startup, because no AI tier remains to filter
-the Tier 1 candidates.
+A failure in this step never stops the collector; the collector logs
+the failure and continues without the affected objects. When the
+`anomaly_embeddings` step fails, the collector also skips the
+`chat_memories` column step. Look for the following log lines when the
+objects are missing after a startup:
+
+- `pgvector extension not available` means that the datastore has no
+  `vector` extension to install, so the collector created neither
+  object.
+- `pgvector setup skipped` means that the availability check or the
+  `anomaly_embeddings` step failed, so the collector created neither
+  object; the line includes the underlying error.
+- `chat_memories embedding setup skipped` means that the
+  `anomaly_embeddings` table exists but the `chat_memories` column step
+  failed; the line includes the underlying error.
+
+While the collector cannot create the `anomaly_embeddings` table, Tier
+2 cannot match candidates. When Tier 2 is enabled and an embedding
+provider is configured, the alerter still generates an embedding for
+each anomaly candidate. The similarity search and the embedding insert
+then fail because the `anomaly_embeddings` table does not exist, and
+the alerter logs an error for each failure. The alerter passes every
+such candidate on as if Tier 2 had found no match, so Tier 2 never
+suppresses a candidate, and Tier 3 classifies each candidate without
+any similar past anomalies. When Tier 3 is not available, every
+candidate that passes Tier 1 becomes an alert, subject to the usual
+suppression checks, such as an active blackout or an open alert on the
+same metric.
+
+When the table cannot be created on a datastore with Tier 3
+configured, set `anomaly.tier2.enabled` to `false` in the alerter
+configuration. The setting avoids an embedding request and two logged
+errors for every anomaly candidate, and every candidate still reaches
+Tier 3. When no Tier 3 provider is configured either, the alerter
+disables anomaly detection altogether at startup, because no AI tier
+remains to filter the Tier 1 candidates.
 
 ### Reporting Probe Row Counts
 
@@ -468,11 +506,6 @@ ColdFront mode has the following limitations:
 - The collector refuses to start when the `use_coldfront_for_metrics`
   value does not match the kind of metrics tables already in the
   datastore.
-- The collector skips the optional pgvector setup, so the datastore has
-  no `chat_memories.embedding` column and no `anomaly_embeddings`
-  table; the
-  [Understanding the Missing pgvector Objects](#understanding-the-missing-pgvector-objects)
-  section describes the effect on the alerter.
 - The collector refuses to start on a ColdFront build that lacks the
   `coldfront._partition_clause` or `coldfront.ensure_attached`
   function.

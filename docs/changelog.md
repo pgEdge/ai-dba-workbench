@@ -129,12 +129,17 @@ project adheres to
   datastore. A rejected write can put batch values, including
   credentials, into the datastore's server log, so protect that
   log like the data. Some column types are stored differently,
-  and metrics tables have no indexes or foreign keys. The
-  collector skips the pgvector setup, so chat memories have no
-  embeddings and the `anomaly_embeddings` table does not exist;
-  the alerter's Tier 2 similarity matching then logs errors and
-  never suppresses a candidate, so disable Tier 2 when Tier 3
-  is configured. Also, `list_probes` shows `unknown`
+  and metrics tables have no indexes or foreign keys. When
+  pgvector is installed on the datastore, Tier 2 anomaly
+  matching and chat memory embeddings work: migration 1 defers
+  the pgvector setup, and the collector creates the `vector`
+  extension, the `anomaly_embeddings` table and the
+  `chat_memories.embedding` column at each startup when they
+  are missing, so existing ColdFront datastores receive them at
+  the next start. A failure is logged and never stops the
+  collector; while the table cannot be created, Tier 2 logs
+  errors and never suppresses a candidate, so disable Tier 2
+  when Tier 3 is configured. Also, `list_probes` shows `unknown`
   as the row count of a probe stored as a view, and
   `query_datastore` cannot filter, sort, group or take the
   minimum or maximum of `pg_node_role.role_details`. The

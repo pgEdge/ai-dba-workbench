@@ -129,8 +129,7 @@ Container Registry.
    least 12 characters long.
 
     In the following example, the `exec` subcommand creates a user
-    named `admin` inside the server container. The container image has
-    no shell, so the command runs the server binary directly.
+    named `admin` inside the server container.
 
     ```bash
     docker compose \

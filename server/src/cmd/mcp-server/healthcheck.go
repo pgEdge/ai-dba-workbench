@@ -20,11 +20,10 @@ import (
 const healthCheckTimeout = 5 * time.Second
 
 // runHealthCheck reports whether a TCP listener accepts connections at
-// address (host:port). The container images carry no shell, curl or
-// wget, so a container health check runs the server binary itself with
-// -health-check instead. Like the shell probe it replaces, it checks
-// only that the port accepts a connection, and so does not depend on
-// whether the listener speaks plain HTTP or TLS.
+// address (host:port). A container health check runs the server binary
+// itself with -health-check, so the probe does not depend on which tools
+// the base image ships. It checks only that the port accepts a TCP
+// connection, and so works whether the listener speaks plain HTTP or TLS.
 func runHealthCheck(address string, timeout time.Duration) error {
 	conn, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {

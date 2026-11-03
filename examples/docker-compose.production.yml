@@ -91,8 +91,8 @@ services:
         ports:
             - "${SERVER_PORT:-8080}:8080"
         healthcheck:
-            # The image has no shell, so the server binary probes its
-            # own port.
+            # The server binary probes its own port, which works whether
+            # the listener speaks HTTP or TLS.
             test: ["CMD", "/usr/local/bin/ai-dba-server", "-health-check", "localhost:8080"]
             interval: 30s
             timeout: 5s

@@ -26,24 +26,25 @@ RUN go mod download
 # Build the binary
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /build/ai-dba-collector ./src
 
-# Create the runtime image's configuration directory here, as the
-# distroless runtime image has no shell or mkdir to create it itself
-RUN mkdir -p /rootfs/etc/pgedge
-
-# Stage 2: Runtime image. The binary is static (CGO_ENABLED=0), so it runs
-# on distroless/static, which carries only CA certificates, tzdata and
-# /etc/passwd: no shell, package manager or libc, and so none of the
-# Debian packages whose unfixed CVEs a bookworm-slim base accumulates.
+# Stage 2: Runtime image. The binary is static (CGO_ENABLED=0), so it does
+# not use the C library; Alpine provides a small base that still has a
+# shell and BusyBox for debugging. ca-certificates supplies the CA bundle
+# for outbound TLS, and tzdata the zone files that time.LoadLocation reads.
 # It runs as UID/GID 999, the "appuser" of the earlier Debian images, so
-# volumes written by those releases stay writable after an upgrade. The
-# distroless /etc/passwd has no entry for UID 999, so ENV USER supplies the
-# name that Go's os/user falls back to.
-FROM gcr.io/distroless/static-debian13
+# volumes written by those releases stay writable after an upgrade.
+# Alpine's base /etc/group gives GID 999 to "ping", which nothing in this
+# image uses, so that group is removed first to free the GID.
+FROM alpine:3
 
-ENV USER=appuser
+# hadolint ignore=DL3018
+RUN apk add --no-cache ca-certificates tzdata && \
+    delgroup ping && \
+    addgroup -S -g 999 appuser && \
+    adduser -S -D -H -u 999 -G appuser -h /nonexistent -s /sbin/nologin appuser && \
+    mkdir -p /etc/pgedge && \
+    chown appuser:appuser /etc/pgedge
 
 COPY --from=builder /build/ai-dba-collector /usr/local/bin/ai-dba-collector
-COPY --from=builder --chown=999:999 /rootfs/etc/pgedge /etc/pgedge
 
 USER 999:999
 

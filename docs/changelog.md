@@ -21,8 +21,8 @@ project adheres to
 
 - Add a `-health-check host:port` flag to `ai-dba-server`, which checks
   that a listener accepts TCP connections at the address and exits.
-  The server container image has no shell, so the example Docker
-  Compose files now use it for the server's health check.
+  The example Docker Compose files now use it for the server's health
+  check.
 - Refuse a Debian or RPM package upgrade whose installed server
   configuration the new server would refuse at start-up (#784). A new
   `pgedge-ai-dba-upgrade-check` package, which every other package of
@@ -611,14 +611,11 @@ project adheres to
 ### Changed
 
 - Build the server, collector and alerter container images on
-  `gcr.io/distroless/static-debian13` instead of `debian:bookworm-slim`,
-  removing the Debian packages that carried most of the images'
-  reported vulnerabilities, including many with no fix available. The
-  images keep their user ID and group ID (999), so existing volumes
-  remain writable, but they no longer contain a shell or any other
-  utility; use `docker compose exec server /usr/local/bin/ai-dba-server`
-  to run server commands. The client image now upgrades every Alpine
-  package when it is built.
+  `alpine:3` instead of `debian:bookworm-slim`, removing the Debian
+  packages that carried most of the images' reported vulnerabilities,
+  including many with no fix available. The images keep their user ID
+  and group ID (999), so existing volumes remain writable. The client
+  image now upgrades every Alpine package when it is built.
 
 - Build anomaly detection baselines for four more metrics (#490):
   `pg_stat_replication.lag_bytes`,

@@ -475,8 +475,8 @@ echo ""
 
 explain "Creating admin user..."
 
-# The server image has no shell to write a password file inside the
-# container, so a one-off server container reads it from a bind mount.
+# A one-off server container reads the password from a bind-mounted file,
+# which keeps it off the command line.
 echo "DemoPass2026" > "$SCRIPT_DIR/secret/admin-password"
 chmod 600 "$SCRIPT_DIR/secret/admin-password"
 (cd "$SCRIPT_DIR" && docker compose run --rm --no-deps -T \

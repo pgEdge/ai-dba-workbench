@@ -1193,6 +1193,134 @@ describe('AdminUsers', () => {
         });
     });
 
+    // Issue #788: a refused row action must not replace the user list
+    // with the page-level error, and a caller who is not a superuser is
+    // not offered the Superuser switches the server would refuse.
+    describe('Action failures and non-superuser callers', () => {
+        const denied = 'Permission denied: requires superuser privileges';
+
+        async function renderList(): Promise<ReturnType<typeof userEvent.setup>> {
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('bob')).toBeInTheDocument();
+            });
+            return user;
+        }
+
+        it('keeps the list when a superuser toggle is refused', async () => {
+            installListMocks();
+            mockApiPut.mockRejectedValue(new Error(denied));
+            const user = await renderList();
+            await user.click(screen.getAllByLabelText('Toggle superuser')[1]);
+            const alert = await screen.findByRole('alert');
+            expect(alert).toHaveTextContent(denied);
+            expect(screen.getByText('alice')).toBeInTheDocument();
+            expect(screen.getByText('bob')).toBeInTheDocument();
+            expect(
+                screen.getByRole('button', { name: /create user/i }),
+            ).toBeInTheDocument();
+        });
+
+        it('keeps the list when an enabled toggle is refused', async () => {
+            installListMocks();
+            mockApiPut.mockRejectedValue(new Error(denied));
+            const user = await renderList();
+            await user.click(screen.getAllByLabelText('Toggle enabled')[1]);
+            expect(await screen.findByText(denied)).toBeInTheDocument();
+            expect(screen.getByText('bob')).toBeInTheDocument();
+        });
+
+        it('closes the dialog and keeps the list when a delete is refused', async () => {
+            installListMocks();
+            mockApiDelete.mockRejectedValue(new Error(denied));
+            const user = await renderList();
+            await user.click(screen.getAllByLabelText('delete user')[0]);
+            const dialog = await screen.findByRole('dialog');
+            await user.click(
+                within(dialog).getByRole('button', { name: /delete/i }),
+            );
+            expect(await screen.findByText(denied)).toBeInTheDocument();
+            await waitFor(() => {
+                expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+            });
+            expect(screen.getByText('alice')).toBeInTheDocument();
+        });
+
+        it('dismisses the action error, and clears it on the next action', async () => {
+            installListMocks();
+            mockApiPut.mockRejectedValueOnce(new Error(denied));
+            const user = await renderList();
+            await user.click(screen.getAllByLabelText('Toggle enabled')[1]);
+            const alert = await screen.findByRole('alert');
+            await user.click(within(alert).getByRole('button', { name: /close/i }));
+            expect(screen.queryByText(denied)).not.toBeInTheDocument();
+
+            mockApiPut.mockRejectedValueOnce(new Error(denied));
+            await user.click(screen.getAllByLabelText('Toggle enabled')[1]);
+            expect(await screen.findByText(denied)).toBeInTheDocument();
+            mockApiPut.mockResolvedValueOnce({});
+            await user.click(screen.getAllByLabelText('Toggle enabled')[1]);
+            await waitFor(() => {
+                expect(screen.queryByText(denied)).not.toBeInTheDocument();
+            });
+        });
+
+        it('withholds the Superuser switches from a caller who is not a superuser', async () => {
+            mockUseAuth.mockReturnValue({
+                user: { username: 'carol', isSuperuser: false },
+            });
+            installListMocks();
+            const user = await renderList();
+
+            for (const sw of screen.getAllByLabelText('Toggle superuser')) {
+                expect(sw).toBeDisabled();
+            }
+            // The Enabled switch stays usable on an ordinary account.
+            expect(screen.getAllByLabelText('Toggle enabled')[1]).toBeEnabled();
+
+            await user.click(screen.getByRole('button', { name: /create user/i }));
+            const createDialog = await screen.findByRole('dialog');
+            expect(
+                within(createDialog).queryByRole('checkbox', { name: 'Superuser' }),
+            ).not.toBeInTheDocument();
+            await user.click(
+                within(createDialog).getByRole('button', { name: /cancel/i }),
+            );
+            await waitFor(() => {
+                expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+            });
+
+            await user.click(screen.getAllByLabelText('edit user')[1]);
+            const editDialog = await screen.findByRole('dialog');
+            expect(
+                within(editDialog).queryByRole('checkbox', { name: 'Superuser' }),
+            ).not.toBeInTheDocument();
+            expect(mockApiPut).not.toHaveBeenCalled();
+        });
+
+        it('offers the Superuser switches to a superuser caller', async () => {
+            installListMocks();
+            const user = await renderList();
+            // Row 1 is bob: neither the caller nor a service account.
+            expect(screen.getAllByLabelText('Toggle superuser')[1]).toBeEnabled();
+            await user.click(screen.getByRole('button', { name: /create user/i }));
+            const createDialog = await screen.findByRole('dialog');
+            expect(
+                within(createDialog).getByRole('checkbox', { name: 'Superuser' }),
+            ).toBeEnabled();
+        });
+
+        it('withholds the Superuser switches while the caller is unknown', async () => {
+            mockUseAuth.mockReturnValue({ user: null });
+            installListMocks();
+            await renderList();
+            for (const sw of screen.getAllByLabelText('Toggle superuser')) {
+                expect(sw).toBeDisabled();
+            }
+        });
+    });
+
     describe('Federated accounts', () => {
         const federatedUser: MockUser = {
             ...mockUsers[1],

@@ -1324,6 +1324,15 @@ project adheres to
 
 ### Fixed
 
+- Keep the user list on the Administration > Users page when an
+  action on a row is refused (#788). A failed Superuser or Enabled
+  toggle, or a failed delete, replaced the whole page with the error
+  until the panel was closed and reopened; the error now appears in a
+  dismissable message above the list. A user who is not a superuser,
+  and so cannot change the superuser flag, now sees the Superuser
+  switch in the list disabled and no Superuser switch in the Create
+  User and Edit User dialogs.
+
 - Return the stored baseline rows from `GET
   /api/v1/metrics/baselines` (#348). The endpoint averaged every
   baseline row of a metric across its periods, and filtered on a

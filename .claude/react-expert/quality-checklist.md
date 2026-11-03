@@ -92,6 +92,15 @@ Reference implementations:
   `channels/useChannelCRUD.ts` all route their catch blocks
   through `extractErrorMessage`.
 
+Keep a failed action separate from a failed load. A component
+whose load error replaces the whole page (an early
+`if (error) return <Alert>`) must not route a row action's failure
+(an inline toggle or a delete) into that same state, or one refused
+click wipes the list until the panel is reopened (#788). Hold the
+action failure in its own state and render it as a dismissable
+`Alert` above the table; `AdminUsers.tsx` does this with
+`actionError`.
+
 Tests for AdminPanel mutation paths must cover both the
 `Error`-instance branch and the non-`Error` fallback. Reject a
 mock with a plain string and assert that
@@ -795,7 +804,12 @@ never reaches the rendered document.
 ## Permission-Gated UI
 
 Hide actions a user cannot perform; do not render disabled
-placeholders. Read permissions from the `useAuth` context hook at
+placeholders. The exception is a control that also displays a
+row's state, such as the Superuser switch in the
+`AdminUsers.tsx` table: for a caller who is not a superuser it
+stays rendered but disabled so the column still shows each
+account's status, whilst the same switch is hidden in the create
+and edit dialogs. Read permissions from the `useAuth` context hook at
 `client/src/contexts/useAuth.ts`. The hook returns
 `hasPermission(perm: string)`, which already accounts for the
 `isSuperuser` flag and the `*` wildcard in `adminPermissions`, so

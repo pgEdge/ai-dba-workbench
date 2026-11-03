@@ -442,26 +442,28 @@ a restart or a pull does not upgrade the installation unprepared.
    the files under `docker/config` match release 2.0.0. Git refuses to
    check out the release while a tracked file has local changes, and
    the 1.0.0 Docker guide edits `docker/config/ai-dba-server.yaml` to
-   set the datastore password. Copy the file aside, discard the local
-   changes, and check out the release:
+   set the datastore password. The `git checkout -- docker/config`
+   command discards the local changes to every file in the directory,
+   so copy the whole directory aside first, then check out the release:
 
     ```bash
-    cp docker/config/ai-dba-server.yaml ~/ai-dba-server.yaml.1.0.0
+    cp -a docker/config ~/ai-dba-config-1.0.0
     git checkout -- docker/config
     git fetch --tags
     git checkout v2.0.0
     ```
 
-6. Reapply your edits to the 2.0.0 copy of
-   `docker/config/ai-dba-server.yaml`, rather than copying the 1.0.0
-   file over the 2.0.0 file. The 1.0.0 file sets an `http.auth.enabled`
-   key that no release reads; the 2.0.0 file replaces the key with
-   `http.auth.local.enabled`, which controls local login and defaults
-   to `true`. The following command shows the differences between the
-   two files:
+6. Reapply your edits to the 2.0.0 copies of the files under
+   `docker/config`, rather than copying the 1.0.0 files over the 2.0.0
+   files. Release 2.0.0 changes all three configuration files; for
+   example, the 1.0.0 `ai-dba-server.yaml` file sets an
+   `http.auth.enabled` key that no release reads, and the 2.0.0 file
+   replaces the key with `http.auth.local.enabled`, which controls
+   local login and defaults to `true`. The following command shows the
+   differences between the two directories:
 
     ```bash
-    diff ~/ai-dba-server.yaml.1.0.0 docker/config/ai-dba-server.yaml
+    diff -r ~/ai-dba-config-1.0.0 docker/config
     ```
 
 7. Pull the 2.0.0 images:
@@ -581,7 +583,30 @@ stay stopped until you start them.
         /var/lib/pgedge/ai-dba-server-1.0.0
     ```
 
-3. Upgrade the packages. The upgrade installs the new
+3. Keep copies of the installed 1.0.0 `.deb` files. The pgEdge Debian
+   repository holds only the latest version of each package, so the
+   1.0.0 packages cannot be downloaded again once release 2.0.0 is
+   published, and a rollback needs the local copies. The `apt` cache in
+   `/var/cache/apt/archives` may still hold the files, although the
+   `apt` command removes downloaded packages after installing them
+   unless configured otherwise. The following commands copy any 1.0.0
+   packages from the cache into a new directory and list the copies:
+
+    ```bash
+    mkdir ~/ai-dba-debs-1.0.0
+    cp /var/cache/apt/archives/pgedge-ai-dba-*_1.0.0-*.deb \
+        ~/ai-dba-debs-1.0.0/
+    ls ~/ai-dba-debs-1.0.0
+    ```
+
+    Confirm that the directory holds the `pgedge-ai-dba-server`,
+    `pgedge-ai-dba-collector`, `pgedge-ai-dba-alerter` and
+    `pgedge-ai-dba-client` packages. If the cache does not hold the
+    files, copy them from wherever you kept the packages you installed;
+    without them, a rollback cannot reinstall release 1.0.0 from
+    packages.
+
+4. Upgrade the packages. The upgrade installs the new
    `pgedge-ai-dba-upgrade-check` package, and `apt-get upgrade` keeps
    back an upgrade that needs a new package, so use `apt upgrade`
    instead:
@@ -604,7 +629,7 @@ stay stopped until you start them.
     [Recovering from a Refused Upgrade](upgrading.md#recovering-from-a-refused-upgrade)
     for the recovery steps.
 
-4. Answer any prompt about a configuration file you edited. If you
+5. Answer any prompt about a configuration file you edited. If you
    keep your version of the file, `dpkg` saves the 2.0.0 default beside
    the file with the `.dpkg-dist` suffix; compare the two files and
    merge any new settings you need:
@@ -613,7 +638,7 @@ stay stopped until you start them.
     ls /etc/pgedge/*.dpkg-dist /etc/nginx/sites-available/*.dpkg-dist
     ```
 
-5. Start the collector, and wait for the collector to finish migrating
+6. Start the collector, and wait for the collector to finish migrating
    the schema as described in
    [Confirming the Schema Migration](#confirming-the-schema-migration):
 
@@ -621,14 +646,14 @@ stay stopped until you start them.
     sudo systemctl start pgedge-ai-dba-collector
     ```
 
-6. Start the server, and then the alerter:
+7. Start the server, and then the alerter:
 
     ```bash
     sudo systemctl start pgedge-ai-dba-server
     sudo systemctl start pgedge-ai-dba-alerter
     ```
 
-7. Verify the upgrade as described in
+8. Verify the upgrade as described in
    [Verifying the Upgrade](#verifying-the-upgrade).
 
 ## Verifying the Upgrade
@@ -788,12 +813,15 @@ order:
 
 - For a binary installation, copy the binaries and the client back
   from `/opt/ai-workbench-1.0.0`.
-- For a Docker installation, copy your edited configuration files
-  aside, discard the local changes with `git checkout -- docker/config`,
-  check out the `v1.0.0` tag, reapply your edits, and start the
+- For a Docker installation, discard the local changes with
+  `git checkout -- docker/config`, check out the `v1.0.0` tag, restore
+  your 1.0.0 configuration with
+  `cp -a ~/ai-dba-config-1.0.0/. docker/config/`, and start the
   services with `VERSION=1.0.0`.
-- For an RPM or Debian installation, downgrade the packages to the
-  1.0.0 version as the following examples show.
+- For an RPM installation, downgrade the packages to the 1.0.0 version
+  from the repository as the following example shows.
+- For a Debian installation, install the 1.0.0 `.deb` files you kept
+  before the upgrade as the following example shows.
 
 Name the 1.0.0 version explicitly when you downgrade a package; without
 a version, `dnf downgrade` moves to the next lower version, which is
@@ -808,17 +836,16 @@ sudo dnf downgrade pgedge-ai-dba-server-1.0.0 \
     pgedge-ai-dba-client-1.0.0
 ```
 
-The `apt install` command needs the full package version that
-`apt-cache policy` reports. In the following example, the commands
-list the available versions and install release 1.0.0 with the
-version `1.0.0-1`; replace the version with the one that
-`apt-cache policy` shows:
+The pgEdge Debian repository holds only the latest version of each
+package, so `apt` cannot download the 1.0.0 packages once release
+2.0.0 is published. Install the 1.0.0 `.deb` files that you copied in
+[Upgrading a Debian or Ubuntu Installation](#upgrading-a-debian-or-ubuntu-installation)
+instead. In the following example, the command installs the copies
+from the `~/ai-dba-debs-1.0.0` directory:
 
 ```bash
-apt-cache policy pgedge-ai-dba-server
 sudo apt install --allow-downgrades \
-    pgedge-ai-dba-server=1.0.0-1 pgedge-ai-dba-collector=1.0.0-1 \
-    pgedge-ai-dba-alerter=1.0.0-1 pgedge-ai-dba-client=1.0.0-1
+    ~/ai-dba-debs-1.0.0/pgedge-ai-dba-*_1.0.0-*.deb
 ```
 
 The 1.0.0 packages do not require the `pgedge-ai-dba-upgrade-check`

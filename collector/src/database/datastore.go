@@ -155,13 +155,7 @@ func (ds *Datastore) initializeSchema() error {
 		return fmt.Errorf("failed to migrate schema: %w", err)
 	}
 
-	// Under ColdFront migration 1 cannot create the pgvector objects;
-	// create them now, outside the migration transactions.
-	if useColdFront {
-		embCtx, embCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer embCancel()
-		EnsureColdFrontEmbeddings(embCtx, conn)
-	}
+	ensureEmbeddingsAfterMigrate(conn, useColdFront)
 
 	logger.Info("Database schema initialized")
 	return nil

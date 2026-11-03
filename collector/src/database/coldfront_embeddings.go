@@ -13,6 +13,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -36,6 +37,23 @@ const coldFrontEmbeddingsStateQuery = `
 type embeddingsConn interface {
 	rowQuerier
 	txBeginner
+}
+
+// coldFrontEmbeddingsTimeout bounds EnsureColdFrontEmbeddings at
+// startup; adding chat_memories.embedding waits for an ACCESS EXCLUSIVE
+// lock on that table.
+const coldFrontEmbeddingsTimeout = 30 * time.Second
+
+// ensureEmbeddingsAfterMigrate runs EnsureColdFrontEmbeddings once the
+// migrations have run, under ColdFront only: in the default mode
+// migration #1 has already created the pgvector objects.
+func ensureEmbeddingsAfterMigrate(conn embeddingsConn, useColdFront bool) {
+	if !useColdFront {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), coldFrontEmbeddingsTimeout)
+	defer cancel()
+	EnsureColdFrontEmbeddings(ctx, conn)
 }
 
 // EnsureColdFrontEmbeddings creates, under ColdFront, the pgvector

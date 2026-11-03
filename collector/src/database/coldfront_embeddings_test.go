@@ -171,24 +171,7 @@ func TestEnsureColdFrontEmbeddings(t *testing.T) {
 			}
 			EnsureColdFrontEmbeddings(context.Background(), c)
 
-			if len(c.txs) != len(tt.wantTxs) {
-				t.Fatalf("began %d transactions, want %d", len(c.txs), len(tt.wantTxs))
-			}
-			for i, tx := range c.txs {
-				all := strings.Join(tx.execs, "\n")
-				if !strings.Contains(all, tt.wantTxs[i]) {
-					t.Errorf("transaction %d issued %q, want %q", i+1, all, tt.wantTxs[i])
-				}
-				// pg_duckdb refuses a SAVEPOINT once a transaction
-				// has touched DuckDB, so none is taken here.
-				if strings.Contains(strings.ToUpper(all), "SAVEPOINT") {
-					t.Errorf("transaction %d took a SAVEPOINT: %q", i+1, all)
-				}
-				if tx.committed != tt.wantCommitted[i] || tx.rolledBack == tt.wantCommitted[i] {
-					t.Errorf("transaction %d committed=%v rolledBack=%v, want committed=%v",
-						i+1, tx.committed, tx.rolledBack, tt.wantCommitted[i])
-				}
-			}
+			checkEmbeddingsTxs(t, c.txs, tt.wantTxs, tt.wantCommitted)
 			if tt.wantLog == "" {
 				if strings.Contains(buf.String(), "disabled") {
 					t.Errorf("unexpected log: %q", buf.String())
@@ -197,5 +180,47 @@ func TestEnsureColdFrontEmbeddings(t *testing.T) {
 				t.Errorf("log %q does not contain %q", buf.String(), tt.wantLog)
 			}
 		})
+	}
+}
+
+// checkEmbeddingsTxs asserts that txs are the transactions wanted: each
+// issues its wanted statement, takes no SAVEPOINT, and is committed or
+// rolled back as wanted.
+func checkEmbeddingsTxs(t *testing.T, txs []*embeddingsTx, want []string, committed []bool) {
+	t.Helper()
+	if len(txs) != len(want) {
+		t.Fatalf("began %d transactions, want %d", len(txs), len(want))
+	}
+	for i, tx := range txs {
+		all := strings.Join(tx.execs, "\n")
+		if !strings.Contains(all, want[i]) {
+			t.Errorf("transaction %d issued %q, want %q", i+1, all, want[i])
+		}
+		// pg_duckdb refuses a SAVEPOINT once a transaction has touched
+		// DuckDB, so none is taken here.
+		if strings.Contains(strings.ToUpper(all), "SAVEPOINT") {
+			t.Errorf("transaction %d took a SAVEPOINT: %q", i+1, all)
+		}
+		if tx.committed != committed[i] || tx.rolledBack == committed[i] {
+			t.Errorf("transaction %d committed=%v rolledBack=%v, want committed=%v",
+				i+1, tx.committed, tx.rolledBack, committed[i])
+		}
+	}
+}
+
+func TestEnsureEmbeddingsAfterMigrate(t *testing.T) {
+	// The default mode leaves the setup to migration #1.
+	c := &fakeEmbeddingsConn{}
+	ensureEmbeddingsAfterMigrate(c, false)
+	if len(c.sql) != 0 || len(c.txs) != 0 {
+		t.Errorf("default mode issued %q and began %d transactions", c.sql, len(c.txs))
+	}
+
+	// ColdFront runs it.
+	c = &fakeEmbeddingsConn{scriptedQuerier: scriptedQuerier{
+		rows: []scriptedRow{{values: []any{true, false, false}}}}}
+	ensureEmbeddingsAfterMigrate(c, true)
+	if len(c.sql) != 1 || len(c.txs) != 2 {
+		t.Errorf("ColdFront issued %q and began %d transactions, want the state query and 2", c.sql, len(c.txs))
 	}
 }

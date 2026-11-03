@@ -214,7 +214,8 @@ than in one transaction.
 ## Startup and Runtime
 
 - After `Migrate`, under ColdFront only, `initializeSchema` calls
-  `database.EnsureColdFrontEmbeddings` (`coldfront_embeddings.go`). It
+  `database.EnsureColdFrontEmbeddings` (`coldfront_embeddings.go`)
+  through `ensureEmbeddingsAfterMigrate`, with a 30-second timeout. It
   creates what v1 skipped, already at v6's `halfvec(4000)` width:
   `anomaly_embeddings` with its HNSW index and the
   `fk_anomaly_candidates_embedding` key (`createAnomalyEmbeddings`),

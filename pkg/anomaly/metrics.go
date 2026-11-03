@@ -65,13 +65,15 @@ type MetricDef struct {
 	// HistoricalSQL reads the samples a baseline is computed from. $1 is
 	// the lookback in days, used as INTERVAL '1 day' * $1::int, and $2
 	// an inclusive upper bound on collected_at, applied beside the
-	// lookback as collected_at <= COALESCE($2::timestamptz,
-	// collected_at) so a caller reading a past window does not scan up
-	// to the present. A NULL $2 means no upper bound: the alerter binds
-	// NULL, never +infinity, which DuckDB on a ColdFront datastore can
-	// fail to subtract, and the bound is not written as $2 IS NULL OR
-	// ..., which DuckDB cannot plan (GitHub issue #755). PostgreSQL folds
-	// the COALESCE over a non-NULL $2 to a plain bound. Rows are
+	// lookback as collected_at <= $2::timestamptz so a caller reading a
+	// past window does not scan up to the present. $2 is always a finite
+	// timestamp: a caller with no upper bound binds a far-future one (the
+	// alerter binds 9999-12-31 00:00:00 UTC), never +infinity, which
+	// DuckDB on a ColdFront datastore can fail to subtract, and never
+	// NULL, under which the bound matches no row. The plain comparison
+	// stays an index condition and prunes partitions under a generic
+	// plan, which a COALESCE or $2 IS NULL form would not (and DuckDB
+	// cannot plan the latter; GitHub issue #755). Rows are
 	// (connection_id, database_name, value, collected_at), plus a
 	// trailing sample_count for the *WithSamples scan kinds, ordered by
 	// connection and time. Every query joins live connections only.
@@ -262,7 +264,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_activity psa
 				JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 				WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
-				  AND psa.collected_at <= COALESCE($2::timestamptz, psa.collected_at)
+				  AND psa.collected_at <= $2::timestamptz
 				  AND psa.backend_type = 'client backend'
 				GROUP BY psa.connection_id, psa.collected_at
 			),
@@ -297,7 +299,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			  AND psa.collected_at <= COALESCE($2::timestamptz, psa.collected_at)
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
@@ -313,7 +315,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_replication r
 			JOIN connections c ON c.id = r.connection_id AND c.deleted_at IS NULL
 			WHERE r.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			  AND r.collected_at <= COALESCE($2::timestamptz, r.collected_at)
+			  AND r.collected_at <= $2::timestamptz
 			  AND r.sent_lsn IS NOT NULL
 			  AND r.replay_lsn IS NOT NULL
 			GROUP BY r.connection_id, r.collected_at
@@ -331,7 +333,7 @@ var metricDefs = map[string]MetricDef{
 			  FROM metrics.pg_replication_slots s
 			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			   AND s.collected_at <= COALESCE($2::timestamptz, s.collected_at)
+			   AND s.collected_at <= $2::timestamptz
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
@@ -347,7 +349,7 @@ var metricDefs = map[string]MetricDef{
 			  FROM metrics.spock_exception_log s
 			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			   AND s.collected_at <= COALESCE($2::timestamptz, s.collected_at)
+			   AND s.collected_at <= $2::timestamptz
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
@@ -363,7 +365,7 @@ var metricDefs = map[string]MetricDef{
 			  FROM metrics.spock_resolutions s
 			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			   AND s.collected_at <= COALESCE($2::timestamptz, s.collected_at)
+			   AND s.collected_at <= $2::timestamptz
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
@@ -377,7 +379,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			  AND psa.collected_at <= COALESCE($2::timestamptz, psa.collected_at)
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.wait_event_type = 'Lock'
 			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
@@ -394,7 +396,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			  AND psa.collected_at <= COALESCE($2::timestamptz, psa.collected_at)
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.state = 'idle in transaction'
 			  AND psa.xact_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
@@ -412,7 +414,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			  AND psa.collected_at <= COALESCE($2::timestamptz, psa.collected_at)
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.wait_event_type = 'Lock'
 			  AND psa.query_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
@@ -430,7 +432,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			  AND psa.collected_at <= COALESCE($2::timestamptz, psa.collected_at)
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.state = 'active'
 			  AND psa.query_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
@@ -448,7 +450,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
 			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			  AND psa.collected_at <= COALESCE($2::timestamptz, psa.collected_at)
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.xact_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
@@ -473,7 +475,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_checkpointer m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
-				  AND m.collected_at <= COALESCE($2::timestamptz, m.collected_at)
+				  AND m.collected_at <= $2::timestamptz
 			),
 			bucket_role AS (
 				SELECT DISTINCT ON (connection_id, date_trunc('hour', collected_at AT TIME ZONE 'UTC'))
@@ -482,7 +484,7 @@ var metricDefs = map[string]MetricDef{
 				       is_in_recovery
 				FROM metrics.pg_node_role
 				WHERE collected_at > NOW() - INTERVAL '1 day' * $1::int
-				  AND collected_at <= COALESCE($2::timestamptz, collected_at)
+				  AND collected_at <= $2::timestamptz
 				ORDER BY connection_id,
 				         date_trunc('hour', collected_at AT TIME ZONE 'UTC'),
 				         collected_at DESC
@@ -532,7 +534,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_database m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
-				  AND m.collected_at <= COALESCE($2::timestamptz, m.collected_at)
+				  AND m.collected_at <= $2::timestamptz
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			),
@@ -577,7 +579,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_database m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
-				  AND m.collected_at <= COALESCE($2::timestamptz, m.collected_at)
+				  AND m.collected_at <= $2::timestamptz
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			)
@@ -610,7 +612,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_database m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
-				  AND m.collected_at <= COALESCE($2::timestamptz, m.collected_at)
+				  AND m.collected_at <= $2::timestamptz
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			)
@@ -645,7 +647,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_stat_statements s
 				JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
 				WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1::int
-				  AND s.collected_at <= COALESCE($2::timestamptz, s.collected_at)
+				  AND s.collected_at <= $2::timestamptz
 				ORDER BY s.connection_id, s.queryid, s.userid, s.dbid,
 				         s.toplevel, s.collected_at, s.database_name
 			),
@@ -703,7 +705,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_sys_cpu_usage_info m
 			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			  AND m.collected_at <= COALESCE($2::timestamptz, m.collected_at)
+			  AND m.collected_at <= $2::timestamptz
 			ORDER BY m.connection_id, m.collected_at
 		`,
 	},
@@ -717,7 +719,7 @@ var metricDefs = map[string]MetricDef{
 				FROM metrics.pg_sys_disk_info m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
-				  AND m.collected_at <= COALESCE($2::timestamptz, m.collected_at)
+				  AND m.collected_at <= $2::timestamptz
 				  AND m.total_space > 0
 				  AND ` + PseudoFilesystemExclusion + `
 				GROUP BY m.connection_id, m.collected_at
@@ -738,7 +740,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_sys_load_avg_info m
 			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			  AND m.collected_at <= COALESCE($2::timestamptz, m.collected_at)
+			  AND m.collected_at <= $2::timestamptz
 			ORDER BY m.connection_id, m.collected_at
 		`,
 	},
@@ -756,7 +758,7 @@ var metricDefs = map[string]MetricDef{
 			FROM metrics.pg_sys_memory_info m
 			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
 			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
-			  AND m.collected_at <= COALESCE($2::timestamptz, m.collected_at)
+			  AND m.collected_at <= $2::timestamptz
 			ORDER BY m.connection_id, m.collected_at
 		`,
 	},

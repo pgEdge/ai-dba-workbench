@@ -465,7 +465,7 @@ SELECT m.connection_id, ...
 FROM metrics.pg_stat_activity m
 JOIN connections c ON c.id = m.connection_id
 WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
-  AND m.collected_at <= COALESCE($2::timestamptz, m.collected_at)
+  AND m.collected_at <= $2::timestamptz
 ```
 
 For queries that use CTEs with window functions (LAG, partitioned by
@@ -482,7 +482,7 @@ WITH db_blocks AS (
     FROM metrics.pg_stat_database m
     JOIN connections c ON c.id = m.connection_id
     WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
-      AND m.collected_at <= COALESCE($2::timestamptz, m.collected_at)
+      AND m.collected_at <= $2::timestamptz
 )
 SELECT ...
 FROM db_blocks
@@ -1856,8 +1856,8 @@ conventions from that change hold across both:
 - A tier is only reachable if its `min_span_hours` is at most
   `lookback_days * 24`. Every `historicalSQL` filters `collected_at >
   NOW() - INTERVAL '1 day' * $1::int` (and `collected_at <=
-  COALESCE($2::timestamptz, collected_at)`, where the alerter binds a
-  NULL `$2`, so no upper bound) and `UpsertMetricBaseline` rewrites
+  $2::timestamptz`, where the alerter binds 9999-12-31, so no effective
+  upper bound) and `UpsertMetricBaseline` rewrites
   `earliest_sample_at` on every refresh, so a baseline's span never
   exceeds the lookback. At the original 7-day default the daily tier's
   336-hour span was unreachable and the documented three-step order was
@@ -2142,12 +2142,12 @@ the band the alerter scores it with; the code is
   `date_trunc` and `BucketWidth` disagree.
 - Every `HistoricalSQL` lookback (`collected_at > NOW() - INTERVAL '1
   day' * $1::int`) is followed at once by `AND <same column> <=
-  COALESCE($2::timestamptz, <same column>)`, because
+  $2::timestamptz`, because
   the outer window predicate cannot pass a CTE's window function and a
   past window would otherwise scan up to now (#776).
   `TestHistoricalUpperBound` in `pkg/anomaly` enforces the pairing. The
-  alerter passes `noHistoricalUpperBound` (a NULL
-  `pgtype.Timestamptz`, which the `COALESCE` reads as no bound; never
+  alerter passes `noHistoricalUpperBound` (a finite
+  9999-12-31 00:00:00 UTC; never NULL, which matches no row, nor
   +infinity, which DuckDB on ColdFront can fail on, see
   `coldfront-queries.md`); the comparison passes `comparisonUpperBound`,
   the window end for a raw metric and the start of the next bucket for

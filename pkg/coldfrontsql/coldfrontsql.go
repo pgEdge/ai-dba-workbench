@@ -44,9 +44,11 @@ var forbidden = []struct {
 	{regexp.MustCompile(`(?i)\bmake_interval\s*\(`),
 		"DuckDB has no make_interval(); use INTERVAL '1 day' * $1::int"},
 	{regexp.MustCompile(`(?i)\$\d+(\s*::\s*[a-z0-9_ ]+?)?\s+IS\s+(NOT\s+)?NULL\b`),
-		"DuckDB cannot plan a NULL test on a parameter, cast or not; open a bound with COALESCE($2::timestamptz, col) instead"},
+		"DuckDB cannot plan a NULL test on a parameter, cast or not; bind a finite far-future timestamp for an open bound instead"},
+	{regexp.MustCompile(`(?i)\bCOALESCE\s*\(\s*\$\d+`),
+		"COALESCE over a parameter stays a per-row filter under a generic plan, with no index condition or partition pruning; compare with the parameter directly and bind a finite far-future timestamp for an open bound"},
 	{regexp.MustCompile(`(?i)\binfinity\b`),
-		"DuckDB may subtract infinite timestamps in a range join and fail; leave open bounds NULL"},
+		"DuckDB may subtract infinite timestamps in a range join and fail; leave open column bounds NULL and bind a finite far-future timestamp for an open parameter"},
 }
 
 // hostCall matches the start of a host() call, inetCast a cast to inet,
@@ -67,8 +69,8 @@ var avgCall = regexp.MustCompile(`(?i)\bavg\s*\(`)
 // Violations returns a description of every ColdFront rule sql breaks,
 // or nil when it breaks none: an uncast bound parameter, ANY(), unnest(),
 // an array cast, pg_lsn, make_interval(), host() over anything but an
-// inet cast, an inet cast outside host(), a NULL test on a parameter, an
-// infinite timestamp, or an avg() not cast to float where it stands.
+// inet cast, an inet cast outside host(), a NULL test on a parameter, a
+// COALESCE over a parameter, an infinite timestamp, or an avg() not cast to float where it stands.
 //
 // It is a textual check and does not parse SQL, so it also reports a
 // forbidden word inside a string literal or comment; keep such words out

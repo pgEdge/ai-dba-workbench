@@ -31,12 +31,12 @@ PostgreSQL and on ColdFront, with identical plain-PostgreSQL results.
   (`server/src/internal/metrics/anomaly_comparison.go`) wraps them in
   `comparisonSeriesQuery`. Each takes `$1::int` (lookback days) and
   `$2::timestamptz`, an inclusive upper bound on `collected_at` written
-  `<col> <= COALESCE($2::timestamptz, <col>)` beside every lookback. A
-  NULL `$2` means no upper bound: the alerter binds a NULL
-  `pgtype.Timestamptz{}` (`noHistoricalUpperBound` in
+  `<col> <= $2::timestamptz` beside every lookback. `$2` is always a
+  finite timestamp: with no upper bound, the alerter binds
+  9999-12-31 00:00:00 UTC (`noHistoricalUpperBound` in
   `alerter/src/internal/database/metric_queries.go`); the server binds
-  a real timestamp, which PostgreSQL folds into a plain
-  `<col> <= const` index condition.
+  the comparison window's end. Either way the bound is a plain index
+  condition and partition-pruning key, even under a generic plan.
 - `alerter/src/internal/database/metric_registry.go`: `latestSQL` for
   every registry entry, which feeds threshold evaluation, anomaly
   scoring and recovery (`GetLatestMetricValues`).
@@ -111,19 +111,25 @@ failures in rule 3, so reproduce with pgx, never psql.
    `max_connections` ranges this way, with `valid_from` NULL on a
    connection's first `pg_settings` row (`LAG` is NULL) and `valid_to`
    the bare `LEAD`. The same goes for bound parameters: never bind
-   `pgtype.Infinity` or `-infinity` as an open end. Bind NULL and open
-   the bound with `COALESCE`, as in rule 7.
-7. **No NULL test on a parameter.** `$2::timestamptz IS NULL` (cast or
-   not, `IS NOT NULL` too, on either side of an `OR`) fails at DuckDB
-   plan time with the UNKNOWN error of rule 1, whatever `$2` is bound
-   to. A NULL test on a column (`m.valid_from IS NULL`) is fine. To let
-   NULL mean "no bound", write `col <= COALESCE($2::timestamptz, col)`;
-   `COALESCE(col <= $2::timestamptz, true)`,
-   `(col > $2::timestamptz) IS NOT TRUE` and
-   `col <= COALESCE($2::timestamptz, NOW())` also ran, but only the
-   first folds to an indexable `col <= const` when `$2` is a constant,
-   and the `NOW()` form drops rows stamped after the datastore's clock,
-   which an unbounded scan keeps.
+   `pgtype.Infinity` or `-infinity` as an open end. Bind a finite
+   far-future timestamp instead, as in rule 7. 9999-12-31 is safe:
+   DuckDB timestamps reach year 294247, and the gap between that bound
+   and any sample time (about 2.5e17 microseconds) fits the int64
+   microseconds of a DuckDB interval, so a range join that subtracts
+   them cannot overflow.
+7. **No NULL test on a parameter, and no COALESCE over one.**
+   `$2::timestamptz IS NULL` (cast or not, `IS NOT NULL` too, on either
+   side of an `OR`) fails at DuckDB plan time with the UNKNOWN error of
+   rule 1, whatever `$2` is bound to. A NULL test on a column
+   (`m.valid_from IS NULL`) is fine. Do not let NULL mean "no bound"
+   through `col <= COALESCE($2::timestamptz, col)` either: DuckDB runs
+   it, but the Workbench's pools use pgx's cached-statement mode, and
+   under a generic plan (`plan_cache_mode = force_generic_plan`)
+   PostgreSQL keeps it as a per-row filter, with no index condition and
+   no partition pruning (all four weekly partitions scanned against two
+   for `col <= $2::timestamptz`), and a NULL `$2` costs it a default 1/3
+   selectivity guess. Write `col <= $2::timestamptz` and bind a finite
+   far-future timestamp for an open bound.
 8. **Column types differ.** On the views text columns report as
    `character varying` and oid columns as `bigint`. Scanning
    `database_name` into a Go `string` works either way.
@@ -134,7 +140,8 @@ The textual rules live in one place, `coldfrontsql.Violations` in
 `pkg/coldfrontsql/coldfrontsql.go`: an uncast `$n`, `ANY(`, `unnest(`,
 an array cast, `pg_lsn`, `make_interval(`, a `host(` whose argument
 does not end in `::inet`, an `::inet` that is not such an argument, a
-`$n [::type] IS [NOT] NULL` test, `infinity` (any case), and an
+`$n [::type] IS [NOT] NULL` test, a `COALESCE($n`, `infinity` (any
+case), and an
 `avg(...)` not cast to float in place.
 `TestViolations` in `pkg/coldfrontsql/coldfrontsql_test.go` pins them
 against the shapes that failed live and the replacements that worked.
@@ -155,8 +162,8 @@ unless noted:
 - `TestMetricsSQLArgsFinite` (no database) fails when any statement in
   `metricsSQLStatements()` is bound with an infinite
   `pgtype.Timestamptz`, `pgtype.Timestamp` or `pgtype.Date`, and
-  `TestNoHistoricalUpperBoundIsNull` pins `noHistoricalUpperBound` to
-  NULL. Plain PostgreSQL accepts an infinite bind and `Violations` sees
+  `TestNoHistoricalUpperBoundIsFinite` pins `noHistoricalUpperBound` to
+  9999-12-31 00:00:00 UTC. Plain PostgreSQL accepts an infinite bind and `Violations` sees
   only SQL text, so these are the only guards on rule 6's bound
   parameters.
 - `TestConnectionUtilizationHistoricalOpenBounds` in
@@ -180,20 +187,15 @@ unless noted:
   `pkg/anomaly/lsn_test.go` check its shape without a database.
 - `TestHistoricalUpperBound` in `pkg/anomaly/metrics_test.go` pins the
   cast `$1::int` lookback and, directly after it, the
-  `AND <col> <= COALESCE($2::timestamptz, <col>)` bound on every
-  `HistoricalSQL`. The server's `TestComparisonSeriesQuery_Plan` checks
-  that a real `$2` still reaches the inner scan's condition.
+  `AND <col> <= $2::timestamptz` bound on every `HistoricalSQL`. The
+  server's `TestComparisonSeriesQuery_Plan` checks that a real `$2`
+  still reaches the inner scan's condition.
 
 ## Known Trade-offs
 
-Both were measured on plain PostgreSQL 17 and accepted for one SQL text
-that runs on both engines; neither changes results.
+This was measured on plain PostgreSQL 17 and accepted for one SQL text
+that runs on both engines; it does not change results.
 
 - `LSNDiffBytesSQL` decodes each LSN half with one `strpos` per hex
   digit, so the `lag_bytes` historical query ran about 6.3 times slower
   than with `pg_lsn` subtraction (4.4 ms to 27.6 ms over 10,200 rows).
-- With `$2` NULL, as the alerter binds it, the planner cannot fold
-  `collected_at <= COALESCE($2::timestamptz, collected_at)` and keeps it
-  as a filter at the default 1/3 selectivity, cutting row estimates by
-  two thirds on 16 of the 20 historical queries. A real `$2`, as the
-  server binds, folds to a plain index condition.

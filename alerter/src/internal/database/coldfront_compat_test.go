@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -140,20 +141,26 @@ func TestMetricsSQLArgsFinite(t *testing.T) {
 	for _, s := range metricsSQLStatements() {
 		for i, arg := range s.args {
 			if infiniteBind(arg) {
-				t.Errorf("%s: $%d is bound to an infinite value %#v; bind NULL "+
-					"and open the bound with COALESCE instead", s.name, i+1, arg)
+				t.Errorf("%s: $%d is bound to an infinite value %#v; bind a "+
+					"finite far-future timestamp instead", s.name, i+1, arg)
 			}
 		}
 	}
 }
 
-// TestNoHistoricalUpperBoundIsNull pins the baseline calculator's open
-// upper bound to NULL, which each historical query reads as no bound
-// through COALESCE($2::timestamptz, col). GitHub issues #755 and #776.
-func TestNoHistoricalUpperBoundIsNull(t *testing.T) {
-	if noHistoricalUpperBound.Valid {
-		t.Errorf("noHistoricalUpperBound = %#v, want NULL (Valid false)",
-			noHistoricalUpperBound)
+// TestNoHistoricalUpperBoundIsFinite pins the baseline calculator's
+// open upper bound to 9999-12-31 00:00:00 UTC: finite, so DuckDB on a
+// ColdFront datastore never subtracts an infinite timestamp, and not
+// NULL, under which each historical query's plain
+// collected_at <= $2::timestamptz bound would match no row. GitHub
+// issues #755 and #776.
+func TestNoHistoricalUpperBoundIsFinite(t *testing.T) {
+	want := time.Date(9999, time.December, 31, 0, 0, 0, 0, time.UTC)
+	if !noHistoricalUpperBound.Valid ||
+		noHistoricalUpperBound.InfinityModifier != pgtype.Finite ||
+		!noHistoricalUpperBound.Time.Equal(want) {
+		t.Errorf("noHistoricalUpperBound = %#v, want finite %s",
+			noHistoricalUpperBound, want)
 	}
 }
 

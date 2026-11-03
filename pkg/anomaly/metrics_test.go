@@ -122,10 +122,12 @@ var lookbackPredicate = regexp.MustCompile(
 // TestHistoricalUpperBound checks that every lookback on collected_at is
 // followed at once by the $2 upper bound on the same column, so a reader
 // of a past window can keep each inner scan off the present (GitHub
-// issue #776), and that a NULL $2 opens the bound through COALESCE, so a
-// caller with no upper bound binds NULL rather than +infinity, which
-// DuckDB on a ColdFront datastore can fail to subtract, without a
-// $2 IS NULL test, which DuckDB cannot plan (GitHub issue #755).
+// issue #776). The bound is a plain collected_at <= $2::timestamptz, so
+// PostgreSQL keeps it as an index condition and prunes partitions on it
+// even under a generic plan, which a COALESCE($2, col) or $2 IS NULL
+// form defeats; a caller with no upper bound binds a finite far-future
+// timestamp, never +infinity, which DuckDB on a ColdFront datastore can
+// fail to subtract (GitHub issue #755).
 func TestHistoricalUpperBound(t *testing.T) {
 	for _, def := range BaselineMetrics() {
 		sql := def.HistoricalSQL
@@ -140,7 +142,7 @@ func TestHistoricalUpperBound(t *testing.T) {
 		for _, m := range matches {
 			column := sql[m[2]:m[3]]
 			rest := strings.TrimLeft(sql[m[1]:], " \t\n")
-			bound := "AND " + column + " <= COALESCE($2::timestamptz, " + column + ")"
+			bound := "AND " + column + " <= $2::timestamptz"
 			if !strings.HasPrefix(rest, bound) {
 				t.Errorf("%s HistoricalSQL lookback on %s has no $2 upper bound beside it",
 					def.Name, column)

@@ -38,6 +38,8 @@ func TestViolations(t *testing.T) {
 		"unbalanced host":              `SELECT host(client_addr::inet FROM metrics.t`,
 		"inet cast":                    `SELECT client_addr::inet FROM metrics.t`,
 		"inet cast beside host":        `SELECT host(client_addr::inet), server_addr::inet FROM metrics.t`,
+		"COALESCE-open upper bound":    `SELECT 1 FROM metrics.t WHERE collected_at <= COALESCE($2::timestamptz, collected_at)`,
+		"spaced COALESCE parameter":    `SELECT 1 FROM metrics.t WHERE collected_at <= coalesce ( $2::timestamptz, NOW())`,
 		"infinite upper bound":         `SELECT COALESCE(LEAD(collected_at) OVER w, 'infinity'::timestamptz) FROM metrics.t`,
 		"infinite lower bound":         `SELECT '-infinity'::timestamptz FROM metrics.t`,
 		"capitalised infinity":         `SELECT 1 FROM metrics.t WHERE collected_at < 'Infinity'`,
@@ -51,7 +53,8 @@ func TestViolations(t *testing.T) {
 	good := map[string]string{
 		"cast parameter arithmetic": `SELECT 1 FROM metrics.t WHERE collected_at > NOW() - INTERVAL '1 day' * $1::int`,
 		"cast parameter comparison": `SELECT 1 FROM metrics.t WHERE connection_id = $1::int AND name = $2::text`,
-		"COALESCE-open upper bound": `SELECT 1 FROM metrics.t WHERE collected_at <= COALESCE($2::timestamptz, collected_at)`,
+		"plain upper bound":         `SELECT 1 FROM metrics.t WHERE collected_at <= $2::timestamptz`,
+		"COALESCE over a column":    `SELECT COALESCE(datname, '') FROM metrics.t`,
 		"NULL test on a column":     `SELECT 1 FROM metrics.t WHERE valid_from IS NULL OR collected_at >= valid_from`,
 		"integer literal list":      `SELECT 1 FROM metrics.t WHERE connection_id IN (2, 3)`,
 		"cast avg":                  `SELECT avg(numbackends)::float, AVG(x) :: float8 FROM metrics.t`,

@@ -110,9 +110,12 @@ sudo -u pgedge -H ai-dba-server -show-token-scope -token-id 3 \
     -data-dir /var/lib/pgedge/ai-dba-server
 ```
 
-If a token is refused after the upgrade, clear the token's scope, add
-the missing connection or tool to the scope, or change the integration
-to stay within the scope. See
+If a token is refused after the upgrade, add the missing connection or
+tool to the token's scope, or change the integration to stay within the
+scope. Avoid clearing the scope instead; a token without a scope holds
+the whole access of the token's owner, and a cleared token that a
+superuser owns reaches every connection, tool and administrative
+permission. See
 [Managing Tokens](managing-users-and-permissions/tokens.md) for the
 scope commands.
 
@@ -135,7 +138,14 @@ change can widen access on upgrade:
 If you used a read-only `All Connections` grant to keep a group
 read-only, the members of the group gain write access when you
 upgrade. Before you upgrade, grant the group `read` on each such
-connection by name. See the
+connection by name. A grant by name keeps a member read-only only when
+no other grant gives the member `read_write` on the connection, because
+the higher access level wins. Lower or remove any `read_write` grant
+that reaches the members on the connection, such as an
+`All Connections` grant at `read_write` held by another group that the
+members belong to. A member who owns the connection keeps `read_write`
+access whatever the grants say, so also check the owner of each
+connection. See the
 [permission model](managing-users-and-permissions/permission_model.md)
 for the access rules.
 
@@ -235,6 +245,17 @@ be reversed.
 
 ### Backing Up the Datastore
 
+The backups hold sensitive data: the datastore dump holds the encrypted
+passwords of the monitored connections and notification channels, and
+the server data backup holds the `auth.db` password and token hashes.
+Keep the backups in a directory that only your account can read. The
+following command creates the `~/ai-dba-backup-1.0.0` directory that
+the examples in this page use:
+
+```bash
+install -d -m 700 ~/ai-dba-backup-1.0.0
+```
+
 Back up the datastore database with `pg_dump` in the custom format.
 Take connection details from the `database` section of
 `ai-dba-server.yaml`; the following example backs up the
@@ -242,7 +263,7 @@ Take connection details from the `database` section of
 
 ```bash
 pg_dump -h localhost -U postgres -Fc \
-    -f ai_workbench-1.0.0.dump ai_workbench
+    -f ~/ai-dba-backup-1.0.0/ai_workbench-1.0.0.dump ai_workbench
 ```
 
 The collector writes to the datastore continuously, so a backup taken
@@ -252,13 +273,13 @@ installation exactly, take the backup after you stop the components in
 the upgrade procedure for your installation method.
 
 For a Docker installation, run `pg_dump` in the `postgres` container.
-In the following example, the command writes the backup to the current
-directory on the host:
+In the following example, the command writes the backup to the private
+backup directory on the host:
 
 ```bash
 docker compose -f examples/docker-compose.production.yml \
     exec -T postgres pg_dump -U postgres -Fc ai_workbench \
-    > ai_workbench-1.0.0.dump
+    > ~/ai-dba-backup-1.0.0/ai_workbench-1.0.0.dump
 ```
 
 ### Backing Up the Server Data Directory
@@ -429,12 +450,12 @@ a restart or a pull does not upgrade the installation unprepared.
 4. Back up the server data volume. Docker Compose prefixes the volume
    name with the project name, which is `examples` by default; the
    `docker volume ls` command shows the name. The following example
-   archives the `examples_server-data` volume into the current
+   archives the `examples_server-data` volume into the private backup
    directory:
 
     ```bash
     docker run --rm -v examples_server-data:/data:ro \
-        -v "$PWD":/backup debian:bookworm-slim \
+        -v ~/ai-dba-backup-1.0.0:/backup debian:bookworm-slim \
         tar czf /backup/server-data-1.0.0.tar.gz -C /data .
     ```
 
@@ -715,11 +736,21 @@ running release 2.0.0:
 
 1. Query the server's health endpoint; the response reports the server
    version. A binary or Docker installation listens on port `8080` by
-   default, and a Debian or RPM installation on port `8443`:
+   default, so use the following command:
 
     ```bash
     curl -s http://localhost:8080/health
     ```
+
+    A Debian or RPM installation listens on port `8443` by default,
+    using HTTP unless you enabled TLS, so use the following command:
+
+    ```bash
+    curl -s http://localhost:8443/health
+    ```
+
+    If you enabled TLS in the `http.tls` section of the configuration,
+    use `https` in the URL instead.
 
 2. Check that the collector and the alerter are running, and read the
    recent log output of each for errors. For a systemd installation,
@@ -756,15 +787,19 @@ after the upgrade is lost.
 
 ### Restoring the Datastore
 
-Stop every Workbench component, then drop and recreate the datastore
-database and restore the backup. In the following example, the
-commands restore the backup into the `ai_workbench` database:
+Stop every Workbench component, then drop the datastore database and
+restore the backup with the `pg_restore -C` option. The `-C` option
+recreates the database from the backup, with the original owner,
+privileges and database-level settings. With `-C`, the `-d` option
+names an existing database, such as `postgres`, that `pg_restore`
+connects to first; the database name comes from the backup. In the
+following example, the commands recreate and restore the
+`ai_workbench` database:
 
 ```bash
 dropdb -h localhost -U postgres ai_workbench
-createdb -h localhost -U postgres ai_workbench
-pg_restore -h localhost -U postgres -d ai_workbench \
-    ai_workbench-1.0.0.dump
+pg_restore -h localhost -U postgres -C -d postgres \
+    ~/ai-dba-backup-1.0.0/ai_workbench-1.0.0.dump
 ```
 
 For a Docker installation, stop the alerter, the server and the
@@ -774,10 +809,8 @@ collector, and run the same commands in the `postgres` container:
 docker compose -f examples/docker-compose.production.yml \
     exec -T postgres dropdb -U postgres ai_workbench
 docker compose -f examples/docker-compose.production.yml \
-    exec -T postgres createdb -U postgres ai_workbench
-docker compose -f examples/docker-compose.production.yml \
-    exec -T postgres pg_restore -U postgres -d ai_workbench \
-    < ai_workbench-1.0.0.dump
+    exec -T postgres pg_restore -U postgres -C -d postgres \
+    < ~/ai-dba-backup-1.0.0/ai_workbench-1.0.0.dump
 ```
 
 ### Restoring the Server Data Directory
@@ -800,7 +833,7 @@ installation, restore the volume from the archive:
 
 ```bash
 docker run --rm -v examples_server-data:/data \
-    -v "$PWD":/backup debian:bookworm-slim \
+    -v ~/ai-dba-backup-1.0.0:/backup:ro debian:bookworm-slim \
     sh -c 'find /data -mindepth 1 -delete &&
         tar xzf /backup/server-data-1.0.0.tar.gz -C /data'
 ```

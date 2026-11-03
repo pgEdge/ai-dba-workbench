@@ -115,13 +115,13 @@ tar -xzf %{SOURCE3} -C %{_builddir}/client
 #tar -xzf %%{SOURCE4} -C %%{_builddir}/docs
 
 %pre -n pgedge-ai-dba-collector
-%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config
+%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config || exit 1
 
 %pre -n pgedge-ai-dba-alerter
-%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config
+%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config || exit 1
 
 %pre -n pgedge-ai-dba-client
-%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config
+%{_libexecdir}/pgedge-ai-dba-upgrade-check/check-server-config || exit 1
 
 # Each package of the suite runs the upgrade check in its %pre, which
 # rpm runs before it unpacks any of the package's files. A failure

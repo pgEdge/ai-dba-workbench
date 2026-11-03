@@ -143,7 +143,9 @@ project adheres to
   the `coldfront._partition_clause(jsonb,text[])` and
   `coldfront.ensure_attached()` functions (pgEdge ColdFront pull
   request #92; the `v1.0.0-beta2` tag is too old), with
-  `coldfront.grant_app_access` run for each Workbench role and
+  `coldfront.grant_app_access` run for each Workbench role
+  (again for the server and alerter roles after the collector
+  creates the metrics views and after each upgrade) and
   `CREATE` on the database for the collector's role. Choose the
   mode when creating the datastore: switching an existing
   datastore is not supported, and the collector refuses to

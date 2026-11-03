@@ -98,6 +98,21 @@ Replace `ai_workbench` with the collector's `datastore.username` value.
 If the server or alerter connects to the datastore as a different role,
 run the same function for each of those roles as well.
 
+The `grant_app_access` function reads ColdFront's view registry when
+you call the function, so the call covers only the views that exist at
+that moment. Before the collector's first start, no metrics views
+exist yet. The collector's role owns the metrics views that the
+collector creates and needs no further grant on those views. Re-run
+the function for each separate server and alerter role after the
+collector's first start, and again after each Workbench upgrade,
+because an upgrade can add metrics tables. The function is idempotent,
+so a repeated call is safe.
+
+The function grants each role `SELECT`, `INSERT`, `UPDATE`, and
+`DELETE` on every view registered in ColdFront at the time of the call.
+The grant therefore includes the metrics views and any ColdFront view
+that another application registered in the same database.
+
 ### Preparing the Collector's Datastore Role
 
 The collector creates the `workbench_coldfront` schema at startup, so

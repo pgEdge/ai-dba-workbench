@@ -44,11 +44,19 @@ func freeLoopbackAddr(t *testing.T) string {
 	return addr
 }
 
-// waitForHealth polls /health on addr until the server answers.
+// waitForHealth polls /health on addr until the server answers. It
+// uses its own transport without keep-alives, so that no spare
+// connection is left in a shared pool: a connection the server has
+// accepted but never read a request from stays in http.StateNew, and
+// http.Server.Shutdown waits up to 5s for such connections (Go issue
+// 22682), which would stretch any drain the test then times.
 func waitForHealth(t *testing.T, addr string) {
 	t.Helper()
 
-	client := &http.Client{Timeout: time.Second}
+	client := &http.Client{
+		Timeout:   time.Second,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, err := client.Get("http://" + addr + "/health")
@@ -510,7 +518,13 @@ func TestServeHTTPEndsOpenOverviewStreamsWhenTheDrainStarts(t *testing.T) {
 	}()
 	waitForHealth(t, addr)
 
-	client := &http.Client{Timeout: time.Minute}
+	// A private transport dials exactly one connection for the stream;
+	// the shared default one can race a returning idle connection and
+	// park a second, never-used one, which Shutdown counts as active
+	// for 5s while it sits in http.StateNew.
+	transport := &http.Transport{}
+	t.Cleanup(transport.CloseIdleConnections)
+	client := &http.Client{Timeout: time.Minute, Transport: transport}
 	resp, err := client.Get("http://" + addr + "/stream")
 	if err != nil {
 		t.Fatalf("failed to open the stream: %v", err)

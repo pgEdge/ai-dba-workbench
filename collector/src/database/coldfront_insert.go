@@ -63,6 +63,17 @@ import (
 // the 100-argument limit on function calls. Neither function reads the
 // view, which ColdFront refuses inside a function.
 //
+// literal() runs once per value, so PostgreSQL must be able to inline
+// it: it is a single-SELECT LANGUAGE sql function with no SET clause and
+// not SECURITY DEFINER, since either prevents inlining (a SET
+// search_path made 200,000 calls about six times slower). Its body is
+// therefore parsed under the caller's search_path, so every function and
+// operator in it is qualified with pg_catalog and it needs no pinned
+// path; its only caller pins one anyway. CREATE OR REPLACE resets the
+// SET clause of a helper an earlier collector created, so an upgraded
+// datastore gets the inlinable form on the next start.
+// TestColdFrontLiteralIsInlinable checks both.
+//
 // insert_rows must run its EXECUTE with no EXCEPTION handler: a PL/pgSQL
 // EXCEPTION block runs its body in a subtransaction, and pg_duckdb
 // refuses every write in one ("SAVEPOINT and subtransactions are not
@@ -78,10 +89,11 @@ CREATE OR REPLACE FUNCTION workbench_coldfront.literal(p_value text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
-SET search_path = pg_catalog, pg_temp
+SECURITY INVOKER
 AS $fn$
     SELECT CASE WHEN p_value IS NULL THEN 'NULL'
-                ELSE '''' || replace(p_value, '''', '''''') || '''' END
+                ELSE '''' OPERATOR(pg_catalog.||) pg_catalog.replace(p_value, '''', '''''')
+                     OPERATOR(pg_catalog.||) '''' END
 $fn$;
 
 COMMENT ON FUNCTION workbench_coldfront.literal(text) IS

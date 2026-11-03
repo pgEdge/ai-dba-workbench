@@ -30,6 +30,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/collector/src/coldfront"
 	"github.com/pgedge/ai-workbench/collector/src/probes"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
 // awkwardText exercises the quoting the insert helper relies on: a
@@ -308,6 +309,95 @@ func TestColdFrontHelperSchemaOwnership(t *testing.T) {
 	}
 	if functions != 0 {
 		t.Errorf("%d functions were created in a schema another role owns", functions)
+	}
+}
+
+// TestColdFrontLiteralIsInlinable checks that literal(), which runs once
+// per value, is replaced on upgrade by a form PostgreSQL inlines, and
+// that the inlined body stays safe under a hostile search_path.
+func TestColdFrontLiteralIsInlinable(t *testing.T) {
+	ctx := context.Background()
+	pool, conn := getTestConnection(t)
+	defer pool.Close()
+	defer conn.Release()
+
+	// The helper as an earlier collector created it, with a SET clause.
+	if _, err := conn.Exec(ctx, `
+        DROP SCHEMA IF EXISTS workbench_coldfront CASCADE;
+        DROP SCHEMA IF EXISTS wb_hostile CASCADE;
+        CREATE SCHEMA workbench_coldfront;
+        CREATE FUNCTION workbench_coldfront.literal(p_value text) RETURNS text
+            LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, pg_temp
+            AS $f$ SELECT CASE WHEN p_value IS NULL THEN 'NULL'
+                               ELSE '''' || replace(p_value, '''', '''''') || '''' END $f$;
+    `); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS workbench_coldfront CASCADE; DROP SCHEMA IF EXISTS wb_hostile CASCADE"); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	}()
+
+	if err := EnsureColdFrontInsertHelper(ctx, conn); err != nil {
+		t.Fatalf("EnsureColdFrontInsertHelper: %v", err)
+	}
+	var (
+		config  []string
+		secDef  bool
+		volatil string
+	)
+	if err := conn.QueryRow(ctx, `
+        SELECT proconfig, prosecdef, provolatile::text FROM pg_proc
+        WHERE oid = 'workbench_coldfront.literal(text)'::regprocedure
+    `).Scan(&config, &secDef, &volatil); err != nil {
+		t.Fatal(err)
+	}
+	if len(config) != 0 || secDef || volatil != "i" {
+		t.Errorf("literal(): proconfig %v, SECURITY DEFINER %v, volatility %s; want no SET clause, SECURITY INVOKER, IMMUTABLE",
+			config, secDef, volatil)
+	}
+
+	// Inlined, the plan computes the body's expression and never calls
+	// literal() itself.
+	rows, err := conn.Query(ctx, `
+        EXPLAIN (VERBOSE, COSTS OFF)
+        SELECT workbench_coldfront.literal(v.x) FROM (VALUES ('a'::text), (NULL)) AS v(x)
+    `)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined := strings.Join(plan, "\n"); strings.Contains(joined, "literal(") || !strings.Contains(joined, "replace(") {
+		t.Errorf("literal() is not inlined:\n%s", joined)
+	}
+
+	// The inlined body is parsed under the caller's search_path, so a
+	// replace() earlier in that path must not be picked up.
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // test cleanup
+	if _, err := tx.Exec(ctx, `
+        CREATE SCHEMA wb_hostile;
+        CREATE FUNCTION wb_hostile.replace(text, text, text) RETURNS text
+            LANGUAGE sql AS $f$ SELECT 'hijacked' $f$;
+        SET LOCAL search_path = wb_hostile, pg_catalog;
+    `); err != nil {
+		t.Fatal(err)
+	}
+	var got, gotNull string
+	if err := tx.QueryRow(ctx,
+		`SELECT workbench_coldfront.literal('it''s'), workbench_coldfront.literal(NULL)`,
+	).Scan(&got, &gotNull); err != nil {
+		t.Fatal(err)
+	}
+	if got != `'it''s'` || gotNull != "NULL" {
+		t.Errorf("literal() under a hostile search_path = %q, %q; want 'it''s', NULL", got, gotNull)
 	}
 }
 

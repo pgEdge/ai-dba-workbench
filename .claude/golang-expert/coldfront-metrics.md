@@ -139,6 +139,17 @@ than in one transaction.
   functions are `SECURITY INVOKER` with `search_path = pg_catalog,
   pg_temp`. Neither may read the view: ColdFront refuses DuckDB reads
   inside a function.
+- `literal(text)` must stay inlinable, since it runs once per value: a
+  single-SELECT `LANGUAGE sql` `IMMUTABLE` `SECURITY INVOKER` function
+  with no `SET` clause (a `SET search_path` blocked inlining and made it
+  roughly six times slower). An inlined body is parsed under the
+  caller's search_path, so every function and operator in it is
+  `pg_catalog`-qualified (`OPERATOR(pg_catalog.||)`,
+  `pg_catalog.replace`). `CREATE OR REPLACE` clears the `SET` clause of
+  a helper an earlier collector created. `TestColdFrontLiteralIsInlinable`
+  checks the upgrade, the `EXPLAIN VERBOSE` plan (it needs a multi-row
+  `VALUES`, or constant folding hides the call) and a hostile
+  search_path.
 - No helper function may have an `EXCEPTION` handler. A PL/pgSQL
   `EXCEPTION` block runs its body in a subtransaction, and pg_duckdb
   refuses every write in one ("SAVEPOINT and subtransactions are not

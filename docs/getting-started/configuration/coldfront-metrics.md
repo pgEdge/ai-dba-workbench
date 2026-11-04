@@ -358,48 +358,51 @@ The data lifecycle belongs to ColdFront and to the operator. The
 ColdFront compactor expires old snapshots and data files, as the
 [Scheduling the ColdFront Compactor](#scheduling-the-coldfront-compactor)
 section describes. Deleting old metrics rows remains the operator's
-responsibility; a `DELETE` statement with a `collected_at` condition
-removes old rows in the way that the
-[Purging Deleted Connections](#purging-deleted-connections) section
-describes.
-
-### Purging Deleted Connections
-
-When a user deletes a connection, the server's background purge still
-removes the connection itself, but leaves the connection's metrics
-rows in place in every ColdFront view. The server logs one line for
-each purge that names the connection ID and every metrics view that
-the purge skipped; a skipped view may hold no rows for that connection.
-The rows stay in those views until an operator removes them, and no
-Workbench retention removes them later. The `metrics.pg_settings` and
-`metrics.pg_hba_file_rules` views can hold sensitive values that the
-collector read from the deleted server.
-
-In ColdFront mode, the collector also creates no foreign keys from the
-metrics tables to the `connections` table. Deleting a connection
-therefore never cascades to the connection's metrics rows.
+responsibility.
 
 ColdFront rewrites a `DELETE` statement on a metrics view into a
 delete on the Iceberg table. In the following example, the statement
-removes the rows of the deleted connection with ID `42` from the
-`metrics.pg_settings` view:
+removes the rows older than 30 days from the `metrics.pg_settings`
+view:
 
 ```sql
-DELETE FROM metrics.pg_settings WHERE connection_id = 42;
+DELETE FROM metrics.pg_settings
+WHERE collected_at < now() - interval '30 days';
 ```
 
-Run one such statement for each view that the purge log line names,
-as the collector's datastore role, a superuser, or a role that
-`coldfront.grant_app_access` covers. The `DELETE` privilege alone is
-not enough, because the statement also needs the DuckDB role
-membership and the `coldfront` schema access that the grant provides.
-Run each statement on its own, outside any transaction block that also
-writes an ordinary PostgreSQL table, because pg_duckdb refuses a
-transaction that writes both kinds of table.
+Run such a statement as the collector's datastore role, a superuser,
+or a role that `coldfront.grant_app_access` covers. The `DELETE`
+privilege alone is not enough, because the statement also needs the
+DuckDB role membership and the `coldfront` schema access that the
+grant provides. Run each statement on its own, outside any transaction
+block that also writes an ordinary PostgreSQL table, because pg_duckdb
+refuses a transaction that writes both kinds of table. A deleted row's
+values remain in object storage until the compactor removes them, as
+the [Purging Deleted Connections](#purging-deleted-connections)
+section describes.
 
-The Workbench's tests have not yet run this `DELETE` path against a
-ColdFront view that is partitioned by day. Run the statements for one
-connection first, and confirm the result before you purge others.
+### Purging Deleted Connections
+
+When a user deletes a connection, the server's background purge also
+removes the connection's metrics rows from each ColdFront view. The
+purge issues one `DELETE` statement with a `connection_id` condition
+for each metrics view, and runs each statement in its own transaction,
+because pg_duckdb refuses a transaction that writes both Iceberg and
+ordinary PostgreSQL tables. The purge removes the connection itself
+only after the metrics deletes succeed.
+
+When a delete on a metrics view fails, the purge leaves the
+connection row in place and reports the failure, so that a later purge
+run can retry the connection. The server's datastore role needs the
+access that `coldfront.grant_app_access` provides, as the
+[Granting ColdFront Access to Workbench Roles](#granting-coldfront-access-to-workbench-roles)
+section describes. Check the server log for the purge failure when a
+deleted connection's row remains in the datastore.
+
+In ColdFront mode, the collector creates no foreign keys from the
+metrics tables to the `connections` table. Deleting a connection
+therefore never cascades to the connection's metrics rows, and the
+purge's own deletes are the only step that removes them.
 
 Iceberg records a delete in delete files and does not rewrite the
 existing data files, so the deleted values remain in object storage

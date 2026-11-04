@@ -15,14 +15,17 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/pkg/anomaly"
 	"github.com/pgedge/ai-workbench/pkg/coldfrontsql"
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
 
 // The tests in this file keep every alerter query that reads metrics.*
@@ -131,18 +134,85 @@ func TestInfiniteBind(t *testing.T) {
 	}
 }
 
+// argRecorder is a pgx query tracer that records the arguments each SQL
+// text is bound with, so a test can see what the real call sites bind.
+type argRecorder struct {
+	mu   sync.Mutex
+	args map[string][]any
+}
+
+// TraceQueryStart records the arguments of a query before it runs.
+func (r *argRecorder) TraceQueryStart(ctx context.Context, _ *pgx.Conn,
+	data pgx.TraceQueryStartData) context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.args[data.SQL] = data.Args
+	return ctx
+}
+
+// TraceQueryEnd satisfies pgx.QueryTracer.
+func (r *argRecorder) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
 // TestMetricsSQLArgsFinite fails when any alerter query that reads
-// metrics.* is bound with an infinite timestamp or date. Plain
-// PostgreSQL accepts one, so only this test catches it; DuckDB on a
-// ColdFront datastore may plan a range join that subtracts the bound and
-// fails with "Cannot subtract infinite timestamps" (rule 6 in
-// .claude/golang-expert/coldfront-queries.md). GitHub issue #755.
+// metrics.* is bound with an infinite timestamp or date at its real call
+// site. Plain PostgreSQL accepts one, so only this test catches it;
+// DuckDB on a ColdFront datastore may plan a range join that subtracts
+// the bound and fails with "Cannot subtract infinite timestamps" (rule 6
+// in .claude/golang-expert/coldfront-queries.md). It drives the
+// exported readers (GetHistoricalMetricValues for every registry entry
+// with a historical query, GetConnectionsWithExtension and
+// GetClusterPeers) through a pool whose tracer records each bound
+// argument list, and also requires those lists to match the argument
+// types metricsSQLStatements gives the other tests here. GitHub issue
+// #755.
 func TestMetricsSQLArgsFinite(t *testing.T) {
+	source := newColdFrontCompatPool(t)
+	ctx := context.Background()
+
+	cfg := source.Config()
+	rec := &argRecorder{args: map[string][]any{}}
+	cfg.ConnConfig.Tracer = rec
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connect with the argument recorder: %v", err)
+	}
+	defer pool.Close()
+	ds := &Datastore{pool: pool}
+
+	// Errors are irrelevant here: the tracer has the arguments before
+	// the query runs.
+	for _, name := range registryNames() {
+		if metricRegistry[name].historicalSQL != "" {
+			_, _ = ds.GetHistoricalMetricValues(ctx, name, 7)
+		}
+	}
+	_, _ = ds.GetConnectionsWithExtension(ctx, "spock")
+	_, _ = ds.GetClusterPeers(ctx, 1)
+
 	for _, s := range metricsSQLStatements() {
-		for i, arg := range s.args {
+		if s.args == nil {
+			continue
+		}
+		got, ok := rec.args[sqlmarker.Tag(s.sql)]
+		if !ok {
+			t.Errorf("%s: no call site ran it, so its arguments went unchecked", s.name)
+			continue
+		}
+		for i, arg := range got {
 			if infiniteBind(arg) {
 				t.Errorf("%s: $%d is bound to an infinite value %#v; bind a "+
 					"finite far-future timestamp instead", s.name, i+1, arg)
+			}
+		}
+		if len(got) != len(s.args) {
+			t.Errorf("%s: bound with %d arguments, metricsSQLStatements lists %d",
+				s.name, len(got), len(s.args))
+			continue
+		}
+		for i := range got {
+			if reflect.TypeOf(got[i]) != reflect.TypeOf(s.args[i]) {
+				t.Errorf("%s: $%d is bound as %T, metricsSQLStatements lists %T",
+					s.name, i+1, got[i], s.args[i])
 			}
 		}
 	}

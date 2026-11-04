@@ -165,13 +165,18 @@ unless noted:
   (`CPUBusyPercentExpr`, `PseudoFilesystemExclusion`,
   `ReplicationLagBytesExpr`), so `pkg/anomaly` is guarded on its own,
   whichever consumer runs the queries.
-- `TestMetricsSQLArgsFinite` (no database) fails when any statement in
-  `metricsSQLStatements()` is bound with an infinite
-  `pgtype.Timestamptz`, `pgtype.Timestamp` or `pgtype.Date`, and
-  `TestNoHistoricalUpperBoundIsFinite` pins `noHistoricalUpperBound` to
-  9999-12-31 00:00:00 UTC. Plain PostgreSQL accepts an infinite bind and `Violations` sees
-  only SQL text, so these are the only guards on rule 6's bound
-  parameters.
+- `TestMetricsSQLArgsFinite` (database) runs the real call sites
+  (`GetHistoricalMetricValues` for every registry entry with a
+  historical query, `GetConnectionsWithExtension`, `GetClusterPeers`)
+  through a pool whose pgx `QueryTracer` records each bound argument
+  list, and fails when one holds an infinite `pgtype.Timestamptz`,
+  `pgtype.Timestamp` or `pgtype.Date`, when a listed statement never
+  ran, or when its argument types differ from those
+  `metricsSQLStatements()` lists for the other tests. Without a
+  database, `TestNoHistoricalUpperBoundIsFinite` pins
+  `noHistoricalUpperBound` to 9999-12-31 00:00:00 UTC. Plain
+  PostgreSQL accepts an infinite bind and `Violations` sees only SQL
+  text, so these are the only guards on rule 6's bound parameters.
 - `TestConnectionUtilizationHistoricalOpenBounds` in
   `pkg/anomaly/metrics_test.go` (no database) pins the NULL-open
   `valid_from`/`valid_to` ranges of the `connection_utilization_percent`
@@ -194,8 +199,12 @@ unless noted:
 - `TestHistoricalUpperBound` in `pkg/anomaly/metrics_test.go` pins the
   cast `$1::int` lookback and, directly after it, the
   `AND <col> <= $2::timestamptz` bound on every `HistoricalSQL`. The
-  server's `TestComparisonSeriesQuery_Plan` checks that a real `$2`
-  still reaches the inner scan's condition.
+  server's `TestComparisonSeriesQuery_Plan` prepares the wrapped series
+  query, explains it under `plan_cache_mode = force_generic_plan`, and
+  requires an `Index Cond` holding `collected_at <= $2` without a
+  `COALESCE`; it also rewrites the bound to the `COALESCE` form and
+  requires that plan to fail the same check. Partition pruning is not
+  asserted: the test schema has only each table's default partition.
 
 ## Known Trade-offs
 

@@ -285,38 +285,48 @@ alerter pools are not covered by this change.
 - **No functions.** DuckDB execution is refused inside a PL/pgSQL or SQL
   function; the server defines none that read metrics.
 - **No schema-qualified ordinary tables.** DuckDB resolves an
-  unqualified `connections` (through the search_path, which the server
-  leaves at the default) but not `public.connections` ("relation does
-  not exist"). Every statement that reads a metrics view names its
-  ordinary tables unqualified, as the topology, cluster, estate and
-  timeline queries always have; `list_connections` and query_datastore's
-  live-connection check for a metric source were the exceptions.
-  query_datastore still qualifies `public.` for configuration sources,
-  which read ordinary tables only (`fromClause` is the reviewed unit that
-  holds both). Splitting such statements into two queries joined in Go
-  was rejected: it costs a round trip and the join's atomicity for no
-  gain, since the server already relies on the search_path everywhere
-  else.
-  Open risk (review of PR #790, not fixed): an unqualified `connections`
-  resolves through the session's search_path, by default
-  `"$user", public`. A role that can create in a schema searched before
-  `public` (a schema named after the server's login role, or one an
-  operator put earlier on the role's or database's search_path) could
-  create its own `connections` table or view there and shadow the real
-  one. In query_datastore's live-connection check for a metric source
-  (`liveConnectionCondition` in `datastore_query_builder.go`) and in
-  list_connections' statement (`list_connections.go`), that table
-  decides which connections a caller sees and which rows survive.
-  Exposure needs DDL rights on the datastore beyond the server's own,
-  which already means control of the data. Candidate fix: pin the
-  server's datastore pool with the startup parameter
-  `search_path=public` (pgx `ConnConfig.RuntimeParams`), so no
-  per-user schema is searched, and keep `CREATE` on `public` revoked
-  from other roles (the PostgreSQL 15+ default). Not done because
-  whether pg_duckdb resolves an unqualified heap table under a pinned
-  startup search_path is unverified on ColdFront; verify that live
-  first, then pin it and add a test that a shadowing table in a
-  `"$user"` schema is ignored.
+  unqualified `connections` (through the search_path) but not
+  `public.connections` ("relation does not exist"), so every statement
+  that reads a metrics view names its ordinary tables unqualified.
+  Only the `metrics` schema, which the collector creates by name, is
+  ever qualified. Splitting such statements into two queries joined in
+  Go was rejected: it costs a round trip and the join's atomicity for no
+  gain.
+  The rule holds beyond ColdFront, for every statement and every
+  datastore: the Workbench's ordinary tables (`connections`, `alerts`,
+  `alert_rules`, `clusters`, ...) are resolved through the role's
+  search_path everywhere, because the collector's migrations create
+  them unqualified. They therefore live in the first schema on that
+  search_path, which is not necessarily `public`: on a datastore whose
+  role is named `coldfront`, the default `"$user", public` puts them in
+  ColdFront's `coldfront` schema. query_datastore's configuration
+  sources once hard-coded `public.<table>` and failed there with
+  `relation "public.connections" does not exist` (42P01) at Parse; they,
+  the scope subqueries and `datastoreConnectionsExist` now name the
+  tables unqualified, and `TestQueryDatastoreFollowsSearchPathIntegration`
+  (`query_datastore_search_path_integration_test.go`) runs query_datastore
+  with the tables in a schema placed ahead of `public`. Never write
+  `public.<workbench table>` in server SQL. The deliberate exceptions are
+  the collector's own `public.anomaly_embeddings` and its
+  `public.chat_memories` embedding column and indexes, which the
+  collector qualifies itself; the server does not read either through
+  query_datastore.
+  Do not pin the server's datastore pool to `search_path=public` (pgx
+  `ConnConfig.RuntimeParams`): it would break every deployment whose
+  tables live in another schema, such as one whose role is named
+  `coldfront`.
+  Accepted risk: because the tables resolve through the search_path, a
+  role with DDL rights on a schema searched before the real one could
+  create a same-named table or view there and shadow it; in
+  `liveConnectionCondition` and list_connections' statement that table
+  would decide which connections a caller sees. Exposure needs DDL rights
+  on the datastore beyond the Workbench's own, which already means
+  control of the data. The documented mitigation is a dedicated role for
+  the Workbench with its `search_path` set before the collector's first
+  start, so the tables are created in, and later read from, the schema
+  that role controls (see the ColdFront metrics page,
+  `docs/getting-started/configuration/coldfront-metrics.md`, on the
+  #755 docs branch).
 - **Type JSON builder literals.** ColdFront rewrites the JSON builders
   for DuckDB, which cannot type an untyped string literal passed as a
   value (`jsonb_build_object('change_type', 'modified')` fails with
@@ -340,7 +350,7 @@ an untyped or integer IN list, parameter arithmetic other than an
 interval times an integer-cast parameter (`intervalTimesIntParam`), an
 uncast `avg` or `EXTRACT`, an untyped run-time IN list, a bare
 `host(client_addr)`, a schema-qualified table other than `metrics.`
-(allow-listed in `reviewedQualifiedTableUnits`), an untyped JSON builder
+(no unit is exempt), an untyped JSON builder
 value, `pg_lsn`, an `'infinity'`/`'-infinity'` literal, a `'{...}'`
 literal not cast to json or jsonb, and a `$n [::type] IS [NOT] NULL`
 test. These rules mirror `coldfrontsql.Violations`, the shared checker
@@ -564,10 +574,11 @@ the per-database sibling scans `datname` into a `string`, so a NULL
 
 Metrics tables live under the `metrics` schema
 (`metrics.pg_stat_activity`, `metrics.pg_stat_database`, etc.). The
-`connections` table lives in the default schema (unqualified
-`connections`) and is managed by the collector. The alerter and server
-both read from `connections` by unqualified name; do not add schema
-qualifiers unless the caller's search_path requires it.
+`connections` table, like the collector's other ordinary tables, is
+created unqualified and so lives in the first schema on the role's
+search_path, which need not be `public`. The alerter and server both
+read it by unqualified name; never qualify it with `public.` (see "No
+schema-qualified ordinary tables" above).
 
 ## Latest-Row Queries (server)
 

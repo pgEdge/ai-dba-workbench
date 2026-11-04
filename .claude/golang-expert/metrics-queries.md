@@ -161,9 +161,26 @@ inside the transaction that first plans a metrics statement; a rollback
 undoes the attach, and re-executing pgx's cached prepared statement on
 that connection then fails with 'Binder Error: Catalog "ice" does not
 exist!' (every other run, on PG 16, 17 and 18). Committing, autocommit
-and `QueryExecModeExec` were unaffected. The server's own read-only
-transactions that end in `rollback.Tx` may be exposed to the same
-failure on a pooled connection; this is unresolved (issue #755).
+and `QueryExecModeExec` were unaffected. The server's datastore pool
+would hit the same failure on any pooled connection after a statement
+timeout, cancellation or read-only `rollback.Tx`, so `NewDatastore`
+(`connection_queries.go`) detects ColdFront before building the pool
+(`detectColdFrontDatastore`: one connection running
+`coldFrontDatastoreQuery`, the `coldfront` extension or any view in
+`metrics`; the extension is checked because it exists before the
+collector's migrations create the views) and sets
+`DefaultQueryExecMode` from `datastoreExecMode`:
+`QueryExecModeDescribeExec` on ColdFront, which never creates a named
+prepared statement but keeps server-described parameter and result
+types (one extra round trip per query), and pgx's default statement
+cache on plain PostgreSQL. `TestDescribeExecKeepsNoStatementAcrossRollback`
+shows the mechanism on plain PostgreSQL (the default mode keeps a
+named statement across a rollback, describe-exec keeps none);
+`TestNewDatastoreDetectsColdFront` pins the detection. Unverified live:
+that describe-exec ends the "ice" error on ColdFront (Exec mode, which
+also parses afresh on every execution, was the verified one), and
+that every server statement runs under it there. The collector and
+alerter pools are not covered by this change.
 
 - **Result types must agree.** A cast helps only when it changes the
   PostgreSQL type; casting to the type PostgreSQL already infers is a

@@ -179,15 +179,20 @@ func TestMetricsSQLArgsFinite(t *testing.T) {
 	defer pool.Close()
 	ds := &Datastore{pool: pool}
 
-	// Errors are irrelevant here: the tracer has the arguments before
-	// the query runs.
 	for _, name := range registryNames() {
-		if metricRegistry[name].historicalSQL != "" {
-			_, _ = ds.GetHistoricalMetricValues(ctx, name, 7)
+		if metricRegistry[name].historicalSQL == "" {
+			continue
+		}
+		if _, err := ds.GetHistoricalMetricValues(ctx, name, 7); err != nil {
+			t.Errorf("%s: GetHistoricalMetricValues: %v", name, err)
 		}
 	}
-	_, _ = ds.GetConnectionsWithExtension(ctx, "spock")
-	_, _ = ds.GetClusterPeers(ctx, 1)
+	if _, err := ds.GetConnectionsWithExtension(ctx, "spock"); err != nil {
+		t.Errorf("GetConnectionsWithExtension: %v", err)
+	}
+	if _, err := ds.GetClusterPeers(ctx, 1); err != nil {
+		t.Errorf("GetClusterPeers: %v", err)
+	}
 
 	for _, s := range metricsSQLStatements() {
 		if s.args == nil {

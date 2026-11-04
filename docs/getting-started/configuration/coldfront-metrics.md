@@ -182,6 +182,35 @@ replacing the functions that the collector writes metrics through.
 Run the collector as a dedicated role that is not a superuser, so that
 the collector holds only the privileges it needs.
 
+### Keeping Workbench Tables out of the ColdFront Schema
+
+The Workbench migrations create the tables outside the `metrics` schema,
+such as `connections` and `alerts`, without a schema prefix. PostgreSQL
+creates each of those tables in the first existing schema on the
+`search_path` of the collector's role. The default `search_path` of
+`"$user", public` resolves `$user` to the role name, so a role named
+`coldfront` places the tables in the schema that the ColdFront extension
+creates. Workbench tables in the extension's schema can clash with
+ColdFront object names, can be affected when the extension is upgraded
+or dropped, and make the schema's grants harder to audit.
+
+Connect the collector, the server, and the alerter as a dedicated
+application role that is not named `coldfront`; the ColdFront
+installation examples connect as a role with that name. The
+[Connecting to ColdFront](https://github.com/pgEdge/ColdFront/blob/main/docs/connecting.md)
+guide likewise onboards a separate least-privilege application role
+with the `grant_app_access` function. Alternatively, set the role's
+`search_path` before the collector's first start. In the following
+example, the `ALTER ROLE` statement makes PostgreSQL create the
+unqualified Workbench tables in the `public` schema:
+
+```sql
+ALTER ROLE ai_workbench SET search_path = public;
+```
+
+Changing the `search_path` after the collector's first start does not
+move the tables that the migrations have already created.
+
 ## Enabling ColdFront Storage
 
 The `use_coldfront_for_metrics` option enables ColdFront storage. The

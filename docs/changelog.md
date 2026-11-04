@@ -632,6 +632,14 @@ project adheres to
 
 ### Changed
 
+- List and serve only the collector's probes from the metrics schema
+  (#755). The `list_probes`, `describe_probe`, `query_metrics`,
+  `describe_datastore` and `query_datastore` tools and the
+  `GET /api/v1/metrics/latest` and `GET /api/v1/metrics/query`
+  endpoints now admit only the probe names the collector writes, on
+  plain PostgreSQL and ColdFront datastores alike; other tables,
+  partitions and views in the `metrics` schema are no longer listed or
+  served.
 - Return a `query_datastore` `avg` aggregate as double precision, and
   print floating-point values in tool output in plain decimal rather
   than exponent notation (#755). A `sum` of an interval column now
@@ -2894,15 +2902,6 @@ project adheres to
   remains available to API consumers. (#387)
 
 ### Security
-
-- List and serve only the collector's probes from the metrics schema
-  (#755). The `list_probes`, `describe_probe`, `query_metrics`,
-  `describe_datastore` and `query_datastore` tools and the
-  `GET /api/v1/metrics/latest` and `GET /api/v1/metrics/query`
-  endpoints now admit only the probe names the collector writes, on
-  plain PostgreSQL and ColdFront datastores alike; other tables,
-  partitions and views in the `metrics` schema are no longer listed or
-  served.
 
 - Update `golang.org/x/crypto` to v0.58.0 in every Go module, fixing
   the advisories against its `ssh`, `ssh/agent` and `ssh/knownhosts`

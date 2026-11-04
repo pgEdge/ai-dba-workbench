@@ -50,7 +50,11 @@ through a long retention history could outlast any request budget.
    under `metrics` with a `connection_id` column (every probe on a
    pgEdge ColdFront datastore, issue #755) has no ctid, so
    `metricsLeafTablesQuery` returns it flagged, `splitMetricsViews` sets
-   it apart, and `purgeMetricsViews` clears it with one
+   it apart, `purgeableViews` keeps only a view named for a known probe
+   (`metrics.IsKnownProbe`; any other is skipped with a once-per-view
+   `[WARN]` and never blocks the row's removal; tests swap the
+   allowlist through `Datastore.isProbeView`), and `purgeMetricsViews`
+   clears it with one
    `DELETE FROM metrics.<view> WHERE connection_id = $1::int` per view,
    autocommitted, so each runs in a transaction of its own (pg_duckdb
    refuses a transaction that writes a view and an ordinary table, and

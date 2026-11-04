@@ -104,6 +104,25 @@ func TestSplitMetricsViews(t *testing.T) {
 	}
 }
 
+// TestPurgeableViews checks that only views named for a known probe are
+// purged, by default through metrics.IsKnownProbe, and that a skipped
+// view is dropped from the list however often it is seen.
+func TestPurgeableViews(t *testing.T) {
+	ds := &Datastore{}
+	views := []string{"pg_stat_activity", "operator_report", "pg_settings", "operator_report"}
+	if got := ds.purgeableViews(views); !slices.Equal(got, []string{"pg_stat_activity", "pg_settings"}) {
+		t.Errorf("purgeable views = %v, want [pg_stat_activity pg_settings]", got)
+	}
+	if got := ds.purgeableViews([]string{"operator_report"}); got != nil {
+		t.Errorf("purgeable views of only a non-probe view = %v, want none", got)
+	}
+
+	ds.isProbeView = func(name string) bool { return name == "operator_report" }
+	if got := ds.purgeableViews(views); !slices.Equal(got, []string{"operator_report", "operator_report"}) {
+		t.Errorf("purgeable views with a custom allowlist = %v", got)
+	}
+}
+
 func TestConnectionPurger_RunOnce(t *testing.T) {
 	tests := []struct {
 		name       string

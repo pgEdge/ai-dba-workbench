@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // connPurgeTestSchema is the minimum the two-step delete (issue #669)
@@ -124,7 +125,16 @@ func newConnPurgeTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func())
 		}
 		pool.Close()
 	}
-	return NewTestDatastore(pool), pool, cleanup
+	ds := NewTestDatastore(pool)
+	ds.isProbeView = isPurgeTestProbeView
+	return ds, pool, cleanup
+}
+
+// isPurgeTestProbeView admits the ColdFront stand-in views these tests
+// create (createPurgeTestViews and its kin) as if they were probes, as
+// well as the real probe names, so the view purge reaches them.
+func isPurgeTestProbeView(name string) bool {
+	return strings.HasPrefix(name, "purge_test_cf") || metrics.IsKnownProbe(name)
 }
 
 // seedPurgeConnection inserts a connection with metricsRows rows spread
@@ -787,6 +797,51 @@ func TestPurgeConnection_ViewFailureKeepsConnection(t *testing.T) {
 	wantPurgeRows(t, pool, "metrics.purge_test_cf", victim, 0)
 	if rows := connectionRowCount(t, pool, victim); rows != 0 {
 		t.Errorf("connection rows after the retry = %d, want 0", rows)
+	}
+}
+
+// TestPurgeConnection_SkipsNonProbeViews checks that the purge does not
+// delete through a metrics view that is not named for a known probe,
+// even one with a connection_id column, and that such a view does not
+// hold up the removal of the connection row. The datastore uses the
+// production allowlist (metrics.IsKnownProbe), so neither the operator's
+// view nor the stand-in ColdFront view is written through.
+func TestPurgeConnection_SkipsNonProbeViews(t *testing.T) {
+	ds, pool, cleanup := newConnPurgeTestDatastore(t)
+	defer cleanup()
+	ds.isProbeView = nil
+	defer createPurgeTestViews(t, pool, false)()
+	ctx := context.Background()
+
+	mustExecPurgeTest(t, pool, `CREATE VIEW metrics.purge_test_operator_report AS
+        SELECT * FROM purge_test_cf_store`)
+	victim := seedPurgeConnection(t, pool, "victim", 3)
+	mustExecPurgeTest(t, pool,
+		`INSERT INTO purge_test_cf_store SELECT $1, g FROM generate_series(1, 4) g`, victim)
+	if err := ds.DeleteConnection(ctx, victim); err != nil {
+		t.Fatalf("DeleteConnection: %v", err)
+	}
+
+	tables, views, err := ds.listMetricsRelations(ctx)
+	if err != nil {
+		t.Fatalf("listMetricsRelations: %v", err)
+	}
+	if len(views) != 0 {
+		t.Errorf("purgeable views = %v, want none", views)
+	}
+	if len(tables) == 0 {
+		t.Error("the metrics tables were dropped along with the non-probe views")
+	}
+
+	if err := ds.PurgeConnection(ctx, victim, 5); err != nil {
+		t.Fatalf("PurgeConnection: %v", err)
+	}
+	wantPurgeRows(t, pool, "metrics.purge_test_operator_report", victim, 4)
+	for _, table := range []string{"metrics.purge_test_part", "metrics.purge_test_nofk"} {
+		wantPurgeRows(t, pool, table, victim, 0)
+	}
+	if rows := connectionRowCount(t, pool, victim); rows != 0 {
+		t.Errorf("connection rows after the purge = %d, want 0", rows)
 	}
 }
 

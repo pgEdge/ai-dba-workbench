@@ -16,10 +16,12 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // Deleting a connection happens in two steps (issue #669).
@@ -102,7 +104,8 @@ const connectionMarkedQuery = `
 // A view has no ctid for the batch DELETE to locate rows by, so
 // purgeMetricsViews deletes its rows in one statement instead. On a
 // plain PostgreSQL datastore no metrics relation is a view, so this
-// changes nothing there.
+// changes nothing there. Only a view named for a known probe is purged
+// (purgeableViews); tables keep the batched path whatever their name.
 const metricsLeafTablesQuery = `
     SELECT c.relname,
            EXISTS (
@@ -236,7 +239,39 @@ func (d *Datastore) listMetricsRelations(ctx context.Context) ([]metricsTable, [
 		return nil, nil, fmt.Errorf("failed to read metrics tables: %w", err)
 	}
 	tables, views := splitMetricsViews(relations)
-	return tables, views, nil
+	return tables, d.purgeableViews(views), nil
+}
+
+// skippedPurgeViews records the non-probe metrics views the purge has
+// already warned about, so each is logged once per process rather than
+// on every pass for every deleted connection.
+var skippedPurgeViews sync.Map
+
+// purgeableViews keeps only the views named for a known probe
+// (metrics.IsKnownProbe, or d.isProbeView when set), the same allowlist
+// the metrics readers apply (metrics.LookupProbeRelation). The purge
+// deletes through a view as the datastore owner, so a view an operator
+// created in the metrics schema for another purpose, and whose DELETE
+// may reach rows outside the probe data, is skipped with a warning
+// rather than written through. A skipped view does not hold up the
+// removal of the connection row.
+func (d *Datastore) purgeableViews(views []string) []string {
+	isProbe := d.isProbeView
+	if isProbe == nil {
+		isProbe = metrics.IsKnownProbe
+	}
+	var kept []string
+	for _, view := range views {
+		if isProbe(view) {
+			kept = append(kept, view)
+			continue
+		}
+		if _, warned := skippedPurgeViews.LoadOrStore(view, struct{}{}); !warned {
+			log.Printf("[WARN] Connection purge: skipping non-probe view %s",
+				pgx.Identifier{"metrics", view}.Sanitize())
+		}
+	}
+	return kept
 }
 
 // purgeConnection is PurgeConnection with a hook that runs between the

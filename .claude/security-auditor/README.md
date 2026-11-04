@@ -431,6 +431,10 @@ moved.
   masked probe by week and checks all seven routes refuse the partition
   (found through `pg_inherits`), the same partition once detached, and
   a renamed view.
+  The connection purge applies the same allowlist to views: it deletes
+  only through a `metrics` view named for a known probe
+  (`purgeableViews` in `internal/database/connection_purge.go`), skips
+  any other with a once-per-view WARN, and still removes the row.
 - A user must never manage a blackout that covers a server they cannot
   see (#732). Every create, update, stop and delete of a blackout or
   blackout schedule goes through `requireBlackoutTargetWritable`

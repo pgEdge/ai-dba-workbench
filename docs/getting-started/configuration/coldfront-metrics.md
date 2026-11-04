@@ -570,6 +570,11 @@ ColdFront mode has the following limitations:
   that column fails; a plain select of the column works.
 - The operator must schedule the ColdFront compactor; the Workbench
   performs no compaction or snapshot expiry.
+- A probe run larger than 5,000 rows or 16 MiB of JSON is written as
+  several separate Iceberg commits, and ColdFront has no savepoints to
+  roll back such a run; when a later batch fails, the earlier batches
+  remain and leave a partial set of rows under one `collected_at`
+  value.
 
 To move from one storage mode to the other, create a new datastore with
 the required mode and point the Workbench components at that datastore.

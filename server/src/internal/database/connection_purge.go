@@ -319,17 +319,22 @@ func (d *Datastore) purgeConnection(ctx context.Context, id int, batchSize int,
 		return err
 	}
 
-	// A table without a foreign key, or a view, can have gained rows
-	// since it was cleared, and the DELETE above does not cascade to it.
-	// Sweep them once more now the row is gone: from here on the id is
-	// no longer marked, so no later pass would find them. A failure is
-	// returned so it is logged, but the stragglers it leaves are then
-	// orphaned, which the metrics readers tolerate by joining on
-	// connections.
-	if err := d.purgeMetricsTables(ctx, tables, id, batchSize, true); err != nil {
-		return err
-	}
-	return d.purgeMetricsViews(ctx, views, id)
+	return d.sweepAfterRemoval(ctx, tables, views, id, batchSize)
+}
+
+// sweepAfterRemoval clears rows written since the first sweep from the
+// tables without a foreign key and from the views, as the removal of
+// the connection row does not cascade to them. From here on the id is
+// no longer marked, so no later pass would find these rows: the table
+// sweep and the view sweep are therefore each attempted whatever the
+// other's outcome, and their failures are returned together so they
+// are logged. Stragglers a failure leaves are then orphaned, which the
+// metrics readers tolerate by joining on connections.
+func (d *Datastore) sweepAfterRemoval(ctx context.Context, tables []metricsTable,
+	views []string, id int, batchSize int) error {
+	tableErr := d.purgeMetricsTables(ctx, tables, id, batchSize, true)
+	viewErr := d.purgeMetricsViews(ctx, views, id)
+	return errors.Join(tableErr, viewErr)
 }
 
 // purgeMetricsViews deletes connection id's rows from each metrics view

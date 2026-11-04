@@ -889,3 +889,53 @@ func TestPurgeConnection_SweepsLateViewRows(t *testing.T) {
 		t.Errorf("purged connection still has %d rows", rows)
 	}
 }
+
+// TestPurgeConnection_FinalSweepAttemptsViewsAfterTableFailure checks
+// that once the connection row is gone, a failing table sweep does not
+// stop the view sweep: no later pass retries the connection, so rows
+// left in a view would be orphaned for good. Both sweeps fail here, and
+// both failures are returned.
+func TestPurgeConnection_FinalSweepAttemptsViewsAfterTableFailure(t *testing.T) {
+	ds, pool, cleanup := newConnPurgeTestDatastore(t)
+	defer cleanup()
+	defer createPurgeTestViews(t, pool, false)()
+	ctx := context.Background()
+
+	mustExecPurgeTest(t, pool, `CREATE VIEW metrics.purge_test_cf_gone AS
+        SELECT * FROM purge_test_cf_store`)
+	victim := seedPurgeConnection(t, pool, "victim", 2)
+	if err := ds.DeleteConnection(ctx, victim); err != nil {
+		t.Fatalf("DeleteConnection: %v", err)
+	}
+
+	// Renaming a relation makes its final sweep fail, as the purge still
+	// holds the name it listed before the row went; the late view row
+	// shows whether the view sweep ran despite the table failure.
+	breakSweeps := func(ctx context.Context) error {
+		_, err := pool.Exec(ctx, `
+            ALTER TABLE metrics.purge_test_nofk RENAME TO purge_test_nofk_moved;
+            ALTER VIEW metrics.purge_test_cf_gone RENAME TO purge_test_cf_moved;`)
+		if err != nil {
+			return err
+		}
+		_, err = pool.Exec(ctx, `INSERT INTO metrics.purge_test_cf VALUES ($1, 99)`, victim)
+		return err
+	}
+	err := ds.purgeConnection(ctx, victim, 10, breakSweeps)
+	// Drop the moved table before the deferred teardown closes the pool;
+	// the moved view goes with the stand-in store's CASCADE.
+	mustExecPurgeTest(t, pool, `DROP TABLE IF EXISTS metrics.purge_test_nofk_moved`)
+
+	if err == nil {
+		t.Fatal("purgeConnection with failing final sweeps returned nil")
+	}
+	for _, want := range []string{"purge_test_nofk", "purge_test_cf_gone"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("purgeConnection error = %v, want it to name %s", err, want)
+		}
+	}
+	wantPurgeRows(t, pool, "metrics.purge_test_cf", victim, 0)
+	if rows := connectionRowCount(t, pool, victim); rows != 0 {
+		t.Errorf("connection rows after the final sweep = %d, want 0", rows)
+	}
+}

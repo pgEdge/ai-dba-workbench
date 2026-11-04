@@ -60,8 +60,10 @@ must meet the following requirements:
   `coldfront.ensure_attached()` functions.
 - The datastore roles that the Workbench components use have been
   granted access to ColdFront.
+- The collector's datastore role can write to the ColdFront view
+  registry while the collector creates the metrics tables.
 - The collector's datastore role can create a schema in the datastore
-  database.
+  database and a table in the schema on the role's `search_path`.
 
 ColdFront reports the same extension version in every build, so the
 collector checks for two functions instead of a version number. The
@@ -139,10 +141,51 @@ function is idempotent, so a repeated call is safe. ColdFront revokes
 the function from `PUBLIC`, so a superuser or another operator role
 must run each call.
 
+The `grant_app_access` function does not give the collector everything
+that creating the metrics tables requires. The collector creates each
+metrics table by calling `coldfront.create_iceberg_table`, which runs
+with the privileges of the calling role and inserts or updates the
+table's row in the `coldfront.tiered_views` registry. The
+`grant_app_access` function grants only `SELECT` on that registry, so a
+collector role that is not a superuser also needs `INSERT` and `UPDATE`
+on the registry. In the following example, the `GRANT` statement gives
+the `ai_workbench` role those privileges:
+
+```sql
+GRANT INSERT, UPDATE ON coldfront.tiered_views TO ai_workbench;
+```
+
+The collector needs the registry privileges during every schema
+migration that creates a metrics table; the first start and any
+upgrade that adds a metrics table run such a migration. The privileges
+let the role add or change the registry row of any ColdFront view in
+the database, including a view that another application registered. On
+a shared datastore, revoke the privileges after the migration completes
+and grant them again before the next upgrade. In the following
+example, the `REVOKE` statement removes the registry privileges:
+
+```sql
+REVOKE INSERT, UPDATE ON coldfront.tiered_views FROM ai_workbench;
+```
+
+Run the first start under the collector's own role rather than under a
+superuser. The collector's role must own the `workbench_coldfront`
+schema, so after a first start under another role the collector
+refuses to start under its own role.
+
+The privilege requirements in this section come from the ColdFront
+source code. The Workbench's tests against a live ColdFront datastore
+ran the collector as a superuser, so a collector role that is not a
+superuser has not been tested end to end. When the first migration
+fails with a permission error, the error message names the object that
+the role cannot access.
+
 Start the Workbench components on a new ColdFront datastore in the
 following order:
 
-1. Run `grant_app_access` for the collector's datastore role.
+1. Run `grant_app_access` for the collector's datastore role, and grant
+   the role `INSERT` and `UPDATE` on the `coldfront.tiered_views`
+   registry.
 2. Start the collector, which creates the metrics views during its
    first schema migration.
 3. Run `grant_app_access` again for the server's role and the
@@ -163,8 +206,8 @@ that another application registered in the same database.
 
 ### Preparing the Collector's Datastore Role
 
-The collector creates the `workbench_coldfront` schema at startup, so
-the collector's datastore role needs the `CREATE` privilege on the
+The collector creates the `workbench_coldfront` and `metrics` schemas,
+so the collector's datastore role needs the `CREATE` privilege on the
 datastore database. In the following example, the `GRANT` statement
 gives the `ai_workbench` role that privilege on the `ai_workbench`
 database:
@@ -172,6 +215,26 @@ database:
 ```sql
 GRANT CREATE ON DATABASE ai_workbench TO ai_workbench;
 ```
+
+The `CREATE` privilege on the database allows the role to create
+schemas, but not to create tables in an existing schema. The
+migrations create the tables outside the `metrics` schema without a
+schema prefix, so the role also needs the `CREATE` privilege on the
+schema that the role's `search_path` resolves to. From PostgreSQL 15
+onwards, only the database owner can create objects in the `public`
+schema by default. When the collector's role does not own the datastore
+database, the `GRANT` statement in the following example gives the
+role that privilege on the `public` schema:
+
+```sql
+GRANT CREATE ON SCHEMA public TO ai_workbench;
+```
+
+Alternatively, create a schema that the collector's role owns, and set
+the `search_path` of each Workbench role to that schema; the
+[Keeping Workbench Tables out of the ColdFront Schema](#keeping-workbench-tables-out-of-the-coldfront-schema)
+section shows the `ALTER ROLE` statement that sets a role's
+`search_path`.
 
 The collector's role must own the `workbench_coldfront` schema and
 every function in it. The collector revokes all `PUBLIC` access to the

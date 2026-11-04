@@ -64,12 +64,17 @@ through a long retention history could outlast any request budget.
    without a foreign key and of every view. Every view is attempted; if
    any DELETE fails the row is NOT removed and the joined error is
    returned, so the row stays marked and the purger retries the whole
-   connection with backoff, and no view's rows are silently left. A
-   failure in the sweep after the row is gone is returned and logged,
-   but those stragglers are then orphaned, which is another reason the
-   orphan joins below must stay. Tests stand plain views in
+   connection with backoff, and no view's rows are silently left. The
+   table batches before the removal still stop at the first failure,
+   which also keeps the row. In the sweep after the row is gone
+   (`sweepAfterRemoval`) no later pass would retry the id, so the table
+   sweep and the view sweep each run whatever the other's outcome and
+   their errors are joined, returned and logged; any stragglers are
+   then orphaned, which is another reason the orphan joins below must
+   stay. Tests stand plain views in
    (`TestPurgeConnection_ClearsColdFrontViews`,
-   `..._ViewFailureKeepsConnection`, `..._SweepsLateViewRows`); the
+   `..._ViewFailureKeepsConnection`, `..._SweepsLateViewRows`,
+   `..._FinalSweepAttemptsViewsAfterTableFailure`); the
    DELETE through a real ColdFront view is not yet verified live.
 
 ## Metrics Relations May Be Views (pgEdge ColdFront)

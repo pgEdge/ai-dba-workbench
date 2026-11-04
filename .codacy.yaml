@@ -75,11 +75,6 @@ engines:
       # Test-only: statements assembled from the metrics package's own
       # SQL helpers (AggregateExpr, EpochSeconds) and test constants.
       - 'server/src/internal/metrics/portable_sql_test.go'
-      # ObserveSampleSpacing interpolates only a probe name that has
-      # passed IsValidIdentifier and is quoted with QuoteIdentifier,
-      # plus fixed fragments from IntArrayExpr and EpochSeconds; the
-      # connection IDs and time bounds are bound as $1 to $3.
-      - 'server/src/internal/metrics/probe_interval.go'
       # Test-only DDL over compile-time identifiers quoted with
       # QuoteIdentifier.
       - 'server/src/internal/metrics/probe_view_db_test.go'

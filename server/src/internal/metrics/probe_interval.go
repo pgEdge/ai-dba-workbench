@@ -121,6 +121,10 @@ func ObserveSampleSpacing(
 		return 0, fmt.Errorf("invalid probe name %q", probeName)
 	}
 
+	// The relation name cannot be a bind parameter: probeName has passed
+	// IsValidIdentifier and is quoted with QuoteIdentifier, and
+	// IntArrayExpr adds a fixed fragment; every value is bound as $1-$3.
+	//nosemgrep: go_sql_rule-concat-sqli -- identifier validated by IsValidIdentifier and quoted by QuoteIdentifier; values bound as $1-$3
 	query := `
         WITH samples AS (
             SELECT

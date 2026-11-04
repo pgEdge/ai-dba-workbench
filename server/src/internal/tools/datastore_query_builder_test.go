@@ -358,10 +358,10 @@ func TestBuildDatastoreQueryPageSizeCap(t *testing.T) {
 var scopeFragments = map[datastoreScope]string{
 	scopeConnection: "= ANY(string_to_array($",
 	scopeAlert:      `"connection_id" = ANY(string_to_array($`,
-	scopeViaAlert:   "EXISTS (SELECT 1 FROM public.alerts a WHERE a.id = t.\"alert_id\"",
-	scopeHierarchy:  "EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = t.\"cluster_id\"",
-	scopeCluster:    "EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = t.\"id\"",
-	scopeGroup:      "JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t.\"id\"",
+	scopeViaAlert:   "EXISTS (SELECT 1 FROM alerts a WHERE a.id = t.\"alert_id\"",
+	scopeHierarchy:  "EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = t.\"cluster_id\"",
+	scopeCluster:    "EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = t.\"id\"",
+	scopeGroup:      "JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t.\"id\"",
 }
 
 func TestBuildDatastoreQueryScopesEverySource(t *testing.T) {
@@ -449,18 +449,16 @@ func TestBuildDatastoreQueryUnrestrictedSkipsScoping(t *testing.T) {
 // connection-scoped source keeps to live connections for every caller,
 // one who may read every connection included (issue #669), and that a
 // source with no connection column, or the connections source, which
-// tests its own deleted_at, is not given the predicate. A metric source
-// names connections unqualified, which a pgEdge ColdFront datastore can
-// resolve where it cannot resolve public.connections (issue #755).
+// tests its own deleted_at, is not given the predicate. Every source
+// names connections unqualified, resolved through the role's search_path
+// as the collector's migrations create it, which a pgEdge ColdFront
+// datastore can also resolve where it cannot resolve a qualified name
+// (issue #755).
 func TestBuildDatastoreQueryKeepsToLiveConnections(t *testing.T) {
 	for _, vis := range []visibleSet{{All: true}, {IDs: []int{3}}} {
 		for _, src := range append(configurationSources(), testMetricSource()) {
 			sql, _ := mustBuild(t, src, map[string]any{"source": src.Name}, vis)
-			table := "public.connections"
-			if src.Kind == datastoreKindMetric {
-				table = "connections"
-			}
-			live := `EXISTS (SELECT 1 FROM ` + table + ` lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL)`
+			live := `EXISTS (SELECT 1 FROM connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL)`
 			want := src.Scope == scopeConnection && src.ConnectionColumn != "" && src.LiveColumn == ""
 			if got := strings.Contains(sql, live); got != want {
 				t.Errorf("%s (all=%v): live connection predicate present = %v, want %v: %s",
@@ -539,7 +537,7 @@ func TestBuildDatastoreQueryAlertScoping(t *testing.T) {
 			name: "acks all without system alerts",
 			src:  acks, args: map[string]any{"source": "alert_acknowledgments"},
 			vis:  visibleSet{All: true},
-			want: []string{`EXISTS (SELECT 1 FROM public.alerts a WHERE a.id = t."alert_id" AND a."connection_id" IS NOT NULL)`},
+			want: []string{`EXISTS (SELECT 1 FROM alerts a WHERE a.id = t."alert_id" AND a."connection_id" IS NOT NULL)`},
 		},
 		{
 			name: "acks restricted with system alerts",
@@ -578,8 +576,8 @@ func TestBuildDatastoreQueryHierarchyPredicate(t *testing.T) {
 	for _, w := range []string{
 		`t."connection_id" IS NULL AND t."cluster_id" IS NULL AND t."group_id" IS NULL AND t."scope" IN ($2, $3)`,
 		`t."connection_id" IS NOT NULL AND t."connection_id" = ANY(string_to_array($1, ',')::integer[])`,
-		`t."connection_id" IS NULL AND t."cluster_id" IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = t."cluster_id" AND c.id = ANY(string_to_array($1, ',')::integer[]))`,
-		`t."connection_id" IS NULL AND t."cluster_id" IS NULL AND t."group_id" IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t."group_id" AND c.id = ANY(string_to_array($1, ',')::integer[]))`,
+		`t."connection_id" IS NULL AND t."cluster_id" IS NOT NULL AND EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = t."cluster_id" AND c.id = ANY(string_to_array($1, ',')::integer[]))`,
+		`t."connection_id" IS NULL AND t."cluster_id" IS NULL AND t."group_id" IS NOT NULL AND EXISTS (SELECT 1 FROM connections c JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t."group_id" AND c.id = ANY(string_to_array($1, ',')::integer[]))`,
 	} {
 		if !strings.Contains(sql, w) {
 			t.Errorf("SQL lacks %q:\n%s", w, sql)
@@ -599,7 +597,7 @@ func TestBuildDatastoreQueryConnectionIDs(t *testing.T) {
 	if !strings.Contains(sql, `t."id" = ANY(string_to_array($1, ',')::integer[])`) || !containsIntSlice(qargs, []int{3}) {
 		t.Errorf("connections should scope on id: %s %v", sql, qargs)
 	}
-	if !strings.HasPrefix(sql, `SELECT t."id", t."name"`) || !strings.Contains(sql, "FROM public.\"connections\" t WHERE") {
+	if !strings.HasPrefix(sql, `SELECT t."id", t."name"`) || !strings.Contains(sql, "FROM \"connections\" t WHERE") {
 		t.Errorf("connections query shape: %s", sql)
 	}
 }
@@ -655,7 +653,7 @@ func TestBuildDatastoreQueryConfigTimeRange(t *testing.T) {
 	if strings.Contains(sql, `"start_time" >=`) {
 		t.Errorf("config source without range should be unbounded: %s", sql)
 	}
-	if !strings.Contains(sql, `FROM public."blackouts" t ORDER BY t."start_time" DESC, t."id" ASC LIMIT`) {
+	if !strings.Contains(sql, `FROM "blackouts" t ORDER BY t."start_time" DESC, t."id" ASC LIMIT`) {
 		t.Errorf("config source should order by its time column: %s", sql)
 	}
 	sql, qargs := mustBuild(t, src, map[string]any{"source": "blackouts", "time_start": "7d"}, everyone)
@@ -834,7 +832,7 @@ func TestBuildDatastoreQueryAggregate(t *testing.T) {
 		"order_by":    []any{map[string]any{"column": "max_triggered_at", "direction": "desc"}},
 	}, everyone)
 	if !strings.Contains(sql, `SELECT t."severity", max(t."triggered_at") AS "max_triggered_at" FROM (SELECT t."id", `) ||
-		!strings.Contains(sql, `FROM public."alerts" t WHERE t."connection_id" IS NOT NULL OFFSET 0) t GROUP BY 1`) ||
+		!strings.Contains(sql, `FROM "alerts" t WHERE t."connection_id" IS NOT NULL OFFSET 0) t GROUP BY 1`) ||
 		!strings.Contains(sql, `GROUP BY 1 ORDER BY "max_triggered_at" DESC, "severity" ASC LIMIT`) {
 		t.Errorf("max SQL = %s", sql)
 	}

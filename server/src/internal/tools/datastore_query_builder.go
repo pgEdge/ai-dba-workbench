@@ -673,22 +673,18 @@ func serverConditions(q *datastoreQuery, src datastoreSource, req datastoreReque
 // foreign key still holds for a connection already purged. It binds
 // nothing, so it leaves the parameter numbering alone.
 //
-// A metric source names connections unqualified, resolved through the
-// search_path as every other server query that reads the metrics schema
-// does: on a pgEdge ColdFront datastore DuckDB plans the whole statement
-// once it reads a metrics view, and it cannot resolve a schema-qualified
-// PostgreSQL table such as public.connections (issue #755). A
-// configuration source, which reads only ordinary tables, keeps the
-// qualified name, as fromClause does.
+// connections is named unqualified and resolved through the role's
+// search_path, as fromClause names a configuration source: the
+// collector's migrations create the ordinary tables unqualified, so they
+// live in whichever schema leads that search_path, not necessarily
+// public. On a pgEdge ColdFront datastore DuckDB also plans the whole
+// statement once it reads a metrics view, and it cannot resolve a
+// schema-qualified PostgreSQL table (issue #755).
 func liveConnectionCondition(src datastoreSource) string {
 	if src.Scope != scopeConnection || src.ConnectionColumn == "" {
 		return ""
 	}
-	connections := "public.connections"
-	if src.Kind == datastoreKindMetric {
-		connections = "connections"
-	}
-	return "EXISTS (SELECT 1 FROM " + connections + " lc WHERE lc.id = " +
+	return "EXISTS (SELECT 1 FROM connections lc WHERE lc.id = " +
 		qualified(datastoreTableAlias, src.ConnectionColumn) +
 		" AND lc.deleted_at IS NULL)"
 }
@@ -784,16 +780,19 @@ func checkColumnList(src datastoreSource, names []string, param string) error {
 	return nil
 }
 
-// fromClause names the source table, schema-qualified: metric sources
-// live in the metrics schema and configuration sources in public, where
-// the collector's migrations create them. Qualifying the name keeps a
-// table of the same name earlier on the search_path from being read.
+// fromClause names the source table. A metric source lives in the
+// metrics schema, which the collector creates by name. A configuration
+// source is named unqualified and resolved through the role's
+// search_path, as the collector and every other server query name it:
+// the collector's migrations create the ordinary tables unqualified, so
+// on a datastore whose role has its own schema first on the search_path
+// (a role named coldfront, say) they live there rather than in public.
 func fromClause(src datastoreSource) (string, error) {
 	switch src.Kind {
 	case datastoreKindMetric:
 		return "metrics." + metrics.QuoteIdentifier(src.Table) + " " + datastoreTableAlias, nil
 	case datastoreKindConfiguration:
-		return "public." + metrics.QuoteIdentifier(src.Table) + " " + datastoreTableAlias, nil
+		return metrics.QuoteIdentifier(src.Table) + " " + datastoreTableAlias, nil
 	default:
 		return "", fmt.Errorf("source %q has an unknown kind", src.Name)
 	}
@@ -949,7 +948,7 @@ func viaAlertCondition(q *datastoreQuery, req datastoreRequest, vis visibleSet, 
 	if cond == "" {
 		return ""
 	}
-	return "EXISTS (SELECT 1 FROM public.alerts a WHERE a.id = " +
+	return "EXISTS (SELECT 1 FROM alerts a WHERE a.id = " +
 		qualified(datastoreTableAlias, "alert_id") + " AND " + cond + ")"
 }
 
@@ -964,10 +963,10 @@ func restrictedScopeCondition(q *datastoreQuery, src datastoreSource, visible fu
 	case scopeHierarchy:
 		return hierarchyCondition(q, visible())
 	case scopeCluster:
-		return "EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = " +
+		return "EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = " +
 			qualified(datastoreTableAlias, "id") + " AND c.id = ANY(" + visible() + "))"
 	case scopeGroup:
-		return "EXISTS (SELECT 1 FROM public.connections c JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
+		return "EXISTS (SELECT 1 FROM connections c JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
 			qualified(datastoreTableAlias, "id") + " AND c.id = ANY(" + visible() + "))"
 	default:
 		return ""
@@ -1014,9 +1013,9 @@ func hierarchyCondition(q *datastoreQuery, visible string) string {
 	return "((" + conn + " IS NULL AND " + cluster + " IS NULL AND " + group + " IS NULL AND " +
 		scope + " IN (" + estate + ", " + global + "))" +
 		" OR (" + conn + " IS NOT NULL AND " + conn + " = ANY(" + visible + "))" +
-		" OR (" + conn + " IS NULL AND " + cluster + " IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = " +
+		" OR (" + conn + " IS NULL AND " + cluster + " IS NOT NULL AND EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = " +
 		cluster + " AND c.id = ANY(" + visible + ")))" +
-		" OR (" + conn + " IS NULL AND " + cluster + " IS NULL AND " + group + " IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
+		" OR (" + conn + " IS NULL AND " + cluster + " IS NULL AND " + group + " IS NOT NULL AND EXISTS (SELECT 1 FROM connections c JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
 		group + " AND c.id = ANY(" + visible + "))))"
 }
 

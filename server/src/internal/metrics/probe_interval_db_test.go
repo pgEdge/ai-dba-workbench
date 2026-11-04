@@ -43,7 +43,7 @@ func ensureConnectionForTest(t testing.TB, pool *pgxpool.Pool, connID int) {
 
 	var exists *string
 	if err := pool.QueryRow(ctx,
-		"SELECT to_regclass('public.connections')::text").Scan(&exists); err != nil {
+		"SELECT to_regclass('connections')::text").Scan(&exists); err != nil {
 		t.Fatalf("failed to look for the connections table: %v", err)
 	}
 	if exists == nil {

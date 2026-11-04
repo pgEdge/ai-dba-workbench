@@ -36,14 +36,6 @@ import (
 var metricsReadRef = regexp.MustCompile(
 	`(?i)\b(from|join)\s+(metrics\.|"metrics"\.)|metrics\.%(\[[0-9]+\])?s|(^|\s)metrics\.$`)
 
-// reviewedQualifiedTableUnits are the units that hold a metrics read and
-// a schema-qualified ordinary table in different statements, never in
-// one, each reviewed.
-var reviewedQualifiedTableUnits = map[string]string{
-	"internal/tools/datastore_query_builder.go:fromClause": "returns metrics.<probe> for a metric " +
-		"source and public.<table> for a configuration source, never both in one statement",
-}
-
 // metricsSQLUnit is the SQL in one function, or one package-level
 // constant or variable, of the server source.
 type metricsSQLUnit struct {
@@ -197,9 +189,6 @@ func TestMetricsSQLAvoidsColdFrontShapes(t *testing.T) {
 		}
 		for i, lit := range u.literals {
 			for _, p := range coldfrontcheck.ShapeProblems(lit) {
-				if _, ok := reviewedQualifiedTableUnits[u.unit]; ok && strings.Contains(p, "schema-qualified") {
-					continue
-				}
 				problems = append(problems, u.lines[i]+" ("+u.unit+"): "+p)
 			}
 		}

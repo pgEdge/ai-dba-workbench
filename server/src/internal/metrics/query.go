@@ -353,64 +353,85 @@ func ResolveCustomWindowAt(start, end, now time.Time, startParam, endParam strin
 	return TimeWindow{Start: start, End: end}, nil
 }
 
+// dimensionColumns are probe columns that identify or describe an
+// entity rather than measure it, whatever their type.
+//
+// The last group are identifier columns that are oid or xid on plain
+// PostgreSQL, which IsMetricColumn already treats as dimensions by type,
+// but bigint on a pgEdge ColdFront datastore, which widens oid and xid
+// to bigint (mappedTypes in collector/src/coldfront/types.go on the
+// collector's ColdFront branch). Without them every one would count as
+// a metric there. The other remapped oid columns (datid, usesysid,
+// relid, indexrelid, funcid) are listed above already.
+var dimensionColumns = map[string]bool{
+	"connection_id":    true,
+	"collected_at":     true,
+	"inserted_at":      true,
+	"datid":            true,
+	"datname":          true,
+	"database_name":    true,
+	"pid":              true,
+	"usesysid":         true,
+	"usename":          true,
+	"application_name": true,
+	"client_addr":      true,
+	"client_hostname":  true,
+	"client_port":      true,
+	"backend_start":    true,
+	"xact_start":       true,
+	"query_start":      true,
+	"state_change":     true,
+	"wait_event_type":  true,
+	"wait_event":       true,
+	"state":            true,
+	"backend_xid":      true,
+	"backend_xmin":     true,
+	"query":            true,
+	"backend_type":     true,
+	"relid":            true,
+	"relname":          true,
+	"schemaname":       true,
+	"indexrelid":       true,
+	"indexrelname":     true,
+	"funcid":           true,
+	"funcname":         true,
+	"queryid":          true,
+	"slot_name":        true,
+	"plugin":           true,
+	"slot_type":        true,
+	"sender_host":      true,
+	"sender_port":      true,
+	"conninfo":         true,
+	"status":           true,
+	"name":             true,
+	"setting":          true,
+	"unit":             true,
+	"category":         true,
+	"short_desc":       true,
+	"extra_desc":       true,
+	"context":          true,
+	"vartype":          true,
+	"source":           true,
+	"boot_val":         true,
+	"reset_val":        true,
+	"sourcefile":       true,
+	"sourceline":       true,
+
+	// oid or xid on plain PostgreSQL, bigint on ColdFront.
+	"datdba":        true, // pg_database
+	"dattablespace": true, // pg_database
+	"datfrozenxid":  true, // pg_database
+	"datminmxid":    true, // pg_database
+	"userid":        true, // pg_stat_statements
+	"dbid":          true, // pg_stat_statements
+	"subid":         true, // pg_stat_subscription
+	"remote_origin": true, // spock_exception_log
+	"local_origin":  true, // spock_exception_log
+}
+
 // IsMetricColumn determines whether a column represents a numeric metric
 // as opposed to a dimension identifier.
 func IsMetricColumn(name, dataType string) bool {
-	dimensionColumns := map[string]bool{
-		"connection_id":    true,
-		"collected_at":     true,
-		"inserted_at":      true,
-		"datid":            true,
-		"datname":          true,
-		"database_name":    true,
-		"pid":              true,
-		"usesysid":         true,
-		"usename":          true,
-		"application_name": true,
-		"client_addr":      true,
-		"client_hostname":  true,
-		"client_port":      true,
-		"backend_start":    true,
-		"xact_start":       true,
-		"query_start":      true,
-		"state_change":     true,
-		"wait_event_type":  true,
-		"wait_event":       true,
-		"state":            true,
-		"backend_xid":      true,
-		"backend_xmin":     true,
-		"query":            true,
-		"backend_type":     true,
-		"relid":            true,
-		"relname":          true,
-		"schemaname":       true,
-		"indexrelid":       true,
-		"indexrelname":     true,
-		"funcid":           true,
-		"funcname":         true,
-		"queryid":          true,
-		"slot_name":        true,
-		"plugin":           true,
-		"slot_type":        true,
-		"sender_host":      true,
-		"sender_port":      true,
-		"conninfo":         true,
-		"status":           true,
-		"name":             true,
-		"setting":          true,
-		"unit":             true,
-		"category":         true,
-		"short_desc":       true,
-		"extra_desc":       true,
-		"context":          true,
-		"vartype":          true,
-		"source":           true,
-		"boot_val":         true,
-		"reset_val":        true,
-		"sourcefile":       true,
-		"sourceline":       true,
-	}
-
 	if dimensionColumns[name] {
 		return false
 	}
@@ -446,6 +467,18 @@ var textStatusColumns = map[string]bool{
 	"wal_status": true,
 }
 
+// coldFrontTextColumns are probe columns that are text on a pgEdge
+// ColdFront datastore but not on plain PostgreSQL, where IsEntityKeyColumn
+// does not treat them as entity keys: client_addr in pg_stat_activity and
+// pg_stat_replication is inet, and pg_database's datlocprovider is
+// "char" (mappedTypes in the collector's coldfront package). An address
+// or a locale provider is an attribute of a session or database, not its
+// identity, so they are kept out on ColdFront too.
+var coldFrontTextColumns = map[string]bool{
+	"client_addr":    true,
+	"datlocprovider": true,
+}
+
 // IsEntityKeyColumn reports whether a probe output column is an
 // entity-key (identity/dimension) column that identifies a distinct
 // monitored entity, as opposed to a metric value or an internal
@@ -464,12 +497,15 @@ var textStatusColumns = map[string]bool{
 // therefore excluded here even though they are text. No genuine
 // identity column in the schema ends in "_pretty", so the exclusion
 // is a pure bug fix that changes nothing for existing probes. The
-// columns named in textStatusColumns are excluded for the same reason.
+// columns named in textStatusColumns are excluded for the same reason,
+// and those in coldFrontTextColumns so that a ColdFront datastore keys
+// entities as plain PostgreSQL does.
 func IsEntityKeyColumn(name, dataType string) bool {
 	if latestRowInternalColumns[name] {
 		return false
 	}
-	if strings.HasSuffix(name, "_pretty") || textStatusColumns[name] {
+	if strings.HasSuffix(name, "_pretty") || textStatusColumns[name] ||
+		coldFrontTextColumns[name] {
 		return false
 	}
 	switch dataType {

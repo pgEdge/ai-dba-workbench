@@ -229,7 +229,20 @@ failure on a pooled connection; this is unresolved (issue #755).
   query used it; that SQL is the alerter branch's to change.
 - **Types read back differently.** `inet` is text, so write
   `host(client_addr::inet)`; text is `character varying`, oid is
-  bigint, jsonb is json.
+  bigint, jsonb is json. The collector's ColdFront spec
+  (`mappedTypes` in `collector/src/coldfront/types.go`) widens oid and
+  xid to bigint, inet, `"char"` and name to text, and numeric to
+  numeric(38,0). Column classification must not change with it:
+  `dimensionColumns` in `internal/metrics/query.go` names every
+  identifier that becomes bigint (`datdba`, `dattablespace`,
+  `datfrozenxid`, `datminmxid`, `userid`, `dbid`, `subid`,
+  `remote_origin`, `local_origin`, beside the older `datid`,
+  `usesysid`, `relid`, `indexrelid`, `funcid`), and
+  `coldFrontTextColumns` keeps `client_addr` and `datlocprovider` out
+  of the entity keys. `TestColumnClassificationSurvivesColdFrontTypes`
+  (`coldfront_types_test.go`) lists all 25 remapped columns and fails
+  when `IsMetricColumn` or `IsEntityKeyColumn` answers differently for
+  the two types; add a row when the collector remaps a new column.
 - **No functions.** DuckDB execution is refused inside a PL/pgSQL or SQL
   function; the server defines none that read metrics.
 - **No schema-qualified ordinary tables.** DuckDB resolves an

@@ -740,11 +740,14 @@ configured wait period.
 
 The collector checks the metrics storage mode before running any
 migration and refuses to start when the datastore does not match the
-`use_coldfront_for_metrics` setting. The following table describes
-each startup error and the corrective step:
+`use_coldfront_for_metrics` setting. The collector logs each startup
+error after the prefix `Failed to initialize datastore: failed to
+initialize schema: `, so the message text appears within a longer log
+line. The following table describes each startup error and the
+corrective step:
 
-| Error Message Begins With | Cause | Fix |
-|---------------------------|-------|-----|
+| Error Message Contains | Cause | Fix |
+|------------------------|-------|-----|
 | `use_coldfront_for_metrics is enabled but the coldfront extension is not installed in the datastore` | The option is enabled, but the datastore has no `coldfront.create_iceberg_table` function, so the `coldfront` extension is not installed. | Install a ColdFront build that includes the `coldfront._partition_clause` function and run `CREATE EXTENSION coldfront`, or disable the option. |
 | `use_coldfront_for_metrics is enabled but the installed coldfront extension is too old` | The installed ColdFront build lacks `coldfront._partition_clause(jsonb,text[])` or `coldfront.ensure_attached()`; the message names the missing function. | Install a ColdFront build that provides both the `coldfront._partition_clause(jsonb,text[])` and `coldfront.ensure_attached()` functions; the build must include pgEdge ColdFront pull request #92. |
 | `use_coldfront_for_metrics is enabled but the datastore already stores metrics in PostgreSQL tables` | The datastore was created in standard mode. | Use a new datastore for ColdFront storage, or disable the option. |

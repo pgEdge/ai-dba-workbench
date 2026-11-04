@@ -64,34 +64,38 @@ const maxColdFrontDroppedRows = 10
 var coldFrontInsertStatement = sqlmarker.Tag(
 	"SELECT " + coldfront.InsertRowsFunction + "($1, $2::jsonb)")
 
-// coldFrontRow is one encoded row and the connection it belongs to,
-// which is all that is logged if ColdFront refuses the row.
+// coldFrontRow is one encoded row, its position in the values given to
+// StoreMetrics, and the connection it belongs to, which is all that is
+// logged if ColdFront refuses the row.
 type coldFrontRow struct {
 	json       json.RawMessage
+	index      int
 	connection any
 }
 
 // coldFrontWriter writes a batch of encoded rows as one statement.
 type coldFrontWriter func(ctx context.Context, rows []coldFrontRow) error
 
-// storeColdFrontMetrics is StoreMetrics under ColdFront.
+// storeColdFrontMetrics is storeMetrics under ColdFront. It returns the
+// positions in values of the rows ColdFront refused and that were
+// dropped.
 //
 // Each statement runs on its own rather than in one transaction: every
 // statement is already its own Iceberg commit, and a failed statement
 // would otherwise abort the transaction, which ColdFront gives no
 // SAVEPOINT to recover from.
-func storeColdFrontMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, columns []string, values [][]any) error {
+func storeColdFrontMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, columns []string, values [][]any) ([]int, error) {
 	// convertForColdFront refuses a table without a specification, so
 	// the lookup after it always succeeds.
 	values, err := convertForColdFront(tableName, columns, values)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	spec, _ := coldfront.Lookup(tableName)
 
 	rows, err := encodeColdFrontRows(spec, columns, values)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	write := func(ctx context.Context, batch []coldFrontRow) error {
@@ -102,23 +106,23 @@ func storeColdFrontMetrics(ctx context.Context, conn *pgxpool.Conn, tableName st
 }
 
 // writeColdFrontBatches writes rows in batches bounded by
-// coldFrontBatchRows and coldFrontBatchBytes. A batch that fails with an
-// error a single row can cause is retried in halves, so one row that
-// ColdFront refuses is dropped and logged rather than losing the run;
-// any other error, or more than maxColdFrontDroppedRows dropped rows, is
-// returned.
-func writeColdFrontBatches(ctx context.Context, tableName string, rows []coldFrontRow, write coldFrontWriter) error {
-	dropped := 0
+// coldFrontBatchRows and coldFrontBatchBytes, and returns the index of
+// each row it dropped. A batch that fails with an error a single row can
+// cause is retried in halves, so one row that ColdFront refuses is
+// dropped and logged rather than losing the run; any other error, or
+// more than maxColdFrontDroppedRows dropped rows, is returned.
+func writeColdFrontBatches(ctx context.Context, tableName string, rows []coldFrontRow, write coldFrontWriter) ([]int, error) {
+	var dropped []int
 	for _, batch := range splitColdFrontBatches(rows, coldFrontBatchRows, coldFrontBatchBytes) {
 		if err := writeOrHalve(ctx, tableName, batch, write, &dropped); err != nil {
 			var refused *ColdFrontRowsRefusedError
 			if errors.As(err, &refused) {
 				refused.Rows = len(rows)
 			}
-			return fmt.Errorf("failed to execute INSERT: %w", err)
+			return dropped, fmt.Errorf("failed to execute INSERT: %w", err)
 		}
 	}
-	return nil
+	return dropped, nil
 }
 
 // ColdFrontRowsRefusedError is returned by StoreMetrics under ColdFront
@@ -153,8 +157,9 @@ func (e *ColdFrontRowsRefusedError) SQLState() string {
 }
 
 // writeOrHalve writes batch, splitting it in two and retrying each half
-// when the failure could be caused by a single row.
-func writeOrHalve(ctx context.Context, tableName string, batch []coldFrontRow, write coldFrontWriter, dropped *int) error {
+// when the failure could be caused by a single row. The index of each
+// row dropped is appended to dropped.
+func writeOrHalve(ctx context.Context, tableName string, batch []coldFrontRow, write coldFrontWriter, dropped *[]int) error {
 	err := write(ctx, batch)
 	if err == nil {
 		return nil
@@ -164,12 +169,12 @@ func writeOrHalve(ctx context.Context, tableName string, batch []coldFrontRow, w
 		return err
 	}
 	if len(batch) == 1 {
-		if *dropped >= maxColdFrontDroppedRows {
+		if len(*dropped) >= maxColdFrontDroppedRows {
 			// The database's message is left out, as in the log line
 			// below: it can quote the rejected value.
-			return &ColdFrontRowsRefusedError{Table: tableName, Code: code, Dropped: *dropped}
+			return &ColdFrontRowsRefusedError{Table: tableName, Code: code, Dropped: len(*dropped)}
 		}
-		*dropped++
+		*dropped = append(*dropped, batch[0].index)
 		// Only the table, the connection and the SQLSTATE are logged:
 		// the error text can quote the rejected value.
 		logger.Errorf("Dropped a row of metrics.%s for connection %v that ColdFront refused (SQLSTATE %s)",
@@ -271,6 +276,7 @@ func encodeColdFrontRows(spec coldfront.Table, columns []string, values [][]any)
 			return nil, err
 		}
 		rows[i].json = b
+		rows[i].index = i
 		if connCol >= 0 && connCol < len(row) {
 			rows[i].connection = row[connCol]
 		}

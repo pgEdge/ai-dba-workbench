@@ -28,7 +28,7 @@ import (
 func testRows(n, size int) []coldFrontRow {
 	rows := make([]coldFrontRow, n)
 	for i := range rows {
-		rows[i] = coldFrontRow{json: []byte(strings.Repeat("x", size)), connection: i}
+		rows[i] = coldFrontRow{json: []byte(strings.Repeat("x", size)), index: i, connection: i}
 	}
 	return rows
 }
@@ -138,8 +138,13 @@ func (w *failingWriter) write(_ context.Context, rows []coldFrontRow) error {
 
 func TestWriteColdFrontBatchesDropsABadRow(t *testing.T) {
 	w := &failingWriter{bad: map[int]bool{5: true}, err: &pgconn.PgError{Code: "22P02"}}
-	if err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(8, 3), w.write); err != nil {
+	dropped, err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(8, 3), w.write)
+	if err != nil {
 		t.Fatalf("writeColdFrontBatches = %v", err)
+	}
+	// The dropped row is reported by its position, for change tracking.
+	if !reflect.DeepEqual(dropped, []int{5}) {
+		t.Errorf("dropped rows %v, want [5]", dropped)
 	}
 	var stored []int
 	for _, b := range w.batches {
@@ -156,7 +161,7 @@ func TestWriteColdFrontBatchesReturnsSystemicErrors(t *testing.T) {
 	// An error no single row causes is returned at once, without
 	// splitting the batch.
 	w := &failingWriter{bad: map[int]bool{0: true, 1: true, 2: true}, err: &pgconn.PgError{Code: "42883"}}
-	err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(3, 3), w.write)
+	_, err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(3, 3), w.write)
 	if err == nil || !strings.Contains(err.Error(), "failed to execute INSERT") || len(w.batches) != 1 {
 		t.Errorf("writeColdFrontBatches = %v after %d statements", err, len(w.batches))
 	}
@@ -168,7 +173,7 @@ func TestWriteColdFrontBatchesReturnsSystemicErrors(t *testing.T) {
 		bad[i] = true
 	}
 	w = &failingWriter{bad: bad, err: &pgconn.PgError{Code: "XX000", Message: "Conversion Error: bad value"}}
-	err = writeColdFrontBatches(context.Background(), "pg_settings", testRows(64, 3), w.write)
+	_, err = writeColdFrontBatches(context.Background(), "pg_settings", testRows(64, 3), w.write)
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("more than %d rows", maxColdFrontDroppedRows)) {
 		t.Errorf("writeColdFrontBatches = %v", err)
 	}
@@ -186,7 +191,7 @@ func TestWriteColdFrontBatchesReturnsSystemicErrors(t *testing.T) {
 		}
 		return w.write(ctx, rows)
 	}
-	if err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(4, 3), write); err == nil {
+	if _, err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(4, 3), write); err == nil {
 		t.Error("a failure while retrying a half was not returned")
 	}
 }
@@ -207,7 +212,7 @@ func TestWriteColdFrontBatchesDropLimitIsExact(t *testing.T) {
 			badRows[i] = true
 		}
 		bw := &failingWriter{bad: badRows, err: &pgconn.PgError{Code: "22P02"}}
-		bErr := writeColdFrontBatches(context.Background(), "pg_settings", testRows(32, 3), bw.write)
+		_, bErr := writeColdFrontBatches(context.Background(), "pg_settings", testRows(32, 3), bw.write)
 		if (bErr != nil) != tt.wantErr {
 			t.Errorf("%d bad rows: writeColdFrontBatches = %v, want error %v", tt.bad, bErr, tt.wantErr)
 		}
@@ -239,7 +244,7 @@ func TestWriteColdFrontBatchesDropLimitErrorHidesValues(t *testing.T) {
 		Code:     "22P02",
 		Message:  `invalid input syntax for type integer: "` + secret + `"`,
 	}}
-	err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(32, 3), w.write)
+	_, err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(32, 3), w.write)
 	if err == nil {
 		t.Fatal("writeColdFrontBatches returned no error at the drop limit")
 	}
@@ -285,7 +290,7 @@ func TestWriteColdFrontBatchesSubtransactionErrorIsSystemic(t *testing.T) {
 		Code:    "XX000",
 		Message: "(PGDuckDB/pgduckdb_raw_query_cpp) Not implemented Error: SAVEPOINT and subtransactions are not supported in DuckDB",
 	}}
-	err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(8, 3), w.write)
+	_, err := writeColdFrontBatches(context.Background(), "pg_settings", testRows(8, 3), w.write)
 	if err == nil || !strings.Contains(err.Error(), "subtransactions are not supported") {
 		t.Errorf("writeColdFrontBatches = %v", err)
 	}

@@ -116,7 +116,7 @@ func (p *PgExtensionProbe) Store(ctx context.Context, datastoreConn *pgxpool.Con
 	}
 
 	// Store metrics
-	if err := StoreMetrics(ctx, datastoreConn, p.GetTableName(), columns, values); err != nil {
+	if err := storeSnapshot(ctx, datastoreConn, "pg_extension", connectionID, p.GetTableName(), columns, values, metrics, normalizeDatabaseName); err != nil {
 		return fmt.Errorf("failed to store metrics: %w", err)
 	}
 

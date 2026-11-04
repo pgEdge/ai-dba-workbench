@@ -185,7 +185,7 @@ func (p *PgHbaFileRulesProbe) Store(ctx context.Context, datastoreConn *pgxpool.
 	}
 
 	// Store metrics
-	if err := StoreMetrics(ctx, datastoreConn, p.GetTableName(), columns, values); err != nil {
+	if err := storeSnapshot(ctx, datastoreConn, "pg_hba_file_rules", connectionID, p.GetTableName(), columns, values, metrics, nil); err != nil {
 		return fmt.Errorf("failed to store metrics: %w", err)
 	}
 

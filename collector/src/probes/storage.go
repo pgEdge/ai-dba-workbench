@@ -70,8 +70,16 @@ func buildMetricsInsert(fullTableName string, columns []string, batch [][]any) (
 
 // StoreMetrics stores metrics using batched INSERT statements.
 func StoreMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, columns []string, values [][]any) error {
+	_, err := storeMetrics(ctx, conn, tableName, columns, values)
+	return err
+}
+
+// storeMetrics is StoreMetrics, and also returns the positions in values
+// of the rows that were dropped because ColdFront refused them. In the
+// default mode no row is ever dropped: the batch fails as a whole.
+func storeMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, columns []string, values [][]any) ([]int, error) {
 	if len(values) == 0 {
-		return nil // Nothing to store
+		return nil, nil // Nothing to store
 	}
 
 	// ColdFront caps a cold-tier INSERT at 99 bound parameters, so its
@@ -79,6 +87,12 @@ func StoreMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, col
 	if ColdFrontMetricsEnabled() {
 		return storeColdFrontMetrics(ctx, conn, tableName, columns, values)
 	}
+	return nil, storeDefaultMetrics(ctx, conn, tableName, columns, values)
+}
+
+// storeDefaultMetrics is storeMetrics in the default mode: every batch
+// in one transaction.
+func storeDefaultMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, columns []string, values [][]any) error {
 
 	fullTableName := pgx.Identifier{"metrics", tableName}.Sanitize()
 

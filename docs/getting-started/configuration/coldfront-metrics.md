@@ -534,9 +534,9 @@ DuckDB role membership and the `coldfront` schema access that the
 grant provides. Run each statement on its own, outside any transaction
 block that also writes an ordinary PostgreSQL table, because pg_duckdb
 refuses a transaction that writes both kinds of table. A deleted row's
-values remain in object storage until the compactor removes them, as
-the [Purging Deleted Connections](#purging-deleted-connections)
-section describes.
+values can remain in object storage after the delete, as the
+[Purging Deleted Connections](#purging-deleted-connections) section
+describes.
 
 ### Purging Deleted Connections
 
@@ -562,12 +562,24 @@ therefore never cascades to the connection's metrics rows, and the
 purge's own deletes are the only step that removes them.
 
 Iceberg records a delete in delete files and does not rewrite the
-existing data files, so the deleted values remain in object storage
-for a time. The values leave object storage only after the compactor
-rewrites the affected data files and snapshot expiry deletes the files
-that only expired snapshots reference. The
+existing data files, so the deleted values remain in object storage.
+The values leave object storage only after the compactor rewrites the
+affected data files and snapshot expiry deletes the files that only
+expired snapshots reference. The
 [Scheduling the ColdFront Compactor](#scheduling-the-coldfront-compactor)
-section describes both steps, and the
+section describes both steps.
+
+Scheduled compaction does not guarantee that the compactor ever
+rewrites a given data file. The compactor rewrites a data file only
+when the file is smaller than 75% of the target size or carries five
+or more delete files, and leaves a partition alone when the partition
+holds fewer than five such files. A day partition that an earlier run
+has already compacted can therefore keep a deleted row in a current
+data file indefinitely, and snapshot expiry never removes a file that
+the current snapshot references. ColdFront documents no option that
+forces the compactor to rewrite a particular partition. Do not rely
+on a delete, compaction, and snapshot expiry to erase metrics values
+from object storage. The
 [ColdFront compaction guide](https://github.com/pgEdge/ColdFront/blob/main/docs/compaction.md)
 lists the conditions under which the compactor rewrites a data file.
 

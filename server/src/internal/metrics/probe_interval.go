@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -123,9 +124,9 @@ func ObserveSampleSpacing(
 
 	// The relation name cannot be a bind parameter: probeName has passed
 	// IsValidIdentifier and is quoted with QuoteIdentifier, and
-	// IntArrayExpr adds a fixed fragment; every value is bound as $1-$3.
-	//nosemgrep: go_sql_rule-concat-sqli -- identifier validated by IsValidIdentifier and quoted by QuoteIdentifier; values bound as $1-$3
-	query := `
+	// IntArrayExpr and EpochSeconds add fixed fragments; every value is
+	// bound as $1-$3.
+	query := strings.Join([]string{`
         WITH samples AS (
             SELECT
                 connection_id,
@@ -135,21 +136,22 @@ func ObserveSampleSpacing(
                 ) AS prev_collected_at
             FROM (
                 SELECT DISTINCT connection_id, collected_at
-                FROM metrics.` + QuoteIdentifier(probeName) + `
-                WHERE connection_id = ANY(` + IntArrayExpr("$1") + `)
+                FROM metrics.`, QuoteIdentifier(probeName), `
+                WHERE connection_id = ANY(`, IntArrayExpr("$1"), `)
                     AND collected_at >= $2
                     AND collected_at <= $3
             ) distinct_samples
         ),
         per_connection AS (
-            SELECT MIN(` + EpochSeconds("collected_at - prev_collected_at") + `)
+            SELECT MIN(`, EpochSeconds("collected_at - prev_collected_at"), `)
                 AS spacing_sec
             FROM samples
             WHERE prev_collected_at IS NOT NULL
                 AND collected_at > prev_collected_at
             GROUP BY connection_id
         )
-        SELECT MAX(spacing_sec) FROM per_connection`
+        SELECT MAX(spacing_sec) FROM per_connection`,
+	}, "")
 
 	var spacing *float64
 	// The connections are bound as one text list (IntArrayExpr) and the

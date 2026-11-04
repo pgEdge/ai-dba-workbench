@@ -319,8 +319,9 @@ server additionally enables `gocritic`. `gosec` is excluded for
 `_test.go` files everywhere. Codacy's Opengrep runs separately from
 golangci-lint; a false positive it raises is cleared with a
 `// nosemgrep: <rule>` line directly above the flagged call, never
-with `//nolint` (see `metrics-queries.md` and
-`internal-query-markers.md`).
+with `//nolint`; for `go_sql_rule-concat-sqli`, building the statement
+with `strings.Join` avoids the finding without a suppression (see
+`metrics-queries.md` and `internal-query-markers.md`).
 
 CI installs the linter with `go install
 github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`, so the

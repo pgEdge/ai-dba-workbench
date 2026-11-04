@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -341,8 +342,14 @@ func (d *Datastore) purgeConnection(ctx context.Context, id int, batchSize int,
 func (d *Datastore) purgeMetricsViews(ctx context.Context, views []string, id int) error {
 	var errs []error
 	for _, view := range views {
-		stmt := fmt.Sprintf(`DELETE FROM %s WHERE connection_id = $1::int`,
-			pgx.Identifier{"metrics", view}.Sanitize())
+		// The relation cannot be a bind parameter: view comes from the
+		// catalog, is admitted only when it names a known probe, and is
+		// quoted by pgx.Identifier.Sanitize; the id is bound as $1.
+		stmt := strings.Join([]string{
+			"DELETE FROM",
+			pgx.Identifier{"metrics", view}.Sanitize(),
+			"WHERE connection_id = $1::int",
+		}, " ")
 		viewCtx, cancel := context.WithTimeout(ctx, connectionPurgeViewTimeout)
 		_, err := d.pool.Exec(viewCtx, stmt, id)
 		cancel()

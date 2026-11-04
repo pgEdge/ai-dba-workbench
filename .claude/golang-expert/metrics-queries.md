@@ -275,6 +275,12 @@ failure on a pooled connection; this is unresolved (issue #755).
   form between datastores; they stay stable within one, which is all
   the client relies on.
 
+The checker is `internal/testutil/coldfrontcheck` (`ShapeProblems` for
+one statement or literal, `UnitProblems` for a unit's literals together,
+`BareHost`), a test-only package like `scratchdb` that the server binary
+must never import. `UnitProblems` requires every bare placeholder
+literal (`$%d`, `$%d::int`, ...) in a unit that formats an `IN (%s)` to
+be `$%d::text`, so one typed list cannot excuse an untyped one beside it.
 `TestMetricsSQLAvoidsColdFrontShapes` (`coldfront_sql_guard_test.go`)
 scans every server unit that reads `metrics.*` for an array parameter,
 an untyped or integer IN list, parameter arithmetic other than an
@@ -292,8 +298,18 @@ checker requires a cast on every parameter and rejects `host(` and
 parameters and `host(client_addr::inet)`, both of which ran live.
 It cannot see column types, so an integer `sum` or `/` is left to
 review, and it does not see SQL assembled in a function that names no
-metrics relation itself (the timeline's connection filter, the
-datastore builder's visible set): keep those on the helpers by hand.
+metrics relation itself (the timeline's connection filter): keep those
+on the helpers by hand. query_datastore's statements are assembled at
+run time, so `TestDatastoreQueryAvoidsColdFrontShapes`
+(`internal/tools/datastore_coldfront_shapes_test.go`) builds one for
+every shape, every aggregation over every column it accepts (with and
+without buckets and a group), and every in/not in filter on a column of
+each type, for an unrestricted and a restricted caller, and runs each
+through `ShapeProblems`; knowing the column types, it also fails an
+integer or smallint `sum` not cast to bigint, and it accepts the uncast
+`avg` over an interval that `AggregateExpr` writes on purpose. Building
+an aggregate as `req.Aggregation+"("` instead of through
+`AggregateExpr` fails it.
 The anomaly comparison is one such function, so
 `TestComparisonSeriesQueryAvoidsColdFrontShapes` runs the same check
 over `comparisonSeriesQuery(def)` for every metric in

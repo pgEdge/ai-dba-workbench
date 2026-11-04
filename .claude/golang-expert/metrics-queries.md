@@ -195,9 +195,15 @@ failure on a pooled connection; this is unresolved (issue #755).
   integer parameter, typed or not, and an IN list of untyped text
   parameters. Bind integers as one text parameter with `IntListArg` and
   compare with `col = ANY(IntArrayExpr("$n"))`; text lists as
-  `IN ($n::text, ...)`; query_datastore's in/not in filters are chains
-  of `=`/`<>` comparisons. A single parameter compared with a column
-  works untyped.
+  `IN ($n::text, ...)`. query_datastore's in/not in filters
+  (`listFilterCondition`) follow the same rules by column type: text as
+  `[NOT] IN ($n::text, ...)`, integer and smallint as
+  `[NOT (]col = ANY(IntArrayExpr($n))[)]` with values outside the
+  int32 range refused in Go, and every other type (bigint, float,
+  boolean, timestamp) as a chain of `=`/`<>` comparisons. bigint stays
+  on the chain only because `string_to_array(...)::bigint[]` has not
+  been run on ColdFront; move it to an array once it has. A single
+  parameter compared with a column works untyped.
 - **No arithmetic on parameters, with one exception.** An interval
   literal multiplied by an integer-typed parameter works, in either
   order: `INTERVAL '1 day' * $1::int`, `$1::bigint * INTERVAL '1 day'`.

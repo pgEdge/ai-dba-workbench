@@ -696,23 +696,34 @@ func TestBuildDatastoreQueryFilters(t *testing.T) {
 		map[string]any{"column": "datname", "op": "=", "value": true},
 		map[string]any{"column": "cache_ratio", "op": "<", "value": 2},
 		map[string]any{"column": "stats_reset", "op": "<", "value": "2026-10-01T00:00:00Z"},
+		map[string]any{"column": "xact_commit", "op": "in", "values": []any{float64(7), "8"}},
+		map[string]any{"column": "cache_ratio", "op": "not in", "values": []any{0.25, "0.75"}},
+		map[string]any{"column": "datname", "op": "not in", "values": []any{"template1"}},
+		map[string]any{"column": "connection_id", "op": "in", "values": []any{float64(6)}},
 	}
 	sql, qargs := mustBuild(t, src, map[string]any{"source": "pg_stat_database", "filters": filters}, everyone)
 	for _, w := range []string{
 		`t."datname" = $3`, `t."datname" <> $4`, `t."xact_commit" < $5`,
 		`t."xact_commit" <= $6`, `t."xact_commit" > $7`, `t."cache_ratio" >= $8`,
-		// in and not in are chains of comparisons, which a ColdFront
-		// datastore can type where it cannot type an IN list (issue #755).
-		`(t."datname" = $9 OR t."datname" = $10)`,
-		`(t."connection_id" <> $11 AND t."connection_id" <> $12)`,
-		`t."datname" LIKE $13`, `t."stats_reset" IS NULL`, `t."blks_hit" IS NOT NULL`,
-		`t."datname" = $14`, `t."datname" = $15`, `t."cache_ratio" < $16`, `t."stats_reset" < $17`,
+		// in and not in take the shape a ColdFront datastore can type
+		// for the column (issue #755): typed text parameters, one text
+		// parameter for an integer list, and otherwise a chain of
+		// comparisons.
+		`t."datname" IN ($9::text, $10::text)`,
+		`NOT (t."connection_id" = ANY(string_to_array($11, ',')::integer[]))`,
+		`t."datname" LIKE $12`, `t."stats_reset" IS NULL`, `t."blks_hit" IS NOT NULL`,
+		`t."datname" = $13`, `t."datname" = $14`, `t."cache_ratio" < $15`, `t."stats_reset" < $16`,
+		`(t."xact_commit" = $17 OR t."xact_commit" = $18)`,
+		`(t."cache_ratio" <> $19 AND t."cache_ratio" <> $20)`,
+		`t."datname" NOT IN ($21::text)`,
+		`t."connection_id" = ANY(string_to_array($22, ',')::integer[])`,
 	} {
 		if !strings.Contains(sql, w) {
 			t.Errorf("SQL lacks %q:\n%s", w, sql)
 		}
 	}
-	want := []any{"app", "template0", int64(10), int64(11), int64(1), 0.5, "a", "b", int64(4), int64(5), "app%", "12", "true", float64(2), "2026-10-01T00:00:00Z"}
+	want := []any{"app", "template0", int64(10), int64(11), int64(1), 0.5, "a", "b", "4,5", "app%", "12", "true",
+		float64(2), "2026-10-01T00:00:00Z", int64(7), int64(8), 0.25, 0.75, "template1", "6"}
 	for i, w := range want {
 		if qargs[i+2] != w {
 			t.Errorf("arg %d = %#v, want %#v", i+3, qargs[i+2], w)
@@ -721,6 +732,21 @@ func TestBuildDatastoreQueryFilters(t *testing.T) {
 	for _, v := range []string{"app", "template0", "app%"} {
 		if strings.Contains(sql, v) {
 			t.Errorf("value %q interpolated into SQL", v)
+		}
+	}
+}
+
+// TestBuildDatastoreQueryIntegerListRange checks that an in filter on an
+// integer column refuses a value IntArrayExpr's integer[] cast could not
+// hold, rather than failing the statement in the database.
+func TestBuildDatastoreQueryIntegerListRange(t *testing.T) {
+	for _, v := range []any{float64(2147483648), "-2147483649"} {
+		_, _, err := buildDatastoreQuery(testMetricSource(), mustParse(t, map[string]any{
+			"source":  "pg_stat_database",
+			"filters": []any{map[string]any{"column": "connection_id", "op": "in", "values": []any{float64(1), v}}},
+		}), everyone, testNow)
+		if err == nil || !strings.Contains(err.Error(), "outside its range") {
+			t.Errorf("value %v: err = %v, want outside its range", v, err)
 		}
 	}
 }

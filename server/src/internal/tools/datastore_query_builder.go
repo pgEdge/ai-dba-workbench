@@ -1146,38 +1146,111 @@ func filterCondition(q *datastoreQuery, src datastoreSource, f datastoreFilter, 
 	}
 }
 
-// listFilterCondition renders an in or not in filter on column, binding
-// each of its values. It is written as a chain of = (or <>) comparisons
-// rather than an IN list, because a pgEdge ColdFront datastore cannot
-// type an IN list of more than one integer parameter, nor of untyped
-// text parameters, and a comparison of a column with one parameter it
-// can (issue #755). The chain means exactly what the IN list did,
-// including for a NULL column: col NOT IN (a, b) and
-// (col <> a AND col <> b) are both NULL then.
+// listFilterCondition renders an in or not in filter on column, in the
+// one shape per column type that a pgEdge ColdFront datastore can type
+// (issue #755), which cannot type an array parameter, an IN list of
+// more than one integer parameter or an IN list of untyped text
+// parameters:
+//
+//   - a text column as IN ($1::text, $2::text, ...), one typed
+//     parameter per value;
+//   - an integer or smallint column as = ANY(metrics.IntArrayExpr($n)),
+//     every value bound as one comma-separated text parameter;
+//   - any other column (bigint, floating point, boolean, timestamp) as a
+//     chain of = (or <>) comparisons with one parameter each, which
+//     ColdFront types from the column. A bigint column stays here
+//     because a bigint[] cast of string_to_array has not been run on
+//     ColdFront.
+//
+// Every shape means what col [NOT] IN (...) means, a NULL column
+// included: col NOT IN (a, b), NOT (col = ANY('{a,b}')) and
+// (col <> a AND col <> b) are all NULL then.
 func listFilterCondition(q *datastoreQuery, c datastoreColumn, f datastoreFilter, column, where string) (string, error) {
+	values, err := listFilterValues(c, f, where)
+	if err != nil {
+		return "", err
+	}
+	negate := f.Op == "not in"
+	switch {
+	case slices.Contains(datastoreTextTypes, c.DataType):
+		return textListCondition(q, values, column, negate), nil
+	case c.DataType == typeInteger || c.DataType == "smallint":
+		return integerListCondition(q, c, values, column, negate, where)
+	default:
+		return comparisonChain(q, values, column, negate), nil
+	}
+}
+
+// listFilterValues checks an in or not in filter's values and coerces
+// each to the column's type.
+func listFilterValues(c datastoreColumn, f datastoreFilter, where string) ([]any, error) {
 	if f.HasValue {
-		return "", fmt.Errorf("%s: operator %s takes values (an array), not value", where, f.Op)
+		return nil, fmt.Errorf("%s: operator %s takes values (an array), not value", where, f.Op)
 	}
 	list, ok := f.Values.([]any)
 	if !ok || len(list) == 0 {
-		return "", fmt.Errorf("%s: operator %s needs values, a non-empty array", where, f.Op)
+		return nil, fmt.Errorf("%s: operator %s needs values, a non-empty array", where, f.Op)
 	}
 	if len(list) > datastoreMaxInValues {
-		return "", fmt.Errorf("%s: operator %s takes at most %d values", where, f.Op, datastoreMaxInValues)
+		return nil, fmt.Errorf("%s: operator %s takes at most %d values", where, f.Op, datastoreMaxInValues)
 	}
-	compare, joiner := " = ", " OR "
-	if f.Op == "not in" {
-		compare, joiner = " <> ", " AND "
-	}
-	terms := make([]string, len(list))
+	values := make([]any, len(list))
 	for j, item := range list {
 		v, err := coerceFilterValue(c, item, where)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
+		values[j] = v
+	}
+	return values, nil
+}
+
+// textListCondition renders column [NOT] IN ($n::text, ...), binding
+// each value.
+func textListCondition(q *datastoreQuery, values []any, column string, negate bool) string {
+	params := make([]string, len(values))
+	for j, v := range values {
+		params[j] = q.bind(v) + "::text"
+	}
+	op := " IN ("
+	if negate {
+		op = " NOT IN ("
+	}
+	return column + op + strings.Join(params, ", ") + ")"
+}
+
+// integerListCondition renders column = ANY(IntArrayExpr($n)), negated
+// for not in, binding the values as one comma-separated text parameter.
+// IntArrayExpr casts to integer[], so a value outside the integer range
+// is refused here rather than failing the cast in the database.
+func integerListCondition(q *datastoreQuery, c datastoreColumn, values []any, column string, negate bool, where string) (string, error) {
+	parts := make([]string, len(values))
+	for j, v := range values {
+		n, ok := v.(int64)
+		if !ok || n < math.MinInt32 || n > math.MaxInt32 {
+			return "", fmt.Errorf("%s: column %q is %s, and %v is outside its range", where, c.Name, c.DataType, v)
+		}
+		parts[j] = strconv.FormatInt(n, 10)
+	}
+	cond := column + " = ANY(" + metrics.IntArrayExpr(q.bind(strings.Join(parts, ","))) + ")"
+	if negate {
+		return "NOT (" + cond + ")", nil
+	}
+	return cond, nil
+}
+
+// comparisonChain renders (column = $1 OR column = $2 ...), or for not
+// in (column <> $1 AND column <> $2 ...), binding each value.
+func comparisonChain(q *datastoreQuery, values []any, column string, negate bool) string {
+	compare, joiner := " = ", " OR "
+	if negate {
+		compare, joiner = " <> ", " AND "
+	}
+	terms := make([]string, len(values))
+	for j, v := range values {
 		terms[j] = column + compare + q.bind(v)
 	}
-	return "(" + strings.Join(terms, joiner) + ")", nil
+	return "(" + strings.Join(terms, joiner) + ")"
 }
 
 // scalarFilterCondition renders a filter that compares the column with

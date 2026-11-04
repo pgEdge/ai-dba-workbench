@@ -437,12 +437,33 @@ The script continues past a failed table so that one failure does not
 stop maintenance of the other tables, and still reports the failure
 through its exit status.
 
-The `psql` client and the compactor both read the connection settings
-from the libpq environment variables, such as `PGHOST` and
-`PGDATABASE`. The
+The `psql` client reads the connection settings from the libpq
+environment variables, such as `PGHOST` and `PGDATABASE`. A compactor
+built from a ColdFront revision that includes pgEdge ColdFront pull
+request #98 reads the same variables, or accepts a connection string
+through the `--dsn` option, and reads the catalog and storage settings
+from the datastore. The script requires such a compactor.
+
+A compactor built from an earlier revision that includes pull request
+#92 does not read the libpq environment. That compactor requires the
+`--config` option, which names a deployment YAML file that holds the
+connection string and the storage credentials, and exits without
+compacting when the option is missing. No ColdFront release tag
+includes either pull request. In the following example, the compactor
+command in the script passes a deployment file to an earlier
+compactor:
+
+```bash
+compactor --config /etc/coldfront/deploy.yaml --table "metrics.${table}" \
+    --expire-snapshots --expire-older-than 1h --orphans
+```
+
+The
 [ColdFront compaction guide](https://github.com/pgEdge/ColdFront/blob/main/docs/compaction.md)
-describes how to build and configure the compactor, and every option
-that the compactor accepts.
+describes how to build and configure the current compactor, and every
+option that the compactor accepts. The
+[compaction guide at the pull request #92 merge](https://github.com/pgEdge/ColdFront/blob/968f3594b238d36ff453687b40c24311406297bd/docs/compaction.md)
+describes the deployment file that an earlier compactor reads.
 
 ## Protecting the Datastore Log
 

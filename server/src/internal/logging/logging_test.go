@@ -11,6 +11,8 @@ package logging
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -321,5 +323,67 @@ func TestLogWithOddNumberOfKeyValues(t *testing.T) {
 	}
 	if _, exists := entry.Fields["key2"]; exists {
 		t.Error("key2 should not exist without a value")
+	}
+}
+
+// prepareLikeError mirrors *pgconn.PrepareError: an exported field that
+// json.Marshal encodes, and the message held in an unexported one that
+// it does not.
+type prepareLikeError struct {
+	ParseComplete bool
+	err           error
+}
+
+func (e *prepareLikeError) Error() string { return "prepare failed: " + e.err.Error() }
+
+// TestLogErrorFieldKeepsMessage checks that an error value is logged as
+// its message rather than as its JSON encoding, which keeps only the
+// exported fields and so loses the message.
+func TestLogErrorFieldKeepsMessage(t *testing.T) {
+	var nilPrepare *prepareLikeError
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"errors.New", errors.New("plain failure"), "plain failure"},
+		{"prepare-like", &prepareLikeError{err: errors.New(`relation "connections" does not exist`)},
+			`prepare failed: relation "connections" does not exist`},
+		{"wrapped", fmt.Errorf("query: %w", errors.New("inner")), "query: inner"},
+		{"typed nil", nilPrepare, "<nil>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalStderr := os.Stderr
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			os.Stderr = w
+			originalLevel := GetLevel()
+			SetLevel(LevelDebug)
+			defer func() {
+				SetLevel(originalLevel)
+				os.Stderr = originalStderr
+			}()
+
+			Error("query_failed", "error", tt.err, "count", 3)
+			w.Close()
+			output, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var entry logEntry
+			if err := json.Unmarshal(output, &entry); err != nil {
+				t.Fatalf("parse log output: %v\nOutput: %s", err, output)
+			}
+			if got := entry.Fields["error"]; got != tt.want {
+				t.Errorf("Fields[error] = %#v, want %q", got, tt.want)
+			}
+			if got := entry.Fields["count"]; got != float64(3) {
+				t.Errorf("Fields[count] = %#v, want 3", got)
+			}
+		})
 	}
 }

@@ -89,6 +89,20 @@ type logEntry struct {
 	Fields    map[string]any `json:"fields,omitempty"`
 }
 
+// fieldValue returns the value a field is logged as. An error is logged
+// as its message: json.Marshal encodes an error value by its exported
+// fields alone, so a *pgconn.PrepareError would read
+// {"ParseComplete":false} and an error from errors.New would read {},
+// with the message lost either way. fmt.Sprint calls Error itself but
+// recovers a panic from a typed nil pointer, which it prints as <nil>,
+// so a stray nil error cannot crash the logger.
+func fieldValue(v any) any {
+	if err, ok := v.(error); ok {
+		return fmt.Sprint(err)
+	}
+	return v
+}
+
 // log writes a structured log message if the level is enabled
 func log(level LogLevel, message string, keyvals ...any) {
 	if int32(level) < currentLevel.Load() {
@@ -106,7 +120,7 @@ func log(level LogLevel, message string, keyvals ...any) {
 	for i := 0; i < len(keyvals); i += 2 {
 		if i+1 < len(keyvals) {
 			key := fmt.Sprintf("%v", keyvals[i])
-			entry.Fields[key] = keyvals[i+1]
+			entry.Fields[key] = fieldValue(keyvals[i+1])
 		}
 	}
 

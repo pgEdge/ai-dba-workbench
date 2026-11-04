@@ -2455,7 +2455,8 @@ func QueryLatestRows(
 	// string: the only identifiers interpolated into the text are probeName,
 	// orderCol, the output column names, and the entity-key (DISTINCT ON)
 	// columns, each of which is validated against a live-discovered allow-list
-	// (the information_schema.tables existence check, ResolveOrderByColumn, and
+	// (ProbeExists / LookupProbeRelation, the known-probe allowlist,
+	// ResolveOrderByColumn, and
 	// GetProbeAllColumns) and then QuoteIdentifier-wrapped before it reaches the
 	// query. Every runtime value (connection IDs, filter strings, and the
 	// limit) is bound through $N placeholders in args and is never concatenated

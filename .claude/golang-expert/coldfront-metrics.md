@@ -250,8 +250,8 @@ than in one transaction.
   a probe stores once, then only when another row or the refused row
   itself changes (`TestChangeTrackingIgnoresRefusedRows`). The record
   is in memory: a restart costs one extra store. A new change-tracked
-  probe must store through `storeSnapshot` with `values[i]` built from
-  `metrics[i]`, and pass the same probe name and normaliser as to
+  probe must store through `storeSnapshot`, passing a `snapshotRows`
+  whose `values[i]` is built from `metrics[i]`, and pass the same probe name and normaliser as to
   `HasDataChanged`.
 
 ## Startup and Runtime

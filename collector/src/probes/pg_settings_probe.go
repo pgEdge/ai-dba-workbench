@@ -176,7 +176,9 @@ func (p *PgSettingsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 	}
 
 	// Store metrics
-	if err := storeSnapshot(ctx, datastoreConn, "pg_settings", connectionID, p.GetTableName(), columns, values, metrics, nil); err != nil {
+	if err := storeSnapshot(
+		ctx, datastoreConn, "pg_settings", connectionID, p.GetTableName(),
+		snapshotRows{columns: columns, values: values, metrics: metrics}, nil); err != nil {
 		return fmt.Errorf("failed to store metrics: %w", err)
 	}
 

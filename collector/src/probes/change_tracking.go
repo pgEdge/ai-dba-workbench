@@ -107,10 +107,19 @@ func HasDataChanged(
 	return changed, nil
 }
 
-// storeSnapshot stores the snapshot of a change-tracked probe, whose
-// values[i] is the row built from metrics[i], and records the rows that
-// were dropped because ColdFront refused them, so that HasDataChanged
-// leaves them out of the next comparison. Without that, the stored
+// snapshotRows holds the snapshot a change-tracked probe stores: the
+// table columns, the rows to insert, and the metrics each row was built
+// from, so that values[i] is the row built from metrics[i].
+type snapshotRows struct {
+	columns []string
+	values  [][]any
+	metrics []map[string]any
+}
+
+// storeSnapshot stores the snapshot of a change-tracked probe and
+// records the rows that were dropped because ColdFront refused them, so
+// that HasDataChanged leaves them out of the next comparison. Without
+// that, the stored
 // snapshot lacks the refused row, every later comparison sees a change,
 // and the probe stores its whole snapshot again on every run.
 //
@@ -123,18 +132,16 @@ func storeSnapshot(
 	probeName string,
 	connectionID int,
 	tableName string,
-	columns []string,
-	values [][]any,
-	metrics []map[string]any,
+	snapshot snapshotRows,
 	normalizeMetrics func([]map[string]any) []map[string]any,
 ) error {
-	dropped, err := storeMetrics(ctx, datastoreConn, tableName, columns, values)
+	dropped, err := storeMetrics(ctx, datastoreConn, tableName, snapshot.columns, snapshot.values)
 	if err != nil {
 		return err
 	}
 	refused := make([]map[string]any, 0, len(dropped))
 	for _, i := range dropped {
-		refused = append(refused, metrics[i])
+		refused = append(refused, snapshot.metrics[i])
 	}
 	refused = stripProbeMarker(refused)
 	if normalizeMetrics != nil {

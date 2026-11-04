@@ -150,7 +150,9 @@ func (p *PgIdentFileMappingsProbe) Store(ctx context.Context, datastoreConn *pgx
 	}
 
 	// Store metrics
-	if err := storeSnapshot(ctx, datastoreConn, "pg_ident_file_mappings", connectionID, p.GetTableName(), columns, values, metrics, nil); err != nil {
+	if err := storeSnapshot(
+		ctx, datastoreConn, "pg_ident_file_mappings", connectionID, p.GetTableName(),
+		snapshotRows{columns: columns, values: values, metrics: metrics}, nil); err != nil {
 		return fmt.Errorf("failed to store metrics: %w", err)
 	}
 

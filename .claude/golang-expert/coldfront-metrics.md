@@ -197,9 +197,14 @@ than in one transaction.
   embedded as the document (`pg_node_role.role_details` is a string),
   with invalid JSON an error. Every column must be in the spec, since
   the helper would silently ignore an unknown key.
-- NaN and infinite floats cannot be JSON: they are stored as NULL, with
-  one log line per batch and column. Failing or dropping the row would
-  lose the rest of a sample for one undefined gauge.
+- NaN and infinite floats cannot be JSON: they are stored as NULL.
+  Failing or dropping the row would lose the rest of a sample for one
+  undefined gauge. `coldFrontNonFinite` (a `nonFiniteReporter`) logs it
+  as an always-shown `logger.Errorf("Warning: ...")`, at most once an
+  hour per `table.column` (`nonFiniteReportInterval`), with the values
+  held back in between counted in the next line: a NaN gauge is NaN on
+  every run, so one line per batch flooded the log.
+  `TestNonFiniteReporter` pins the rate limit.
 - `splitColdFrontBatches` bounds a statement by `coldFrontBatchRows`
   (5,000; 100 in the default mode) and `coldFrontBatchBytes` (16 MiB of
   encoded JSON). Each statement is one Iceberg commit, so a normal
@@ -227,6 +232,27 @@ than in one transaction.
   (`invalid input syntax for type ...: "<value>"`); `errors.As` for a
   `PgError` does not match it, and no caller of `StoreMetrics` needs it
   to. `TestWriteColdFrontBatchesDropLimitErrorHidesValues` pins this.
+- Dropped rows are reported: `writeColdFrontBatches` returns the
+  `coldFrontRow.index` (position in the `values` passed in) of each, and
+  the unexported `storeMetrics` returns them (`StoreMetrics` discards
+  them; in the default mode there are never any).
+- Change-tracked probes (`pg_settings`, `pg_extension`,
+  `pg_hba_file_rules`, `pg_ident_file_mappings`) compare the collected
+  rows with the stored snapshot at `MAX(collected_at)`
+  (`HasDataChanged`), so a refused row, missing from that snapshot, made
+  every run look changed and rewrote the whole snapshot (about nine
+  Iceberg commits a run for `pg_settings`). They store through
+  `storeSnapshot` (`change_tracking.go`), which records the refused rows'
+  per-row hashes (after `stripProbeMarker` and the probe's normaliser)
+  in `refusedSnapshotRows`, keyed by the probe name passed to
+  `HasDataChanged` and the connection; `HasDataChanged` excludes them
+  before hashing, and a store that drops nothing clears the entry. Such
+  a probe stores once, then only when another row or the refused row
+  itself changes (`TestChangeTrackingIgnoresRefusedRows`). The record
+  is in memory: a restart costs one extra store. A new change-tracked
+  probe must store through `storeSnapshot` with `values[i]` built from
+  `metrics[i]`, and pass the same probe name and normaliser as to
+  `HasDataChanged`.
 
 ## Startup and Runtime
 
@@ -242,12 +268,33 @@ than in one transaction.
   Each runs in its own transaction with no SAVEPOINT and no Iceberg
   statement, and only when its object is missing, so a normal startup
   takes no lock and an existing ColdFront datastore gains the objects
-  on its next start. Failures are logged (always shown, naming alerter
-  Tier 2 and chat memory embeddings as disabled), never returned. It
-  relies on pg_duckdb allowing the subtransaction that
-  `addConstraintIfMissing`'s `EXCEPTION` block opens in a transaction
-  that has not touched DuckDB; that is unverified against live
-  ColdFront.
+  on its next start. Failures, and pgvector not being available, are
+  logged (always shown, naming alerter Tier 2 and chat memory
+  embeddings as disabled), never returned.
+- `chat_memories` is not assumed to be in `public`. Migration 1 creates
+  it (like every non-metrics table) unqualified, so it lands in the
+  first existing schema of the datastore role's search_path. On a
+  ColdFront image the superuser role is `coldfront` and the `coldfront`
+  schema exists, so `"$user", public` puts the Workbench tables in
+  `coldfront`; ALTERing `public.chat_memories` then failed with 42P01
+  at every startup. `coldFrontEmbeddingsStateQuery` therefore resolves
+  `to_regclass('chat_memories')` and returns its
+  `format('%I.%I')` name, which `addChatMemoryEmbedding(ctx, tx, table)`
+  alters; the default mode passes `defaultChatMemoriesTable`
+  (`public.chat_memories`) unchanged, as do v6 and
+  `embeddingColumnTypeName`, which still assume `public` (so the default
+  mode on such a datastore silently has no chat memory embedding).
+  `anomaly_embeddings` stays `public.`-qualified in both modes.
+  `TestColdFrontEmbeddingsFollowSearchPath` migrates under a
+  `wb_role_schema, public` search_path and asserts no "skipped" line.
+- The pgvector lines of migration 1 ("pgvector setup deferred",
+  "pgvector setup skipped", "pgvector extension not available",
+  "chat_memories embedding setup skipped") are `logger.Startup`/
+  `Startupf`, always shown; each fires once, when migration 1 runs.
+- `createAnomalyEmbeddings` relies on pg_duckdb allowing the
+  subtransaction that `addConstraintIfMissing`'s `EXCEPTION` block opens
+  in a transaction that has not touched DuckDB; live, anomaly_embeddings
+  and its key were created, which suggests it is allowed.
 
 - `database.PrepareMetricsStorage` runs in `initializeSchema` before
   `Migrate`, bounded by `prepareMetricsStorageTimeout`: 10 seconds in

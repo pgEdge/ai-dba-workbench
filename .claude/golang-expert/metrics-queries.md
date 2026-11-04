@@ -264,6 +264,26 @@ failure on a pooled connection; this is unresolved (issue #755).
   was rejected: it costs a round trip and the join's atomicity for no
   gain, since the server already relies on the search_path everywhere
   else.
+  Open risk (review of PR #790, not fixed): an unqualified `connections`
+  resolves through the session's search_path, by default
+  `"$user", public`. A role that can create in a schema searched before
+  `public` (a schema named after the server's login role, or one an
+  operator put earlier on the role's or database's search_path) could
+  create its own `connections` table or view there and shadow the real
+  one. In query_datastore's live-connection check for a metric source
+  (`liveConnectionCondition` in `datastore_query_builder.go`) and in
+  list_connections' statement (`list_connections.go`), that table
+  decides which connections a caller sees and which rows survive.
+  Exposure needs DDL rights on the datastore beyond the server's own,
+  which already means control of the data. Candidate fix: pin the
+  server's datastore pool with the startup parameter
+  `search_path=public` (pgx `ConnConfig.RuntimeParams`), so no
+  per-user schema is searched, and keep `CREATE` on `public` revoked
+  from other roles (the PostgreSQL 15+ default). Not done because
+  whether pg_duckdb resolves an unqualified heap table under a pinned
+  startup search_path is unverified on ColdFront; verify that live
+  first, then pin it and add a test that a shadowing table in a
+  `"$user"` schema is ignored.
 - **Type JSON builder literals.** ColdFront rewrites the JSON builders
   for DuckDB, which cannot type an untyped string literal passed as a
   value (`jsonb_build_object('change_type', 'modified')` fails with

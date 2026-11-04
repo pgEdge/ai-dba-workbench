@@ -12,8 +12,11 @@ package probes
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/collector/src/coldfront"
 )
@@ -52,6 +55,38 @@ func settingRow(name, setting string) map[string]any {
 	}
 }
 
+// installRefusingInsertHelper switches StoreMetrics to ColdFront with
+// refusingInsertHelper as the datastore's insert helper, with no
+// pg_settings rows for connID and partitions for first to last made
+// beforehand, since EnsurePartition does nothing under ColdFront. All of
+// it is undone when the test ends.
+func installRefusingInsertHelper(t *testing.T, pool *pgxpool.Pool, conn *pgxpool.Conn, connID int, first, last time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	for _, ts := range []time.Time{first, last} {
+		if err := EnsurePartition(ctx, conn, "pg_settings", ts); err != nil {
+			t.Fatalf("EnsurePartition: %v", err)
+		}
+	}
+	const deleteRows = "DELETE FROM metrics.pg_settings WHERE connection_id = $1"
+	if _, err := conn.Exec(ctx, deleteRows, connID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, "DROP SCHEMA IF EXISTS "+coldfront.HelperSchema+" CASCADE;"+refusingInsertHelper); err != nil {
+		t.Fatalf("failed to install the refusing insert helper: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+coldfront.HelperSchema+" CASCADE"); err != nil {
+			t.Errorf("failed to drop the insert helper: %v", err)
+		}
+		if _, err := pool.Exec(ctx, deleteRows, connID); err != nil {
+			t.Errorf("failed to delete the test rows: %v", err)
+		}
+		refusedSnapshotRows.set("pg_settings", connID, nil)
+	})
+	enableColdFront(t)
+}
+
 // TestChangeTrackingIgnoresRefusedRows shows that a change-tracked probe
 // with a row ColdFront refuses every time stores its snapshot once and
 // then not again while nothing else changes, and stores again when
@@ -67,29 +102,7 @@ func TestChangeTrackingIgnoresRefusedRows(t *testing.T) {
 
 	base := time.Now().UTC().Truncate(time.Minute)
 	at := func(i int) time.Time { return base.Add(time.Duration(i) * time.Minute) }
-	// The helper writes to the partitioned table, and EnsurePartition
-	// does nothing under ColdFront, so the partitions are made first.
-	for i := 0; i <= 5; i++ {
-		if err := EnsurePartition(ctx, conn, "pg_settings", at(i)); err != nil {
-			t.Fatalf("EnsurePartition: %v", err)
-		}
-	}
-	if _, err := conn.Exec(ctx, "DELETE FROM metrics.pg_settings WHERE connection_id = $1", connID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := conn.Exec(ctx, "DROP SCHEMA IF EXISTS "+coldfront.HelperSchema+" CASCADE;"+refusingInsertHelper); err != nil {
-		t.Fatalf("failed to install the refusing insert helper: %v", err)
-	}
-	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+coldfront.HelperSchema+" CASCADE"); err != nil {
-			t.Errorf("failed to drop the insert helper: %v", err)
-		}
-		if _, err := pool.Exec(ctx, "DELETE FROM metrics.pg_settings WHERE connection_id = $1", connID); err != nil {
-			t.Errorf("failed to delete the test rows: %v", err)
-		}
-		refusedSnapshotRows.set("pg_settings", connID, nil)
-	})
-	enableColdFront(t)
+	installRefusingInsertHelper(t, pool, conn, connID, at(0), at(5))
 
 	snapshots := func() int {
 		t.Helper()
@@ -136,6 +149,52 @@ func TestChangeTrackingIgnoresRefusedRows(t *testing.T) {
 	store(5, []map[string]any{settingRow("work_mem", "8MB"), settingRow("refused_setting", "y")})
 	if got := snapshots(); got != 3 {
 		t.Fatalf("a changed refused row stored %d snapshots in all, want 3", got)
+	}
+}
+
+// TestChangeTrackedProbesReportStoreFailure shows each change-tracked
+// probe returns the failure of storeSnapshot: under ColdFront, without
+// the datastore's insert helper, the first snapshot of a connection
+// cannot be written.
+func TestChangeTrackedProbesReportStoreFailure(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	ctx := context.Background()
+	if _, err := conn.Exec(ctx, "DROP SCHEMA IF EXISTS "+coldfront.HelperSchema+" CASCADE"); err != nil {
+		t.Fatal(err)
+	}
+	enableColdFront(t)
+
+	cfg := func(name string) *ProbeConfig { return &ProbeConfig{Name: name} }
+	cases := []struct {
+		name  string
+		store func(connID int) error
+	}{
+		{ProbeNamePgSettings, func(id int) error {
+			return NewPgSettingsProbe(cfg(ProbeNamePgSettings)).Store(ctx, conn, id, time.Now(),
+				[]map[string]any{settingRow("work_mem", "4MB")})
+		}},
+		{ProbeNamePgExtension, func(id int) error {
+			return NewPgExtensionProbe(cfg(ProbeNamePgExtension)).Store(ctx, conn, id, time.Now(),
+				[]map[string]any{{"_database_name": "postgres", "extname": "plpgsql",
+					"extversion": "1.0", "extrelocatable": false, "schema_name": "pg_catalog"}})
+		}},
+		{ProbeNamePgHbaFileRules, func(id int) error {
+			return NewPgHbaFileRulesProbe(cfg(ProbeNamePgHbaFileRules)).Store(ctx, conn, id, time.Now(),
+				[]map[string]any{{"rule_number": int32(1), "type": "local", "auth_method": "trust"}})
+		}},
+		{ProbeNamePgIdentFileMappings, func(id int) error {
+			return NewPgIdentFileMappingsProbe(cfg(ProbeNamePgIdentFileMappings)).Store(ctx, conn, id, time.Now(),
+				[]map[string]any{{"map_number": int32(1), "map_name": "m", "sys_name": "s", "pg_username": "u"}})
+		}},
+	}
+	for i, p := range cases {
+		t.Run(p.name, func(t *testing.T) {
+			err := p.store(98770 + i)
+			if err == nil || !strings.Contains(err.Error(), "failed to store metrics") {
+				t.Errorf("Store error = %v, want a failure to store metrics", err)
+			}
+		})
 	}
 }
 

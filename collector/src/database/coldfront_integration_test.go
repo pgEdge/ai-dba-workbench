@@ -414,13 +414,8 @@ func TestColdFrontMigrationsAgainstStub(t *testing.T) {
 
 	// The startup step after the migrations creates them instead, in
 	// transactions of their own, and is a no-op the second time.
-	buf := captureLog(t)
-	EnsureColdFrontEmbeddings(ctx, conn)
-	EnsureColdFrontEmbeddings(ctx, conn)
+	ensureEmbeddingsQuietly(t, conn, 2)
 	checkColdFrontEmbeddings(t, conn)
-	if strings.Contains(buf.String(), "skipped") {
-		t.Errorf("EnsureColdFrontEmbeddings on a fully migrated datastore logged: %q", buf.String())
-	}
 
 	// A second start finds views, recreates nothing and applies nothing.
 	if err := PrepareMetricsStorage(ctx, conn, true); err != nil {
@@ -460,32 +455,7 @@ func TestColdFrontEmbeddingsFollowSearchPath(t *testing.T) {
 	defer conn.Release()
 	cleanupTestSchema(t, pool)
 	defer cleanupTestSchema(t, pool)
-
-	// pgvector, where available, stays in public as on the live
-	// datastore, so dropping the role schema afterwards leaves it.
-	if _, err := conn.Exec(ctx, `
-        DO $$ BEGIN
-            IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') THEN
-                CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;
-            END IF;
-        END $$;
-        DROP SCHEMA IF EXISTS `+roleSchema+` CASCADE;
-        CREATE SCHEMA `+roleSchema+`;`+dropColdFrontStub+coldFrontStub); err != nil {
-		t.Fatalf("failed to set up the role schema and the coldfront stub: %v", err)
-	}
-	defer func() {
-		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+roleSchema+" CASCADE;"+dropColdFrontStub); err != nil {
-			t.Errorf("failed to drop the role schema and the coldfront stub: %v", err)
-		}
-	}()
-	if _, err := conn.Exec(ctx, "SET search_path = "+roleSchema+", public"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if _, err := conn.Exec(ctx, "RESET search_path"); err != nil {
-			t.Errorf("failed to reset search_path: %v", err)
-		}
-	}()
+	defer useRoleSchema(t, pool, conn, roleSchema)()
 
 	if err := PrepareMetricsStorage(ctx, conn, true); err != nil {
 		t.Fatalf("PrepareMetricsStorage failed: %v", err)
@@ -496,11 +466,7 @@ func TestColdFrontEmbeddingsFollowSearchPath(t *testing.T) {
 		t.Fatalf("Migrate under ColdFront failed: %v", err)
 	}
 
-	buf := captureLog(t)
-	EnsureColdFrontEmbeddings(ctx, conn)
-	if out := buf.String(); strings.Contains(out, "skipped") || strings.Contains(out, "does not exist") {
-		t.Errorf("EnsureColdFrontEmbeddings on a fully migrated datastore logged: %q", out)
-	}
+	ensureEmbeddingsQuietly(t, conn, 1)
 
 	var available, publicChat bool
 	var chatType string
@@ -522,6 +488,51 @@ func TestColdFrontEmbeddingsFollowSearchPath(t *testing.T) {
 	}
 	if chatType != want {
 		t.Errorf("%s.chat_memories.embedding is %q, want %q", roleSchema, chatType, want)
+	}
+}
+
+// ensureEmbeddingsQuietly runs EnsureColdFrontEmbeddings times times on
+// a fully migrated datastore and fails if it logged that any setup was
+// skipped or that a relation was missing.
+func ensureEmbeddingsQuietly(t *testing.T, conn *pgxpool.Conn, times int) {
+	t.Helper()
+	buf := captureLog(t)
+	for i := 0; i < times; i++ {
+		EnsureColdFrontEmbeddings(context.Background(), conn)
+	}
+	if out := buf.String(); strings.Contains(out, "skipped") || strings.Contains(out, "does not exist") {
+		t.Errorf("EnsureColdFrontEmbeddings on a fully migrated datastore logged: %q", out)
+	}
+}
+
+// useRoleSchema creates schema, installs coldFrontStub and puts schema
+// first on conn's search_path, before public, as "$user" is for a role
+// named after an
+// existing schema. The function it returns undoes both, and must run
+// before conn is released.
+func useRoleSchema(t *testing.T, pool *pgxpool.Pool, conn *pgxpool.Conn, schema string) func() {
+	t.Helper()
+	ctx := context.Background()
+	// pgvector, where available, stays in public as on the live
+	// datastore, so dropping the role schema afterwards leaves it.
+	if _, err := conn.Exec(ctx, `
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') THEN
+                CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;
+            END IF;
+        END $$;
+        DROP SCHEMA IF EXISTS `+schema+` CASCADE;
+        CREATE SCHEMA `+schema+`;`+dropColdFrontStub+coldFrontStub+`
+        SET search_path = `+schema+`, public;`); err != nil {
+		t.Fatalf("failed to set up the role schema and the coldfront stub: %v", err)
+	}
+	return func() {
+		if _, err := conn.Exec(ctx, "RESET search_path"); err != nil {
+			t.Errorf("failed to reset search_path: %v", err)
+		}
+		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE;"+dropColdFrontStub); err != nil {
+			t.Errorf("failed to drop the role schema and the coldfront stub: %v", err)
+		}
 	}
 }
 

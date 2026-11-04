@@ -281,7 +281,7 @@ func TestListProbes_OmitsUnreadableTables(t *testing.T) {
 			EXECUTE format('GRANT USAGE ON SCHEMA metrics TO %I', r);
 			EXECUTE format('GRANT SELECT ON metrics.pg_connectivity TO %I', r);
 		END $$;
-		CREATE TABLE metrics.pg_restricted (
+		CREATE TABLE metrics.pg_sys_cpu_info (
 		    connection_id INTEGER NOT NULL,
 		    collected_at TIMESTAMPTZ NOT NULL
 		);`); err != nil {
@@ -293,7 +293,7 @@ func TestListProbes_OmitsUnreadableTables(t *testing.T) {
 			DECLARE r text;
 			BEGIN
 				SELECT name INTO r FROM metrics.list_probes_test_role;
-				DROP TABLE IF EXISTS metrics.pg_restricted;
+				DROP TABLE IF EXISTS metrics.pg_sys_cpu_info;
 				EXECUTE format('REVOKE ALL ON metrics.pg_connectivity FROM %I', r);
 				EXECUTE format('REVOKE ALL ON SCHEMA metrics FROM %I', r);
 				EXECUTE format('DROP ROLE IF EXISTS %I', r);
@@ -319,14 +319,14 @@ func TestListProbes_OmitsUnreadableTables(t *testing.T) {
 	// The superuser pool sees both tables.
 	all := listProbesNames(t, mustSuccess(t, ListProbesTool(pool),
 		map[string]any{"__context": ctx}))
-	if _, ok := all["pg_restricted"]; !ok {
-		t.Fatalf("pg_restricted missing for a role that can read it: %v", all)
+	if _, ok := all["pg_sys_cpu_info"]; !ok {
+		t.Fatalf("pg_sys_cpu_info missing for a role that can read it: %v", all)
 	}
 
 	probes := listProbesNames(t, mustSuccess(t, ListProbesTool(restricted),
 		map[string]any{"__context": ctx}))
-	if _, ok := probes["pg_restricted"]; ok {
-		t.Errorf("pg_restricted listed for a role that cannot read it")
+	if _, ok := probes["pg_sys_cpu_info"]; ok {
+		t.Errorf("pg_sys_cpu_info listed for a role that cannot read it")
 	}
 	if _, ok := probes["pg_connectivity"]; !ok {
 		t.Errorf("pg_connectivity missing for a role that can read it: %v", probes)

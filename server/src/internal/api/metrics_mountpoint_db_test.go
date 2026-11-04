@@ -22,10 +22,11 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
-// mountProbeTable is a fixture probe rather than the real pg_sys_disk_info
-// so that the test owns its own rows and can drop the table afterwards
-// without disturbing collected data in the test database.
-const mountProbeTable = "pg_sys_disk_info_mount_test"
+// mountProbeTable is the fixture probe, which takes the real probe's
+// name because the server serves a metrics relation only under a known
+// probe's name (metrics.LookupProbeRelation); the fixture drops and
+// recreates it.
+const mountProbeTable = "pg_sys_disk_info"
 
 // setupMountFixture creates a probe table shaped like pg_sys_disk_info and
 // inserts one current sample for each of two mounts on connection 1, plus an

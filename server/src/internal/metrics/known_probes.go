@@ -10,6 +10,8 @@
 
 package metrics
 
+import "sync"
+
 // knownProbes holds the name of every probe the collector writes into
 // the metrics schema. The collector's probe constants
 // (collector/src/probes/constants.go) and migrations
@@ -56,29 +58,16 @@ var knownProbes = map[string]struct{}{
 	"spock_resolutions":            {},
 }
 
+// knownProbesMu guards knownProbes. Production code only reads it; the
+// package's tests add fixture probes for the length of a test.
+var knownProbesMu sync.RWMutex
+
 // IsKnownProbe reports whether name is the name of a probe the collector
-// writes (knownProbes).
+// writes (knownProbes). It is the allowlist LookupProbeRelation applies,
+// so it decides which metrics relations the server will serve at all.
 func IsKnownProbe(name string) bool {
+	knownProbesMu.RLock()
+	defer knownProbesMu.RUnlock()
 	_, ok := knownProbes[name]
 	return ok
-}
-
-// AdmitsProbeRelation reports whether the relation called name in the
-// metrics schema may be served as a probe. A table is admitted whatever
-// its name, as it always has been. A view is admitted only when it
-// carries a known probe's name, which every view on a pgEdge ColdFront
-// datastore does (issue #755).
-//
-// This fails closed for a view under any other name, such as
-// CREATE VIEW metrics.activity_report AS SELECT * FROM
-// metrics.pg_stat_activity: the read-side masking (ProbeRedactions,
-// RedactProbeRows, statementTextColumns) is keyed by probe name, so a
-// renamed view of a masked probe would otherwise return its credentials
-// and statement text in clear. Every route that resolves a caller's
-// source or probe name must decide through this function:
-// ProbeExists (QueryTimeSeries, QueryLatestRows, /api/v1/metrics/latest,
-// describe_probe and query_metrics), list_probes, and the datastore
-// catalog behind describe_datastore and query_datastore.
-func AdmitsProbeRelation(name string, isView bool) bool {
-	return !isView || IsKnownProbe(name)
 }

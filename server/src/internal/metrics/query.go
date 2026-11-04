@@ -494,35 +494,14 @@ func EntityKeyColumns(cols []string, colTypes map[string]string) []string {
 	return keys
 }
 
-// probeRelationQuery reports whether the relation named $1 in the metrics
-// schema, if there is one that can hold a probe's rows, is a view. On a
-// plain PostgreSQL datastore each probe is a partitioned table, which
-// information_schema.tables reports as a BASE TABLE; on a pgEdge
-// ColdFront datastore each one is a VIEW over Apache Iceberg storage
-// (issue #755). The server needs no setting to tell the datastores apart.
-const probeRelationQuery = `
-        SELECT table_type = 'VIEW' FROM information_schema.tables
-        WHERE table_schema = 'metrics'
-            AND table_name = $1
-            AND table_type IN ('BASE TABLE', 'VIEW')
-    `
-
-// ProbeExists reports whether probeName is a probe the server may read:
-// a table in the metrics schema, or a view there that carries a known
-// probe's name (AdmitsProbeRelation). A view under any other name is
-// reported missing, because the read-side masking is keyed by probe name
-// and could not protect its rows. An error means the check itself
-// failed.
+// ProbeExists reports whether probeName is a probe the server may read
+// (LookupProbeRelation): a relation in the metrics schema, other than a
+// partition, under a known probe's name. Any other name is reported
+// missing, because the read-side masking is keyed by probe name and
+// could not protect its rows. An error means the check itself failed.
 func ProbeExists(ctx context.Context, pool *pgxpool.Pool, probeName string) (bool, error) {
-	var isView bool
-	err := pool.QueryRow(ctx, probeRelationQuery, probeName).Scan(&isView)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return AdmitsProbeRelation(probeName, isView), nil
+	_, ok, err := LookupProbeRelation(ctx, pool, probeName)
+	return ok, err
 }
 
 // IsValidIdentifier checks whether a string is a valid SQL identifier.

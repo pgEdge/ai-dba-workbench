@@ -25,19 +25,22 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
-// latestTablesProbe is a fixture probe shaped like pg_stat_all_tables, so
-// that the test owns its rows and can drop the table afterwards without
-// disturbing collected data in the test database.
-const latestTablesProbe = "pg_stat_all_tables_latest_test"
+// The fixture probes take real probe names, because the server serves a
+// metrics relation only under a known probe's name
+// (metrics.LookupProbeRelation). Each fixture drops and recreates its
+// table, and each name's entity-key fallback matches its columns.
+
+// latestTablesProbe is a fixture probe shaped like pg_stat_all_tables.
+const latestTablesProbe = "pg_stat_all_tables"
 
 // latestNoSchemaProbe is a fixture probe with a text dimension but no
 // schemaname column, used to prove the schema filters are ignored for
 // probes they cannot apply to.
-const latestNoSchemaProbe = "pg_latest_noschema_test"
+const latestNoSchemaProbe = "pg_database"
 
 // latestNoDimensionProbe is a fixture probe with no text dimension column
 // at all, which the latest-snapshot query cannot key a DISTINCT ON on.
-const latestNoDimensionProbe = "pg_latest_nodim_test"
+const latestNoDimensionProbe = "pg_sys_load_avg_info"
 
 // latestFixtureRow is one sample inserted into the pg_stat_all_tables
 // shaped fixture.
@@ -435,7 +438,7 @@ func TestLatestSnapshot_OrderingAndLimits(t *testing.T) {
 // latestViewProbe is a view over the latest-tables fixture, standing in
 // for a pgEdge ColdFront datastore, where every probe is a view over
 // Apache Iceberg storage (issue #755). A view is served only under a
-// known probe's name (metrics.AdmitsProbeRelation), so it takes the name
+// known probe's name (metrics.LookupProbeRelation), so it takes the name
 // of a real probe no other fixture in this package seeds.
 const (
 	latestViewProbe     = "pg_stat_subscription"

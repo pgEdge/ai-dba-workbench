@@ -189,16 +189,16 @@ func TestLookupDatastoreSourceMetricDiscovery(t *testing.T) {
 	ctx := context.Background()
 	t.Cleanup(func() {
 		if _, err := pool.Exec(context.Background(),
-			`DROP TABLE IF EXISTS metrics.ds_test_probe, metrics.ds_test_nokeys CASCADE`); err != nil {
+			`DROP TABLE IF EXISTS metrics.pg_server_info, metrics.pg_stat_checkpointer CASCADE`); err != nil {
 			t.Logf("drop test probe tables: %v", err)
 		}
 	})
 
 	stmts := []string{
 		`CREATE SCHEMA IF NOT EXISTS metrics`,
-		`DROP TABLE IF EXISTS metrics.ds_test_probe CASCADE`,
-		`DROP TABLE IF EXISTS metrics.ds_test_nokeys CASCADE`,
-		`CREATE TABLE metrics.ds_test_probe (
+		`DROP TABLE IF EXISTS metrics.pg_server_info CASCADE`,
+		`DROP TABLE IF EXISTS metrics.pg_stat_checkpointer CASCADE`,
+		`CREATE TABLE metrics.pg_server_info (
             connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL,
             datname text,
@@ -206,10 +206,10 @@ func TestLookupDatastoreSourceMetricDiscovery(t *testing.T) {
             conninfo text,
             db_password text
         ) PARTITION BY RANGE (collected_at)`,
-		`COMMENT ON TABLE metrics.ds_test_probe IS 'Test probe for datastore discovery.'`,
-		`CREATE TABLE metrics.ds_test_probe_20260101 PARTITION OF metrics.ds_test_probe
+		`COMMENT ON TABLE metrics.pg_server_info IS 'Test probe for datastore discovery.'`,
+		`CREATE TABLE metrics.pg_server_info_20260101 PARTITION OF metrics.pg_server_info
             FOR VALUES FROM ('2026-01-01') TO ('2026-01-08')`,
-		`CREATE TABLE metrics.ds_test_nokeys (value bigint)`,
+		`CREATE TABLE metrics.pg_stat_checkpointer (value bigint)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
@@ -217,13 +217,13 @@ func TestLookupDatastoreSourceMetricDiscovery(t *testing.T) {
 		}
 	}
 
-	src, err := lookupDatastoreSource(ctx, pool, "ds_test_probe")
+	src, err := lookupDatastoreSource(ctx, pool, "pg_server_info")
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
 	if src.Kind != datastoreKindMetric || src.Scope != scopeConnection ||
 		src.TimeColumn != "collected_at" || src.ConnectionColumn != "connection_id" ||
-		src.Table != "ds_test_probe" {
+		src.Table != "pg_server_info" {
 		t.Errorf("unexpected source: %+v", src)
 	}
 	if src.Description != "Test probe for datastore discovery." {
@@ -239,26 +239,26 @@ func TestLookupDatastoreSourceMetricDiscovery(t *testing.T) {
 		t.Error("datname should be a dimension")
 	}
 
-	for _, name := range []string{"ds_test_probe_20260101", "ds_test_nokeys", "no_such_probe"} {
+	for _, name := range []string{"pg_server_info_20260101", "pg_stat_checkpointer", "no_such_probe"} {
 		if _, err := lookupDatastoreSource(ctx, pool, name); !errors.Is(err, errUnknownDatastoreSource) {
 			t.Errorf("lookup %q: got %v, want unknown source", name, err)
 		}
 	}
 
-	if _, err := pool.Exec(ctx, `COMMENT ON TABLE metrics.ds_test_probe IS NULL`); err != nil {
+	if _, err := pool.Exec(ctx, `COMMENT ON TABLE metrics.pg_server_info IS NULL`); err != nil {
 		t.Fatalf("clear comment: %v", err)
 	}
-	src, err = lookupDatastoreSource(ctx, pool, "ds_test_probe")
+	src, err = lookupDatastoreSource(ctx, pool, "pg_server_info")
 	if err != nil {
 		t.Fatalf("lookup without comment: %v", err)
 	}
-	if !strings.Contains(src.Description, "ds_test_probe") {
+	if !strings.Contains(src.Description, "pg_server_info") {
 		t.Errorf("default description = %q", src.Description)
 	}
 
 	done, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := lookupDatastoreSource(done, pool, "ds_test_probe"); err == nil {
+	if _, err := lookupDatastoreSource(done, pool, "pg_server_info"); err == nil {
 		t.Error("a context that is already done should fail the lookup")
 	}
 }

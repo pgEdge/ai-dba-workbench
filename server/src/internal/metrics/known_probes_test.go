@@ -16,28 +16,25 @@ import (
 	"testing"
 )
 
-func TestAdmitsProbeRelation(t *testing.T) {
-	tests := []struct {
-		name   string
-		isView bool
-		want   bool
-	}{
-		{"pg_stat_activity", false, true},
-		{"pg_stat_activity", true, true},
-		{"pg_settings", true, true},
-		// A table keeps working under any name, as before issue #755.
-		{"ds_masking_secret_probe", false, true},
-		// A renamed view of a masked probe would bypass the masking that
-		// is keyed by probe name.
-		{"activity_report", true, false},
-		{"pg_stat_activity_report", true, false},
-		{"", true, false},
+// registerFixtureProbeForTest makes name a known probe until the test
+// ends, so a fixture table under a test-only name can be read through
+// ProbeExists, which serves known probes only. The package's fixtures
+// carry their own names so they cannot collide with a real probe's
+// table, which other packages' tests create in the same database.
+func registerFixtureProbeForTest(t testing.TB, name string) {
+	t.Helper()
+	knownProbesMu.Lock()
+	_, had := knownProbes[name]
+	knownProbes[name] = struct{}{}
+	knownProbesMu.Unlock()
+	if had {
+		return
 	}
-	for _, tt := range tests {
-		if got := AdmitsProbeRelation(tt.name, tt.isView); got != tt.want {
-			t.Errorf("AdmitsProbeRelation(%q, %v) = %v, want %v", tt.name, tt.isView, got, tt.want)
-		}
-	}
+	t.Cleanup(func() {
+		knownProbesMu.Lock()
+		defer knownProbesMu.Unlock()
+		delete(knownProbes, name)
+	})
 }
 
 // TestKnownProbesCoverMaskedAndKeyedProbes checks that every probe the

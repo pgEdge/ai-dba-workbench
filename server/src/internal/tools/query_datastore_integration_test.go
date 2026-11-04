@@ -39,14 +39,14 @@ import (
 
 // dsProbeSchema is a metric source with two entity rows per connection.
 const dsProbeSchema = `
-CREATE TABLE metrics.ds_probe (
+CREATE TABLE metrics.pg_sys_os_info (
     connection_id INTEGER NOT NULL,
     collected_at TIMESTAMPTZ NOT NULL,
     datname TEXT,
     numbackends INTEGER,
     xact_commit BIGINT
 );
-COMMENT ON TABLE metrics.ds_probe IS 'Test probe for query_datastore.';
+COMMENT ON TABLE metrics.pg_sys_os_info IS 'Test probe for query_datastore.';
 `
 
 // dsFixtureFunctions creates the helper functions newDatastoreFixture
@@ -208,7 +208,7 @@ func newDatastoreFixture(t *testing.T) *datastoreFixture {
             (4, 1, 'group', NULL, NULL, 1, 'visible group')`, args: ids},
 		{sql: `INSERT INTO metric_baselines (connection_id, metric_name, period_type) VALUES
             ($1, 'visible_metric', 'all'), ($2, 'hidden_metric', 'all')`, args: ids},
-		{sql: `INSERT INTO metrics.ds_probe (connection_id, collected_at, datname, numbackends, xact_commit) VALUES
+		{sql: `INSERT INTO metrics.pg_sys_os_info (connection_id, collected_at, datname, numbackends, xact_commit) VALUES
             ($1, now() - interval '50 minutes', 'app', 1, 100),
             ($1, now() - interval '20 minutes', 'app', 3, 150),
             ($1, now() - interval '20 minutes', 'postgres', 2, 10),
@@ -319,9 +319,9 @@ func TestQueryDatastoreScopesEveryRuleIntegration(t *testing.T) {
 	vis, hid := fmt.Sprint(f.visible), fmt.Sprint(f.hidden)
 
 	t.Run("metric source", func(t *testing.T) {
-		rows := mustQuery(t, tool, user, map[string]any{"source": "ds_probe"})
+		rows := mustQuery(t, tool, user, map[string]any{"source": "pg_sys_os_info"})
 		assertColumn(t, rows, "connection_id", vis, vis, vis)
-		rows = mustQuery(t, tool, admin, map[string]any{"source": "ds_probe"})
+		rows = mustQuery(t, tool, admin, map[string]any{"source": "pg_sys_os_info"})
 		assertColumn(t, rows, "connection_id", vis, vis, vis, hid)
 	})
 
@@ -392,7 +392,7 @@ func TestQueryDatastoreScopesEveryRuleIntegration(t *testing.T) {
 
 	t.Run("hidden connection named", func(t *testing.T) {
 		text, isErr := call(t, tool, user, map[string]any{
-			"source": "ds_probe", "connection_ids": []any{float64(f.hidden)}})
+			"source": "pg_sys_os_info", "connection_ids": []any{float64(f.hidden)}})
 		if !isErr || !strings.Contains(text, "connection not found or not accessible.") {
 			t.Fatalf("expected the generic denial, got: %s", text)
 		}
@@ -401,7 +401,7 @@ func TestQueryDatastoreScopesEveryRuleIntegration(t *testing.T) {
 		}
 		// A connection that does not exist gets the same text.
 		missing, _ := call(t, tool, user, map[string]any{
-			"source": "ds_probe", "connection_ids": []any{float64(99999)}})
+			"source": "pg_sys_os_info", "connection_ids": []any{float64(99999)}})
 		if missing != text {
 			t.Errorf("missing and hidden connections should be indistinguishable:\n%s\n%s", missing, text)
 		}
@@ -429,15 +429,15 @@ func TestQueryDatastoreHidesDeletedConnectionsIntegration(t *testing.T) {
 	// predicate; the marked connection's metric rows must still be gone
 	// from plain rows and from aggregates (the #688 review).
 	vis := fmt.Sprint(f.visible)
-	rows = mustQuery(t, tool, admin, map[string]any{"source": "ds_probe"})
+	rows = mustQuery(t, tool, admin, map[string]any{"source": "pg_sys_os_info"})
 	assertColumn(t, rows, "connection_id", vis, vis, vis)
 	rows = mustQuery(t, tool, admin, map[string]any{
-		"source": "ds_probe", "shape": "aggregate", "aggregation": "count",
+		"source": "pg_sys_os_info", "shape": "aggregate", "aggregation": "count",
 		"group_by": []any{"connection_id"}})
 	assertColumn(t, rows, "connection_id", vis)
 
 	text, isErr := call(t, tool, admin, map[string]any{
-		"source": "ds_probe", "connection_ids": []any{float64(f.hidden)}})
+		"source": "pg_sys_os_info", "connection_ids": []any{float64(f.hidden)}})
 	if !isErr || !strings.Contains(text, "connection not found or not accessible.") {
 		t.Fatalf("expected the generic denial for a deleted connection, got: %s", text)
 	}
@@ -458,7 +458,7 @@ func TestQueryDatastoreEmptyVisibleSetIntegration(t *testing.T) {
 	}
 	// Connection-scoped sources return nothing, rather than an error or
 	// every row.
-	for _, source := range []string{"ds_probe", "connections", "metric_baselines", "clusters", "cluster_groups"} {
+	for _, source := range []string{"pg_sys_os_info", "connections", "metric_baselines", "clusters", "cluster_groups"} {
 		text, isErr := call(t, tool, user, map[string]any{"source": source})
 		if isErr || !strings.Contains(text, "Results (0 rows)") {
 			t.Errorf("%s: expected no rows, got: %s", source, text)
@@ -508,7 +508,7 @@ func TestQueryDatastoreShapesIntegration(t *testing.T) {
 
 	t.Run("latest", func(t *testing.T) {
 		rows := mustQuery(t, tool, user, map[string]any{
-			"source": "ds_probe", "shape": "latest", "columns": []any{"connection_id", "datname", "xact_commit"}})
+			"source": "pg_sys_os_info", "shape": "latest", "columns": []any{"connection_id", "datname", "xact_commit"}})
 		if len(rows) != 2 {
 			t.Fatalf("latest: want one row per database, got %v", rows)
 		}
@@ -524,7 +524,7 @@ func TestQueryDatastoreShapesIntegration(t *testing.T) {
 
 	t.Run("aggregate with buckets", func(t *testing.T) {
 		rows := mustQuery(t, tool, admin, map[string]any{
-			"source": "ds_probe", "shape": "aggregate", "aggregation": "max",
+			"source": "pg_sys_os_info", "shape": "aggregate", "aggregation": "max",
 			"columns": []any{"xact_commit"}, "group_by": []any{"connection_id"},
 			"time_start": "1h", "buckets": float64(2)})
 		if len(rows) != 3 {
@@ -536,7 +536,7 @@ func TestQueryDatastoreShapesIntegration(t *testing.T) {
 			}
 		}
 		rows = mustQuery(t, tool, user, map[string]any{
-			"source": "ds_probe", "shape": "aggregate", "aggregation": "max",
+			"source": "pg_sys_os_info", "shape": "aggregate", "aggregation": "max",
 			"columns": []any{"xact_commit"}, "group_by": []any{"connection_id"},
 			"time_start": "1h", "buckets": float64(2)})
 		assertColumn(t, rows, "max_xact_commit", "100", "150")
@@ -544,7 +544,7 @@ func TestQueryDatastoreShapesIntegration(t *testing.T) {
 
 	t.Run("aggregate count", func(t *testing.T) {
 		rows := mustQuery(t, tool, user, map[string]any{
-			"source": "ds_probe", "shape": "aggregate", "aggregation": "count", "group_by": []any{"datname"}})
+			"source": "pg_sys_os_info", "shape": "aggregate", "aggregation": "count", "group_by": []any{"datname"}})
 		if len(rows) != 2 {
 			t.Fatalf("count by datname: %v", rows)
 		}
@@ -552,7 +552,7 @@ func TestQueryDatastoreShapesIntegration(t *testing.T) {
 
 	t.Run("paging", func(t *testing.T) {
 		args := func(page int) map[string]any {
-			return map[string]any{"source": "ds_probe", "columns": []any{"xact_commit"}, "page_size": float64(2),
+			return map[string]any{"source": "pg_sys_os_info", "columns": []any{"xact_commit"}, "page_size": float64(2),
 				"page": float64(page), "order_by": []any{map[string]any{"column": "xact_commit"}}}
 		}
 		text, isErr := call(t, tool, user, args(1))
@@ -569,9 +569,9 @@ func TestQueryDatastoreShapesIntegration(t *testing.T) {
 
 	t.Run("explain", func(t *testing.T) {
 		text, isErr := call(t, tool, admin, map[string]any{
-			"source": "ds_probe", "explain": true,
+			"source": "pg_sys_os_info", "explain": true,
 			"filters": []any{map[string]any{"column": "datname", "op": "=", "value": "app"}}})
-		if isErr || !strings.HasPrefix(text, "Datastore Query Plan: ds_probe") || !strings.Contains(text, "Scan") {
+		if isErr || !strings.HasPrefix(text, "Datastore Query Plan: pg_sys_os_info") || !strings.Contains(text, "Scan") {
 			t.Fatalf("explain: %s", text)
 		}
 		if strings.Contains(text, "\t") {
@@ -580,7 +580,7 @@ func TestQueryDatastoreShapesIntegration(t *testing.T) {
 	})
 
 	t.Run("time window", func(t *testing.T) {
-		rows := mustQuery(t, tool, user, map[string]any{"source": "ds_probe", "time_start": "4h", "columns": []any{"xact_commit"}})
+		rows := mustQuery(t, tool, user, map[string]any{"source": "pg_sys_os_info", "time_start": "4h", "columns": []any{"xact_commit"}})
 		assertColumn(t, rows, "xact_commit", "10", "100", "150", "50")
 	})
 }
@@ -607,7 +607,7 @@ func TestQueryDatastoreFailuresIntegration(t *testing.T) {
 
 	done, cancel := context.WithCancel(user)
 	cancel()
-	runCase("lookup failure", f.tool(), done, map[string]any{"source": "ds_probe"}, "Failed to look up the source")
+	runCase("lookup failure", f.tool(), done, map[string]any{"source": "pg_sys_os_info"}, "Failed to look up the source")
 	runCase("execution failure", f.tool(), done, map[string]any{"source": "alerts"}, "")
 	runCase("explain failure", f.tool(), done, map[string]any{"source": "alerts", "explain": true}, "")
 	runCase("explain restricted", f.tool(), user, map[string]any{"source": "alerts", "explain": true},
@@ -634,7 +634,7 @@ func TestDescribeDatastoreIntegration(t *testing.T) {
 		"alerts\tconfiguration\ttriggered_at\talert\t",
 		"blackouts\tconfiguration\tstart_time\thierarchy\t",
 		"alert_rules\tconfiguration\t\tglobal\t",
-		"ds_probe\tmetric\tcollected_at\tconnection\tTest probe for query_datastore.",
+		"pg_sys_os_info\tmetric\tcollected_at\tconnection\tTest probe for query_datastore.",
 		"pg_connectivity\tmetric\tcollected_at\tconnection\tMetrics collected by the pg_connectivity probe.",
 		"- via_alert: ",
 		"Scoping rules:",
@@ -650,12 +650,12 @@ func TestDescribeDatastoreIntegration(t *testing.T) {
 		t.Error("a blank source should list every source")
 	}
 
-	text, isErr = call(t, tool, ctx, map[string]any{"source": "ds_probe"})
+	text, isErr = call(t, tool, ctx, map[string]any{"source": "pg_sys_os_info"})
 	if isErr {
 		t.Fatalf("describe probe: %s", text)
 	}
 	for _, want := range []string{
-		"Source: ds_probe\nKind: metric\n", "Time column: collected_at",
+		"Source: pg_sys_os_info\nKind: metric\n", "Time column: collected_at",
 		"Shape latest returns the newest row per: connection_id, datname",
 		"xact_commit\tbigint\tmetric", "datname\ttext\tdimension",
 	} {
@@ -697,7 +697,7 @@ func TestDescribeDatastoreIntegration(t *testing.T) {
 	if text, isErr := call(t, tool, done, map[string]any{}); !isErr || !strings.Contains(text, "Failed to list the datastore sources") {
 		t.Errorf("list failure: %s", text)
 	}
-	if text, isErr := call(t, tool, done, map[string]any{"source": "ds_probe"}); !isErr || !strings.Contains(text, "Failed to look up the source") {
+	if text, isErr := call(t, tool, done, map[string]any{"source": "pg_sys_os_info"}); !isErr || !strings.Contains(text, "Failed to look up the source") {
 		t.Errorf("lookup failure: %s", text)
 	}
 
@@ -771,7 +771,7 @@ func TestQueryDatastoreRecordsRefusedConnection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			capture.denials = nil
 			text, isErr := call(t, tool, tc.ctx, map[string]any{
-				"source": "ds_probe", "connection_ids": []any{float64(tc.id)}})
+				"source": "pg_sys_os_info", "connection_ids": []any{float64(tc.id)}})
 			if !isErr || !strings.Contains(text, connectionNotAccessibleMsg) {
 				t.Fatalf("expected the generic denial, got: %s", text)
 			}
@@ -784,7 +784,7 @@ func TestQueryDatastoreRecordsRefusedConnection(t *testing.T) {
 
 	capture.denials = nil
 	if _, isErr := call(t, tool, f.userCtx(), map[string]any{
-		"source": "ds_probe", "connection_ids": []any{float64(f.visible)}}); isErr {
+		"source": "pg_sys_os_info", "connection_ids": []any{float64(f.visible)}}); isErr {
 		t.Fatal("expected a visible connection to be queried")
 	}
 	if len(capture.denials) != 0 {
@@ -817,7 +817,7 @@ func TestProviderWiresQueryDatastoreDenialRecorder(t *testing.T) {
 		auth.TokenHashContextKey, "hash-query-datastore")
 
 	resp, err := provider.Execute(ctx, "query_datastore", map[string]any{
-		"source": "ds_probe", "connection_ids": []any{float64(f.hidden)}})
+		"source": "pg_sys_os_info", "connection_ids": []any{float64(f.hidden)}})
 	if err != nil {
 		t.Fatalf("Execute returned a Go error: %v", err)
 	}

@@ -404,6 +404,33 @@ moved.
   allows acknowledging, unacknowledging and saving an analysis of an
   alert, and managing blackouts and blackout schedules on that server;
   the user ruled this intended, so do not report it as a finding.
+- Probe names are an allowlist, because all of the masking above is
+  keyed by a probe's exact name (`ProbeRedactions`, `ProbeColumnMask`,
+  `RedactProbeRows`, `MaskedProbeColumn`, `RawStatementColumns`). A
+  relation holding a probe's rows under another name would be served
+  in clear: a collector weekly partition (`pg_stat_activity_20261102`,
+  information_schema reports it as a BASE TABLE), a detached partition,
+  a table created under another name, or a view such as `CREATE VIEW
+  metrics.activity_report AS SELECT * FROM metrics.pg_stat_activity`.
+  Every route that resolves a caller's probe or source name must
+  therefore decide through `metrics.LookupProbeRelation` or
+  `metrics.ListProbeRelations` (`internal/metrics/probe_relations.go`):
+  `ProbeExists` (describe_probe, query_metrics, `/api/v1/metrics/latest`,
+  `/api/v1/metrics/query`, `QueryTimeSeries`, `QueryLatestRows`), the
+  datastore catalog behind query_datastore and describe_datastore, and
+  list_probes. They admit only a `metrics.IsKnownProbe` name, refusing
+  any other before a query, and then a catalog row with relkind `r`,
+  `p` or `v`, `NOT relispartition` and SELECT privilege
+  (`has_table_privilege`). Before PR #790 `ProbeExists` admitted any BASE TABLE in
+  `metrics`, partitions included, on the four `ProbeExists` routes; the
+  datastore catalog and list_probes already excluded partitions. Report
+  a new route that reads a caller-named metrics relation without these
+  functions, or a new catalog filter written by hand.
+  `TestMaskedProbesOnEveryRouteIntegration`
+  (`internal/tools/datastore_masking_routes_test.go`) partitions each
+  masked probe by week and checks all seven routes refuse the partition
+  (found through `pg_inherits`), the same partition once detached, and
+  a renamed view.
 - A user must never manage a blackout that covers a server they cannot
   see (#732). Every create, update, stop and delete of a blackout or
   blackout schedule goes through `requireBlackoutTargetWritable`

@@ -48,7 +48,7 @@ func createProbeView(t *testing.T, pool *pgxpool.Pool, view, table string) {
 
 // The views the latest-row and time-series tests read take the names of
 // real probes, because a view is served only under a known probe's name
-// (AdmitsProbeRelation); probes no other test in the package seeds were
+// (LookupProbeRelation); probes no other test in the package seeds were
 // chosen. renamedViewSuffix names a view of a fixture that is not a known
 // probe, which must be refused.
 const (
@@ -187,10 +187,10 @@ func TestGetProbeEntityKeyColumns_QueryError(t *testing.T) {
 	}
 }
 
-// TestProbeExists checks that a table is a probe whatever its name, a
-// view only under a known probe's name, and that a renamed view of a
-// probe is refused, since the masking keyed by probe name could not
-// protect it.
+// TestProbeExists checks that a table or view is a probe only under a
+// known probe's name, and that a renamed view and a table under another
+// name are refused, since the masking keyed by probe name could not
+// protect them.
 func TestProbeExists(t *testing.T) {
 	pool, closePool := newLatestRowsTestPool(t)
 	defer closePool()
@@ -200,6 +200,15 @@ func TestProbeExists(t *testing.T) {
 	createProbeView(t, pool, latestViewProbe, latestRowsTestProbe)
 	const renamed = latestRowsTestProbe + renamedViewSuffix
 	createProbeView(t, pool, renamed, latestRowsTestProbe)
+	// A table under a name that is not a known probe's, which was served
+	// before the lookup admitted known probes only.
+	const unknownTable = "ds_unknown_probe_test"
+	dropTable(context.Background(), pool, unknownTable)
+	defer dropTable(context.Background(), pool, unknownTable)
+	if _, err := pool.Exec(context.Background(), `CREATE TABLE metrics.ds_unknown_probe_test (
+        connection_id integer NOT NULL, collected_at timestamptz NOT NULL, n bigint)`); err != nil {
+		t.Fatalf("create the unknown table: %v", err)
+	}
 
 	ctx := context.Background()
 	tests := []struct {
@@ -210,6 +219,7 @@ func TestProbeExists(t *testing.T) {
 		{"partitioned or plain table", latestRowsTestProbe, true},
 		{"ColdFront view under a probe's name", latestViewProbe, true},
 		{"view under another name", renamed, false},
+		{"table under another name", unknownTable, false},
 		{"missing probe", "does_not_exist_probe", false},
 	}
 	for _, tt := range tests {

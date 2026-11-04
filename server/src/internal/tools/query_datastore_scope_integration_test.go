@@ -30,7 +30,7 @@ func seedHiddenDatabase(t *testing.T, f *datastoreFixture) []int {
 		seedBaselineConnection(t, f.pool, "visible-conn-3", true, ""),
 	}
 	if _, err := f.pool.Exec(context.Background(),
-		`INSERT INTO metrics.ds_probe (connection_id, collected_at, datname, numbackends, xact_commit) VALUES
+		`INSERT INTO metrics.pg_sys_os_info (connection_id, collected_at, datname, numbackends, xact_commit) VALUES
             ($1, now() - interval '5 minutes', 'other', 1, 1),
             ($2, now() - interval '5 minutes', 'other', 1, 1),
             ($3, now() - interval '5 minutes', 'hiddendb', 4, 4)`,
@@ -63,13 +63,13 @@ func TestQueryDatastoreHiddenRowsIntegration(t *testing.T) {
 	// The hidden row exists, and an unscoped query for it raises the
 	// error the attack relies on.
 	if _, err := f.pool.Exec(ctx,
-		`SELECT count(*) FROM metrics.ds_probe WHERE datname LIKE $1`, `hidden%\`); err == nil {
+		`SELECT count(*) FROM metrics.pg_sys_os_info WHERE datname LIKE $1`, `hidden%\`); err == nil {
 		t.Fatal("an unscoped trailing-escape pattern should fail on the hidden row")
 	}
 
 	t.Run("validation rejects the pattern", func(t *testing.T) {
 		text, isErr := call(t, f.tool(), user, map[string]any{
-			"source":  "ds_probe",
+			"source":  "pg_sys_os_info",
 			"filters": []any{map[string]any{"column": "datname", "op": "like", "value": `hidden%\`}},
 		})
 		if !isErr || !strings.Contains(text, "must not end with a single backslash") {
@@ -81,14 +81,14 @@ func TestQueryDatastoreHiddenRowsIntegration(t *testing.T) {
 	})
 
 	t.Run("scope is applied before the caller's filters", func(t *testing.T) {
-		src, err := lookupDatastoreSource(ctx, f.pool, "ds_probe")
+		src, err := lookupDatastoreSource(ctx, f.pool, "pg_sys_os_info")
 		if err != nil {
 			t.Fatalf("lookup: %v", err)
 		}
 		const placeholder = "placeholder%"
 		for _, shape := range []string{"rows", "latest", "aggregate"} {
 			args := map[string]any{
-				"source":  "ds_probe",
+				"source":  "pg_sys_os_info",
 				"shape":   shape,
 				"filters": []any{map[string]any{"column": "datname", "op": "like", "value": placeholder}},
 			}
@@ -136,7 +136,7 @@ func TestQueryDatastoreHiddenRowsIntegration(t *testing.T) {
 
 	t.Run("an equality filter on hidden data finds nothing", func(t *testing.T) {
 		rows := mustQuery(t, f.tool(), user, map[string]any{
-			"source":  "ds_probe",
+			"source":  "pg_sys_os_info",
 			"filters": []any{map[string]any{"column": "datname", "op": "=", "value": "hiddendb"}},
 		})
 		if len(rows) != 0 {
@@ -146,7 +146,7 @@ func TestQueryDatastoreHiddenRowsIntegration(t *testing.T) {
 
 	t.Run("explain is refused, so plan estimates cannot count hidden rows", func(t *testing.T) {
 		text, isErr := call(t, f.tool(), user, map[string]any{
-			"source":  "ds_probe",
+			"source":  "pg_sys_os_info",
 			"explain": true,
 			"filters": []any{map[string]any{"column": "datname", "op": "like", "value": "hidden%"}},
 		})
@@ -157,14 +157,14 @@ func TestQueryDatastoreHiddenRowsIntegration(t *testing.T) {
 
 	t.Run("a failing statement gets a general message", func(t *testing.T) {
 		text, isErr := call(t, f.tool(), user, map[string]any{
-			"source":  "ds_probe",
+			"source":  "pg_sys_os_info",
 			"filters": []any{map[string]any{"column": "collected_at", "op": ">", "value": "not-a-time"}},
 		})
 		if !isErr || text != datastoreQueryFailedMsg {
 			t.Errorf("got (error=%v) %q, want %q", isErr, text, datastoreQueryFailedMsg)
 		}
 		text, isErr = call(t, f.tool(), superuserContext(), map[string]any{
-			"source":  "ds_probe",
+			"source":  "pg_sys_os_info",
 			"explain": true,
 			"filters": []any{map[string]any{"column": "collected_at", "op": ">", "value": "not-a-time"}},
 		})
@@ -183,21 +183,21 @@ func TestQueryDatastoreReviewBehaviourIntegration(t *testing.T) {
 
 	t.Run("zero-row hint on the default window", func(t *testing.T) {
 		text, isErr := call(t, f.tool(), user, map[string]any{
-			"source":  "ds_probe",
+			"source":  "pg_sys_os_info",
 			"filters": []any{map[string]any{"column": "datname", "op": "=", "value": "absent"}},
 		})
 		if isErr || !strings.Contains(text, datastoreDefaultWindowHint) {
 			t.Errorf("got (error=%v) %s", isErr, text)
 		}
 		text, isErr = call(t, f.tool(), user, map[string]any{
-			"source":     "ds_probe",
+			"source":     "pg_sys_os_info",
 			"time_start": "30d",
 			"filters":    []any{map[string]any{"column": "datname", "op": "=", "value": "absent"}},
 		})
 		if isErr || strings.Contains(text, "No rows in the default window") {
 			t.Errorf("an explicit time_start should not get the hint: (error=%v) %s", isErr, text)
 		}
-		text, _ = call(t, f.tool(), user, map[string]any{"source": "ds_probe"})
+		text, _ = call(t, f.tool(), user, map[string]any{"source": "pg_sys_os_info"})
 		if strings.Contains(text, "No rows in the default window") {
 			t.Errorf("a non-empty page should not get the hint: %s", text)
 		}
@@ -217,17 +217,17 @@ func TestQueryDatastoreReviewBehaviourIntegration(t *testing.T) {
 
 	t.Run("unrestricted caller naming a missing connection", func(t *testing.T) {
 		missing, _ := call(t, f.tool(), superuserContext(), map[string]any{
-			"source": "ds_probe", "connection_ids": []any{99999},
+			"source": "pg_sys_os_info", "connection_ids": []any{99999},
 		})
 		hidden, _ := call(t, f.tool(), user, map[string]any{
-			"source": "ds_probe", "connection_ids": []any{f.hidden},
+			"source": "pg_sys_os_info", "connection_ids": []any{f.hidden},
 		})
 		const denial = "connection not found or not accessible."
 		if !strings.HasPrefix(missing, denial) || !strings.HasPrefix(hidden, denial) {
 			t.Errorf("a missing connection should get the hidden-connection answer:\nmissing: %s\nhidden: %s", missing, hidden)
 		}
 		rows := mustQuery(t, f.tool(), superuserContext(), map[string]any{
-			"source": "ds_probe", "connection_ids": []any{f.hidden},
+			"source": "pg_sys_os_info", "connection_ids": []any{f.hidden},
 		})
 		assertColumn(t, rows, "datname", "app")
 	})
@@ -242,7 +242,7 @@ func TestQueryDatastoreReviewBehaviourIntegration(t *testing.T) {
 	t.Run("pages are stable", func(t *testing.T) {
 		args := func(page int) map[string]any {
 			return map[string]any{
-				"source": "ds_probe", "time_start": "1h", "page_size": 1, "page": page,
+				"source": "pg_sys_os_info", "time_start": "1h", "page_size": 1, "page": page,
 				"columns":  []any{"datname"},
 				"order_by": []any{map[string]any{"column": "connection_id"}},
 			}
@@ -268,17 +268,17 @@ func TestDescribeDatastorePartitionedIntegration(t *testing.T) {
 	// once when the partition is created, so the current partition spans
 	// the two days either side of the server's clock.
 	stmts := []fixtureStatement{
-		{sql: `CREATE TABLE metrics.ds_part (
+		{sql: `CREATE TABLE metrics.pg_sys_load_avg_info (
             connection_id INTEGER NOT NULL,
             collected_at TIMESTAMPTZ NOT NULL,
             value BIGINT
         ) PARTITION BY RANGE (collected_at)`},
-		{sql: `CREATE TABLE metrics.ds_part_old PARTITION OF metrics.ds_part
+		{sql: `CREATE TABLE metrics.pg_sys_load_avg_info_old PARTITION OF metrics.pg_sys_load_avg_info
             FOR VALUES FROM ('2000-01-01 00:00:00+00') TO ('2000-02-01 00:00:00+00')`},
-		{sql: `CREATE TABLE metrics.ds_part_current PARTITION OF metrics.ds_part
+		{sql: `CREATE TABLE metrics.pg_sys_load_avg_info_current PARTITION OF metrics.pg_sys_load_avg_info
             FOR VALUES FROM (now() - interval '48 hours') TO (now() + interval '48 hours')`},
-		{sql: `CREATE INDEX ON metrics.ds_part (connection_id, collected_at)`},
-		{sql: `INSERT INTO metrics.ds_part VALUES
+		{sql: `CREATE INDEX ON metrics.pg_sys_load_avg_info (connection_id, collected_at)`},
+		{sql: `INSERT INTO metrics.pg_sys_load_avg_info VALUES
             ($1, '2000-01-15 00:00:00+00', 1), ($1, now() - interval '5 minutes', 2)`, args: []any{f.visible}},
 	}
 	for _, stmt := range stmts {
@@ -288,18 +288,18 @@ func TestDescribeDatastorePartitionedIntegration(t *testing.T) {
 	}
 
 	text, isErr := call(t, DescribeDatastoreTool(f.pool), superuserContext(), map[string]any{})
-	if isErr || !strings.Contains(text, "ds_part\tmetric\tcollected_at\tconnection\t") {
+	if isErr || !strings.Contains(text, "pg_sys_load_avg_info\tmetric\tcollected_at\tconnection\t") {
 		t.Fatalf("the partitioned parent should be listed: %s", text)
 	}
-	if strings.Contains(text, "ds_part_old") || strings.Contains(text, "ds_part_current") {
+	if strings.Contains(text, "pg_sys_load_avg_info_old") || strings.Contains(text, "pg_sys_load_avg_info_current") {
 		t.Errorf("partitions should not be listed: %s", text)
 	}
 
-	rows := mustQuery(t, f.tool(), f.userCtx(), map[string]any{"source": "ds_part"})
+	rows := mustQuery(t, f.tool(), f.userCtx(), map[string]any{"source": "pg_sys_load_avg_info"})
 	assertColumn(t, rows, "value", "2")
 
-	plan, isErr := call(t, f.tool(), superuserContext(), map[string]any{"source": "ds_part", "explain": true})
-	if isErr || !strings.Contains(plan, "ds_part_current") || strings.Contains(plan, "ds_part_old") {
+	plan, isErr := call(t, f.tool(), superuserContext(), map[string]any{"source": "pg_sys_load_avg_info", "explain": true})
+	if isErr || !strings.Contains(plan, "pg_sys_load_avg_info_current") || strings.Contains(plan, "pg_sys_load_avg_info_old") {
 		t.Errorf("a windowed query should plan only the current partition:\n%s", plan)
 	}
 }
@@ -332,11 +332,11 @@ func TestDatastoreSourceLookupErrorsIntegration(t *testing.T) {
 
 	doneCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := lookupDatastoreSource(doneCtx, f.pool, "ds_probe"); err == nil ||
+	if _, err := lookupDatastoreSource(doneCtx, f.pool, "pg_sys_os_info"); err == nil ||
 		!strings.Contains(err.Error(), "failed to look up source") {
 		t.Errorf("lookup on a canceled context = %v, want a look-up failure", err)
 	}
-	if _, err := lookupMetricColumns(doneCtx, f.pool, "ds_probe"); err == nil ||
+	if _, err := lookupMetricColumns(doneCtx, f.pool, "pg_sys_os_info"); err == nil ||
 		!strings.Contains(err.Error(), "failed to read source columns") {
 		t.Errorf("column lookup on a canceled context = %v, want a read failure", err)
 	}

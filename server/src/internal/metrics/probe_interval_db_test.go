@@ -216,6 +216,7 @@ func setupSpacingFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 		t.Fatalf("failed to create metrics schema: %v", err)
 	}
 	dropTable(ctx, pool, spacingTestProbe)
+	registerFixtureProbeForTest(t, spacingTestProbe)
 
 	ddl := `CREATE TABLE metrics."` + spacingTestProbe + `" (
         connection_id integer NOT NULL,

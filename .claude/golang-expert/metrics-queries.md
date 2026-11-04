@@ -61,44 +61,61 @@ through a long retention history could outlast any request budget.
 On a ColdFront datastore every `metrics.*` relation is a view (relkind
 `'v'`, `table_type` `VIEW`) over Apache Iceberg storage; on plain
 PostgreSQL they are partitioned tables. The server has no setting for
-this, so every probe-discovery query must accept both:
-`metrics.ProbeExists` (shared by `QueryTimeSeries`,
+this, so probe discovery accepts both. It lives in one place,
+`internal/metrics/probe_relations.go`: `LookupProbeRelation` (behind
+`metrics.ProbeExists`, which `QueryTimeSeries`,
 `discoverLatestRowColumns`, the latest-snapshot handler, `query_metrics`
-and `describe_probe`) reads `BASE TABLE` and `VIEW`; the datastore
-catalog's `pg_class` lookups take relkinds `'r', 'p', 'v'`;
-`list_probes` lists a view only when it has `connection_id` and
-`collected_at`, and reports its `row_count` as `unknown` (never run
-`count(*)` against an Iceberg view). Do not add a new
-`table_type = 'BASE TABLE'` or `relkind IN ('r', 'p')` filter over
-`metrics`.
+and `describe_probe` share, and behind the datastore catalog's
+`lookupMetricTable`) and `ListProbeRelations` (behind `list_probes` and
+describe_datastore's `listDatastoreSources`). Both read `pg_class` and
+`pg_namespace` only, never a metrics relation (on ColdFront DuckDB
+would plan it): relkind `'r', 'p', 'v'`, `NOT c.relispartition` and
+`has_table_privilege(c.oid, 'SELECT')`, plus whether the relation is a
+view and has the `connection_id`/`collected_at` bookkeeping columns.
+Only the list computes a row count (planner estimate, summed over the
+partition tree; NULL for a view, reported as `unknown`; never run
+`count(*)` against an Iceberg view). `list_probes` drops a view without
+bookkeeping columns, the datastore catalog any relation without them.
+Do not write another catalog query over `metrics` for a route; call
+these.
 
-A view is admitted only under a known probe's name, and this is a
-security rule, not a tidiness one. The read-side masking
-(`ProbeRedactions`, `RedactProbeRows`, `statementTextColumns`) is keyed
-by probe name, so `CREATE VIEW metrics.activity_report AS SELECT * FROM
-metrics.pg_stat_activity` would otherwise serve stored statement text
-and credentials in clear. Every route that resolves a caller's source or
-probe name decides through `metrics.AdmitsProbeRelation(name, isView)`
-(`internal/metrics/known_probes.go`): a table under any name, as before,
-and a view only when `IsKnownProbe(name)`. The catalog queries return
-whether the relation is a view (`table_type = 'VIEW'` in
-`probeRelationQuery`, `c.relkind = 'v'` in
-`datastoreMetricTableQuery`, `datastoreMetricSourcesQuery` and
-`list_probes`) and the Go side applies the rule, so listing and lookup
-cannot disagree. A new route that takes a probe or source name must use
-`ProbeExists` or `AdmitsProbeRelation`. `knownProbes` must hold every
-probe the collector creates: `TestKnownProbesMatchCollectorSchema`
-migrates a scratch database and fails in either direction, and
+Only a known probe's name is admitted, whatever the relkind, and this is
+a security rule, not a tidiness one. The read-side masking
+(`ProbeRedactions`, `ProbeColumnMask`, `RedactProbeRows`,
+`MaskedProbeColumn`, `RawStatementColumns`) is keyed by the probe's exact
+name, so a relation holding a probe's rows under another name would be
+served in clear: a weekly partition such as `pg_stat_activity_20261102`
+(information_schema reports it as a BASE TABLE, which the old
+`ProbeExists` admitted), a detached partition, a table created under
+another name, or `CREATE VIEW metrics.activity_report AS SELECT * FROM
+metrics.pg_stat_activity`. `LookupProbeRelation` refuses a name that is
+not `IsKnownProbe` before any query, and `ListProbeRelations` drops one.
+`knownProbes` (guarded by `knownProbesMu`) must hold every probe the
+collector creates: `TestKnownProbesMatchCollectorSchema` migrates a
+scratch database and fails in either direction, and
 `TestKnownProbesCoverMaskedAndKeyedProbes` checks that every
 `ProbeRedactions` and `probeEntityKeyFallback` entry is known.
-`checkRenamedViewRefused` in `TestMaskedProbesOnEveryRouteIntegration`
-creates `<probe>_report` over each masked probe and fails if
-query_datastore, describe_datastore, list_probes, describe_probe,
-query_metrics, `/metrics/latest` or `/metrics/query` admits it. Test
-fixtures that stand a view in for ColdFront must therefore take a real
-probe's name (`pg_sys_process_info`, `pg_stat_user_functions`,
+`TestMaskedProbesOnEveryRouteIntegration` partitions each masked probe
+by week and, through `checkPartitionRefused` and
+`checkRenamedViewRefused`, fails if query_datastore, describe_datastore,
+list_probes, describe_probe, query_metrics, `/metrics/latest` or
+`/metrics/query` admits the partition (found through `pg_inherits`), the
+detached partition or a `<probe>_report` view.
+
+Test fixtures must therefore take a real probe's name, or be registered.
+In `internal/metrics`, `registerFixtureProbeForTest(t, name)`
+(`known_probes_test.go`) adds a fixture name such as
+`pg_stat_all_tables_ts_test` to `knownProbes` for one test, so those
+fixtures keep names no other package's test creates. Other packages
+cannot reach it and use real names: in `internal/tools` and
+`internal/api` each fixture drops and recreates its probe table, and
+takes a probe whose `probeEntityKeyFallback` entry is empty or matches
+its columns (a PK-less fixture under a name with fallback keys it lacks
+would break the latest-row query), for example `pg_sys_os_info` for
+query_datastore's former `ds_probe`. View fixtures standing in for
+ColdFront use `pg_sys_process_info`, `pg_stat_user_functions`,
 `pg_stat_recovery_prefetch`, `pg_statio_all_sequences` and
-`pg_stat_subscription` are used because no other fixture seeds them).
+`pg_stat_subscription`, which no other fixture in their package seeds.
 
 A view has no primary key, so `GetProbeEntityKeyColumns`
 falls back to `probeEntityKeyFallback` on ColdFront (see the entity-key

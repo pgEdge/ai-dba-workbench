@@ -82,84 +82,34 @@ Returns a TSV table with:
 				ctx = context.Background()
 			}
 
-			// Query for the probe tables in the metrics schema with their
-			// descriptions and row counts. The collector stores each probe
-			// in a partitioned parent table with weekly partitions named
-			// <probe>_<YYYYMMDD>; partitions are excluded by catalog state
-			// (relispartition) rather than by name, because a name pattern
-			// cannot tell a partition from a probe reliably (issue #644).
-			// relkind 'r' and 'p' are the ordinary and partitioned tables
-			// that information_schema.tables reports as BASE TABLE, and the
-			// privilege check keeps tables the datastore role cannot read
-			// out of the list, as information_schema.tables did. A
-			// partitioned table holds no rows itself, so its row count is the
-			// sum over the leaf partitions at every level of its tree.
+			// The probes come from metrics.ListProbeRelations, the catalog
+			// lookup every route shares, so list_probes lists exactly what
+			// describe_probe, query_metrics and the datastore tools accept:
+			// known probes only, never a partition (issue #644) or a
+			// relation the datastore role cannot read. The masking of
+			// statement text and settings is keyed by probe name, so a
+			// relation under any other name could not be read safely.
 			//
-			// On a pgEdge ColdFront datastore every probe is instead a view
-			// (relkind 'v') over Apache Iceberg storage (issue #755). A view
-			// is listed when it carries the connection_id and collected_at
-			// bookkeeping columns every probe has, so an unrelated view in
-			// the schema is not mistaken for one, and only under a known
-			// probe's name (metrics.AdmitsProbeRelation, applied below to
-			// is_view): the masking of statement text and settings is keyed
-			// by probe name, so a view under another name could not be
-			// read safely. A view has no statistics, and count(*) would
-			// scan the probe's whole history in object storage, so its row
-			// count is NULL and reported as unknown.
-			query := `
-				SELECT
-					c.relname::text AS table_name,
-					COALESCE(obj_description(c.oid, 'pg_class'), '') AS description,
-					c.relkind = 'v' AS is_view,
-					CASE WHEN c.relkind = 'v' THEN NULL
-					WHEN c.relkind = 'p' THEN (
-						SELECT COALESCE(SUM(ps.n_live_tup), 0)
-						FROM pg_partition_tree(c.oid) pt
-						JOIN pg_stat_user_tables ps ON ps.relid = pt.relid
-						WHERE pt.isleaf
-					)::bigint
-					ELSE COALESCE(s.n_live_tup, 0)
-					END AS row_count
-				FROM pg_class c
-				JOIN pg_namespace n ON n.oid = c.relnamespace
-				LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
-				WHERE n.nspname = 'metrics'
-					AND NOT c.relispartition
-					AND (c.relkind IN ('r', 'p')
-						OR (c.relkind = 'v'
-							AND EXISTS (SELECT 1 FROM pg_attribute a
-								WHERE a.attrelid = c.oid AND a.attname = 'connection_id'
-									AND a.attnum > 0 AND NOT a.attisdropped)
-							AND EXISTS (SELECT 1 FROM pg_attribute a
-								WHERE a.attrelid = c.oid AND a.attname = 'collected_at'
-									AND a.attnum > 0 AND NOT a.attisdropped)))
-					AND has_table_privilege(c.oid, 'SELECT')
-				ORDER BY c.relname
-			`
-
-			rows, err := pool.Query(ctx, query)
+			// On a pgEdge ColdFront datastore every probe is a view over
+			// Apache Iceberg storage (issue #755). A view is listed only
+			// when it carries the connection_id and collected_at columns
+			// every probe has, and its row count is reported as unknown.
+			relations, err := metrics.ListProbeRelations(ctx, pool)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to query metrics probes: %v", err))
 			}
-			defer rows.Close()
 
 			var probes []ProbeInfo
-			for rows.Next() {
-				var probe ProbeInfo
-				var isView bool
-				if err := rows.Scan(&probe.Name, &probe.Description, &isView, &probe.RowCount); err != nil {
-					return mcp.NewToolError(fmt.Sprintf("Failed to scan probe: %v", err))
-				}
-				if !metrics.AdmitsProbeRelation(probe.Name, isView) {
+			for _, rel := range relations {
+				if rel.IsView && !rel.HasBookkeeping {
 					continue
 				}
-				// Determine scope based on probe name patterns
-				probe.Scope = determineProbeScope(probe.Name)
-				probes = append(probes, probe)
-			}
-
-			if err := rows.Err(); err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Error iterating probes: %v", err))
+				probes = append(probes, ProbeInfo{
+					Name:        rel.Name,
+					Description: rel.Description,
+					RowCount:    rel.RowCount,
+					Scope:       determineProbeScope(rel.Name),
+				})
 			}
 
 			if len(probes) == 0 {

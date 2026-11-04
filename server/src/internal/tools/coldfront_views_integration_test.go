@@ -21,7 +21,7 @@ import (
 // These tests stand a plain view in for a ColdFront one, which the
 // catalog reports the same way (relkind 'v', table_type VIEW), and check
 // that every probe tool finds and reads it. A view is served only under a
-// known probe's name (metrics.AdmitsProbeRelation), so the stand-ins take
+// known probe's name (metrics.LookupProbeRelation), so the stand-ins take
 // the names of real probes no other fixture here seeds, and a view under
 // any other name must be refused.
 const (
@@ -121,9 +121,9 @@ func TestDatastoreToolsAcceptViewsIntegration(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := f.pool.Exec(ctx, `
-		CREATE VIEW metrics.pg_statio_all_sequences AS SELECT * FROM metrics.ds_probe;
+		CREATE VIEW metrics.pg_statio_all_sequences AS SELECT * FROM metrics.pg_sys_os_info;
 		COMMENT ON VIEW metrics.pg_statio_all_sequences IS 'ColdFront stand-in source.';
-		CREATE VIEW metrics.ds_report AS SELECT * FROM metrics.ds_probe;`); err != nil {
+		CREATE VIEW metrics.ds_report AS SELECT * FROM metrics.pg_sys_os_info;`); err != nil {
 		t.Fatalf("create source view: %v", err)
 	}
 

@@ -104,6 +104,7 @@ func setupLatestRowsFixture(t *testing.T, pool *pgxpool.Pool) func() {
 	}
 
 	dropTable(ctx, pool, latestRowsTestProbe)
+	registerFixtureProbeForTest(t, latestRowsTestProbe)
 
 	ddl := `CREATE TABLE metrics."` + latestRowsTestProbe + `" (
         connection_id integer NOT NULL,
@@ -380,6 +381,7 @@ func setupNoEntityKeyFixture(t *testing.T, pool *pgxpool.Pool) func() {
 	}
 
 	dropTable(ctx, pool, latestRowsNoEntityKey)
+	registerFixtureProbeForTest(t, latestRowsNoEntityKey)
 
 	ddl := `CREATE TABLE metrics."` + latestRowsNoEntityKey + `" (
         connection_id integer NOT NULL,
@@ -528,6 +530,7 @@ func TestDiscoverLatestRowColumns_Integration(t *testing.T) {
 
 	t.Run("probe with only internal columns rejected", func(t *testing.T) {
 		dropTable(ctx, pool, latestRowsInternalOnly)
+		registerFixtureProbeForTest(t, latestRowsInternalOnly)
 		internalDDL := `CREATE TABLE metrics."` + latestRowsInternalOnly + `" (
             connection_id integer NOT NULL,
             collected_at  timestamp with time zone NOT NULL,

@@ -16,7 +16,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
@@ -682,23 +681,6 @@ func redactMetricColumns(name string, columns []datastoreColumn) []datastoreColu
 // hold. Its text names describe_datastore so a caller can recover.
 var errUnknownDatastoreSource = errors.New("unknown source: call describe_datastore to list the sources query_datastore accepts")
 
-// datastoreMetricTableQuery finds a parent probe table in the metrics
-// schema. Partitions are excluded by relispartition rather than by name,
-// so a probe whose name happens to contain "_p" is still found. A view
-// (relkind 'v') is a probe too: on a pgEdge ColdFront datastore every
-// probe is a view over Apache Iceberg storage (issue #755). The second
-// column says whether the relation is a view, which lookupMetricTable
-// admits only under a known probe's name (metrics.AdmitsProbeRelation).
-const datastoreMetricTableQuery = `
-        SELECT COALESCE(obj_description(c.oid, 'pg_class'), ''), c.relkind = 'v'
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'metrics'
-            AND c.relname = $1
-            AND c.relkind IN ('r', 'p', 'v')
-            AND NOT c.relispartition
-    `
-
 // datastoreMetricColumnsQuery lists a probe table's columns.
 const datastoreMetricColumnsQuery = `
         SELECT column_name, data_type
@@ -761,28 +743,21 @@ func metricDescription(name, comment string) string {
 	return description
 }
 
-// lookupMetricTable returns the comment on the parent probe table name
-// in the metrics schema, or errUnknownDatastoreSource when there is no
-// such table, or when name is a view that does not carry a known probe's
-// name: the masking of statement text and settings is keyed by probe
-// name, so such a view could return them in clear
-// (metrics.AdmitsProbeRelation).
+// lookupMetricTable returns the comment on probe name, or
+// errUnknownDatastoreSource when metrics.LookupProbeRelation does not
+// admit it: when it is not a known probe's name (the masking of
+// statement text and settings is keyed by probe name, so a relation
+// under any other name could return them in clear), is a partition, or
+// the datastore role cannot read it.
 func lookupMetricTable(ctx context.Context, pool *pgxpool.Pool, name string) (string, error) {
-	// A relation name is unique within a schema, so there is at most one
-	// row.
-	var description string
-	var isView bool
-	err := pool.QueryRow(ctx, datastoreMetricTableQuery, name).Scan(&description, &isView)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errUnknownDatastoreSource
-	}
+	rel, ok, err := metrics.LookupProbeRelation(ctx, pool, name)
 	if err != nil {
 		return "", fmt.Errorf("failed to look up source: %w", err)
 	}
-	if !metrics.AdmitsProbeRelation(name, isView) {
+	if !ok {
 		return "", errUnknownDatastoreSource
 	}
-	return description, nil
+	return rel.Description, nil
 }
 
 // lookupMetricColumns returns the columns of probe table name that a
@@ -824,29 +799,6 @@ func lookupMetricColumns(ctx context.Context, pool *pgxpool.Pool, name string) (
 	return columns, nil
 }
 
-// datastoreMetricSourcesQuery lists every parent probe table in the
-// metrics schema that carries the bookkeeping columns
-// lookupDatastoreSource requires, so describe_datastore lists exactly the
-// metric sources query_datastore accepts. It takes the same relkinds as
-// datastoreMetricTableQuery, ColdFront views included, and likewise
-// reports whether each is a view, for listDatastoreSources to apply
-// metrics.AdmitsProbeRelation as lookupMetricTable does.
-const datastoreMetricSourcesQuery = `
-        SELECT c.relname, COALESCE(obj_description(c.oid, 'pg_class'), ''), c.relkind = 'v'
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'metrics'
-            AND c.relkind IN ('r', 'p', 'v')
-            AND NOT c.relispartition
-            AND EXISTS (SELECT 1 FROM pg_attribute a
-                        WHERE a.attrelid = c.oid AND a.attname = 'connection_id'
-                            AND a.attnum > 0 AND NOT a.attisdropped)
-            AND EXISTS (SELECT 1 FROM pg_attribute a
-                        WHERE a.attrelid = c.oid AND a.attname = 'collected_at'
-                            AND a.attnum > 0 AND NOT a.attisdropped)
-        ORDER BY c.relname
-    `
-
 // datastoreSourceSummary is one row of describe_datastore's source list.
 type datastoreSourceSummary struct {
 	Name        string
@@ -878,36 +830,27 @@ func listDatastoreSources(ctx context.Context, pool *pgxpool.Pool) ([]datastoreS
 		})
 	}
 
-	rows, err := pool.Query(ctx, datastoreMetricSourcesQuery)
+	// Every probe relation that carries the bookkeeping columns
+	// lookupDatastoreSource requires, so describe_datastore lists exactly
+	// the metric sources query_datastore accepts.
+	relations, err := metrics.ListProbeRelations(ctx, pool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list metric sources: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var name, description string
-		var isView bool
-		if err := rows.Scan(&name, &description, &isView); err != nil {
-			return nil, fmt.Errorf("failed to list metric sources: %w", err)
-		}
+	for _, rel := range relations {
 		// lookupDatastoreSource resolves a configuration source first, so
-		// a probe table sharing a configuration source's name could never
-		// be read as a metric source; listing it would be misleading. Nor
-		// does it accept a view under a name that is not a known probe's.
-		if !metrics.IsValidIdentifier(name) || configNames[name] ||
-			!metrics.AdmitsProbeRelation(name, isView) {
+		// a probe sharing a configuration source's name could never be
+		// read as a metric source; listing it would be misleading.
+		if !rel.HasBookkeeping || !metrics.IsValidIdentifier(rel.Name) || configNames[rel.Name] {
 			continue
 		}
-		description = metricDescription(name, description)
 		summaries = append(summaries, datastoreSourceSummary{
-			Name:        name,
+			Name:        rel.Name,
 			Kind:        datastoreKindMetric,
 			TimeColumn:  metricTimeColumn,
 			Scope:       scopeConnection,
-			Description: description,
+			Description: metricDescription(rel.Name, rel.Description),
 		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to list metric sources: %w", err)
 	}
 	return summaries, nil
 }

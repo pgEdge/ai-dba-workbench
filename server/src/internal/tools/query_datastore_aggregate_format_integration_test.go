@@ -28,7 +28,7 @@ func TestQueryDatastoreAggregateFormatIntegration(t *testing.T) {
 	f := newDatastoreFixture(t)
 	ctx := context.Background()
 	if _, err := f.pool.Exec(ctx, `
-        CREATE TABLE metrics.ds_format_probe (
+        CREATE TABLE metrics.pg_sys_memory_info (
             connection_id INTEGER NOT NULL,
             collected_at TIMESTAMPTZ NOT NULL,
             n INTEGER,
@@ -37,12 +37,12 @@ func TestQueryDatastoreAggregateFormatIntegration(t *testing.T) {
 		t.Fatalf("create probe: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := f.pool.Exec(context.Background(), `DROP TABLE IF EXISTS metrics.ds_format_probe`); err != nil {
+		if _, err := f.pool.Exec(context.Background(), `DROP TABLE IF EXISTS metrics.pg_sys_memory_info`); err != nil {
 			t.Logf("drop probe: %v", err)
 		}
 	})
 	if _, err := f.pool.Exec(ctx, `
-        INSERT INTO metrics.ds_format_probe VALUES
+        INSERT INTO metrics.pg_sys_memory_info VALUES
             ($1, now() - interval '20 minutes', 1431655764, '1 day 02:00:00'),
             ($1, now() - interval '10 minutes', 1431655766, '24:00:00.100003')`, f.visible); err != nil {
 		t.Fatalf("seed probe: %v", err)
@@ -58,7 +58,7 @@ func TestQueryDatastoreAggregateFormatIntegration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.output, func(t *testing.T) {
 			rows := mustQuery(t, f.tool(), f.userCtx(), map[string]any{
-				"source": "ds_format_probe", "shape": "aggregate",
+				"source": "pg_sys_memory_info", "shape": "aggregate",
 				"aggregation": tt.aggregation, "columns": []any{tt.column}})
 			if len(rows) != 1 || rows[0][tt.output] != tt.want {
 				t.Errorf("%s(%s) = %v, want %s %q", tt.aggregation, tt.column, rows, tt.output, tt.want)

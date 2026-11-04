@@ -54,6 +54,16 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle -health-check: probe the listener and exit, before any
+	// configuration is read, so that the probe stays cheap
+	if flags.HealthCheck != "" {
+		if err := runHealthCheck(flags.HealthCheck, healthCheckTimeout); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	// Resolve passwords from flags, environment variables, or files
 	if err := flags.ResolvePasswords(); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)

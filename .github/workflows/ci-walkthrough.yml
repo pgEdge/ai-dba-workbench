@@ -5,11 +5,13 @@ on:
         branches: [ main, master ]
         paths:
             - 'examples/walkthrough/**'
+            - '*/Dockerfile'
             - '.github/workflows/ci-walkthrough.yml'
     pull_request:
         branches: [ main, master ]
         paths:
             - 'examples/walkthrough/**'
+            - '*/Dockerfile'
             - '.github/workflows/ci-walkthrough.yml'
     workflow_dispatch:
 
@@ -58,6 +60,15 @@ jobs:
                   # fatal config error, so write a clearly-fake placeholder. The
                   # smoke test never calls the LLM, so the value is irrelevant.
                   echo "ci-placeholder-llm-key" > examples/walkthrough/secret/llm-api-key
+
+            # Build the workbench images from this checkout under the tags the
+            # walkthrough uses, so Compose runs the code being tested rather
+            # than the last published release.
+            - name: Build workbench images
+              run: |
+                  for svc in server collector alerter client; do
+                      docker build -f "$svc/Dockerfile" -t "ghcr.io/pgedge/ai-dba-$svc:latest" .
+                  done
 
             - name: Start services
               run: docker compose -f examples/walkthrough/docker-compose.yml up -d

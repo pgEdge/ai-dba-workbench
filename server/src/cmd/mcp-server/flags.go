@@ -27,6 +27,9 @@ type Flags struct {
 	TraceFile  string
 	OpenAPI    string
 	Debug      bool
+	// HealthCheck, when set, is a host:port to probe with a TCP
+	// connection before exiting; see runHealthCheck.
+	HealthCheck string
 	// CheckConfig loads and validates the configuration file, then
 	// exits without starting the server. The packages run it before an
 	// upgrade replaces any files (issue #784).
@@ -162,6 +165,8 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.StringVar(&f.DataDir, "data-dir", "", "Data directory for auth database and conversations")
 	flag.StringVar(&f.TraceFile, "trace-file", "", "Path to trace file for logging MCP requests/responses")
 	flag.StringVar(&f.OpenAPI, "openapi", "", "Write OpenAPI specification to file and exit")
+	flag.StringVar(&f.HealthCheck, "health-check", "",
+		"Check that a TCP listener accepts connections at host:port, then exit (for container health checks)")
 	flag.BoolVar(&f.CheckConfig, "check-config", false,
 		"Load and validate the configuration file, then exit without starting the server")
 

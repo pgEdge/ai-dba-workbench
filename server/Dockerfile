@@ -30,22 +30,27 @@ RUN go mod download
 # Build the binary (pure Go, no CGO required)
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /build/ai-dba-server ./cmd/mcp-server
 
-# Stage 2: Runtime image
-FROM debian:bookworm-slim
+# Stage 2: Runtime image. The binary is static (CGO_ENABLED=0), so it does
+# not use the C library; Alpine provides a small base that still has a
+# shell and BusyBox for debugging. ca-certificates supplies the CA bundle
+# for outbound TLS, and tzdata the zone files that time.LoadLocation reads.
+# It runs as UID/GID 999, the "appuser" of the earlier Debian images, so
+# volumes written by those releases stay writable after an upgrade.
+# Alpine's base /etc/group gives GID 999 to "ping", which nothing in this
+# image uses, so that group is removed first to free the GID.
+FROM alpine:3
 
-# hadolint ignore=DL3008
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN mkdir -p /etc/pgedge /data
+# hadolint ignore=DL3018
+RUN apk add --no-cache ca-certificates tzdata && \
+    delgroup ping && \
+    addgroup -S -g 999 appuser && \
+    adduser -S -D -H -u 999 -G appuser -h /nonexistent -s /sbin/nologin appuser && \
+    mkdir -p /etc/pgedge /data /usr/local/bin/data && \
+    chown appuser:appuser /etc/pgedge /data /usr/local/bin/data
 
 COPY --from=builder /build/ai-dba-server /usr/local/bin/ai-dba-server
 
-RUN mkdir -p /usr/local/bin/data && \
-    groupadd -r appuser && useradd -r -g appuser -d /nonexistent -s /usr/sbin/nologin appuser && \
-    chown -R appuser:appuser /etc/pgedge /data /usr/local/bin/data
-USER appuser
+USER 999:999
 
 EXPOSE 8080
 VOLUME /data

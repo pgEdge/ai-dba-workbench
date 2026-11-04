@@ -339,10 +339,8 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
 	}
 
-	// Set application name
-	if poolConfig.ConnConfig.RuntimeParams == nil {
-		poolConfig.ConnConfig.RuntimeParams = make(map[string]string)
-	}
+	// Set application name. ParseConfig always allocates RuntimeParams,
+	// so the map needs no nil check.
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "pgEdge AI DBA Workbench - Server"
 
 	// Bound every statement server-side. See

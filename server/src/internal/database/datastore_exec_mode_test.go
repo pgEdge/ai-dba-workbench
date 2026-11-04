@@ -12,6 +12,7 @@ package database
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -68,6 +69,44 @@ func TestNewDatastoreDetectsColdFront(t *testing.T) {
 	defer cf.Close()
 	if got := cf.GetPool().Config().ConnConfig.DefaultQueryExecMode; got != pgx.QueryExecModeDescribeExec {
 		t.Errorf("mode with a metrics view = %v, want describe-exec", got)
+	}
+}
+
+// TestDetectColdFrontDatastoreQueryFailure covers the catalog-query
+// failure of detectColdFrontDatastore: the connection succeeds, but a
+// schema placed ahead of pg_catalog on its search_path shadows
+// pg_extension with a table that has no extname column, so the
+// detection query fails.
+func TestDetectColdFrontDatastoreQueryFailure(t *testing.T) {
+	cfg := testDatastoreConfig(t)
+	ctx := context.Background()
+
+	base, err := pgxpool.ParseConfig(cfg.BuildConnectionString())
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	conn, err := pgx.ConnectConfig(ctx, base.ConnConfig.Copy())
+	if err != nil {
+		t.Skipf("Could not connect to test database: %v", err)
+	}
+	defer conn.Close(context.Background()) //nolint:errcheck // test cleanup
+	if _, err := conn.Exec(ctx, `DROP SCHEMA IF EXISTS coldfront_detect_shadow CASCADE;
+        CREATE SCHEMA coldfront_detect_shadow;
+        CREATE TABLE coldfront_detect_shadow.pg_extension (x int)`); err != nil {
+		t.Fatalf("create the shadowing schema: %v", err)
+	}
+	defer func() {
+		if _, err := conn.Exec(context.Background(),
+			`DROP SCHEMA IF EXISTS coldfront_detect_shadow CASCADE`); err != nil {
+			t.Logf("drop the shadowing schema: %v", err)
+		}
+	}()
+
+	shadowed := base.ConnConfig.Copy()
+	shadowed.RuntimeParams["search_path"] = "coldfront_detect_shadow, pg_catalog"
+	_, err = detectColdFrontDatastore(ctx, shadowed)
+	if err == nil || !strings.Contains(err.Error(), "failed to detect the datastore kind") {
+		t.Fatalf("detectColdFrontDatastore error = %v, want a detection failure", err)
 	}
 }
 

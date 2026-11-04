@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -485,6 +487,35 @@ func TestConnectionPurge_ClosedPool(t *testing.T) {
 	}
 	if _, _, err := scratch.listMetricsRelations(context.Background()); err == nil {
 		t.Error("listMetricsRelations against a closed pool returned nil error")
+	}
+}
+
+// TestListMetricsRelations_ScanFailure covers the row-read failure of
+// listMetricsRelations. The catalog query's column types are fixed, so
+// the failure is induced client-side: the scratch pool decodes bool
+// (OID 16) with the int4 codec, which cannot scan into the *bool the
+// isView and hasFK columns target.
+func TestListMetricsRelations_ScanFailure(t *testing.T) {
+	_, pool, cleanup := newConnPurgeTestDatastore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	cfg := pool.Config().Copy()
+	cfg.AfterConnect = func(_ context.Context, conn *pgx.Conn) error {
+		conn.TypeMap().RegisterType(&pgtype.Type{
+			Name: "bool", OID: pgtype.BoolOID, Codec: pgtype.Int4Codec{},
+		})
+		return nil
+	}
+	scratchPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("scratch pool creation failed: %v", err)
+	}
+	defer scratchPool.Close()
+
+	_, _, err = NewTestDatastore(scratchPool).listMetricsRelations(ctx)
+	if err == nil || !strings.Contains(err.Error(), "failed to read metrics tables") {
+		t.Fatalf("listMetricsRelations error = %v, want a read failure", err)
 	}
 }
 

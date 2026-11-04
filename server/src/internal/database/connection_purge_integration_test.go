@@ -483,6 +483,9 @@ func TestConnectionPurge_ClosedPool(t *testing.T) {
 	if err := scratch.removeDeletedConnection(context.Background(), 1); err == nil {
 		t.Error("removeDeletedConnection against a closed pool returned nil error")
 	}
+	if _, _, err := scratch.listMetricsRelations(context.Background()); err == nil {
+		t.Error("listMetricsRelations against a closed pool returned nil error")
+	}
 }
 
 // TestDeletedConnectionHiddenFromReaders verifies that a connection

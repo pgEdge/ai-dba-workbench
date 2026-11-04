@@ -677,13 +677,21 @@ allow-list: the probe name is checked against
 runtime values bind through `$N` placeholders. golangci-lint/gosec is
 satisfied without a `//nolint`, but Codacy's Opengrep flags the
 `pool.Query(ctx, query, args...)` call in `QueryLatestRows` as
-`go_sql_rule-concat-sqli`. That is a false positive; it is cleared with a
-`// nosemgrep: go_sql_rule-concat-sqli` line immediately above the call,
-kept alongside the existing justification comment. Use `nosemgrep`, not
-`//nolint:gosec`, for Opengrep-only findings.
+`go_sql_rule-concat-sqli`. That is a false positive. The
+`// nosemgrep: go_sql_rule-concat-sqli` line above the call is kept for
+local semgrep runs, but do not rely on it for Codacy: no inline
+`nosemgrep` has cleared a Codacy finding on this repository in practice,
+and `.codacy.yaml` records that Codacy ignores inline disables. (One
+attempt sat above the statement's assignment rather than the flagged
+sink line, so whether a correctly placed one works on Codacy is
+unconfirmed; treat it as ineffective.) `//nolint` does not reach
+Opengrep either. The Codacy suppression known to work is path-based,
+an entry under `engines: opengrep: exclude_paths` in `.codacy.yaml`
+with a justification comment, and the reviewer accepts new entries
+there for test files only.
 
-For new code, prefer a construction the rule does not match over any
-suppression. The rule (GitLab sast-rules `go/sql/rule-concat-sqli.yml`)
+For production code, use a construction the rule does not match. The
+rule (GitLab sast-rules `go/sql/rule-concat-sqli.yml`)
 is a taint rule with no sanitizers: its sources are `fmt.Sprintf(...)`
 (unless every argument is a literal), `"..." + $X`, and
 `strings.Builder.String()`, and its sinks are any `$DB.Exec`, `Query` or
@@ -693,12 +701,12 @@ flagged, while the identifier inside it still goes through
 `IsValidIdentifier` / a known-probe check and `QuoteIdentifier` /
 `pgx.Identifier.Sanitize`, and values stay bound. `ObserveSampleSpacing`
 (`probe_interval.go`) and `purgeMetricsViews`
-(`database/connection_purge.go`) use this form. A `strings.Builder` is
-not an alternative: its `String()` is itself a source. Running
+(`database/connection_purge.go`) use this form; Codacy's re-analysis
+cleared the findings it had raised in both files after commit 3b2c710d
+switched them to it. A `strings.Builder` is not an alternative: its
+`String()` is itself a source. Running
 `pipx run --spec semgrep semgrep --disable-nosem --config <rule.yml>
-<file>` reproduces Codacy's finding locally. A `nosemgrep` placed above the
-statement's assignment, rather than directly above the sink call, does not
-clear the finding.
+<file>` reproduces Codacy's finding locally.
 
 ### Integration tests
 
@@ -2688,11 +2696,13 @@ escaping wrinkle in `LIKE 'idle in transaction%'` disappears with the
 format string. And Codacy's Opengrep `go_sql_rule-concat-sqli` rule fires
 Error-level on `tx.Query(ctx, query, args...)` whenever `query` came from a
 `Sprintf`, even with every value bound; removing the pattern clears the
-finding on its merits instead of needing a `nosemgrep` suppression. Prefer
-this shape over `nosemgrep` for new code where the variants are a small
-fixed set; the existing `nosemgrep` in `internal/metrics/query.go` remains
-appropriate there, because its identifiers are discovered from
-`information_schema` at run time and genuinely cannot be constants.
+finding on its merits, which matters because an inline `nosemgrep` has
+not cleared a Codacy finding here in practice. Prefer this shape for new
+code where the variants are a small fixed set. Where identifiers are
+discovered at run time and cannot be constants, as in
+`internal/metrics/query.go`, assemble the statement with `strings.Join`
+in new code rather than adding a `nosemgrep` like the one `query.go`
+still carries (see "Identifier safety and the Codacy suppression").
 
 One caveat: the `LIMIT` cannot be formatted from a Go integer constant
 inside a constant expression, so the literal is written into the tail and a

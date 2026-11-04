@@ -64,7 +64,11 @@ the one above it. Every partition call site needs the `//nosemgrep`
 form, including the two that bind their variable as `$1`, because the
 tagging alone makes the SQL non-constant; the `#nosec` form is only
 needed where a builder actually formats a string. Keep whichever
-annotations a site already has when moving this code around.
+annotations a site already has when moving this code around. These
+`//nosemgrep` lines serve local semgrep runs; an inline disable has not
+been shown to clear a Codacy finding (see the Linting section of
+`testing-strategy.md`), so new production SQL should be assembled with
+`strings.Join` instead.
 `lastCollectionTimeQuery` in
 `collector/src/probes/config_loader.go` follows the same pattern.
 

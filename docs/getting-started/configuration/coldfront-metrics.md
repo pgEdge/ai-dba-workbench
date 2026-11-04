@@ -570,3 +570,16 @@ ColdFront mode has the following limitations:
 
 To move from one storage mode to the other, create a new datastore with
 the required mode and point the Workbench components at that datastore.
+
+A rebuilt ColdFront datastore can silently reuse old Iceberg tables,
+because `coldfront.create_iceberg_table` creates the namespace and each
+table only if they do not exist, and the collector's startup check reads
+only the PostgreSQL catalog. A new datastore that uses a warehouse still
+holding `metrics` tables from an earlier datastore inherits their old
+rows and column set; the connection IDs in those rows may not match the
+new datastore's connections. Unless you intend to keep that history,
+point the rebuilt datastore at a fresh warehouse, or run
+`coldfront.drop_iceberg_table()` on each `metrics` table from the old
+datastore before you retire the old datastore, as the
+[ColdFront usage guide](https://github.com/pgEdge/ColdFront/blob/main/docs/using_coldfront/index.md#dropping-an-iceberg-table)
+describes.

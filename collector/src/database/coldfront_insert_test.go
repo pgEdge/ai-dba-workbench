@@ -342,12 +342,21 @@ func TestColdFrontLiteralIsInlinable(t *testing.T) {
 	if err := EnsureColdFrontInsertHelper(ctx, conn); err != nil {
 		t.Fatalf("EnsureColdFrontInsertHelper: %v", err)
 	}
+	checkLiteralAttributes(t, conn)
+	checkLiteralInlined(t, conn)
+	checkLiteralUnderHostileSearchPath(t, conn)
+}
+
+// checkLiteralAttributes checks that literal() has none of the
+// attributes that keep PostgreSQL from inlining it.
+func checkLiteralAttributes(t *testing.T, conn *pgxpool.Conn) {
+	t.Helper()
 	var (
 		config  []string
 		secDef  bool
 		volatil string
 	)
-	if err := conn.QueryRow(ctx, `
+	if err := conn.QueryRow(context.Background(), `
         SELECT proconfig, prosecdef, provolatile::text FROM pg_proc
         WHERE oid = 'workbench_coldfront.literal(text)'::regprocedure
     `).Scan(&config, &secDef, &volatil); err != nil {
@@ -357,10 +366,14 @@ func TestColdFrontLiteralIsInlinable(t *testing.T) {
 		t.Errorf("literal(): proconfig %v, SECURITY DEFINER %v, volatility %s; want no SET clause, SECURITY INVOKER, IMMUTABLE",
 			config, secDef, volatil)
 	}
+}
 
-	// Inlined, the plan computes the body's expression and never calls
-	// literal() itself.
-	rows, err := conn.Query(ctx, `
+// checkLiteralInlined checks that a plan calling literal() computes its
+// body's expression instead of the function. It reads from a multi-row
+// VALUES list, since constant folding would hide the call either way.
+func checkLiteralInlined(t *testing.T, conn *pgxpool.Conn) {
+	t.Helper()
+	rows, err := conn.Query(context.Background(), `
         EXPLAIN (VERBOSE, COSTS OFF)
         SELECT workbench_coldfront.literal(v.x) FROM (VALUES ('a'::text), (NULL)) AS v(x)
     `)
@@ -374,9 +387,14 @@ func TestColdFrontLiteralIsInlinable(t *testing.T) {
 	if joined := strings.Join(plan, "\n"); strings.Contains(joined, "literal(") || !strings.Contains(joined, "replace(") {
 		t.Errorf("literal() is not inlined:\n%s", joined)
 	}
+}
 
-	// The inlined body is parsed under the caller's search_path, so a
-	// replace() earlier in that path must not be picked up.
+// checkLiteralUnderHostileSearchPath checks that literal(), whose
+// inlined body is parsed under the caller's search_path, does not pick
+// up a replace() earlier in that path.
+func checkLiteralUnderHostileSearchPath(t *testing.T, conn *pgxpool.Conn) {
+	t.Helper()
+	ctx := context.Background()
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

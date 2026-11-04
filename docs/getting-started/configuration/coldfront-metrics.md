@@ -365,13 +365,24 @@ following practices reduce the exposure:
 
 - Restrict access to the datastore's log files to the roles and
   operators who may read the datastore's data.
+- Set `log_error_verbosity = terse`, which omits the `DETAIL`, `HINT`,
+  `QUERY`, and `CONTEXT` fields from each logged error; the `CONTEXT`
+  field is where the batch values can appear.
 - Keep `log_parameter_max_length_on_error` at its default of `0`, so
-  that PostgreSQL does not log the bound batch parameter.
-- Set `log_error_verbosity = terse`, or raise
-  `log_min_error_statement`, to log less of the failing statement.
+  that PostgreSQL does not log the bound batch parameter with an error.
 
-The last two settings apply to the whole datastore server, so they
-also remove diagnostic detail from every other error in the log.
+Statement logging is a separate exposure that `log_error_verbosity`
+does not control. The `log_min_error_statement` setting decides
+whether PostgreSQL logs the text of a failing statement; setting the
+value to `panic` stops that logging, but does not remove the `CONTEXT`
+field, so the setting is not a substitute for terse verbosity. When
+`log_statement` or `log_min_duration_statement` logs the collector's
+writes, set `log_parameter_max_length` to `0` so that those entries
+omit the bound batch parameter; the default of `-1` logs the parameter
+in full.
+
+These settings apply to the whole datastore server, so they also
+remove diagnostic detail from every other entry in the log.
 
 ## Understanding Behavioural Differences
 

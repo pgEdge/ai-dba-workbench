@@ -44,7 +44,13 @@ PostgreSQL and on ColdFront, with identical plain-PostgreSQL results.
   `pkg/anomaly`, so the alerter's tests below cover those too.
 - `alerter/src/internal/database/queries.go`:
   `connectionsWithExtensionSQL` (rule extension gates) and
-  `clusterPeersSQL` (cluster context for alerts).
+  `clusterPeersSQL` (cluster context for alerts). Both were run
+  read-only with literal arguments through psql on live ColdFront
+  1.0.0-beta3 datastores on PostgreSQL 16, 17 and 18: each planned and
+  ran under DuckDB, including `clusterPeersSQL`'s correlated
+  `LEFT JOIN LATERAL ... ORDER BY collected_at DESC LIMIT 1`, which
+  returned the expected `standalone` role. psql cannot show rule 3's
+  scan failures, so the pgx-driven tests below still apply.
 
 Probe staleness, connection errors and everything else read ordinary
 tables (`probe_availability`, `connections`, ...) and run in PostgreSQL.

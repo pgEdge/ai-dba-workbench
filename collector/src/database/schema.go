@@ -2643,9 +2643,11 @@ func (sm *SchemaManager) registerMigrations() {
 				}
 			}
 
+			// The messages below are always shown: each is logged once,
+			// when migration #1 runs, and says why a feature is off.
 			switch {
 			case sm.useColdFrontForMetrics:
-				logger.Info("pgvector setup deferred: metrics are stored in " +
+				logger.Startup("pgvector setup deferred: metrics are stored in " +
 					"ColdFront, so the anomaly and chat memory embeddings are " +
 					"created after the migrations")
 			case vectorAvailable:
@@ -2659,11 +2661,13 @@ func (sm *SchemaManager) registerMigrations() {
 				// statement failed with SQLSTATE 25P02 and the user
 				// saw the wrong error.
 				if err := runPgVectorSetup(ctx, tx); err != nil {
-					logger.Infof("pgvector setup skipped: %v", err)
+					logger.Startupf("pgvector setup skipped, so alerter Tier 2 "+
+						"anomaly matching and chat memory embeddings are disabled: %v", err)
 					vectorAvailable = false
 				}
 			default:
-				logger.Info("pgvector extension not available, skipping anomaly embeddings setup")
+				logger.Startup("pgvector extension not available, so alerter " +
+					"Tier 2 anomaly matching and chat memory embeddings are disabled")
 			}
 
 			// chat_memories
@@ -2721,7 +2725,8 @@ func (sm *SchemaManager) registerMigrations() {
 			// this point.
 			if vectorAvailable {
 				if err := runChatMemoryEmbeddingSetup(ctx, tx); err != nil {
-					logger.Infof("chat_memories embedding setup skipped: %v", err)
+					logger.Startupf("chat_memories embedding setup skipped, so "+
+						"chat memory embeddings are disabled: %v", err)
 				}
 			}
 

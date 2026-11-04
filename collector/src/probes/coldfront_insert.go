@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -254,8 +255,8 @@ func joinColdFrontRows(rows []coldFrontRow) []byte {
 // name. Every column must be in the table's specification, since the
 // helper would otherwise drop an unknown key without a word. Values are
 // made JSON-faithful by jsonValue; NaN and infinite floats, which JSON
-// cannot carry, are stored as NULL and reported in one log line per
-// column.
+// cannot carry, are stored as NULL and reported through
+// coldFrontNonFinite, at most once an hour per column.
 func encodeColdFrontRows(spec coldfront.Table, columns []string, values [][]any) ([]coldFrontRow, error) {
 	types, connCol, err := coldFrontColumnTypes(spec, columns)
 	if err != nil {
@@ -275,10 +276,66 @@ func encodeColdFrontRows(spec coldfront.Table, columns []string, values [][]any)
 		}
 	}
 	for name, n := range nonFinite {
-		logger.Infof("Storing %d NaN or infinite value(s) of metrics.%s.%s as NULL: ColdFront rows travel as JSON, which cannot represent them",
-			n, spec.Name, name)
+		coldFrontNonFinite.report(spec.Name, name, n)
 	}
 	return rows, nil
+}
+
+// nonFiniteReportInterval is the least time between two log lines about
+// NaN or infinite values of the same metrics column. A gauge that is NaN
+// on a monitored server is NaN on every probe run, so one line per run
+// would flood the log.
+const nonFiniteReportInterval = time.Hour
+
+// coldFrontNonFinite reports the NaN and infinite values StoreMetrics
+// stores as NULL under ColdFront.
+var coldFrontNonFinite = newNonFiniteReporter(nonFiniteReportInterval, time.Now)
+
+// nonFiniteReporter logs, at most once per interval for each metrics
+// column, how many NaN or infinite values of it were stored as NULL
+// since its previous line. It is safe for concurrent use, since probes
+// store concurrently.
+type nonFiniteReporter struct {
+	mu       sync.Mutex
+	interval time.Duration
+	now      func() time.Time
+	columns  map[string]*nonFiniteColumn
+}
+
+// nonFiniteColumn is the reporting state of one metrics column.
+type nonFiniteColumn struct {
+	logged  time.Time // when its last line was logged; zero if never
+	pending int       // values stored as NULL since that line
+}
+
+func newNonFiniteReporter(interval time.Duration, now func() time.Time) *nonFiniteReporter {
+	return &nonFiniteReporter{interval: interval, now: now, columns: map[string]*nonFiniteColumn{}}
+}
+
+// report records n values of metrics.table.column stored as NULL and
+// logs them, with any not yet logged, unless that column's last line is
+// more recent than the interval.
+func (r *nonFiniteReporter) report(table, column string, n int) {
+	key := table + "." + column
+	r.mu.Lock()
+	c, ok := r.columns[key]
+	if !ok {
+		c = &nonFiniteColumn{}
+		r.columns[key] = c
+	}
+	c.pending += n
+	now := r.now()
+	if !c.logged.IsZero() && now.Sub(c.logged) < r.interval {
+		r.mu.Unlock()
+		return
+	}
+	count := c.pending
+	c.pending, c.logged = 0, now
+	r.mu.Unlock()
+
+	logger.Errorf("Warning: stored %d NaN or infinite value(s) of metrics.%s as NULL: "+
+		"ColdFront rows travel as JSON, which cannot represent them "+
+		"(logged at most once an hour per column)", count, key)
 }
 
 // coldFrontColumnTypes returns the PostgreSQL type of each column in the

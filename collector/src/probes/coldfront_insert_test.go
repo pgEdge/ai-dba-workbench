@@ -11,9 +11,11 @@
 package probes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"math"
 	"strings"
 	"testing"
@@ -113,6 +115,56 @@ func TestColdFrontRowsJSON(t *testing.T) {
 	}
 	if string(got) != `[{"connection_id":1,"response_time_ms":null},{"connection_id":2,"response_time_ms":1.5}]` {
 		t.Errorf("NaN batch = %s", got)
+	}
+}
+
+// TestNonFiniteReporter shows the NaN-as-NULL line is always shown but
+// logged at most once an hour per column, with the values held back in
+// between counted in the next line, so a gauge that is NaN on every
+// probe run does not flood the log.
+func TestNonFiniteReporter(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	clock := time.Date(2026, 1, 2, 3, 0, 0, 0, time.UTC)
+	r := newNonFiniteReporter(time.Hour, func() time.Time { return clock })
+	lines := func() []string {
+		out := strings.TrimSpace(buf.String())
+		buf.Reset()
+		if out == "" {
+			return nil
+		}
+		return strings.Split(out, "\n")
+	}
+
+	r.report("pg_connectivity", "response_time_ms", 2)
+	got := lines()
+	if len(got) != 1 || !strings.Contains(got[0],
+		"Warning: stored 2 NaN or infinite value(s) of metrics.pg_connectivity.response_time_ms as NULL: "+
+			"ColdFront rows travel as JSON, which cannot represent them (logged at most once an hour per column)") {
+		t.Fatalf("first report logged %q", got)
+	}
+
+	// Every probe run within the hour is counted but not logged; another
+	// column has its own allowance.
+	for i := 0; i < 5; i++ {
+		clock = clock.Add(10 * time.Minute)
+		r.report("pg_connectivity", "response_time_ms", 1)
+	}
+	if got := lines(); got != nil {
+		t.Fatalf("reports within the hour logged %q", got)
+	}
+	r.report("pg_stat_io", "read_time", 1)
+	if got := lines(); len(got) != 1 || !strings.Contains(got[0], "stored 1 NaN or infinite value(s) of metrics.pg_stat_io.read_time") {
+		t.Fatalf("another column logged %q", got)
+	}
+
+	clock = clock.Add(10 * time.Minute)
+	r.report("pg_connectivity", "response_time_ms", 1)
+	if got := lines(); len(got) != 1 || !strings.Contains(got[0], "stored 6 NaN or infinite value(s) of metrics.pg_connectivity.response_time_ms") {
+		t.Fatalf("report after the hour logged %q, want the 6 values since the last line", got)
 	}
 }
 

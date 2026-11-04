@@ -24,6 +24,18 @@ func TestViolations(t *testing.T) {
 		"NULL test after comparison":   `SELECT 1 FROM metrics.t WHERE (collected_at <= $2::timestamptz OR $2::timestamptz IS NULL)`,
 		"NOT NULL test":                `SELECT 1 FROM metrics.t WHERE $1::int IS NOT NULL`,
 		"spaced cast NULL test":        `SELECT 1 FROM metrics.t WHERE $2 :: timestamp with time zone is null`,
+		"parenthesised NULL test":      `SELECT 1 FROM metrics.t WHERE ($2::timestamptz) IS NULL`,
+		"doubly parenthesised test":    `SELECT 1 FROM metrics.t WHERE (($2)) IS NOT NULL`,
+		"CAST NULL test":               `SELECT 1 FROM metrics.t WHERE CAST($2 AS timestamptz) IS NULL`,
+		"ISNULL on a parameter":        `SELECT 1 FROM metrics.t WHERE $2::timestamptz ISNULL`,
+		"spaced CAST NULL test":        `SELECT 1 FROM metrics.t WHERE (cast ( $2 as timestamp without time zone ) ) is not null`,
+		"NOTNULL on a parameter":       `SELECT 1 FROM metrics.t WHERE $2::timestamptz NOTNULL`,
+		"ALL over a parameter":         `SELECT 1 FROM metrics.t WHERE connection_id = ALL($1::int[])`,
+		"spaced ALL over a literal":    `SELECT 1 FROM metrics.t WHERE connection_id <> all (ARRAY[2, 3])`,
+		"SOME over a literal":          `SELECT 1 FROM metrics.t WHERE name LIKE SOME('{a%,b%}')`,
+		"uncast ARRAY literal":         `SELECT 1 FROM metrics.t WHERE connection_id IN (SELECT x FROM (SELECT ARRAY[2, 3] AS x) a)`,
+		"spaced array literal":         `SELECT array [1] FROM metrics.t`,
+		"CAST missing its AS":          `SELECT 1 FROM metrics.t WHERE connection_id = CAST($1)`,
 		"ANY over a parameter":         `SELECT 1 FROM metrics.t WHERE connection_id = ANY($1::int[])`,
 		"ANY over a literal":           `SELECT 1 FROM metrics.t WHERE connection_id = ANY('{2,3}'::int[])`,
 		"unnest":                       `SELECT 1 FROM metrics.t WHERE connection_id IN (SELECT unnest($1::int[]))`,
@@ -61,6 +73,12 @@ func TestViolations(t *testing.T) {
 		"array_agg subscript":       `SELECT (array_agg(x ORDER BY y DESC))[1] FROM metrics.t`,
 		"uncast EXTRACT":            `SELECT MAX(EXTRACT(EPOCH FROM (collected_at - xact_start)))::float FROM metrics.t`,
 		"host over an inet cast":    `SELECT host(client_addr::inet), Host ( s.server_addr :: INET ) FROM metrics.t s`,
+		"spaced cast parameter":     `SELECT 1 FROM metrics.t WHERE connection_id = $1 ::int AND name = $2 :: text`,
+		"CAST parameter":            `SELECT 1 FROM metrics.t WHERE connection_id = CAST($1 AS int) AND name = cast( $2 as text )`,
+		"UNION ALL subquery":        `SELECT 1 FROM metrics.t UNION ALL (SELECT 2 FROM metrics.u)`,
+		"cast NULL test result":     `SELECT 1 FROM metrics.t WHERE collected_at <= $2::timestamptz AND datname IS NULL`,
+		"multi-word cast then NULL": `SELECT 1 FROM metrics.t WHERE x = $1::double precision AND datname IS NULL`,
+		"paren in a literal":        `SELECT avg(CASE WHEN name = ')' THEN 1 END)::float FROM metrics.t`,
 		"NULL-open range join":      `SELECT 1 FROM metrics.t a JOIN r m ON (m.valid_from IS NULL OR a.collected_at >= m.valid_from) AND (m.valid_to IS NULL OR a.collected_at < m.valid_to)`,
 	}
 	for name, sql := range good {
@@ -100,6 +118,10 @@ func TestMatchingParen(t *testing.T) {
 		{"(a)", 0, 2},
 		{"f((a)(b))", 1, 8},
 		{"((a)", 0, -1},
+		{"f(')', x)", 1, 8},
+		{`f("a)b", x)`, 1, 10},
+		{"f('it''s)', x)", 1, 13},
+		{"f(')", 1, -1},
 	}
 	for _, c := range cases {
 		if got := matchingParen(c.s, c.open); got != c.want {

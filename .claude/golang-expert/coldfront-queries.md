@@ -137,12 +137,18 @@ failures in rule 3, so reproduce with pgx, never psql.
 ## Tests That Enforce Them
 
 The textual rules live in one place, `coldfrontsql.Violations` in
-`pkg/coldfrontsql/coldfrontsql.go`: an uncast `$n`, `ANY(`, `unnest(`,
-an array cast, `pg_lsn`, `make_interval(`, a `host(` whose argument
-does not end in `::inet`, an `::inet` that is not such an argument, a
-`$n [::type] IS [NOT] NULL` test, a `COALESCE($n`, `infinity` (any
-case), and an
-`avg(...)` not cast to float in place.
+`pkg/coldfrontsql/coldfrontsql.go`: a `$n` cast neither as
+`$n::type` (spaces allowed around `::`) nor as `CAST($n AS type)`,
+`ANY(`, an `ALL(` or `SOME(` after a comparison operator or `LIKE`, an
+`ARRAY[` literal, `unnest(`, an array cast, `pg_lsn`, `make_interval(`,
+a `host(` whose argument does not end in `::inet`, an `::inet` that is
+not such an argument, a NULL test (`IS [NOT] NULL`, `ISNULL`,
+`NOTNULL`) on a `$n`, bare, cast either way or parenthesised, a
+`COALESCE($n`, `infinity` (any case), and an `avg(...)` not cast to
+float in place. Only `ANY(`, the array cast and `unnest(` failed live;
+`ALL(`, `SOME(` and `ARRAY[` are barred as the same array typing. The
+parenthesis matcher behind `host(` and `avg(` skips quoted literals
+and identifiers, but the forbidden-word checks still see inside them.
 `TestViolations` in `pkg/coldfrontsql/coldfrontsql_test.go` pins them
 against the shapes that failed live and the replacements that worked.
 A module that adds a `metrics.*` reader runs its SQL through

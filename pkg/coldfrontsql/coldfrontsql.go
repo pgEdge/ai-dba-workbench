@@ -23,18 +23,43 @@ import (
 	"strings"
 )
 
-// bindParam matches a bound parameter reference.
-var bindParam = regexp.MustCompile(`\$\d+`)
+// bindParam matches a bound parameter reference; castAfter matches a
+// :: cast directly after one, and castOpen and castAs the CAST( before
+// and the AS after one written CAST($n AS type).
+var (
+	bindParam = regexp.MustCompile(`\$\d+`)
+	castAfter = regexp.MustCompile(`^\s*::`)
+	castOpen  = regexp.MustCompile(`(?i)\bCAST\s*\(\s*$`)
+	castAs    = regexp.MustCompile(`(?i)^\s+AS\b`)
+)
 
-// forbidden lists SQL shapes that DuckDB cannot run, each with the
-// reason reported when one appears. Every one was tried live against
-// ColdFront with pgx bound parameters.
+// typeName matches a type name in a cast, including the multi-word
+// forms PostgreSQL spells with spaces, but never a following keyword.
+const typeName = `[a-z_][a-z0-9_]*(\s+(with(out)?\s+time\s+zone|precision|varying))?`
+
+// paramNullTest matches a NULL test on a parameter (IS [NOT] NULL,
+// ISNULL or NOTNULL) whether the parameter is bare, cast with :: or
+// CAST(), or wrapped in any number of parentheses.
+var paramNullTest = regexp.MustCompile(`(?i)(\$\d+(\s*::\s*` + typeName + `)?|\bCAST\s*\(\s*\$\d+\s+AS\s+` + typeName + `\s*\))` +
+	`[\s)]*\b(IS\s+(NOT\s+)?NULL|ISNULL|NOTNULL)\b`)
+
+// forbidden lists SQL shapes the Workbench must not send to a ColdFront
+// datastore, each with the reason reported when one appears. Each was
+// tried live against ColdFront with pgx bound parameters, except ALL(),
+// SOME() and ARRAY[...], which are barred with ANY() and the array cast
+// as the same array typing DuckDB rejects, and COALESCE over a
+// parameter, which DuckDB runs but which defeats PostgreSQL's index and
+// partition pruning under a generic plan.
 var forbidden = []struct {
 	pattern *regexp.Regexp
 	reason  string
 }{
 	{regexp.MustCompile(`(?i)\bANY\s*\(`),
 		"ANY(...) over an array fails with an UNKNOWN type in DuckDB, even with a literal or cast array"},
+	{regexp.MustCompile(`(?i)(?:[=<>!]|\bLIKE)\s*(?:ALL|SOME)\s*\(`),
+		"ALL(...) and SOME(...) over an array fail in DuckDB as ANY(...) does; use IN (...) or a join"},
+	{regexp.MustCompile(`(?i)\bARRAY\s*\[`),
+		"array literals fail with an UNKNOWN type in DuckDB; bind scalars or one text value instead"},
 	{regexp.MustCompile(`(?i)\bunnest\s*\(`),
 		"unnest of an array parameter fails with an UNKNOWN type in DuckDB"},
 	{regexp.MustCompile(`(?i)::\s*[a-z0-9_ ]+\[\]`),
@@ -43,7 +68,7 @@ var forbidden = []struct {
 		"DuckDB has no pg_lsn type; use anomaly.LSNDiffBytesSQL on the text LSN"},
 	{regexp.MustCompile(`(?i)\bmake_interval\s*\(`),
 		"DuckDB has no make_interval(); use INTERVAL '1 day' * $1::int"},
-	{regexp.MustCompile(`(?i)\$\d+(\s*::\s*[a-z0-9_ ]+?)?\s+IS\s+(NOT\s+)?NULL\b`),
+	{paramNullTest,
 		"DuckDB cannot plan a NULL test on a parameter, cast or not; bind a finite far-future timestamp for an open bound instead"},
 	{regexp.MustCompile(`(?i)\bCOALESCE\s*\(\s*\$\d+`),
 		"COALESCE over a parameter stays a per-row filter under a generic plan, with no index condition or partition pruning; compare with the parameter directly and bind a finite far-future timestamp for an open bound"},
@@ -67,10 +92,12 @@ var floatCast = regexp.MustCompile(`(?i)^\s*::\s*(float8|float|double precision)
 var avgCall = regexp.MustCompile(`(?i)\bavg\s*\(`)
 
 // Violations returns a description of every ColdFront rule sql breaks,
-// or nil when it breaks none: an uncast bound parameter, ANY(), unnest(),
-// an array cast, pg_lsn, make_interval(), host() over anything but an
-// inet cast, an inet cast outside host(), a NULL test on a parameter, a
-// COALESCE over a parameter, an infinite timestamp, or an avg() not cast to float where it stands.
+// or nil when it breaks none: an uncast bound parameter, ANY(), ALL()
+// or SOME() over an array, an ARRAY[...] literal, unnest(), an array
+// cast, pg_lsn, make_interval(), host() over anything but an inet cast,
+// an inet cast outside host(), a NULL test on a parameter, a COALESCE
+// over a parameter, an infinite timestamp, or an avg() not cast to float
+// where it stands.
 //
 // It is a textual check and does not parse SQL, so it also reports a
 // forbidden word inside a string literal or comment; keep such words out
@@ -79,7 +106,7 @@ func Violations(sql string) []string {
 	var problems []string
 
 	for _, loc := range bindParam.FindAllStringIndex(sql, -1) {
-		if !strings.HasPrefix(sql[loc[1]:], "::") {
+		if !paramCast(sql, loc) {
 			problems = append(problems, sql[loc[0]:loc[1]]+
 				" has no cast; DuckDB types a bare parameter as UNKNOWN, so write "+
 				sql[loc[0]:loc[1]]+"::int (or ::text, ...)")
@@ -108,6 +135,15 @@ func Violations(sql string) []string {
 		}
 	}
 	return problems
+}
+
+// paramCast reports whether the parameter at loc in sql is cast where it
+// stands, as $n::type (spaces allowed around the ::) or CAST($n AS type).
+func paramCast(sql string, loc []int) bool {
+	if castAfter.MatchString(sql[loc[1]:]) {
+		return true
+	}
+	return castOpen.MatchString(sql[:loc[0]]) && castAs.MatchString(sql[loc[1]:])
 }
 
 // inetViolations reports each host() call whose argument is not cast to
@@ -141,11 +177,20 @@ func inetViolations(sql string) []string {
 }
 
 // matchingParen returns the index of the parenthesis closing the one at
-// open, or -1 when it is unbalanced.
+// open, or -1 when it is unbalanced. Parentheses inside a single-quoted
+// string literal or a double-quoted identifier do not count; a doubled
+// quote inside either reads as two adjacent quoted runs, which skips the
+// same text.
 func matchingParen(s string, open int) int {
 	depth := 0
 	for i := open; i < len(s); i++ {
 		switch s[i] {
+		case '\'', '"':
+			end := strings.IndexByte(s[i+1:], s[i])
+			if end < 0 {
+				return -1
+			}
+			i += end + 1
 		case '(':
 			depth++
 		case ')':

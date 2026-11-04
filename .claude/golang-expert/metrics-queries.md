@@ -292,10 +292,12 @@ value, `pg_lsn`, an `'infinity'`/`'-infinity'` literal, a `'{...}'`
 literal not cast to json or jsonb, and a `$n [::type] IS [NOT] NULL`
 test. These rules mirror `coldfrontsql.Violations`, the shared checker
 the alerter branch adds in `pkg/coldfrontsql`; once that lands, consider
-running server SQL through it too. The two still differ: the alerter's
-checker requires a cast on every parameter and rejects `host(` and
-`::inet` outright, whereas the server keeps untyped comparison
-parameters and `host(client_addr::inet)`, both of which ran live.
+running server SQL through it too. On `inet` the two now agree: #791's
+checker allows `host(<expr>::inet)` and flags a `host()` whose argument
+is not cast to inet and an `::inet` cast anywhere else, as the server's
+`BareHost` rule intends. They still differ on parameters: the
+alerter's checker requires a cast on every parameter, whereas the server
+keeps untyped comparison parameters, which ran live.
 It cannot see column types, so an integer `sum` or `/` is left to
 review, and it does not see SQL assembled in a function that names no
 metrics relation itself (the timeline's connection filter): keep those

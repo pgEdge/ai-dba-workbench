@@ -42,6 +42,8 @@ func (r scriptedRow) Scan(dest ...any) error {
 			*p, ok = r.values[i].(bool)
 		case *[]string:
 			*p, ok = r.values[i].([]string)
+		case *string:
+			*p, ok = r.values[i].(string)
 		}
 		if !ok {
 			return fmt.Errorf("cannot scan %T into %T", r.values[i], d)

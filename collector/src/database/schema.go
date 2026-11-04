@@ -4735,23 +4735,30 @@ func createAnomalyEmbeddings(ctx context.Context, tx pgx.Tx) error {
 // keeps that failure from aborting the parent transaction.
 func runChatMemoryEmbeddingSetup(ctx context.Context, tx pgx.Tx) error {
 	return runSavepointed(ctx, tx, "chat_memories_embedding_setup", func() error {
-		return addChatMemoryEmbedding(ctx, tx)
+		return addChatMemoryEmbedding(ctx, tx, defaultChatMemoriesTable)
 	})
 }
 
+// defaultChatMemoriesTable is the chat_memories table migration #1
+// gives its embedding column in the default mode.
+const defaultChatMemoriesTable = "public.chat_memories"
+
 // addChatMemoryEmbedding is the body of runChatMemoryEmbeddingSetup;
 // like createAnomalyEmbeddings it is idempotent and shared with
-// EnsureColdFrontEmbeddings.
-func addChatMemoryEmbedding(ctx context.Context, tx pgx.Tx) error {
+// EnsureColdFrontEmbeddings. table is the chat_memories table, quoted
+// and schema-qualified: defaultChatMemoriesTable in the default mode,
+// and under ColdFront the name the catalog gives the table the
+// search_path resolves (format('%I.%I')), never user input.
+func addChatMemoryEmbedding(ctx context.Context, tx pgx.Tx, table string) error {
 	_, err := tx.Exec(ctx, `
-		ALTER TABLE public.chat_memories
+		ALTER TABLE `+table+`
 			ADD COLUMN IF NOT EXISTS embedding halfvec(4000);
 
-		COMMENT ON COLUMN public.chat_memories.embedding IS
+		COMMENT ON COLUMN `+table+`.embedding IS
 			'Vector embedding for similarity search, zero-padded to a fixed width';
 
 		CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding
-			ON public.chat_memories USING hnsw (embedding halfvec_cosine_ops);
+			ON `+table+` USING hnsw (embedding halfvec_cosine_ops);
 	`)
 	if err != nil {
 		return fmt.Errorf(

@@ -87,8 +87,11 @@ func captureLog(t *testing.T) *bytes.Buffer {
 
 func TestEnsureColdFrontEmbeddings(t *testing.T) {
 	const tier2 = "alerter Tier 2 anomaly matching and chat memory embeddings are disabled"
+	stateIn := func(available, anomaly bool, chatTable string, chat bool) []scriptedRow {
+		return []scriptedRow{{values: []any{available, anomaly, chatTable, chat}}}
+	}
 	state := func(available, anomaly, chat bool) []scriptedRow {
-		return []scriptedRow{{values: []any{available, anomaly, chat}}}
+		return stateIn(available, anomaly, "public.chat_memories", chat)
 	}
 
 	tests := []struct {
@@ -109,8 +112,10 @@ func TestEnsureColdFrontEmbeddings(t *testing.T) {
 			wantLog: tier2 + ": failed to check for pgvector: boom",
 		},
 		{
-			name: "pgvector not available",
-			rows: state(false, false, false),
+			// Shown without -v, once per startup.
+			name:    "pgvector not available",
+			rows:    state(false, false, false),
+			wantLog: "pgvector extension not available, so " + tier2,
 		},
 		{
 			name: "both objects exist",
@@ -127,6 +132,19 @@ func TestEnsureColdFrontEmbeddings(t *testing.T) {
 			rows:          state(true, true, false),
 			wantTxs:       []string{"ALTER TABLE public.chat_memories"},
 			wantCommitted: []bool{true},
+		},
+		{
+			// The datastore role's search_path put chat_memories in
+			// a schema of its own, as live: the column goes there.
+			name:          "chat_memories outside public",
+			rows:          stateIn(true, true, `"cold front".chat_memories`, false),
+			wantTxs:       []string{`ALTER TABLE "cold front".chat_memories`},
+			wantCommitted: []bool{true},
+		},
+		{
+			name:    "no chat_memories on the search_path",
+			rows:    stateIn(true, true, "", false),
+			wantLog: "chat memory embeddings are disabled: no chat_memories table is on the datastore role's search_path",
 		},
 		{
 			name:          "anomaly setup fails",
@@ -218,7 +236,7 @@ func TestEnsureEmbeddingsAfterMigrate(t *testing.T) {
 
 	// ColdFront runs it.
 	c = &fakeEmbeddingsConn{scriptedQuerier: scriptedQuerier{
-		rows: []scriptedRow{{values: []any{true, false, false}}}}}
+		rows: []scriptedRow{{values: []any{true, false, "public.chat_memories", false}}}}}
 	ensureEmbeddingsAfterMigrate(c, true)
 	if len(c.sql) != 1 || len(c.txs) != 2 {
 		t.Errorf("ColdFront issued %q and began %d transactions, want the state query and 2", c.sql, len(c.txs))

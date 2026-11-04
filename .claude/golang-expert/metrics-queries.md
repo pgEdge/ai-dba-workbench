@@ -48,13 +48,25 @@ through a long retention history could outlast any request budget.
    after its batch loop and nothing would cascade it. It is
    restart-safe, because the marked row is the work queue. A view
    under `metrics` with a `connection_id` column (every probe on a
-   pgEdge ColdFront datastore, issue #755) is never purged: ColdFront
-   owns that data's lifecycle and the ctid batch cannot run on a view.
-   `metricsLeafTablesQuery` returns such views flagged, and
-   `splitMetricsViews`/`logSkippedMetricsViews` set them aside and log
-   one `[INFO]` line per purge through the package var `purgeLogf`
-   (tests swap it). Their rows outlive the connection, which is another
-   reason the orphan joins below must stay.
+   pgEdge ColdFront datastore, issue #755) has no ctid, so
+   `metricsLeafTablesQuery` returns it flagged, `splitMetricsViews` sets
+   it apart, and `purgeMetricsViews` clears it with one
+   `DELETE FROM metrics.<view> WHERE connection_id = $1::int` per view,
+   autocommitted, so each runs in a transaction of its own (pg_duckdb
+   refuses a transaction that writes a view and an ordinary table, and
+   refuses subtransactions), under `connectionPurgeViewTimeout` (10
+   minutes, as an Iceberg delete rewrites data files). Order: tables in
+   batches, then every view, then the row, then a sweep of the tables
+   without a foreign key and of every view. Every view is attempted; if
+   any DELETE fails the row is NOT removed and the joined error is
+   returned, so the row stays marked and the purger retries the whole
+   connection with backoff, and no view's rows are silently left. A
+   failure in the sweep after the row is gone is returned and logged,
+   but those stragglers are then orphaned, which is another reason the
+   orphan joins below must stay. Tests stand plain views in
+   (`TestPurgeConnection_ClearsColdFrontViews`,
+   `..._ViewFailureKeepsConnection`, `..._SweepsLateViewRows`); the
+   DELETE through a real ColdFront view is not yet verified live.
 
 ## Metrics Relations May Be Views (pgEdge ColdFront)
 
@@ -361,9 +373,10 @@ filter by connection too: `liveAlertConnectionCondition` in
 `timeline_queries.go` for the timeline total (written as
 `connection_id IN (SELECT id FROM connections WHERE deleted_at IS
 NULL)`, a test for liveness rather than for the marked IDs, because on
-ColdFront the purge leaves a view's rows behind after it removes the
-connection row, and the event queries' join to `connections` drops
-them; `TestTimeline_PurgedConnectionOnViews` pins it), and `deleted_at IS NULL`
+ColdFront a view has no foreign key, so a row written after the purge's
+last sweep of it outlives the connection row, and the event queries'
+join to `connections` drops it; `TestTimeline_PurgedConnectionOnViews`
+pins it), and `deleted_at IS NULL`
 beside `cluster_id` in the cluster and group connection-ID lookups of
 `estate_queries.go`, as defence in depth against a racing update that
 re-sets `cluster_id`. Each reader is pinned by a marked-connection test:

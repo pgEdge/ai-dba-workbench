@@ -17,9 +17,11 @@ import (
 
 // TestTimeline_PurgedConnectionOnViews is the regression test for the
 // timeline total on a pgEdge ColdFront datastore (issue #755), where
-// metrics.pg_settings is a view whose rows the purge leaves in place.
-// Once a deleted connection's row is purged its configuration changes
-// are still in the view; the event query drops them by joining live
+// metrics.pg_settings is a view with no foreign key to connections. The
+// purge clears a deleted connection's view rows before it removes the
+// row and sweeps them again after, but a write that lands once that
+// sweep has run, or a failed sweep, leaves rows of a connection that no
+// longer exists. The event query drops them by joining live
 // connections, so the count must drop them too, rather than only those
 // of a connection still marked.
 func TestTimeline_PurgedConnectionOnViews(t *testing.T) {
@@ -34,13 +36,15 @@ func TestTimeline_PurgedConnectionOnViews(t *testing.T) {
 
 	kept := e.conn("kept", "192.0.2.21", "", nil, nil)
 	purged := e.conn("purged", "192.0.2.22", "", nil, nil)
-	for _, id := range []int{kept, purged} {
+	seed := func(id int) {
 		for i, ago := range []string{"2 hours", "1 hour"} {
 			e.exec(`INSERT INTO pg_settings_cf_store (connection_id, name, setting, collected_at)
                     VALUES ($1, 'work_mem', $2, now() - $3::text::interval)`,
 				id, []string{"4MB", "8MB"}[i], ago)
 		}
 	}
+	seed(kept)
+	seed(purged)
 
 	if err := e.ds.DeleteConnection(e.ctx, purged); err != nil {
 		t.Fatalf("DeleteConnection: %v", err)
@@ -51,9 +55,11 @@ func TestTimeline_PurgedConnectionOnViews(t *testing.T) {
 	if n := e.queryInt(`SELECT count(*) FROM connections WHERE id = $1`, purged); n != 0 {
 		t.Fatalf("the purged connection still has %d rows", n)
 	}
-	if n := e.queryInt(`SELECT count(*) FROM metrics.pg_settings WHERE connection_id = $1`, purged); n != 2 {
-		t.Fatalf("the view holds %d rows of the purged connection, want 2 left in place", n)
+	if n := e.queryInt(`SELECT count(*) FROM metrics.pg_settings WHERE connection_id = $1`, purged); n != 0 {
+		t.Fatalf("the view holds %d rows of the purged connection after the purge, want 0", n)
 	}
+	// Rows that land after the purge's last sweep stay behind.
+	seed(purged)
 
 	result, err := e.ds.GetTimelineEvents(e.ctx, TimelineFilter{
 		StartTime:  time.Now().Add(-24 * time.Hour),

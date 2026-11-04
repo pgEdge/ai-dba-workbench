@@ -632,37 +632,61 @@ func TestPurgeConnection_HookAndFinalSweepFailures(t *testing.T) {
 	}
 }
 
-// TestPurgeConnection_LeavesColdFrontViewsInPlace stands a view in for a
-// pgEdge ColdFront metrics relation (issue #755). Its rows live outside
-// the metrics schema, as ColdFront's do in Iceberg storage, so the
-// purge must leave them in place, log once that it did, and still purge
-// the plain metrics tables and remove the connection row.
-func TestPurgeConnection_LeavesColdFrontViewsInPlace(t *testing.T) {
-	ds, pool, cleanup := newConnPurgeTestDatastore(t)
-	defer cleanup()
+// createPurgeTestViews stands views in for pgEdge ColdFront metrics
+// relations (issue #755): metrics.purge_test_cf over a store outside the
+// metrics schema, as ColdFront's rows live in Iceberg storage, and, when
+// broken is set, metrics.purge_test_cf_broken, a view no DELETE can
+// write through. It returns a cleanup.
+func createPurgeTestViews(t *testing.T, pool *pgxpool.Pool, broken bool) func() {
+	t.Helper()
 	ctx := context.Background()
-
 	if _, err := pool.Exec(ctx, `
+        DROP TABLE IF EXISTS purge_test_cf_store CASCADE;
         CREATE TABLE purge_test_cf_store (connection_id INTEGER NOT NULL, n INTEGER NOT NULL);
         CREATE VIEW metrics.purge_test_cf AS SELECT * FROM purge_test_cf_store;`); err != nil {
 		t.Fatalf("create the ColdFront stand-in view: %v", err)
 	}
-	defer func() {
+	if broken {
+		// DISTINCT makes the view not automatically updatable.
+		if _, err := pool.Exec(ctx, `CREATE VIEW metrics.purge_test_cf_broken AS
+            SELECT DISTINCT connection_id, n FROM purge_test_cf_store`); err != nil {
+			t.Fatalf("create the broken view: %v", err)
+		}
+	}
+	return func() {
 		if _, err := pool.Exec(context.Background(),
 			`DROP TABLE IF EXISTS purge_test_cf_store CASCADE`); err != nil {
 			t.Logf("drop the ColdFront stand-in: %v", err)
 		}
-	}()
+	}
+}
 
-	logf, lines := captureLog()
-	prev := purgeLogf
-	purgeLogf = logf
-	defer func() { purgeLogf = prev }()
+// connectionRowCount returns how many connections rows have id.
+func connectionRowCount(t *testing.T, pool *pgxpool.Pool, id int) int {
+	t.Helper()
+	var rows int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM connections WHERE id = $1`, id).Scan(&rows); err != nil {
+		t.Fatalf("count connection rows: %v", err)
+	}
+	return rows
+}
+
+// TestPurgeConnection_ClearsColdFrontViews checks that the purge deletes
+// a deleted connection's rows through a metrics view, leaves another
+// connection's, still purges the plain metrics tables and removes the
+// connection row.
+func TestPurgeConnection_ClearsColdFrontViews(t *testing.T) {
+	ds, pool, cleanup := newConnPurgeTestDatastore(t)
+	defer cleanup()
+	defer createPurgeTestViews(t, pool, false)()
+	ctx := context.Background()
 
 	victim := seedPurgeConnection(t, pool, "victim", 6)
+	keeper := seedPurgeConnection(t, pool, "keeper", 2)
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO purge_test_cf_store SELECT $1, g FROM generate_series(1, 4) g`,
-		victim); err != nil {
+		`INSERT INTO purge_test_cf_store SELECT $1::int, g FROM generate_series(1, 4) g
+         UNION ALL SELECT $2::int, g FROM generate_series(1, 3) g`, victim, keeper); err != nil {
 		t.Fatalf("seed the ColdFront stand-in: %v", err)
 	}
 	if err := ds.DeleteConnection(ctx, victim); err != nil {
@@ -672,29 +696,112 @@ func TestPurgeConnection_LeavesColdFrontViewsInPlace(t *testing.T) {
 		t.Fatalf("PurgeConnection: %v", err)
 	}
 
-	if got := countPurgeRows(t, pool, "metrics.purge_test_cf", victim); got != 4 {
-		t.Errorf("ColdFront view rows after the purge = %d, want 4 left in place", got)
+	if got := countPurgeRows(t, pool, "metrics.purge_test_cf", victim); got != 0 {
+		t.Errorf("view rows of the purged connection = %d, want 0", got)
+	}
+	if got := countPurgeRows(t, pool, "metrics.purge_test_cf", keeper); got != 3 {
+		t.Errorf("view rows of another connection = %d, want 3", got)
 	}
 	for _, table := range []string{"metrics.purge_test_part", "metrics.purge_test_nofk"} {
 		if got := countPurgeRows(t, pool, table, victim); got != 0 {
 			t.Errorf("%s rows after the purge = %d, want 0", table, got)
 		}
 	}
-	var rows int
-	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM connections WHERE id = $1`, victim).Scan(&rows); err != nil {
-		t.Fatalf("count connection rows: %v", err)
-	}
-	if rows != 0 {
+	if rows := connectionRowCount(t, pool, victim); rows != 0 {
 		t.Errorf("purged connection still has %d rows", rows)
 	}
+}
 
-	logged := lines()
-	if len(logged) != 1 {
-		t.Fatalf("logged %d notes, want exactly one: %q", len(logged), logged)
+// TestPurgeConnection_ViewFailureKeepsConnection checks that when one
+// view's DELETE fails the purge still clears the other views, returns an
+// error naming the failed view, and leaves the connection row marked, so
+// a later pass retries it and no view's rows are silently left behind.
+// Once the view is fixed, the next purge completes.
+func TestPurgeConnection_ViewFailureKeepsConnection(t *testing.T) {
+	ds, pool, cleanup := newConnPurgeTestDatastore(t)
+	defer cleanup()
+	defer createPurgeTestViews(t, pool, true)()
+	ctx := context.Background()
+
+	victim := seedPurgeConnection(t, pool, "victim", 3)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO purge_test_cf_store SELECT $1, g FROM generate_series(1, 4) g`, victim); err != nil {
+		t.Fatalf("seed the ColdFront stand-in: %v", err)
 	}
-	if !strings.Contains(logged[0], "purge_test_cf") ||
-		!strings.Contains(logged[0], "ColdFront") {
-		t.Errorf("the note should name the view and ColdFront: %q", logged[0])
+	if err := ds.DeleteConnection(ctx, victim); err != nil {
+		t.Fatalf("DeleteConnection: %v", err)
+	}
+
+	// Each view's rows are the store's, so seed a second store for the
+	// working view to show it is cleared despite the other's failure.
+	if _, err := pool.Exec(ctx, `
+        CREATE TABLE purge_test_cf_store2 (connection_id INTEGER NOT NULL);
+        CREATE VIEW metrics.purge_test_cf_other AS SELECT * FROM purge_test_cf_store2;`); err != nil {
+		t.Fatalf("create the second view: %v", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(context.Background(),
+			`DROP TABLE IF EXISTS purge_test_cf_store2 CASCADE`); err != nil {
+			t.Logf("drop the second store: %v", err)
+		}
+	}()
+	if _, err := pool.Exec(ctx, `INSERT INTO purge_test_cf_store2 VALUES ($1), ($1)`, victim); err != nil {
+		t.Fatalf("seed the second view: %v", err)
+	}
+
+	err := ds.PurgeConnection(ctx, victim, 5)
+	if err == nil || !strings.Contains(err.Error(), "purge_test_cf_broken") {
+		t.Fatalf("PurgeConnection with a failing view = %v, want a purge_test_cf_broken error", err)
+	}
+	if got := countPurgeRows(t, pool, "metrics.purge_test_cf_other", victim); got != 0 {
+		t.Errorf("the working view kept %d rows after another view failed, want 0", got)
+	}
+	if rows := connectionRowCount(t, pool, victim); rows != 1 {
+		t.Fatalf("connection rows after a view failed = %d, want the marked row kept", rows)
+	}
+	ids, err := ds.ListDeletedConnectionIDs(ctx)
+	if err != nil || !slices.Contains(ids, victim) {
+		t.Fatalf("marked connections = %v, %v; want %d still marked for a retry", ids, err, victim)
+	}
+
+	if _, err := pool.Exec(ctx, `DROP VIEW metrics.purge_test_cf_broken`); err != nil {
+		t.Fatalf("drop the broken view: %v", err)
+	}
+	if err := ds.PurgeConnection(ctx, victim, 5); err != nil {
+		t.Fatalf("PurgeConnection after the view was fixed: %v", err)
+	}
+	if got := countPurgeRows(t, pool, "metrics.purge_test_cf", victim); got != 0 {
+		t.Errorf("view rows after the retry = %d, want 0", got)
+	}
+	if rows := connectionRowCount(t, pool, victim); rows != 0 {
+		t.Errorf("connection rows after the retry = %d, want 0", rows)
+	}
+}
+
+// TestPurgeConnection_SweepsLateViewRows checks that a row written to a
+// view after it was cleared, but before the connection row went, is
+// swept once the row is gone, as a table without a foreign key is.
+func TestPurgeConnection_SweepsLateViewRows(t *testing.T) {
+	ds, pool, cleanup := newConnPurgeTestDatastore(t)
+	defer cleanup()
+	defer createPurgeTestViews(t, pool, false)()
+	ctx := context.Background()
+
+	victim := seedPurgeConnection(t, pool, "victim", 2)
+	if err := ds.DeleteConnection(ctx, victim); err != nil {
+		t.Fatalf("DeleteConnection: %v", err)
+	}
+	lateWrite := func(ctx context.Context) error {
+		_, err := pool.Exec(ctx, `INSERT INTO metrics.purge_test_cf VALUES ($1, 99)`, victim)
+		return err
+	}
+	if err := ds.purgeConnection(ctx, victim, 5, lateWrite); err != nil {
+		t.Fatalf("purgeConnection: %v", err)
+	}
+	if got := countPurgeRows(t, pool, "metrics.purge_test_cf", victim); got != 0 {
+		t.Errorf("late view rows after the purge = %d, want 0", got)
+	}
+	if rows := connectionRowCount(t, pool, victim); rows != 0 {
+		t.Errorf("purged connection still has %d rows", rows)
 	}
 }

@@ -369,9 +369,10 @@ func buildCountQuery(connCondition, timeCondition, typeCondition string, filter 
 // by joining live connections, so TotalCount matches the events it
 // totals (issue #668). That covers a connection marked for deletion and
 // also one the purge has already removed: on a pgEdge ColdFront
-// datastore the purge leaves a metrics view's rows in place (issue
-// #755), so events can outlive their connection row, and a test for
-// marked rows alone (NOT IN the marked IDs) would still count them.
+// datastore a metrics view has no foreign key to connections (issue
+// #755), so a row written after the purge's last sweep of the view, or
+// one a failed sweep left, outlives its connection row, and a test for
+// marked rows alone (NOT IN the marked IDs) would still count it.
 // The count builders rewrite connection_id with their own table alias,
 // which is why the subquery names no column of that spelling. It names
 // connections unqualified and joins no catalog, so DuckDB can plan it

@@ -64,6 +64,10 @@ must meet the following requirements:
   registry while the collector creates the metrics tables.
 - The collector's datastore role can create a schema in the datastore
   database and a table in the schema on the role's `search_path`.
+- A superuser has created the `vector` extension in the schema on the
+  `search_path` of the Workbench roles, when the collector's role is not
+  a superuser and the deployment uses Tier 2 anomaly matching or chat
+  memory embeddings.
 
 ColdFront reports the same extension version in every build, so the
 collector checks for two functions instead of a version number. The
@@ -173,12 +177,10 @@ superuser. The collector's role must own the `workbench_coldfront`
 schema, so after a first start under another role the collector
 refuses to start under its own role.
 
-The privilege requirements in this section come from the ColdFront
-source code. The Workbench's tests against a live ColdFront datastore
-ran the collector as a superuser, so a collector role that is not a
-superuser has not been tested end to end. When the first migration
-fails with a permission error, the error message names the object that
-the role cannot access.
+The setup that this page describes has been verified end to end with a
+collector and server role that is not a superuser and does not own the
+datastore database. When the first migration fails with a permission
+error, the error message names the object that the role cannot access.
 
 Start the Workbench components on a new ColdFront datastore in the
 following order:
@@ -186,17 +188,21 @@ following order:
 1. Run `grant_app_access` for the collector's datastore role, and grant
    the role `INSERT` and `UPDATE` on the `coldfront.tiered_views`
    registry.
-2. Start the collector, which creates the metrics views during its
+2. Create the `vector` extension as a superuser when the collector's
+   role is not a superuser, as the
+   [Installing the pgvector Extension](#installing-the-pgvector-extension)
+   section describes.
+3. Start the collector, which creates the metrics views during its
    first schema migration.
-3. Run `grant_app_access` again for the server's role and the
+4. Run `grant_app_access` again for the server's role and the
    alerter's role when either role differs from the collector's role.
-4. Start the server and the alerter.
+5. Start the server and the alerter.
 
 The order matters because the server's startup check reads the
 `metrics.pg_settings` view. A server role that differs from the
 collector's role cannot read that view until the grant runs after the
 view exists, so the server fails to start until you re-run the grant.
-Repeat the third step after each Workbench upgrade, because an upgrade
+Repeat the fourth step after each Workbench upgrade, because an upgrade
 can add metrics tables.
 
 The function grants each role `SELECT`, `INSERT`, `UPDATE`, and
@@ -273,6 +279,48 @@ ALTER ROLE ai_workbench SET search_path = public;
 
 Changing the `search_path` after the collector's first start does not
 move the tables that the migrations have already created.
+
+### Installing the pgvector Extension
+
+A collector role that is not a superuser cannot create the `vector`
+extension; the attempt fails with a `permission denied to create
+extension "vector"` error. The collector logs the failure and continues,
+but alerter Tier 2 anomaly matching and chat memory embeddings stay
+disabled until a superuser creates the extension. The
+[Creating the pgvector Objects](#creating-the-pgvector-objects) section
+describes the objects that the collector creates once the extension
+exists.
+
+A superuser must create the extension in the datastore database before
+the collector's first start. In the following example, the
+`CREATE EXTENSION` statement creates the extension in the `public`
+schema:
+
+```sql
+CREATE EXTENSION vector SCHEMA public;
+```
+
+Name the schema on the `search_path` of the Workbench roles when that
+schema is not `public`. When the extension is created after the first
+start, restart the collector; the collector creates the
+`anomaly_embeddings` table and the `chat_memories.embedding` column at
+the next start.
+
+The `SCHEMA` clause matters because, without the clause, PostgreSQL
+creates the extension in the first existing schema on the `search_path`
+of the superuser who runs the statement. For a superuser named
+`coldfront`, the default `search_path` resolves to the `coldfront`
+schema that the ColdFront extension creates, as the
+[Keeping Workbench Tables out of the ColdFront Schema](#keeping-workbench-tables-out-of-the-coldfront-schema)
+section explains. The Workbench roles then cannot resolve the
+extension's types, and the collector fails with a `type "halfvec" does
+not exist` error. In the following example, the `ALTER EXTENSION`
+statement moves an extension that was created in the wrong schema to
+the `public` schema:
+
+```sql
+ALTER EXTENSION vector SET SCHEMA public;
+```
 
 ## Enabling ColdFront Storage
 
@@ -641,7 +689,7 @@ At every startup, after the schema migrations, the collector creates
 any of the following pgvector objects that are missing:
 
 - the `vector` extension, when the extension is available but not yet
-  installed.
+  installed and the collector's role may create the extension.
 - the `anomaly_embeddings` table, with its HNSW index and its foreign
   key to `anomaly_candidates`, which holds the embeddings that the
   alerter's Tier 2 similarity matching compares.

@@ -429,32 +429,24 @@ var dimensionColumns = map[string]bool{
 	"local_origin":  true, // spock_exception_log
 }
 
+// metricTypes are the column types IsMetricColumn counts as metrics.
+// Every other type is a dimension: timestamps, dates and times, text,
+// name, inet and oid among them.
+var metricTypes = map[string]bool{
+	"bigint":           true,
+	"integer":          true,
+	"smallint":         true,
+	"numeric":          true,
+	"double precision": true,
+	"real":             true,
+	"interval":         true,
+}
+
 // IsMetricColumn determines whether a column represents a numeric metric
-// as opposed to a dimension identifier.
+// as opposed to a dimension identifier: a column of a metricTypes type
+// that dimensionColumns does not name.
 func IsMetricColumn(name, dataType string) bool {
-	if dimensionColumns[name] {
-		return false
-	}
-
-	// Timestamp types are dimensions
-	if strings.Contains(dataType, "timestamp") || dataType == "date" || dataType == "time" {
-		return false
-	}
-
-	// Text types are typically dimensions
-	if dataType == "text" || dataType == "character varying" ||
-		dataType == "name" || dataType == "inet" || dataType == "oid" {
-		return false
-	}
-
-	// Numeric types are metrics
-	if dataType == "bigint" || dataType == "integer" || dataType == "smallint" ||
-		dataType == "numeric" || dataType == "double precision" || dataType == "real" ||
-		dataType == "interval" {
-		return true
-	}
-
-	return false
+	return !dimensionColumns[name] && metricTypes[dataType]
 }
 
 // textStatusColumns lists text-typed probe columns that hold a changing

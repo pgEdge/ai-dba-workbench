@@ -98,12 +98,32 @@ var castAfter = regexp.MustCompile(`(?i)^\s*::\s*(float8|double precision|bigint
 // shape in sql, which reads the metrics schema.
 func ShapeProblems(sql string) []string {
 	var problems []string
+	for _, check := range []func(string) []string{
+		badShapeProblems, arrayLiteralProblems, qualifiedTableProblems,
+		jsonValueProblems, uncastCallProblems,
+	} {
+		problems = append(problems, check(sql)...)
+	}
+	return problems
+}
+
+// badShapeProblems reports each coldFrontBadShapes match, once the one
+// planned parameter arithmetic (intervalTimesIntParam) is masked.
+func badShapeProblems(sql string) []string {
+	var problems []string
 	masked := intervalTimesIntParam.ReplaceAllString(sql, "interval_multiple")
 	for _, bad := range coldFrontBadShapes {
 		if m := bad.re.FindString(masked); m != "" {
 			problems = append(problems, strconv.Quote(m)+": "+bad.hint)
 		}
 	}
+	return problems
+}
+
+// arrayLiteralProblems reports a '{...}' literal not cast to json or
+// jsonb.
+func arrayLiteralProblems(sql string) []string {
+	var problems []string
 	for _, m := range arrayLiteral.FindAllStringSubmatch(sql, -1) {
 		cast := strings.ToLower(strings.TrimLeft(m[1], " \t\n:"))
 		if cast != "json" && cast != "jsonb" {
@@ -111,6 +131,13 @@ func ShapeProblems(sql string) []string {
 				"literal to an array; write ARRAY[...], or bind integers with IntListArg and IntArrayExpr")
 		}
 	}
+	return problems
+}
+
+// qualifiedTableProblems reports a schema-qualified relation other than
+// one in the metrics schema.
+func qualifiedTableProblems(sql string) []string {
+	var problems []string
 	for _, m := range qualifiedTable.FindAllStringSubmatch(sql, -1) {
 		if !strings.EqualFold(m[2], "metrics") && !notARelation[strings.ToLower(m[1])] {
 			problems = append(problems, strconv.Quote(strings.TrimSpace(m[0]))+": ColdFront plans the "+
@@ -118,21 +145,34 @@ func ShapeProblems(sql string) []string {
 				"name it unqualified, as the other metrics queries do")
 		}
 	}
-	if strings.Contains(sql, "_build_object") {
-		if m := untypedJSONValue.FindString(sql); m != "" {
-			problems = append(problems, strconv.Quote(strings.TrimSpace(m))+": DuckDB cannot type a "+
-				"string literal as a JSON builder's value; cast it to text")
-		}
+	return problems
+}
+
+// jsonValueProblems reports an untyped string literal passed as a JSON
+// builder's value.
+func jsonValueProblems(sql string) []string {
+	if !strings.Contains(sql, "_build_object") {
+		return nil
 	}
+	if m := untypedJSONValue.FindString(sql); m != "" {
+		return []string{strconv.Quote(strings.TrimSpace(m)) + ": DuckDB cannot type a " +
+			"string literal as a JSON builder's value; cast it to text"}
+	}
+	return nil
+}
+
+// uncastCallProblems reports an avg or EXTRACT call whose result is not
+// cast to a type both engines agree on.
+func uncastCallProblems(sql string) []string {
+	var problems []string
 	for _, loc := range uncastCalls.FindAllStringIndex(sql, -1) {
 		end := matchingParen(sql, loc[1]-1)
 		if end < 0 {
 			// The call is closed in another fragment; nothing to check.
 			continue
 		}
-		call := sql[loc[0] : end+1]
 		if !castAfter.MatchString(sql[end+1:]) {
-			problems = append(problems, strconv.Quote(call)+": numeric to PostgreSQL but DOUBLE on "+
+			problems = append(problems, strconv.Quote(sql[loc[0]:end+1])+": numeric to PostgreSQL but DOUBLE on "+
 				"ColdFront; cast it to float8 (EpochSeconds, AggregateExpr)")
 		}
 	}

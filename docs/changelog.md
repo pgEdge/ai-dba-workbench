@@ -113,7 +113,13 @@ project adheres to
   role. Each write adds one Iceberg snapshot, so the operator must
   schedule ColdFront's compactor with snapshot expiry for every metrics
   table. The Workbench performs no metrics retention in this mode, and
-  an existing datastore cannot switch between storage modes.
+  an existing datastore cannot switch between storage modes. The server
+  detects a ColdFront datastore at start-up and runs its queries there
+  without named prepared statements, so a query does not fail with
+  `Catalog "ice" does not exist!` after an earlier query rolled back.
+  The connection purge deletes a deleted connection's rows from each
+  metrics view in a transaction of its own; when a delete fails, the
+  purge keeps the connection and retries on a later pass.
   The [Storing Metrics in pgEdge ColdFront](getting-started/configuration/coldfront-metrics.md)
   page describes the setup, the start-up order and every difference.
 
@@ -625,6 +631,12 @@ project adheres to
   for up to an hour.
 
 ### Changed
+
+- Return a `query_datastore` `avg` aggregate as double precision, and
+  print floating-point values in tool output in plain decimal rather
+  than exponent notation (#755). A `sum` of an interval column now
+  reports the total in hours, as in `26:00:00`, rather than in days
+  and hours.
 
 - Build the server, collector and alerter container images on
   `alpine:3` instead of `debian:bookworm-slim`, removing the Debian
@@ -2882,6 +2894,15 @@ project adheres to
   remains available to API consumers. (#387)
 
 ### Security
+
+- List and serve only the collector's probes from the metrics schema
+  (#755). The `list_probes`, `describe_probe`, `query_metrics`,
+  `describe_datastore` and `query_datastore` tools and the
+  `GET /api/v1/metrics/latest` and `GET /api/v1/metrics/query`
+  endpoints now admit only the probe names the collector writes, on
+  plain PostgreSQL and ColdFront datastores alike; other tables,
+  partitions and views in the `metrics` schema are no longer listed or
+  served.
 
 - Update `golang.org/x/crypto` to v0.58.0 in every Go module, fixing
   the advisories against its `ssh`, `ssh/agent` and `ssh/knownhosts`

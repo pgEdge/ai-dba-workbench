@@ -25,7 +25,10 @@ architecture:
 ### list_probes
 
 The `list_probes` tool lists all available metrics
-probes in the datastore.
+probes in the datastore. The tool lists only the
+probes that the collector writes; the metrics tools
+do not list or serve any other table, partition or
+view in the `metrics` schema.
 
 **Parameters**: None
 

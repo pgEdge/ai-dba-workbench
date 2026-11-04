@@ -193,6 +193,13 @@ const (
 )
 ```
 
+Add the same name to the `knownProbes` set in
+`/server/src/internal/metrics/known_probes.go` in the
+same change. The server lists and serves only the
+probes in that set, and the
+`TestKnownProbesMatchCollectorSchema` test fails when
+the set and the collector's metrics tables differ.
+
 ### 4. Register in Scheduler
 
 Add probe creation to

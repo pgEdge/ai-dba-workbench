@@ -293,24 +293,57 @@ interval between compactor runs, divided by the probe interval and
 multiplied by the number of monitored connections. An expiry age of
 `1h` with an hourly compactor run keeps at most about 120 snapshots for
 each connection on a one-minute probe. Shorten both values when the
-datastore monitors many connections. Keep the expiry age longer than
-the longest transaction that reads a metrics view, because ColdFront
-holds a transaction's snapshot until the transaction ends; the
-Workbench's own metrics queries are short, but a query that an
-operator holds open in `psql` can last longer.
+datastore monitors many connections.
 
-The following example lists the metrics views that ColdFront has
+A transaction that reads a metrics view keeps the snapshot of its
+first read until the transaction ends, and snapshot expiry does not
+know about that transaction. When expiry deletes the files of that
+snapshot, the transaction's next scan fails with the object store's
+not-found error. The ColdFront compaction guide advises keeping
+`--expire-older-than` longer than the longest transaction that reads
+the table. Expiry measures the age of the snapshot rather than the age
+of the transaction, so a transaction can begin on a snapshot that is
+already old. Keep the expiry age longer than the longest reader's
+lifetime plus the age of the snapshot when the reader first reads the
+view. While the collector writes a table, that snapshot age is at most
+about one probe interval; after the collector stops writing a table,
+the current snapshot can grow older. The Workbench's own metrics
+queries are short, but a query that an operator holds open in `psql`
+can last much longer.
+
+The following script lists the metrics views that ColdFront has
 registered, and runs the compactor against each one with a one-hour
-snapshot expiry and orphan-file removal:
+snapshot expiry and orphan-file removal. The script exits with a
+non-zero status when the listing fails, when the listing returns no
+views, or when any compactor run fails:
 
 ```bash
-for table in $(psql -At -c "SELECT relname FROM coldfront.tiered_views
-                            WHERE schema_name = 'metrics'
-                            ORDER BY relname"); do
-    compactor --table "metrics.${table}" \
-        --expire-snapshots --expire-older-than 1h --orphans
+#!/usr/bin/env bash
+set -euo pipefail
+
+tables=$(psql -X -At -v ON_ERROR_STOP=1 \
+    -c "SELECT relname FROM coldfront.tiered_views
+        WHERE schema_name = 'metrics' ORDER BY relname")
+
+if [ -z "${tables}" ]; then
+    echo "No ColdFront metrics views found." >&2
+    exit 1
+fi
+
+status=0
+for table in ${tables}; do
+    if ! compactor --table "metrics.${table}" \
+            --expire-snapshots --expire-older-than 1h --orphans; then
+        echo "The compactor failed for metrics.${table}." >&2
+        status=1
+    fi
 done
+exit "${status}"
 ```
+
+The script continues past a failed table so that one failure does not
+stop maintenance of the other tables, and still reports the failure
+through its exit status.
 
 The `psql` client and the compactor both read the connection settings
 from the libpq environment variables, such as `PGHOST` and

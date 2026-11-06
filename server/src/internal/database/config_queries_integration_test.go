@@ -1082,3 +1082,57 @@ func TestAlertRuleErrorPaths(t *testing.T) {
 		t.Error("expected error from DeleteAlertThreshold")
 	}
 }
+
+// TestUpdateProbeConfig_UpdateFailures drives the UPDATE's own error
+// paths, which the earlier fetch cannot reach: a BEFORE UPDATE trigger
+// that raises makes the statement fail, and one that returns NULL makes
+// it update nothing, which must read as not found.
+func TestUpdateProbeConfig_UpdateFailures(t *testing.T) {
+	ds, pool, fx, cleanup := newConfigQueriesTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_, serverID := seedProbeConfigs(t, pool, fx.ConnID)
+
+	exec := func(sql string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatalf("exec %q: %v", sql, err)
+		}
+	}
+	exec(`
+		CREATE OR REPLACE FUNCTION raise_on_probe_configs() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected probe_configs failure';
+		END $$;
+		CREATE OR REPLACE FUNCTION skip_on_probe_configs() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			RETURN NULL;
+		END $$;`)
+	// The functions outlive the tables the cleanup drops.
+	defer exec(`
+		DROP FUNCTION IF EXISTS raise_on_probe_configs() CASCADE;
+		DROP FUNCTION IF EXISTS skip_on_probe_configs() CASCADE;`)
+
+	t.Run("update fails", func(t *testing.T) {
+		exec(`CREATE TRIGGER raise_on_update BEFORE UPDATE ON probe_configs
+			FOR EACH ROW EXECUTE FUNCTION raise_on_probe_configs()`)
+		defer exec(`DROP TRIGGER raise_on_update ON probe_configs`)
+		_, err := ds.UpdateProbeConfig(ctx, int64(serverID), ProbeConfigUpdate{})
+		if err == nil || errors.Is(err, ErrProbeConfigNotFound) {
+			t.Errorf("UpdateProbeConfig: error = %v, want the update failure", err)
+		}
+	})
+
+	t.Run("update changes nothing", func(t *testing.T) {
+		exec(`CREATE TRIGGER skip_on_update BEFORE UPDATE ON probe_configs
+			FOR EACH ROW EXECUTE FUNCTION skip_on_probe_configs()`)
+		defer exec(`DROP TRIGGER skip_on_update ON probe_configs`)
+		_, err := ds.UpdateProbeConfig(ctx, int64(serverID), ProbeConfigUpdate{})
+		if !errors.Is(err, ErrProbeConfigNotFound) {
+			t.Errorf("UpdateProbeConfig: error = %v, want %v", err, ErrProbeConfigNotFound)
+		}
+	})
+}

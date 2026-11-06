@@ -250,8 +250,13 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
             }
 
             if (selection.type === 'server') {
-                // Show cluster-scoped blackouts if this server is in that cluster
-                if (b.scope === 'cluster') {return false;}
+                // Show cluster-scoped blackouts if this server is in that
+                // cluster, matched on the cluster's database row. #809.
+                if (b.scope === 'cluster') {
+                    return b.cluster_id !== undefined
+                        && selection.dbClusterId !== undefined
+                        && b.cluster_id === selection.dbClusterId;
+                }
                 // Show server-scoped blackouts matching this server
                 if (b.scope === 'server' && b.connection_id !== undefined) {
                     return b.connection_id === selection.id;

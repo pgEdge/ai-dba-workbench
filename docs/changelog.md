@@ -1344,8 +1344,9 @@ project adheres to
   field holding the numeric ID to send as `cluster_id`. The
   navigator's blackout indicator now shows cluster blackouts on
   auto-detected clusters, and the blackout banner for a selected
-  cluster now lists its cluster blackouts, which it never matched
-  before. Standalone servers still offer no Cluster scope.
+  cluster, or for a server in it, now lists its cluster blackouts,
+  which it never matched before. Standalone servers still offer no
+  Cluster scope.
 
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled

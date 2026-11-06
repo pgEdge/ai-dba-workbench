@@ -14,6 +14,7 @@ import { useClusterData } from './useClusterData';
 import type { ClusterServer, ClusterEntry } from './ClusterDataContext';
 import { apiPost, apiGet, apiDelete } from '../utils/apiClient';
 import { logger } from '../utils/logger';
+import { getDbClusterId } from '../utils/clusterHelpers';
 
 export type SelectionType = 'server' | 'cluster' | 'estate' | null;
 
@@ -167,10 +168,15 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
         const curType = selectionTypeRef.current;
 
         if (curCluster && curType === 'cluster') {
+            // An auto-detected cluster's topology ID can change between
+            // refreshes, so fall back to its database row. Issue #809.
+            const curDbId = getDbClusterId(curCluster);
+            const matches = (c: ClusterEntry): boolean =>
+                c.id === curCluster.id
+                || (curDbId !== undefined && getDbClusterId(c) === curDbId);
             for (const group of clusterData) {
-                const fresh: ClusterEntry | undefined = group.clusters?.find(
-                    c => c.id === curCluster.id,
-                );
+                const fresh: ClusterEntry | undefined =
+                    group.clusters?.find(matches);
                 if (fresh && fresh !== curCluster) {
                     setSelectedCluster(fresh);
                     return;

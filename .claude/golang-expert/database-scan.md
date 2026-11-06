@@ -94,6 +94,11 @@ fields encoded without `omitempty`:
 - `TopologyServerInfo.Children` and
   `TopologyServerInfo.Relationships` use `omitempty`; nil is fine
   there because it is omitted from JSON entirely.
+- `TopologyCluster.DBClusterID` (`db_cluster_id`, `omitempty`) is the
+  `clusters.id` behind an auto-detected cluster, set by
+  `attachDBClusterIDs` from the cluster overrides; zero (omitted)
+  means no row, as for standalone servers. Cluster-scoped requests
+  such as blackouts must send this, not the transient topology `id`.
 
 `GetClusterTopology` runs `normalizeTopologyGroups` as the final
 step before returning. The helper walks the tree and replaces nil

@@ -230,6 +230,53 @@ describe('buildSelection', () => {
         });
     });
 
+    describe('database cluster ID (issue #809)', () => {
+        it('takes dbClusterId from db_cluster_id on an auto-detected cluster', () => {
+            const server = makeServer(5);
+            const cluster: ClusterEntry = {
+                ...makeCluster('server-5', [server]),
+                db_cluster_id: 21,
+            };
+            const groups = [makeGroup('g1', [cluster])];
+
+            const clusterSel = buildSelection('cluster', null, cluster, groups);
+            assertSelection(clusterSel);
+            expect(clusterSel.type === 'cluster' && clusterSel.dbClusterId).toBe(21);
+
+            const serverSel = buildSelection('server', server, null, groups);
+            assertSelection(serverSel);
+            expect(serverSel.type === 'server' && serverSel.dbClusterId).toBe(21);
+        });
+
+        it('parses dbClusterId from a database-backed cluster ID', () => {
+            const server = makeServer(6);
+            const cluster = makeCluster('cluster-8', [server]);
+            const groups = [makeGroup('g1', [cluster])];
+
+            const clusterSel = buildSelection('cluster', null, cluster, groups);
+            assertSelection(clusterSel);
+            expect(clusterSel.type === 'cluster' && clusterSel.dbClusterId).toBe(8);
+
+            const serverSel = buildSelection('server', server, null, groups);
+            assertSelection(serverSel);
+            expect(serverSel.type === 'server' && serverSel.dbClusterId).toBe(8);
+        });
+
+        it('leaves dbClusterId unset when the cluster has no database row', () => {
+            const server = makeServer(9);
+            const cluster = makeCluster('server-9', [server]);
+            const groups = [makeGroup('g1', [cluster])];
+
+            const clusterSel = buildSelection('cluster', null, cluster, groups);
+            assertSelection(clusterSel);
+            expect(clusterSel.type === 'cluster' && clusterSel.dbClusterId).toBeUndefined();
+
+            const serverSel = buildSelection('server', server, null, groups);
+            assertSelection(serverSel);
+            expect(serverSel.type === 'server' && serverSel.dbClusterId).toBeUndefined();
+        });
+    });
+
     describe('server selection - happy path', () => {
         it('resolves clusterId, clusterName, groupId, and groupName for the owning cluster', () => {
             const server = makeServer(42, { spock_node_name: 'node-a', spock_version: '5.0' });

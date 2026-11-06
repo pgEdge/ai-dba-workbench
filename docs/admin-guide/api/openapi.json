@@ -15170,6 +15170,10 @@
             "type": "string",
             "description": "Auto-detected cluster type (spock, spock_ha, binary, logical, server, manual)"
           },
+          "db_cluster_id": {
+            "type": "integer",
+            "description": "Numeric ID of the clusters row backing an auto-detected cluster, for use as cluster_id in cluster-scoped requests such as blackouts; omitted for standalone servers and clusters without a row"
+          },
           "description": {
             "type": "string",
             "description": "Cluster description",

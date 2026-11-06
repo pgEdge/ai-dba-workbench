@@ -54,6 +54,8 @@ export interface ClusterEntry {
     servers: ClusterServer[];
     isStandalone?: boolean;
     auto_cluster_key?: string;
+    /** Numeric clusters.id of an auto-detected cluster; see issue #809. */
+    db_cluster_id?: number;
     replication_type?: string | null;
     [key: string]: unknown;
 }

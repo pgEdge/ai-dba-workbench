@@ -90,8 +90,10 @@ type ClusterGroupWithClusters struct {
 	Clusters []ClusterWithServers `json:"clusters"`
 }
 
-// clusterOverride holds custom name and description for auto-detected clusters
+// clusterOverride holds the clusters row ID and the custom name and
+// description for auto-detected clusters
 type clusterOverride struct {
+	ID          int
 	Name        string
 	Description string
 }
@@ -640,7 +642,7 @@ func (d *Datastore) GetClusterOverrides(ctx context.Context) (map[string]cluster
 // getClusterOverridesInternal is the lock-free internal implementation
 func (d *Datastore) getClusterOverridesInternal(ctx context.Context) (map[string]clusterOverride, error) {
 	query := `
-        SELECT auto_cluster_key, name, COALESCE(description, '') as description
+        SELECT id, auto_cluster_key, name, COALESCE(description, '') as description
         FROM clusters
         WHERE auto_cluster_key IS NOT NULL
           AND dismissed = FALSE
@@ -654,11 +656,12 @@ func (d *Datastore) getClusterOverridesInternal(ctx context.Context) (map[string
 
 	overrides := make(map[string]clusterOverride)
 	for rows.Next() {
+		var id int
 		var key, name, description string
-		if err := rows.Scan(&key, &name, &description); err != nil {
+		if err := rows.Scan(&id, &key, &name, &description); err != nil {
 			return nil, fmt.Errorf("failed to scan cluster override: %w", err)
 		}
-		overrides[key] = clusterOverride{Name: name, Description: description}
+		overrides[key] = clusterOverride{ID: id, Name: name, Description: description}
 	}
 
 	if err := rows.Err(); err != nil {

@@ -568,6 +568,25 @@ func TestClusterOverridesAndUpserts_Integration(t *testing.T) {
 		if _, ok := overrides["logical:hidden"]; ok {
 			t.Errorf("Dismissed cluster appeared in overrides")
 		}
+		// Each override carries its row's ID (issue #809).
+		var binaryID int
+		if err := pool.QueryRow(ctx, "SELECT id FROM clusters WHERE auto_cluster_key = 'binary:1'").Scan(&binaryID); err != nil {
+			t.Fatalf("select binary:1 id: %v", err)
+		}
+		if got := overrides["binary:1"].ID; got != binaryID {
+			t.Errorf("binary:1 override ID = %d, want %d", got, binaryID)
+		}
+	})
+
+	t.Run("GetClusterOverrides reports a row it cannot scan", func(t *testing.T) {
+		// A NULL name cannot be scanned into a string. This runs on the
+		// per-test schema, which the cleanup drops.
+		mustExecClusterQueries(t, pool, "ALTER TABLE clusters ALTER COLUMN name DROP NOT NULL")
+		mustExecClusterQueries(t, pool, "UPDATE clusters SET name = NULL WHERE auto_cluster_key = 'binary:1'")
+		if _, err := ds.GetClusterOverrides(ctx); err == nil || !strings.Contains(err.Error(), "failed to scan") {
+			t.Errorf("GetClusterOverrides scan error = %v", err)
+		}
+		mustExecClusterQueries(t, pool, "UPDATE clusters SET name = 'renamed' WHERE auto_cluster_key = 'binary:1'")
 	})
 
 	t.Run("group auto keys", func(t *testing.T) {

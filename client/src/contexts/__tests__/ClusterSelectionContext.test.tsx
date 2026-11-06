@@ -294,6 +294,70 @@ describe('ClusterSelectionContext', () => {
             });
         });
 
+        it('follows an auto-detected cluster whose topology ID changes', async () => {
+            const autoCluster: ClusterEntry = {
+                ...cluster1,
+                id: 'server-100',
+                db_cluster_id: 42,
+            };
+            mockClusterData = [
+                { id: 'group-1', name: 'prod', clusters: [autoCluster] },
+            ];
+
+            const { result, rerender } = renderHook(() => useClusterSelection(), {
+                wrapper,
+            });
+
+            act(() => {
+                result.current.selectCluster(autoCluster);
+            });
+
+            // The primary changed, so the topology ID moved but the
+            // database row is the same (issue #809).
+            const moved: ClusterEntry = {
+                ...autoCluster,
+                id: 'server-101',
+            };
+            const otherCluster: ClusterEntry = {
+                ...cluster1,
+                id: 'server-200',
+                db_cluster_id: 7,
+            };
+            mockClusterData = [
+                {
+                    id: 'group-1',
+                    name: 'prod',
+                    clusters: [otherCluster, moved],
+                },
+            ];
+            rerender();
+
+            await waitFor(() => {
+                expect(result.current.selectedCluster).toBe(moved);
+            });
+        });
+
+        it('keeps a cluster selection that has no match in fresh data', async () => {
+            mockClusterData = baseData;
+
+            const { result, rerender } = renderHook(() => useClusterSelection(), {
+                wrapper,
+            });
+
+            act(() => {
+                result.current.selectCluster(cluster1);
+            });
+
+            mockClusterData = [
+                { id: 'group-1', name: 'prod', clusters: [] },
+            ];
+            rerender();
+
+            await waitFor(() => {
+                expect(result.current.selectedCluster).toBe(cluster1);
+            });
+        });
+
         it('updates selectedServer reference when cluster data refreshes', async () => {
             mockClusterData = baseData;
             mockApiPost.mockResolvedValue({ connection_id: 1 });

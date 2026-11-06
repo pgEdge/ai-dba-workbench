@@ -248,6 +248,14 @@ end in the future is clamped to the present moment.
 | GET | `/api/v1/overview` | Get an AI-generated estate overview. |
 | GET | `/api/v1/overview/stream` | Stream overview generation via SSE. |
 
+Both endpoints apply per-user limits on the summaries they
+generate. A caller over the limit receives the cached summary
+for the scope, even if it is stale; when none exists, the
+endpoint returns `429 Too Many Requests` with a `Retry-After`
+header giving the wait in seconds. The
+[server configuration](../../getting-started/configuration/server.md#ai-overview-rate-limits-rate_limitoverview)
+describes the limits.
+
 ### Conversations
 
 | Method | Endpoint | Description |

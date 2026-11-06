@@ -297,6 +297,30 @@ func TestBuildOpenAPISpec_MetricsQueryCustomWindowParams(t *testing.T) {
 	}
 }
 
+func TestBuildOpenAPISpec_OverviewRateLimitResponses(t *testing.T) {
+	// Both overview endpoints can refuse a caller who has used up their
+	// summary generations, and the client needs Retry-After to back off.
+	spec := BuildOpenAPISpec()
+
+	for _, path := range []string{"/overview", "/overview/stream"} {
+		op := spec.Paths[path].Get
+		if op == nil {
+			t.Fatalf("Expected GET operation on %s", path)
+		}
+		resp, ok := op.Responses["429"]
+		if !ok {
+			t.Errorf("Expected a 429 response on %s", path)
+			continue
+		}
+		if _, ok := resp.Headers["Retry-After"]; !ok {
+			t.Errorf("Expected the 429 response on %s to document Retry-After", path)
+		}
+		if _, ok := resp.Content["text/plain"]; !ok {
+			t.Errorf("Expected the 429 response on %s to be text/plain", path)
+		}
+	}
+}
+
 func TestOpenAPIOIDCPathOperationsMatchHandlers(t *testing.T) {
 	spec := BuildOpenAPISpec()
 

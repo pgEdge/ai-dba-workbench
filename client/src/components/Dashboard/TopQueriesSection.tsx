@@ -836,9 +836,9 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
                         })}
                     </Box>
 
-                    {queries.map((query, index) => (
+                    {queries.map((query) => (
                         <Box
-                            key={query.queryid || index}
+                            key={`${query.queryid}:${query.database_name}`}
                             sx={bodyRowSx}
                             onClick={() => { handleQueryClick(query); }}
                             tabIndex={0}

@@ -275,12 +275,13 @@ The filter lists the databases seen over a fixed
 twenty-four hours, so the available choices do not vanish
 as the user narrows the selected window.
 
-The Database column resolves each query's source
-database from the `dbid` field in
-`pg_stat_statements` using `pg_stat_activity`.
-Because `pg_stat_statements` collects data
-cluster-wide, the section deduplicates queries so
-each entry reflects a single database context.
+The Database column names the database each query ran
+in, resolved from the `dbid` field in
+`pg_stat_statements`. A statement that runs in several
+databases, such as `BEGIN`, appears once for each of
+them, and each row counts only the calls made in its
+own database; selecting a row opens the figures for that
+database.
 
 Clicking the Calls, Total Time, Mean Time or Rows column header sorts the list
 by that column. A newly chosen column sorts largest first, and clicking the

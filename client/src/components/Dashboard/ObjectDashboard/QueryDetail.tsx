@@ -261,6 +261,15 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             queryid: objectName,
             limit: '1',
         });
+        /*
+         * The top-queries endpoint reports a statement once per
+         * database it ran in, so the request names the database the
+         * overlay was opened for; without it, the single row returned
+         * would be whichever database's figures sort first.
+         */
+        if (databaseName) {
+            params.set('database_name', databaseName);
+        }
         appendTimeRangeParams(params, selectedWindow);
 
         const url = `/api/v1/metrics/top-queries?${params.toString()}`;
@@ -313,7 +322,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             }
         }
     }, [
-        user, connectionId, objectName,
+        user, connectionId, databaseName, objectName,
         selectedRange, customStart, customEnd,
     ]);
 

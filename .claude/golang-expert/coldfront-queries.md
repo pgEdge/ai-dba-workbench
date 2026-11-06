@@ -46,11 +46,13 @@ PostgreSQL and on ColdFront, with identical plain-PostgreSQL results.
   `connectionsWithExtensionSQL` (rule extension gates) and
   `clusterPeersSQL` (cluster context for alerts). Both were run
   read-only with literal arguments through psql on live ColdFront
-  1.0.0-beta3 datastores on PostgreSQL 16, 17 and 18: each planned and
-  ran under DuckDB, including `clusterPeersSQL`'s correlated
+  1.0.0-beta3 datastores on PostgreSQL 16, 17 and 18, and again with
+  pgx-bound parameters in every pgx exec mode (cache statement, cache
+  describe, describe-exec, exec and simple protocol) on ColdFront main,
+  pg_duckdb 1.1.0 and PostgreSQL 18.6: each planned and ran under
+  DuckDB, including `clusterPeersSQL`'s correlated
   `LEFT JOIN LATERAL ... ORDER BY collected_at DESC LIMIT 1`, which
-  returned the expected `standalone` role. psql cannot show rule 3's
-  scan failures, so the pgx-driven tests below still apply.
+  returned the expected `standalone` role.
 
 Probe staleness, connection errors and everything else read ordinary
 tables (`probe_availability`, `connections`, ...) and run in PostgreSQL.
@@ -78,11 +80,14 @@ failures in rule 3, so reproduce with pgx, never psql.
 2. **Bind no arrays.** `col = ANY($1)`, `= ANY($1::int[])`,
    `IN (SELECT unnest($1::int[]))`, `= ANY($1::text::int[])`, a literal
    `= ANY('{2,3}'::int[])` and even `IN ($1::int, $2::int)` all fail
-   with the UNKNOWN error. What works: `col = $1::int`, `col = $1 OR
-   col = $2`, `col IN ($1::text, $2::text)`, integer literal lists
-   `IN (2, 3)`, and `= ANY(string_to_array($1, ',')::int[])` with one
-   text parameter (the guard rejects `ANY(` wholesale, so prefer the
-   others).
+   with the UNKNOWN error. The `IN` failure holds for every non-text
+   type tried (int, bigint, timestamptz, `NOT IN` too) and in every pgx
+   exec mode except the simple protocol, which inlines the values. What
+   works: `col = $1::int`, `col = $1::int OR col = $2::int`, a single
+   parameter or one beside literals (`IN ($1::int, 2)`),
+   `col IN ($1::text, $2::text)`, integer literal lists `IN (2, 3)`,
+   and `= ANY(string_to_array($1, ',')::int[])` with one text parameter
+   (the guard rejects `ANY(` wholesale, so prefer the others).
 3. **No numeric result columns.** PostgreSQL labels `avg()` over an
    integer and `EXTRACT(EPOCH ...)` as numeric (OID 1700), but DuckDB
    sends DOUBLE bytes under that label and pgx fails with "numeric
@@ -129,7 +134,8 @@ failures in rule 3, so reproduce with pgx, never psql.
    rule 1, whatever `$2` is bound to. A NULL test on a column
    (`m.valid_from IS NULL`) is fine. Do not let NULL mean "no bound"
    through `col <= COALESCE($2::timestamptz, col)` either: DuckDB runs
-   it, but the Workbench's pools use pgx's cached-statement mode, and
+   it, but on plain PostgreSQL the Workbench's pools use pgx's
+   cached-statement mode, and
    under a generic plan (`plan_cache_mode = force_generic_plan`)
    PostgreSQL keeps it as a per-row filter, with no index condition and
    no partition pruning (all four weekly partitions scanned against two
@@ -150,9 +156,11 @@ The textual rules live in one place, `coldfrontsql.Violations` in
 a `host(` whose argument does not end in `::inet`, an `::inet` that is
 not such an argument, a NULL test (`IS [NOT] NULL`, `ISNULL`,
 `NOTNULL`) on a `$n`, bare, cast either way or parenthesised, a
-`COALESCE($n`, `infinity` (any case), and an `avg(...)` not cast to
-float in place. Only `ANY(`, the array cast and `unnest(` failed live;
-`ALL(`, `SOME(` and `ARRAY[` are barred as the same array typing. The
+`COALESCE($n`, `infinity` (any case), an `IN (...)` list (not a
+subquery) holding two or more `$n` not cast to `text`, and an
+`avg(...)` not cast to float in place. Only `ANY(`, the array cast,
+`unnest(` and the `IN` list failed live; `ALL(`, `SOME(` and `ARRAY[`
+are barred as the same array typing. The
 parenthesis matcher behind `host(` and `avg(` skips quoted literals
 and identifiers, but the forbidden-word checks still see inside them.
 `TestViolations` in `pkg/coldfrontsql/coldfrontsql_test.go` pins them
@@ -211,6 +219,27 @@ unless noted:
   `COALESCE`; it also rewrites the bound to the `COALESCE` form and
   requires that plan to fail the same check. Partition pruning is not
   asserted: the test schema has only each table's default partition.
+
+## Pool Execution Mode
+
+pgx's default statement cache is unsafe on ColdFront. ColdFront
+attaches its Iceberg catalog (`ice`) inside the transaction that first
+plans a metrics statement; a rollback (statement timeout, cancellation,
+`rollback.Tx`) undoes the attach, and re-executing the cached prepared
+statement on that pooled connection fails with 'Binder Error: Catalog
+"ice" does not exist!'. Live, that reproduced 8 times in 8 under the
+cache mode and never under describe-exec or exec. So the alerter's
+`NewDatastore` (`alerter/src/internal/database/datastore.go`) runs
+`coldFrontDatastoreQuery` (the `coldfront` extension, or any view in
+`metrics`) on one probe connection before building the pool, and
+`datastoreExecMode` sets `QueryExecModeDescribeExec` on ColdFront and
+keeps the statement cache on plain PostgreSQL. The probe connection
+doubles as the reachability check, so there is no separate `Ping`. The
+server's `NewDatastore` does the same (PR #790). Tests:
+`TestDatastoreExecMode`, `TestNewDatastoreDetectsColdFront`,
+`TestDetectColdFrontDatastoreQueryFailure` and
+`TestDescribeExecKeepsNoStatementAcrossRollback` in
+`alerter/src/internal/database/datastore_exec_mode_test.go`.
 
 ## Known Trade-offs
 

@@ -75,10 +75,11 @@ collector checks for two functions instead of a version number. The
 ColdFront pull request #92, which also contains the read support from
 pull request #85 that the server relies on. The collector also calls
 the `coldfront.ensure_attached()` function to attach the Lakekeeper
-catalog. The ColdFront tags up to and including `v1.0.0-beta2` predate
-pull request #92, so install a ColdFront build that includes that
-change. The collector refuses to start when the installed ColdFront
-build lacks either function.
+catalog. ColdFront 1.0.0-beta3 is the first release that includes pull
+request #92; the releases up to and including 1.0.0-beta2 predate the
+change, so install ColdFront 1.0.0-beta3 or later. The collector
+refuses to start when the installed ColdFront build lacks either
+function.
 
 In the following example, the query reports whether the installed
 ColdFront build provides each function that the collector requires:
@@ -236,11 +237,18 @@ role that privilege on the `public` schema:
 GRANT CREATE ON SCHEMA public TO ai_workbench;
 ```
 
-Alternatively, create a schema that the collector's role owns, and set
-the `search_path` of each Workbench role to that schema; the
+On a deployment that uses neither alerter Tier 2 anomaly matching nor
+chat memory embeddings, you can instead create a schema that the
+collector's role owns, and set the `search_path` of each Workbench
+role to that schema; the
 [Keeping Workbench Tables out of the ColdFront Schema](#keeping-workbench-tables-out-of-the-coldfront-schema)
 section shows the `ALTER ROLE` statement that sets a role's
-`search_path`.
+`search_path`. The alternative does not remove the need for the grant
+on `public` when either feature is in use, because the collector
+always creates the `anomaly_embeddings` table in the `public` schema,
+whatever the `search_path`. The collector adds the `chat_memories`
+embedding column only after the `anomaly_embeddings` table exists, so
+chat memory embeddings depend on the same grant.
 
 The collector's role must own the `workbench_coldfront` schema and
 every function in it. The collector revokes all `PUBLIC` access to the
@@ -359,6 +367,26 @@ before running any migration and refuses to start when the setting
 does not match the existing metrics tables; the
 [Collector Configuration](collector.md#troubleshooting) document lists
 each startup error and its fix.
+
+### Restarting the Server After a Storage Change
+
+The server detects a ColdFront datastore once, when the server starts
+and opens its datastore connection pool. The server treats the
+datastore as a ColdFront datastore when the `coldfront` extension is
+installed or when the `metrics` schema holds a view. On a ColdFront
+datastore, the server runs its queries without named prepared
+statements, so that a query cannot fail with the
+`Catalog "ice" does not exist!` error after an earlier query rolled
+back. A configuration reload through `SIGHUP` does not repeat the
+detection.
+
+Restart the server whenever the datastore that the server connects to
+changes between standard and ColdFront storage, for example when you
+rebuild the datastore with the other storage mode under the same
+connection settings. Until the restart, a server that started against
+a standard datastore can fail ColdFront queries with that error. A
+server that started against a ColdFront datastore keeps working on a
+standard datastore, but makes an extra round trip for every query.
 
 ### Understanding the Startup Steps
 
@@ -486,19 +514,21 @@ stop maintenance of the other tables, and still reports the failure
 through its exit status.
 
 The `psql` client reads the connection settings from the libpq
-environment variables, such as `PGHOST` and `PGDATABASE`. A compactor
-built from a ColdFront revision that includes pgEdge ColdFront pull
-request #98 reads the same variables, or accepts a connection string
-through the `--dsn` option, and reads the catalog and storage settings
-from the datastore. The script requires such a compactor.
+environment variables, such as `PGHOST` and `PGDATABASE`. The
+compactor in ColdFront 1.0.0-beta3 reads the same variables, or accepts
+a connection string through the `--dsn` option, and reads the catalog
+and storage settings from the datastore. The script requires such a
+compactor; a compactor built from any revision that includes pgEdge
+ColdFront pull request #98 behaves the same way.
 
-A compactor built from an earlier revision that includes pull request
-#92 does not read the libpq environment. That compactor requires the
-`--config` option, which names a deployment YAML file that holds the
-connection string and the storage credentials, and exits without
-compacting when the option is missing. No ColdFront release tag
-includes either pull request. In the following example, the compactor
-command in the script passes a deployment file to an earlier
+A compactor built from a development revision that includes pull
+request #92 but predates pull request #98 does not read the libpq
+environment. That compactor requires the `--config` option, which names
+a deployment YAML file that holds the connection string and the storage
+credentials, and exits without compacting when the option is missing.
+No ColdFront release contains such a compactor, because ColdFront
+1.0.0-beta3 includes both pull requests. In the following example, the
+compactor command in the script passes a deployment file to an earlier
 compactor:
 
 ```bash
@@ -662,11 +692,20 @@ single write.
 The collector handles values and rejected rows as follows:
 
 - A `NaN` or infinite floating-point value is stored as `NULL`, and the
-  collector logs one line for each batch and column affected.
+  collector logs at most one line an hour for each metrics column
+  affected, with the number of values stored as `NULL` since the
+  column's previous line.
 - A row that ColdFront refuses because of its data is dropped, and the
   collector logs only the table, the connection ID, and the SQLSTATE.
 - More than ten refused rows in one write, or any error that does not
-  come from a single row's data, fails the whole write.
+  come from a single row's data, fails the write; the rows that the
+  collector has already committed remain in the table.
+
+To find a refused row, the collector splits the failed batch in half
+and retries each half, repeating the split until the refused row stands
+alone. Each half that succeeds is a separate statement and Iceberg
+commit, so one refused row splits a batch into several commits and
+adds a snapshot for each commit.
 
 ### Indexing Metrics Tables
 

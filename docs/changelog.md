@@ -100,28 +100,18 @@ project adheres to
   The server and alerter now use `pgedge-go-llm-lib` v0.6.0, which
   requires Go 1.26.10, so the collector, server and alerter now build
   with Go 1.26.10.
+
 - Store metrics in pgEdge ColdFront (#755). The new collector option
   `use_coldfront_for_metrics` (default `false`), or the
-  `-use-coldfront-for-metrics` flag, creates each `metrics.*` table as a
-  PostgreSQL view over an Apache Iceberg table on object storage; the
-  server and alerter need no setting. The datastore needs `pg_duckdb`,
-  a writable Lakekeeper warehouse, the `duckdb.postgres_role` setting,
-  a ColdFront build that provides
-  `coldfront._partition_clause(jsonb,text[])` and
-  `coldfront.ensure_attached()`, `coldfront.grant_app_access` for each
-  Workbench role, and `CREATE` on the database for the collector's
-  role. Each write adds one Iceberg snapshot, so the operator must
-  schedule ColdFront's compactor with snapshot expiry for every metrics
-  table. The Workbench performs no metrics retention in this mode, and
-  an existing datastore cannot switch between storage modes. The server
-  detects a ColdFront datastore at start-up and runs its queries there
-  without named prepared statements, so a query does not fail with
-  `Catalog "ice" does not exist!` after an earlier query rolled back.
-  The connection purge deletes a deleted connection's rows from each
-  metrics view in a transaction of its own; when a delete fails, the
-  purge keeps the connection and retries on a later pass.
-  The [Storing Metrics in pgEdge ColdFront](getting-started/configuration/coldfront-metrics.md)
-  page describes the setup, the start-up order and every difference.
+  `-use-coldfront-for-metrics` flag, creates each `metrics.*` table as
+  a PostgreSQL view over an Apache Iceberg table on object storage;
+  the server and alerter need no setting. The datastore needs
+  ColdFront 1.0.0-beta3 or later, prepared before the collector's
+  first start; the operator must schedule ColdFront's compactor, and
+  an existing datastore cannot switch between storage modes. The
+  [Storing Metrics in pgEdge ColdFront](getting-started/configuration/coldfront-metrics.md)
+  page describes the prerequisites, the setup and every difference
+  from a standard datastore.
 
 - Classify tier 3 anomaly candidates with an optional decision
   model (#626). The new `llm.decision_provider` option selects
@@ -640,6 +630,7 @@ project adheres to
   plain PostgreSQL and ColdFront datastores alike; other tables,
   partitions and views in the `metrics` schema are no longer listed or
   served.
+
 - Return a `query_datastore` `avg` aggregate as double precision, and
   print floating-point values in tool output in plain decimal rather
   than exponent notation (#755). A `sum` of an interval column now

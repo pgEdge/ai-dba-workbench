@@ -57,7 +57,7 @@ var forbidden = []struct {
 	{regexp.MustCompile(`(?i)\bANY\s*\(`),
 		"ANY(...) over an array fails with an UNKNOWN type in DuckDB, even with a literal or cast array"},
 	{regexp.MustCompile(`(?i)(?:[=<>!]|\bLIKE)\s*(?:ALL|SOME)\s*\(`),
-		"ALL(...) and SOME(...) over an array fail in DuckDB as ANY(...) does; use IN (...) or a join"},
+		"ALL(...) and SOME(...) over an array fail in DuckDB as ANY(...) does; use OR'd equalities, IN over literals, or a join"},
 	{regexp.MustCompile(`(?i)\bARRAY\s*\[`),
 		"array literals fail with an UNKNOWN type in DuckDB; bind scalars or one text value instead"},
 	{regexp.MustCompile(`(?i)\bunnest\s*\(`),
@@ -91,13 +91,23 @@ var floatCast = regexp.MustCompile(`(?i)^\s*::\s*(float8|float|double precision)
 // avgCall matches the start of an avg() aggregate call.
 var avgCall = regexp.MustCompile(`(?i)\bavg\s*\(`)
 
+// inList matches the start of an IN (or NOT IN) list, subquery matches
+// the start of a subquery inside one, and textCast a cast to text
+// directly after a parameter.
+var (
+	inList   = regexp.MustCompile(`(?i)\bIN\s*\(`)
+	subquery = regexp.MustCompile(`(?i)^\s*(SELECT|WITH|VALUES)\b`)
+	textCast = regexp.MustCompile(`(?i)^\s*::\s*text\b`)
+)
+
 // Violations returns a description of every ColdFront rule sql breaks,
 // or nil when it breaks none: an uncast bound parameter, ANY(), ALL()
 // or SOME() over an array, an ARRAY[...] literal, unnest(), an array
 // cast, pg_lsn, make_interval(), host() over anything but an inet cast,
 // an inet cast outside host(), a NULL test on a parameter, a COALESCE
-// over a parameter, an infinite timestamp, or an avg() not cast to float
-// where it stands.
+// over a parameter, an infinite timestamp, an IN list holding two or
+// more parameters that are not text, or an avg() not cast to float where
+// it stands.
 //
 // It is a textual check and does not parse SQL, so it also reports a
 // forbidden word inside a string literal or comment; keep such words out
@@ -120,6 +130,7 @@ func Violations(sql string) []string {
 	}
 
 	problems = append(problems, inetViolations(sql)...)
+	problems = append(problems, inListViolations(sql)...)
 
 	// avg() over an integer column is numeric to PostgreSQL but DOUBLE
 	// to DuckDB, so pgx fails to scan it; the call must be cast where it
@@ -132,6 +143,35 @@ func Violations(sql string) []string {
 		if end < 0 || !floatCast.MatchString(sql[end+1:]) {
 			problems = append(problems,
 				"avg(...) must be cast to float directly: avg(x)::float")
+		}
+	}
+	return problems
+}
+
+// inListViolations reports each IN (or NOT IN) list holding two or more
+// bound parameters that are not cast to text, as in IN ($1::int,
+// $2::int). pg_duckdb fails to plan such a list under pgx's extended
+// protocol, in every exec mode, with "Could not convert DuckDB type:
+// UNKNOWN to Postgres type", whatever the parameters' casts; a single
+// parameter, a parameter beside literals, and parameters cast to text
+// all run. A subquery's own lists are checked where they stand.
+func inListViolations(sql string) []string {
+	var problems []string
+	for _, loc := range inList.FindAllStringIndex(sql, -1) {
+		end := matchingParen(sql, loc[1]-1)
+		if end < 0 || subquery.MatchString(sql[loc[1]:end]) {
+			continue
+		}
+		typed := 0
+		for _, p := range bindParam.FindAllStringIndex(sql[loc[1]:end], -1) {
+			if !textCast.MatchString(sql[loc[1]+p[1]:]) {
+				typed++
+			}
+		}
+		if typed >= 2 {
+			problems = append(problems, strings.TrimSpace(sql[loc[0]:end+1])+
+				": DuckDB cannot type an IN list of two or more non-text "+
+				"parameters, even cast; write (col = $1::int OR col = $2::int)")
 		}
 	}
 	return problems

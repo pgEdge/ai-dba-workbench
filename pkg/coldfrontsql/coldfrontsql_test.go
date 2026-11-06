@@ -55,6 +55,10 @@ func TestViolations(t *testing.T) {
 		"infinite upper bound":         `SELECT COALESCE(LEAD(collected_at) OVER w, 'infinity'::timestamptz) FROM metrics.t`,
 		"infinite lower bound":         `SELECT '-infinity'::timestamptz FROM metrics.t`,
 		"capitalised infinity":         `SELECT 1 FROM metrics.t WHERE collected_at < 'Infinity'`,
+		"IN list of cast parameters":   `SELECT 1 FROM metrics.t WHERE connection_id IN ($1::int, $2::int)`,
+		"NOT IN list of parameters":    `SELECT 1 FROM metrics.t WHERE connection_id not in ( $1::bigint, CAST($2 AS bigint) )`,
+		"IN list of timestamps":        `SELECT 1 FROM metrics.t WHERE collected_at IN ($1::timestamptz, $2::timestamptz, 'now')`,
+		"IN list beside a text param":  `SELECT 1 FROM metrics.t WHERE connection_id IN ($1::int, $2::text, $3::int)`,
 	}
 	for name, sql := range bad {
 		if len(Violations(sql)) == 0 {
@@ -79,6 +83,13 @@ func TestViolations(t *testing.T) {
 		"cast NULL test result":     `SELECT 1 FROM metrics.t WHERE collected_at <= $2::timestamptz AND datname IS NULL`,
 		"multi-word cast then NULL": `SELECT 1 FROM metrics.t WHERE x = $1::double precision AND datname IS NULL`,
 		"paren in a literal":        `SELECT avg(CASE WHEN name = ')' THEN 1 END)::float FROM metrics.t`,
+		"IN list of one parameter":  `SELECT 1 FROM metrics.t WHERE connection_id IN ($1::int)`,
+		"IN parameter and literal":  `SELECT 1 FROM metrics.t WHERE connection_id IN ($1::int, 2)`,
+		"IN list of text params":    `SELECT 1 FROM metrics.t WHERE name IN ($1::text, $2 :: TEXT)`,
+		"IN subquery of params":     `SELECT 1 FROM metrics.t WHERE connection_id IN (SELECT id FROM c WHERE a = $1::int AND b = $2::int)`,
+		"OR'd parameter equalities": `SELECT 1 FROM metrics.t WHERE (connection_id = $1::int OR connection_id = $2::int)`,
+		"unbalanced IN list":        `SELECT 1 FROM metrics.t WHERE connection_id IN ($1::int`,
+		"JOIN is not IN":            `SELECT 1 FROM metrics.t JOIN (SELECT $1::int AS a, $2::int AS b) p ON true`,
 		"NULL-open range join":      `SELECT 1 FROM metrics.t a JOIN r m ON (m.valid_from IS NULL OR a.collected_at >= m.valid_from) AND (m.valid_to IS NULL OR a.collected_at < m.valid_to)`,
 	}
 	for name, sql := range good {

@@ -192,10 +192,13 @@ func (d *Datastore) GetClusterTopology(ctx context.Context, visibleConnectionIDs
 		return nil, fmt.Errorf("failed to query connections with roles: %w", err)
 	}
 
-	// Get cluster name overrides for auto-detected clusters
+	// Get cluster name overrides for auto-detected clusters. They also
+	// carry each cluster's database ID, without which the client cannot
+	// offer or match cluster blackouts (issue #809), so a failure here
+	// fails the request rather than returning a silently degraded tree.
 	clusterOverrides, err := d.getClusterOverridesInternal(ctx)
 	if err != nil {
-		clusterOverrides = make(map[string]clusterOverride)
+		return nil, fmt.Errorf("failed to get cluster overrides: %w", err)
 	}
 
 	// Step 2b: Get dismissed auto-detected cluster keys so they are

@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	"github.com/pgedge/ai-workbench/server/internal/api"
@@ -301,6 +302,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// AI Overview endpoint (for estate overview summary)
 		if deps.OverviewGen != nil {
 			overviewHandler := overview.NewHandlerWithRBAC(deps.OverviewGen, deps.OverviewHub, rbacChecker, deps.Datastore)
+			overviewHandler.SetRateLimits(overviewRateLimits(deps.Config))
 			overviewHandler.RegisterRoutes(mux, authWrapper)
 			deps.OverviewGen.OnRestart(func() {
 				serverInfoHandler.InvalidateCache()
@@ -622,6 +624,21 @@ func newLLMProxyConfig(llm *config.LLMConfig) *llmproxy.Config {
 		UseCompactDescriptions: llm.UseCompactDescriptions(),
 		LLMConfig:              llm,
 		RequestSettings:        llm.RequestSettings,
+	}
+}
+
+// overviewRateLimits returns the per-user AI Overview generation limits
+// from cfg's llm.rate_limit.overview settings. A nil cfg yields the
+// defaults, so the limits are never silently off.
+func overviewRateLimits(cfg *config.Config) overview.RateLimits {
+	var rl config.OverviewRateLimitConfig
+	if cfg != nil {
+		rl = cfg.LLM.RateLimit.Overview
+	}
+	return overview.RateLimits{
+		GenerationsPerHour: rl.GenerationsPerHour(),
+		Burst:              rl.Burst(),
+		RefreshInterval:    time.Duration(rl.RefreshIntervalSeconds()) * time.Second,
 	}
 }
 

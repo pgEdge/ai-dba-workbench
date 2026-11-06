@@ -1930,8 +1930,10 @@ func TestTopQueries_OneCounterStoredUnderSeveralDatabases(t *testing.T) {
 // TestTopQueries_DatabaseFilterSumsOneDatabase covers the second blocking
 // finding on the #387 review: the database filter must select which
 // counters are summed rather than filter the summed row. queryid 5002 runs
-// 1,200 calls in alpha and 12 in beta; asking for alpha must return 1,200,
-// asking for beta must return 12, and asking for neither returns the sum.
+// 1,200 calls in alpha and 12 in beta; asking for alpha must return 1,200
+// and asking for beta must return 12. Asking for neither returns each
+// database's figures on a row of its own rather than their sum under one
+// name (issue #802).
 func TestTopQueries_DatabaseFilterSumsOneDatabase(t *testing.T) {
 	h, pool, cleanup := newTopQueriesTestHandler(t)
 	defer cleanup()
@@ -1946,7 +1948,6 @@ func TestTopQueries_DatabaseFilterSumsOneDatabase(t *testing.T) {
 	}{
 		{"alpha only", "&database_name=alpha", 1200, 1200, "alpha"},
 		{"beta only", "&database_name=beta", 12, 12, "beta"},
-		{"unfiltered sums both", "", 1212, 1212, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1963,16 +1964,31 @@ func TestTopQueries_DatabaseFilterSumsOneDatabase(t *testing.T) {
 				t.Errorf("total_exec_time = %v, want %v",
 					rows[0].TotalExecTime, tc.wantTime)
 			}
-			if tc.wantDatabase != "" && rows[0].DatabaseName != tc.wantDatabase {
+			if rows[0].DatabaseName != tc.wantDatabase {
 				t.Errorf("database_name = %q, want %q", rows[0].DatabaseName,
 					tc.wantDatabase)
 			}
 		})
 	}
 
+	// Unfiltered, the statement is reported once per database, each row
+	// with only its own database's calls, in total_exec_time order.
+	rows, total := decodeTopQueries(t, callTopQueries(t, h,
+		"connection_id=4242&time_range=1h&queryid=5002"))
+	if total != "2" || len(rows) != 2 {
+		t.Fatalf("unfiltered: total = %s, rows = %#v; want two rows",
+			total, rows)
+	}
+	if rows[0].DatabaseName != "alpha" || rows[0].Calls != 1200 ||
+		rows[1].DatabaseName != "beta" || rows[1].Calls != 12 {
+		t.Errorf("unfiltered rows = %s:%d, %s:%d; want alpha:1200, beta:12",
+			rows[0].DatabaseName, rows[0].Calls,
+			rows[1].DatabaseName, rows[1].Calls)
+	}
+
 	// The probing database is not a statement database: filtering on it
 	// must match nothing even though every sample row was stored under it.
-	rows, total := decodeTopQueries(t, callTopQueries(t, h,
+	rows, total = decodeTopQueries(t, callTopQueries(t, h,
 		"connection_id=4242&time_range=1h&database_name=postgres"))
 	if total != "0" || len(rows) != 0 {
 		t.Errorf("database_name=postgres: total = %s, rows = %#v; want none",

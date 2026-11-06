@@ -445,6 +445,42 @@ describe('TopQueriesSection', () => {
         });
     });
 
+    it('opens each database row of one statement for its own database',
+        async () => {
+            setupFetch({
+                rows: [
+                    makeQueryRow({
+                        queryid: 'q1', database_name: 'pgbench_db',
+                        query: 'BEGIN',
+                    }),
+                    makeQueryRow({
+                        queryid: 'q1', database_name: 'ai_workbench',
+                        query: 'BEGIN',
+                    }),
+                ],
+            });
+
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('pgbench_db')).toBeInTheDocument();
+                expect(screen.getByText('ai_workbench')).toBeInTheDocument();
+            });
+
+            const rows = screen.getAllByRole('row', {
+                name: /View details for query/,
+            });
+            expect(rows).toHaveLength(2);
+            fireEvent.click(rows[1]);
+
+            expect(mockPushOverlay).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    objectName: 'q1',
+                    databaseName: 'ai_workbench',
+                }),
+            );
+        });
+
     it('truncates long query text at 80 characters', async () => {
         const longQuery = `SELECT ${'a'.repeat(200)}`;
         setupFetch({ rows: [makeQueryRow({ query: longQuery })] });

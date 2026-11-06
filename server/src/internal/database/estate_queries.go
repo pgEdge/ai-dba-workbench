@@ -135,9 +135,9 @@ type DiskContext struct {
 
 // GetEstateSnapshot gathers all data needed for an AI overview of the
 // estate. It returns a point-in-time snapshot of server status, alerts,
-// blackouts, and recent events. If individual sub-queries fail, partial
-// data is returned with what succeeded.
-func (d *Datastore) GetEstateSnapshot(ctx context.Context) (*EstateSnapshot, error) {
+// blackouts, and recent events. A sub-query that fails is logged and
+// its section left empty, so it always returns a snapshot.
+func (d *Datastore) GetEstateSnapshot(ctx context.Context) *EstateSnapshot {
 	snapshotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -162,7 +162,7 @@ func (d *Datastore) GetEstateSnapshot(ctx context.Context) (*EstateSnapshot, err
 	// Gather recent events from the last 24 hours
 	d.gatherRecentEvents(snapshotCtx, snapshot, nil, "GetEstateSnapshot")
 
-	return snapshot, nil
+	return snapshot
 }
 
 // gatherEstateServerData populates server status counts and per-server
@@ -270,10 +270,20 @@ func (d *Datastore) gatherEstateAlertData(ctx context.Context, snapshot *EstateS
 // are not evaluated because that would require a cron expression
 // parser.
 func (d *Datastore) gatherEstateBlackoutData(ctx context.Context, snapshot *EstateSnapshot) {
+	d.gatherBlackoutData(ctx, snapshot, nil)
+}
+
+// gatherBlackoutData populates active and upcoming blackouts as
+// gatherEstateBlackoutData does. A non-empty connectionIDs keeps only
+// the blackouts that reach one of those connections, so that a scoped
+// snapshot never describes a blackout on a cluster, group or server
+// outside the scope.
+func (d *Datastore) gatherBlackoutData(ctx context.Context, snapshot *EstateSnapshot, connectionIDs []int) {
 	// Retrieve recent blackouts ordered by start_time DESC; future
 	// blackouts appear first, followed by currently active ones
 	result, err := d.ListBlackouts(ctx, BlackoutFilter{
-		Limit: 100,
+		ConnectionIDs: connectionIDs,
+		Limit:         100,
 	})
 	if err != nil {
 		logger.Errorf("GetEstateSnapshot: failed to get blackouts: %v", err)
@@ -474,11 +484,10 @@ func (d *Datastore) buildScopedSnapshot(ctx context.Context, connectionIDs []int
 	// Gather alert data filtered to the given connections.
 	d.gatherScopedAlertData(snapshotCtx, snapshot, connectionIDs)
 
-	// Gather blackout data (estate-wide; filtered post-query is not
-	// possible because blackouts reference scopes, not connections
-	// directly). Include all blackouts so the LLM can note relevant
-	// maintenance windows.
-	d.gatherEstateBlackoutData(snapshotCtx, snapshot)
+	// Gather the blackouts that reach the given connections: estate
+	// blackouts, and server, cluster or group blackouts covering one of
+	// them. A blackout on anything else stays out of the snapshot.
+	d.gatherBlackoutData(snapshotCtx, snapshot, connectionIDs)
 
 	// Gather recent events filtered to the given connections.
 	d.gatherRecentEvents(snapshotCtx, snapshot, connectionIDs, "GetScopedSnapshot")

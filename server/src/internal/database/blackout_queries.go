@@ -103,9 +103,14 @@ type BlackoutFilter struct {
 	GroupID      *int
 	ClusterID    *int
 	ConnectionID *int
-	Active       *bool
-	Limit        int
-	Offset       int
+	// ConnectionIDs, when set, keeps only the blackouts that reach at
+	// least one of these connections: estate blackouts, server
+	// blackouts on one of them, and cluster or group blackouts with one
+	// of them as a member, matching the timeline's blackout events.
+	ConnectionIDs []int
+	Active        *bool
+	Limit         int
+	Offset        int
 }
 
 // BlackoutListResult holds paginated blackout results
@@ -152,6 +157,13 @@ func (d *Datastore) ListBlackouts(ctx context.Context, filter BlackoutFilter) (*
 	if filter.ConnectionID != nil {
 		conditions = append(conditions, fmt.Sprintf("b.connection_id = $%d", argNum))
 		args = append(args, *filter.ConnectionID)
+		argNum++
+	}
+
+	if len(filter.ConnectionIDs) > 0 {
+		reach := buildBlackoutScopeFilter(fmt.Sprintf("connection_id = ANY($%d)", argNum))
+		conditions = append(conditions, strings.TrimPrefix(reach, "AND "))
+		args = append(args, filter.ConnectionIDs)
 		argNum++
 	}
 

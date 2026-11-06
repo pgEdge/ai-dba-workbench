@@ -1468,6 +1468,17 @@ project adheres to
   `GET /api/v1/overview` endpoint now returns `status: error` with an
   `error` message, rather than `status: generating`, when the first
   estate overview could not be generated.
+- Stop a scoped AI Overview revealing resources the user cannot see.
+  Both overview endpoints now return `400 Bad Request` when
+  `connection_ids` is combined with `scope_type` or `scope_id`. A
+  scope's display name is looked up only after the user's access to the
+  scope has been confirmed, and the `scope_name` parameter is used only
+  with `connection_ids`; it is trimmed, stripped of quotes and control
+  characters, capped at 128 characters and kept apart in the cache, so
+  two users naming the same connections differently never share a
+  summary. The blackouts summarised for a server or cluster overview
+  now include only those that apply to its connections, rather than
+  every active blackout in the estate.
 
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled

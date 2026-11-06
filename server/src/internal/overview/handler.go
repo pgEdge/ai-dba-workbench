@@ -27,6 +27,11 @@ import (
 // API discovery.
 const openAPISpecPath = "/api/v1/openapi.json"
 
+// errScopeWithConnectionIDs answers a request that names both explicit
+// connections and a scope, so that a scope the caller may not see is
+// never looked up alongside connections they can.
+const errScopeWithConnectionIDs = "connection_ids cannot be combined with scope_type or scope_id"
+
 // validScopeTypes lists the scope_type values accepted by the handler.
 var validScopeTypes = map[string]bool{
 	"server":  true,
@@ -97,8 +102,14 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 	scopeType := r.URL.Query().Get("scope_type")
 	scopeIDStr := r.URL.Query().Get("scope_id")
 
+	if connectionIDsStr != "" && (scopeType != "" || scopeIDStr != "") {
+		http.Error(w, errScopeWithConnectionIDs, http.StatusBadRequest)
+		return
+	}
+
 	// When connection_ids is provided, use the explicit connection list
-	// approach. This takes priority over scope_type/scope_id.
+	// approach. The caller's scope_name labels the summary; the
+	// generator sanitizes it and keys the cache on it.
 	if connectionIDsStr != "" {
 		connectionIDs, err := parseConnectionIDs(connectionIDsStr)
 		if err != nil {
@@ -269,28 +280,35 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	scopeType := r.URL.Query().Get("scope_type")
 	scopeIDStr := r.URL.Query().Get("scope_id")
 
-	// Build the scope key for subscribing.
-	// Estate-wide subscribers use an empty key.
+	if connectionIDsStr != "" && (scopeType != "" || scopeIDStr != "") {
+		http.Error(w, errScopeWithConnectionIDs, http.StatusBadRequest)
+		return
+	}
+
+	// Build the scope key for subscribing. Estate-wide subscribers use
+	// an empty key. A connections key carries the IDs and the effective
+	// scope name, as the generator's cache key does, and connections
+	// marks a summary over an explicit (possibly empty) ID list.
 	var scopeKey string
-	var filteredConnectionIDs []int
+	var connections bool
+	var connectionIDs []int
+	var effectiveName string
+	var scopeID int
 	if connectionIDsStr != "" {
-		connectionIDs, err := parseConnectionIDs(connectionIDsStr)
+		requested, err := parseConnectionIDs(connectionIDsStr)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		filtered, ok := h.filterConnectionIDs(r.Context(), w, connectionIDs)
+		filtered, ok := h.filterConnectionIDs(r.Context(), w, requested)
 		if !ok {
 			return
 		}
 		// filterConnectionIDs returns a deduplicated, sorted slice so the
 		// cache/SSE scope key is stable across equivalent inputs.
-		filteredConnectionIDs = filtered
-		parts := make([]string, len(filtered))
-		for i, id := range filtered {
-			parts[i] = fmt.Sprintf("%d", id)
-		}
-		scopeKey = "connections:" + strings.Join(parts, ",")
+		connections = true
+		connectionIDs = filtered
+		effectiveName = sanitizeScopeName(scopeName)
 	} else if scopeType != "" || scopeIDStr != "" {
 		if scopeType == "" || scopeIDStr == "" {
 			http.Error(w, "Both scope_type and scope_id are required", http.StatusBadRequest)
@@ -300,7 +318,8 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "scope_type must be server, cluster, or group", http.StatusBadRequest)
 			return
 		}
-		scopeID, err := strconv.Atoi(scopeIDStr)
+		var err error
+		scopeID, err = strconv.Atoi(scopeIDStr)
 		if err != nil || scopeID <= 0 {
 			http.Error(w, "scope_id must be a positive integer", http.StatusBadRequest)
 			return
@@ -313,24 +332,20 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			scopeKey = fmt.Sprintf("%s:%d", scopeType, scopeID)
 		} else {
 			// Restricted visibility routes through the connections-summary
-			// path. intersectVisible returns a deduplicated, sorted slice
-			// so two users with different visibility never share a cache
-			// entry.
-			filteredConnectionIDs = intersect
-			parts := make([]string, len(intersect))
-			for i, id := range intersect {
-				parts[i] = fmt.Sprintf("%d", id)
+			// path over the visible members only. The name is looked up
+			// only now that scopeVisible has passed, and any scope_name
+			// from the caller is ignored. When the intersection is empty
+			// the subscription is accepted but nothing is generated.
+			connections = true
+			connectionIDs = intersect
+			if len(intersect) > 0 {
+				effectiveName = sanitizeScopeName(h.resolveScopeName(r.Context(), scopeType, scopeID))
 			}
-			scopeKey = "connections:" + strings.Join(parts, ",")
-			// When the intersection is empty we still accept the
-			// subscription but will not kick off generation below.
 		}
-	}
-
-	// When no scope params are given, check RBAC. Restricted callers
-	// receive a scoped SSE feed covering only their visible connections
-	// instead of the full estate-wide stream.
-	if scopeKey == "" {
+	} else {
+		// No scope params: restricted callers receive a scoped SSE feed
+		// covering only their visible connections instead of the full
+		// estate-wide stream.
 		visible, allConns, err := h.resolveVisible(r.Context())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: overview/sse: failed to resolve visible connections: %v\n", err)
@@ -342,19 +357,16 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			for id := range visible {
 				ids = append(ids, id)
 			}
-			ids = dedupeAndSort(ids)
-			filteredConnectionIDs = ids
-			parts := make([]string, len(ids))
-			for i, id := range ids {
-				parts[i] = fmt.Sprintf("%d", id)
-			}
-			// Always leave the estate-wide key: an empty key subscribes
-			// to the full estate feed and is sent the cached estate
-			// overview, so a restricted caller who can see nothing must
-			// get the empty connections key, which nothing generates
-			// for, rather than falling through to "".
-			scopeKey = "connections:" + strings.Join(parts, ",")
+			// A restricted caller who can see nothing must get the
+			// empty connections key, which nothing generates for,
+			// rather than the estate-wide key, which is sent the cached
+			// estate overview.
+			connections = true
+			connectionIDs = dedupeAndSort(ids)
 		}
+	}
+	if connections {
+		scopeKey = connectionsKey(connectionIDs, effectiveName)
 	}
 
 	// Check the caller's generation limits while an error response can
@@ -408,25 +420,14 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case scopeKey == "":
 		send(h.generator.EstateStatus())
-	case scopeKey == "connections:":
+	case connections && len(connectionIDs) == 0:
 		send(statusOverview(statusEmpty, ""))
-	case strings.HasPrefix(scopeKey, "connections:"):
-		ids := filteredConnectionIDs
-		effectiveName := scopeName
-		if effectiveName == "" && scopeType != "" && scopeIDStr != "" {
-			if id, convErr := strconv.Atoi(scopeIDStr); convErr == nil {
-				effectiveName = h.resolveScopeName(r.Context(), scopeType, id)
-			}
-		}
+	case connections:
 		go func() {
-			deliver(h.generator.GetConnectionsSummary(ids, effectiveName, false))
+			deliver(h.generator.GetConnectionsSummary(connectionIDs, effectiveName, false))
 		}()
 	default:
 		// The key is "<scope_type>:<scope_id>", validated above.
-		scopeID, err := strconv.Atoi(scopeIDStr)
-		if err != nil {
-			return
-		}
 		go func() {
 			deliver(h.generator.GetScopedSummary(scopeType, scopeID, false))
 		}()

@@ -7942,7 +7942,7 @@
           {
             "name": "connection_ids",
             "in": "query",
-            "description": "Comma-separated connection IDs",
+            "description": "Comma-separated connection IDs; cannot be combined with scope_type or scope_id",
             "schema": {
               "type": "string"
             }
@@ -7950,7 +7950,7 @@
           {
             "name": "scope_type",
             "in": "query",
-            "description": "Scope type (estate, group, cluster, server)",
+            "description": "Scope type (server, cluster, group)",
             "schema": {
               "type": "string"
             }
@@ -7966,7 +7966,7 @@
           {
             "name": "scope_name",
             "in": "query",
-            "description": "Scope display name",
+            "description": "Display name for a connection_ids summary; trimmed, stripped of quotes and control characters and capped at 128 characters. Ignored with scope_type or scope_id, whose name is looked up on the server",
             "schema": {
               "type": "string"
             }
@@ -7979,6 +7979,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OverviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "connection_ids combined with scope_type or scope_id, or an invalid parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -8031,7 +8041,7 @@
           {
             "name": "connection_ids",
             "in": "query",
-            "description": "Comma-separated connection IDs",
+            "description": "Comma-separated connection IDs; cannot be combined with scope_type or scope_id",
             "schema": {
               "type": "string"
             }
@@ -8039,7 +8049,7 @@
           {
             "name": "scope_type",
             "in": "query",
-            "description": "Scope type (estate, group, cluster, server)",
+            "description": "Scope type (server, cluster, group)",
             "schema": {
               "type": "string"
             }
@@ -8048,6 +8058,14 @@
             "name": "scope_id",
             "in": "query",
             "description": "Scope entity ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope_name",
+            "in": "query",
+            "description": "Display name for a connection_ids summary; trimmed, stripped of quotes and control characters and capped at 128 characters. Ignored with scope_type or scope_id, whose name is looked up on the server",
             "schema": {
               "type": "string"
             }
@@ -8061,6 +8079,16 @@
                 "schema": {
                   "type": "string",
                   "description": "Server-Sent Events stream"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "connection_ids combined with scope_type or scope_id, or an invalid parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }

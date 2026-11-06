@@ -135,3 +135,56 @@ func TestTopologyConnectionReadersErrorPathsIntegration(t *testing.T) {
 		t.Errorf("getPersistedClusterMembers query error = %v", err)
 	}
 }
+
+// TestGetClusterTopologyErrorPathsIntegration checks that
+// GetClusterTopology reports a failure in each datastore step it
+// cannot do without. Every case breaks the per-test schema, which the
+// cleanup drops.
+func TestGetClusterTopologyErrorPathsIntegration(t *testing.T) {
+	cases := []struct {
+		name   string
+		breaks []string
+		want   string
+	}{
+		{
+			name:   "default group",
+			breaks: []string{`ALTER TABLE cluster_groups RENAME COLUMN is_default TO is_default_gone`},
+			want:   "failed to get default group",
+		},
+		{
+			name:   "connections",
+			breaks: []string{`DROP TABLE alerts CASCADE`},
+			want:   "failed to query connections with roles",
+		},
+		{
+			// Losing the dismissed column also fails the override
+			// lookup, which GetClusterTopology tolerates.
+			name:   "dismissed keys",
+			breaks: []string{`ALTER TABLE clusters RENAME COLUMN dismissed TO dismissed_gone`},
+			want:   "failed to get dismissed cluster keys",
+		},
+		{
+			name:   "claimed keys",
+			breaks: []string{`ALTER TABLE clusters RENAME COLUMN group_id TO group_id_gone`},
+			want:   "failed to get claimed cluster keys",
+		},
+		{
+			name:   "manual groups",
+			breaks: []string{`ALTER TABLE clusters RENAME COLUMN replication_type TO replication_type_gone`},
+			want:   "failed to build manual groups topology",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ds, pool, _, cleanup := newConfigQueriesTestDatastore(t)
+			defer cleanup()
+			for _, sql := range tc.breaks {
+				mustExecClusterQueries(t, pool, sql)
+			}
+			_, err := ds.GetClusterTopology(context.Background(), nil)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("GetClusterTopology error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

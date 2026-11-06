@@ -362,7 +362,10 @@ describe('BlackoutContext', () => {
             const { result } = renderHook(() => useBlackouts(), {
                 wrapper: buildWrapper({
                     type: 'cluster',
-                    id: '10',
+                    // Auto-detected clusters carry a transient topology
+                    // ID; the blackout matches on dbClusterId. #809.
+                    id: 'server-100',
+                    dbClusterId: 10,
                     name: 'Test Cluster',
                     status: 'online',
                     description: '',
@@ -385,7 +388,8 @@ describe('BlackoutContext', () => {
             const { result } = renderHook(() => useBlackouts(), {
                 wrapper: buildWrapper({
                     type: 'cluster',
-                    id: '999',
+                    id: 'cluster-999',
+                    dbClusterId: 999,
                     name: 'Other Cluster',
                     status: 'online',
                     description: '',
@@ -402,6 +406,28 @@ describe('BlackoutContext', () => {
             expect(ids).toContain(1); // estate still applies
             expect(ids).not.toContain(2);
             expect(ids).not.toContain(3);
+        });
+
+        it('cluster selection without a database row matches no cluster blackout', async () => {
+            const { result } = renderHook(() => useBlackouts(), {
+                wrapper: buildWrapper({
+                    type: 'cluster',
+                    id: 'cluster-10',
+                    name: 'Unresolved Cluster',
+                    status: 'online',
+                    description: '',
+                    servers: [],
+                    serverIds: [],
+                }),
+            });
+
+            await waitFor(() => {
+                expect(result.current.blackouts.length).toBe(4);
+            });
+
+            const ids = result.current.activeBlackoutsForSelection.map(b => b.id);
+            expect(ids).toContain(1);
+            expect(ids).not.toContain(2);
         });
 
         it('server selection shows estate and matching server blackouts but excludes cluster', async () => {

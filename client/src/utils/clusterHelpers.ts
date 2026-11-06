@@ -25,6 +25,37 @@ export interface ServerLike {
 }
 
 /**
+ * Cluster entry as returned by GET /api/v1/clusters, reduced to the
+ * fields needed to resolve its database row.
+ */
+export interface ClusterIdLike {
+    id: string;
+    db_cluster_id?: unknown;
+}
+
+const DB_BACKED_CLUSTER_ID = /^cluster-(\d+)$/;
+
+/**
+ * Resolve the numeric clusters.id behind a topology cluster entry.
+ * Clusters loaded from the database use the ID `cluster-{id}`, whilst
+ * auto-detected clusters carry a transient ID such as `server-{id}` or
+ * `cluster-spock-{prefix}` and expose their row as `db_cluster_id`.
+ * Returns undefined when the entry has no database row, for example a
+ * standalone server. See issue #809.
+ */
+export const getDbClusterId = (
+    cluster: ClusterIdLike | null | undefined,
+): number | undefined => {
+    if (!cluster) {return undefined;}
+    const dbId = cluster.db_cluster_id;
+    if (typeof dbId === 'number' && Number.isInteger(dbId) && dbId > 0) {
+        return dbId;
+    }
+    const match = DB_BACKED_CLUSTER_ID.exec(cluster.id);
+    return match ? parseInt(match[1], 10) : undefined;
+};
+
+/**
  * Recursively collect all servers from a tree of server nodes,
  * flattening any nested `children` arrays into a single list.
  */

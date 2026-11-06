@@ -16,6 +16,7 @@ import {
     extractClusterServerIds,
     computeEstateServerCounts,
     countEstateServers,
+    getDbClusterId,
 } from '../clusterHelpers';
 import type { EstateSelection, ClusterSelection } from '../../types/selection';
 
@@ -903,5 +904,34 @@ describe('countEstateServers', () => {
             }],
         };
         expect(countEstateServers(selection)).toBe(4);
+    });
+});
+
+describe('getDbClusterId', () => {
+    it('returns undefined for a missing cluster', () => {
+        expect(getDbClusterId(null)).toBeUndefined();
+        expect(getDbClusterId(undefined)).toBeUndefined();
+    });
+
+    it('prefers db_cluster_id for an auto-detected cluster (issue #809)', () => {
+        expect(getDbClusterId({ id: 'server-3', db_cluster_id: 12 })).toBe(12);
+        expect(getDbClusterId({ id: 'cluster-spock-pg', db_cluster_id: 13 })).toBe(13);
+    });
+
+    it('parses the ID of a database-backed cluster', () => {
+        expect(getDbClusterId({ id: 'cluster-5' })).toBe(5);
+    });
+
+    it('returns undefined for transient IDs without db_cluster_id', () => {
+        expect(getDbClusterId({ id: 'server-3' })).toBeUndefined();
+        expect(getDbClusterId({ id: 'cluster-spock-pg' })).toBeUndefined();
+    });
+
+    it('ignores db_cluster_id values that are not positive integers', () => {
+        expect(getDbClusterId({ id: 'server-3', db_cluster_id: 0 })).toBeUndefined();
+        expect(getDbClusterId({ id: 'server-3', db_cluster_id: -1 })).toBeUndefined();
+        expect(getDbClusterId({ id: 'server-3', db_cluster_id: 1.5 })).toBeUndefined();
+        expect(getDbClusterId({ id: 'server-3', db_cluster_id: '12' })).toBeUndefined();
+        expect(getDbClusterId({ id: 'cluster-5', db_cluster_id: 0 })).toBe(5);
     });
 });

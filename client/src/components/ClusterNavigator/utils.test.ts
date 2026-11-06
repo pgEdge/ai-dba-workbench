@@ -8,8 +8,16 @@
  *-------------------------------------------------------------------------
  */
 
-import { describe, it, expect } from 'vitest';
-import { parseGroupNumericId, isAutoGroupId } from './utils';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+    parseGroupNumericId,
+    isAutoGroupId,
+    getClusterType,
+    getEffectiveRole,
+    saveToStorage,
+    loadFromStorage,
+    formatRelativeTime,
+} from './utils';
 
 describe('parseGroupNumericId', () => {
     describe('matches database-backed ids', () => {
@@ -129,5 +137,64 @@ describe('isAutoGroupId', () => {
         it('returns false for undefined input', () => {
             expect(isAutoGroupId(undefined)).toBe(false);
         });
+    });
+});
+
+describe('getClusterType', () => {
+    it('returns default for servers with no replication role', () => {
+        expect(getClusterType({
+            id: 'c1',
+            name: 'plain',
+            servers: [{ id: 1, name: 'pg-1', primary_role: 'standalone' }],
+        })).toBe('default');
+    });
+});
+
+describe('getEffectiveRole', () => {
+    it('shows a binary primary in a logical cluster as a publisher', () => {
+        expect(getEffectiveRole('binary_primary', 'logical')).toBe('logical_publisher');
+    });
+
+    it('keeps the role in any other cluster type', () => {
+        expect(getEffectiveRole('binary_primary', 'binary')).toBe('binary_primary');
+    });
+});
+
+describe('saveToStorage', () => {
+    // The test setup replaces localStorage with vi.fn() stubs.
+    const setItem = vi.mocked(localStorage.setItem);
+    const getItem = vi.mocked(localStorage.getItem);
+
+    beforeEach(() => {
+        setItem.mockReset();
+        getItem.mockReset();
+    });
+
+    it('stores the value as JSON that loadFromStorage reads back', () => {
+        saveToStorage('utils-test-key', { a: 1 });
+        expect(setItem).toHaveBeenCalledWith('utils-test-key', '{"a":1}');
+        getItem.mockReturnValueOnce('{"a":1}');
+        expect(loadFromStorage('utils-test-key', null)).toEqual({ a: 1 });
+    });
+
+    it('ignores a storage error', () => {
+        setItem.mockImplementationOnce(() => {
+            throw new Error('quota exceeded');
+        });
+        expect(() => saveToStorage('utils-test-key', 1)).not.toThrow();
+    });
+});
+
+describe('formatRelativeTime', () => {
+    it('returns an empty string without a date', () => {
+        expect(formatRelativeTime(null)).toBe('');
+    });
+
+    it('reports a recent time as just now', () => {
+        expect(formatRelativeTime(new Date())).toBe('just now');
+    });
+
+    it('reports older times in minutes', () => {
+        expect(formatRelativeTime(new Date(Date.now() - 5 * 60 * 1000))).toBe('5m ago');
     });
 });

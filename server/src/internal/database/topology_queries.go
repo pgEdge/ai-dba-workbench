@@ -80,7 +80,13 @@ type AutoRelationshipInput struct {
 	RelationshipType   string
 }
 
-// TopologyCluster represents a replication-aware cluster
+// TopologyCluster represents a replication-aware cluster.
+//
+// DBClusterID is the numeric clusters.id backing an auto-detected entry,
+// when one exists. Auto-detected clusters carry a transient ID such as
+// server-{id} or cluster-spock-{prefix}, so callers that need the
+// database row (for example to create a cluster-scoped blackout) read it
+// from DBClusterID instead. Issue #809.
 type TopologyCluster struct {
 	ID              string               `json:"id"`
 	Name            string               `json:"name"`
@@ -88,6 +94,7 @@ type TopologyCluster struct {
 	ClusterType     string               `json:"cluster_type"`               // spock, spock_ha, binary, logical, server
 	ReplicationType string               `json:"replication_type,omitempty"` // user-set replication type from the database
 	AutoClusterKey  string               `json:"auto_cluster_key,omitempty"`
+	DBClusterID     int                  `json:"db_cluster_id,omitempty"`
 	Servers         []TopologyServerInfo `json:"servers"`
 }
 
@@ -274,6 +281,11 @@ func (d *Datastore) GetClusterTopology(ctx context.Context, visibleConnectionIDs
 	// Step 8: Populate relationships on each server in the topology
 	d.populateTopologyRelationships(ctx, result)
 
+	// Step 8b: Expose the numeric clusters.id of each auto-detected
+	// cluster so the client can target it with cluster-scoped
+	// operations such as blackouts. Issue #809.
+	attachDBClusterIDs(result, clusterOverrides)
+
 	// Step 9: Apply the caller's visibility filter, if any. Pruning
 	// happens after the full topology is assembled so that relationships
 	// are populated before servers are dropped; downstream code relies on
@@ -309,6 +321,27 @@ func normalizeTopologyGroups(groups []TopologyGroup) {
 			cluster := &group.Clusters[j]
 			if cluster.Servers == nil {
 				cluster.Servers = make([]TopologyServerInfo, 0)
+			}
+		}
+	}
+}
+
+// attachDBClusterIDs sets DBClusterID on every auto-detected cluster
+// that has a non-dismissed row in the clusters table; the overrides map
+// is keyed by auto_cluster_key and carries that row's ID. Standalone
+// entries (cluster_type "server") are skipped because auto-detection
+// never assigns connections.cluster_id for them, so a cluster-scoped
+// operation on such a row would reach no server.
+func attachDBClusterIDs(groups []TopologyGroup, overrides map[string]clusterOverride) {
+	for i := range groups {
+		clusters := groups[i].Clusters
+		for j := range clusters {
+			cluster := &clusters[j]
+			if cluster.AutoClusterKey == "" || cluster.ClusterType == "server" {
+				continue
+			}
+			if override, ok := overrides[cluster.AutoClusterKey]; ok && override.ID > 0 {
+				cluster.DBClusterID = override.ID
 			}
 		}
 	}
@@ -593,12 +626,13 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 	// marshals to "clusters": [] when empty rather than "clusters":
 	// null. Issue #242.
 	clusters := make([]TopologyCluster, 0)
-	for _, cluster := range spockClusters {
+	for i := range spockClusters {
+		cluster := &spockClusters[i]
 		// Skip clusters that have been moved to manual groups or dismissed
 		if cluster.AutoClusterKey != "" && (claimedKeys[cluster.AutoClusterKey] || dismissedKeys[cluster.AutoClusterKey]) {
 			continue
 		}
-		clusters = append(clusters, cluster)
+		clusters = append(clusters, *cluster)
 	}
 
 	// 2. Create entries for non-Spock primaries with standbys (binary replication)
@@ -650,11 +684,12 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 	// Match subscribers to publishers based on publisher_host:publisher_port
 	logicalClusters := d.groupLogicalReplicationByPublisher(connections, connByID, connByHostPort, connByNamePort, assignedConnections, clusterOverrides)
 	// Filter out claimed or dismissed logical clusters
-	for _, cluster := range logicalClusters {
+	for i := range logicalClusters {
+		cluster := &logicalClusters[i]
 		if cluster.AutoClusterKey != "" && (claimedKeys[cluster.AutoClusterKey] || dismissedKeys[cluster.AutoClusterKey]) {
 			continue
 		}
-		clusters = append(clusters, cluster)
+		clusters = append(clusters, *cluster)
 	}
 
 	// 3. Handle standalone servers and servers without children

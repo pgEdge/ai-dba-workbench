@@ -528,7 +528,8 @@ func (d *Datastore) resolveConnectionHierarchy(ctx context.Context, connectionID
 	// Find which auto-detected cluster contains this connection
 	var foundKey string
 	var foundName string
-	for key, cluster := range autoClusters {
+	for key := range autoClusters {
+		cluster := autoClusters[key]
 		// Skip standalone servers; they have no meaningful cluster scope
 		if cluster.ClusterType == "server" {
 			continue

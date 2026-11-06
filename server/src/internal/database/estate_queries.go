@@ -176,8 +176,8 @@ func (d *Datastore) gatherEstateServerData(ctx context.Context, snapshot *Estate
 
 	var servers []EstateServerSummary
 	for _, group := range groups {
-		for _, cluster := range group.Clusters {
-			flattenTopologyServers(cluster.Servers, &servers)
+		for i := range group.Clusters {
+			flattenTopologyServers(group.Clusters[i].Servers, &servers)
 		}
 	}
 
@@ -590,8 +590,8 @@ func (d *Datastore) gatherScopedServerData(ctx context.Context, snapshot *Estate
 
 	var allServers []EstateServerSummary
 	for _, group := range groups {
-		for _, cluster := range group.Clusters {
-			flattenTopologyServers(cluster.Servers, &allServers)
+		for i := range group.Clusters {
+			flattenTopologyServers(group.Clusters[i].Servers, &allServers)
 		}
 	}
 

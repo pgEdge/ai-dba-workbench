@@ -184,9 +184,10 @@ The garbage collector manages data retention:
    cutoff as `NOW() - retention_days`, finds
    partitions entirely before the cutoff, and drops
    those partitions.
-3. For change-tracked probes such as `pg_settings`,
-   `pg_hba_file_rules`, and `pg_ident_file_mappings`,
-   the collector identifies the most recent snapshot
+3. For the change-tracked probes `pg_settings`,
+   `pg_hba_file_rules`, `pg_ident_file_mappings`,
+   `pg_server_info`, and `pg_extension`, the
+   collector identifies the most recent snapshot
    for each connection and protects those partitions
    from deletion.
 

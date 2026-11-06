@@ -23,7 +23,15 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
-// getAllConnectionsWithRoles queries all connections with their role data
+// getAllConnectionsWithRoles queries all connections with their role data.
+//
+// Connectivity and node role are read from a five-minute window, because
+// they describe the server's current state. Server info, OS info and the
+// Spock version are read from the latest row with no window: their probes
+// run hourly or every ten minutes, and pg_server_info and pg_extension are
+// change-tracked, so they write a row only when a value changes. A window
+// hid those values, and the system identifier that matches binary
+// standbys to their primary, most of the time (issue #805).
 func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectionWithRole, error) {
 	query := fmt.Sprintf(`
         WITH latest_connectivity AS (
@@ -46,14 +54,12 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
             SELECT DISTINCT ON (connection_id)
                 connection_id, server_version, system_identifier
             FROM metrics.pg_server_info
-            WHERE collected_at > NOW() - INTERVAL '5 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_os_info AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, name as os_name
             FROM metrics.pg_sys_os_info
-            WHERE collected_at > NOW() - INTERVAL '5 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_spock_version AS (
@@ -61,7 +67,6 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
                 connection_id, extversion as spock_version
             FROM metrics.pg_extension
             WHERE extname = 'spock'
-              AND collected_at > NOW() - INTERVAL '1 hour'
             ORDER BY connection_id, collected_at DESC
         ),
         active_alerts AS (
@@ -543,7 +548,9 @@ func (d *Datastore) assignAutoDetectedConnection(ctx context.Context, clusterID,
 // in the database but were not found by auto-detection in the current
 // cycle. These persisted-but-undetected members are returned grouped by
 // their cluster's auto_cluster_key so they can be merged into the
-// topology response.
+// topology response. As in getAllConnectionsWithRoles, server info, OS
+// info and the Spock version come from the latest row with no window
+// (issue #805).
 func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetectedIDs map[int]bool) (map[string][]TopologyServerInfo, error) {
 	query := fmt.Sprintf(`
         WITH latest_connectivity AS (
@@ -564,14 +571,19 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
             SELECT DISTINCT ON (connection_id)
                 connection_id, server_version
             FROM metrics.pg_server_info
-            WHERE collected_at > NOW() - INTERVAL '5 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_os_info AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, name as os_name
             FROM metrics.pg_sys_os_info
-            WHERE collected_at > NOW() - INTERVAL '5 minutes'
+            ORDER BY connection_id, collected_at DESC
+        ),
+        latest_spock_version AS (
+            SELECT DISTINCT ON (connection_id)
+                connection_id, extversion as spock_version
+            FROM metrics.pg_extension
+            WHERE extname = 'spock'
             ORDER BY connection_id, collected_at DESC
         ),
         active_alerts AS (
@@ -586,6 +598,7 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
                lsi.server_version,
                loi.os_name,
                lr.spock_node_name,
+               lsv.spock_version,
                COALESCE(NULLIF(lr.primary_role, 'standalone'), c.role, lr.primary_role, 'unknown') as primary_role,
                %s as status,
                c.connection_error,
@@ -598,6 +611,7 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
         LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
         LEFT JOIN latest_os_info loi ON c.id = loi.connection_id
+        LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
         LEFT JOIN active_alerts aa ON c.id = aa.connection_id
         WHERE c.cluster_id IS NOT NULL
           AND cl.auto_cluster_key IS NOT NULL
@@ -614,13 +628,13 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
 	result := make(map[string][]TopologyServerInfo)
 	for rows.Next() {
 		var s TopologyServerInfo
-		var ownerUsername, description, role, version, osName, spockNodeName, connError sql.NullString
+		var ownerUsername, description, role, version, osName, spockNodeName, spockVersion, connError sql.NullString
 		var autoClusterKey string
 		if err := rows.Scan(
 			&s.ID, &s.Name, &description, &s.Host, &s.Port,
 			&ownerUsername, &role,
 			&s.DatabaseName, &s.Username,
-			&version, &osName, &spockNodeName,
+			&version, &osName, &spockNodeName, &spockVersion,
 			&s.PrimaryRole, &s.Status,
 			&connError,
 			&s.ActiveAlertCount,
@@ -654,6 +668,9 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
 		}
 		if spockNodeName.Valid {
 			s.SpockNodeName = spockNodeName.String
+		}
+		if spockVersion.Valid {
+			s.SpockVersion = spockVersion.String
 		}
 		if connError.Valid {
 			// Masked as in getAllConnectionsWithRoles.

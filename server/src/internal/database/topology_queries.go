@@ -850,6 +850,13 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
             FROM metrics.pg_sys_os_info
             ORDER BY connection_id, collected_at DESC
         ),
+        latest_spock_version AS (
+            SELECT DISTINCT ON (connection_id)
+                connection_id, extversion as spock_version
+            FROM metrics.pg_extension
+            WHERE extname = 'spock'
+            ORDER BY connection_id, collected_at DESC
+        ),
         active_alerts AS (
             SELECT connection_id, COUNT(*) as alert_count
             FROM alerts
@@ -861,6 +868,7 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
                lsi.server_version,
                loi.os_name,
                lr.spock_node_name,
+               lsv.spock_version,
                COALESCE(NULLIF(lr.primary_role, 'standalone'), c.role, lr.primary_role, 'unknown') as primary_role,
                COALESCE(lr.status, 'unknown') as status,
                COALESCE(aa.alert_count, 0) as active_alert_count,
@@ -869,6 +877,7 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
         LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
         LEFT JOIN latest_os_info loi ON c.id = loi.connection_id
+        LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
         LEFT JOIN active_alerts aa ON c.id = aa.connection_id
         WHERE c.cluster_id = $1
         ORDER BY
@@ -881,9 +890,9 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 		return nil, fmt.Errorf("failed to query servers: %w", err)
 	}
 	servers, err := scanAll(rows, func(r pgx.Rows, s *TopologyServerInfo) error {
-		var ownerUsername, description, role, version, osName, spockNodeName sql.NullString
+		var ownerUsername, description, role, version, osName, spockNodeName, spockVersion sql.NullString
 		if err := r.Scan(&s.ID, &s.Name, &description, &s.Host, &s.Port, &ownerUsername, &role,
-			&s.DatabaseName, &s.Username, &version, &osName, &spockNodeName,
+			&s.DatabaseName, &s.Username, &version, &osName, &spockNodeName, &spockVersion,
 			&s.PrimaryRole, &s.Status, &s.ActiveAlertCount, &s.MembershipSource); err != nil {
 			return err
 		}
@@ -906,6 +915,9 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 		}
 		if spockNodeName.Valid {
 			s.SpockNodeName = spockNodeName.String
+		}
+		if spockVersion.Valid {
+			s.SpockVersion = spockVersion.String
 		}
 		s.IsExpandable = false
 		return nil

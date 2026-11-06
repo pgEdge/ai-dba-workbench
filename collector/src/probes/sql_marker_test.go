@@ -385,6 +385,26 @@ func TestLoadProtectedPartitions_FakeQuerier(t *testing.T) {
 		assertTagged(t, "protected partitions query", q.queries[0])
 	})
 
+	// pg_extension is change-tracked, so its newest snapshot, which
+	// holds the Spock version the topology reads, must outlive the
+	// 30-day retention on a server whose extensions do not change
+	// (issue #805).
+	t.Run("protects pg_extension", func(t *testing.T) {
+		q := &fakeQuerier{rows: &fakeRows{
+			data: [][]string{{"pg_extension_20260727"}},
+		}}
+		got, err := loadProtectedPartitions(ctx, q, "pg_extension")
+		if err != nil {
+			t.Fatalf("error = %v", err)
+		}
+		if !got["pg_extension_20260727"] {
+			t.Errorf("expected the partition to be protected, got %v", got)
+		}
+		if len(q.queries) != 1 || !strings.Contains(q.queries[0], `"metrics"."pg_extension"`) {
+			t.Errorf("expected one query on metrics.pg_extension, got %v", q.queries)
+		}
+	})
+
 	t.Run("query error", func(t *testing.T) {
 		q := &fakeQuerier{queryErr: errors.New("boom")}
 		if _, err := loadProtectedPartitions(ctx, q, "pg_settings"); err == nil ||

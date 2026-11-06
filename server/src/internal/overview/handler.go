@@ -110,7 +110,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(filtered) == 0 {
-			if err := json.NewEncoder(w).Encode(generatingResponse{Status: "empty", Summary: nil}); err != nil {
+			if err := json.NewEncoder(w).Encode(generatingResponse{Status: statusEmpty, Summary: nil}); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode empty response: %v\n", err)
 			}
 			return
@@ -147,7 +147,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 			}
 			ids = dedupeAndSort(ids)
 			if len(ids) == 0 {
-				if err := json.NewEncoder(w).Encode(generatingResponse{Status: "empty", Summary: nil}); err != nil {
+				if err := json.NewEncoder(w).Encode(generatingResponse{Status: statusEmpty, Summary: nil}); err != nil {
 					fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode empty response: %v\n", err)
 				}
 				return
@@ -367,6 +367,18 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// and the duplicate is dropped below. A caller who can see no
 	// connections gets the empty notice, and the restricted path never
 	// falls back to the unrestricted scope summary.
+	var last *Overview
+	send := func(overview *Overview) {
+		if overview == last {
+			return
+		}
+		last = overview
+		h.writeSSEEvent(w, overview)
+		flusher.Flush()
+	}
+
+	// The estate and empty notices are written before the stream loop
+	// starts, so a summary broadcast cannot be overtaken by them.
 	direct := make(chan *Overview, 1)
 	deliver := func(overview *Overview, err error) {
 		if err != nil {
@@ -377,9 +389,9 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case scopeKey == "":
-		direct <- h.generator.EstateStatus()
+		send(h.generator.EstateStatus())
 	case scopeKey == "connections:":
-		direct <- statusOverview(statusEmpty, "")
+		send(statusOverview(statusEmpty, ""))
 	case strings.HasPrefix(scopeKey, "connections:"):
 		ids := filteredConnectionIDs
 		effectiveName := scopeName
@@ -405,16 +417,6 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// Stream loop: wait for updates or client disconnect.
 	keepalive := time.NewTicker(30 * time.Second)
 	defer keepalive.Stop()
-
-	var last *Overview
-	send := func(overview *Overview) {
-		if overview == last {
-			return
-		}
-		last = overview
-		h.writeSSEEvent(w, overview)
-		flusher.Flush()
-	}
 
 	for {
 		select {

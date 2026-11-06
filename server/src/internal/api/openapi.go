@@ -1741,7 +1741,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"OverviewResponse": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"status":       {Type: "string", Description: "Present only when no summary is available: generating (no summary yet), empty (no visible connections, SSE stream only) or error (generation failed)"},
+				"status":       {Type: "string", Description: "Present only when no summary is available: generating (no summary yet), empty (the caller can see no connections in the scope) or error (generation failed)"},
 				"error":        {Type: "string", Description: "Generic failure message, present when status is error"},
 				"summary":      {Type: "string", Description: "AI-generated summary; null while a status is reported", Nullable: true},
 				"generated_at": {Type: "string", Format: "date-time", Description: "When the overview was generated"},

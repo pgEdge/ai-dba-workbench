@@ -14167,7 +14167,7 @@
           },
           "status": {
             "type": "string",
-            "description": "Present only when no summary is available: generating (no summary yet), empty (no visible connections, SSE stream only) or error (generation failed)"
+            "description": "Present only when no summary is available: generating (no summary yet), empty (the caller can see no connections in the scope) or error (generation failed)"
           },
           "summary": {
             "type": "string",

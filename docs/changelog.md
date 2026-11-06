@@ -1335,6 +1335,16 @@ project adheres to
 
 ### Fixed
 
+- Label chart y-axis ticks distinctly when the value range is small,
+  and show tooltip values at a useful precision (#803). Every
+  fractional value was rounded to one decimal place, so ticks at a
+  step of 0.05 repeated (0.3, 0.3, 0.2) and a sample of 0.04 showed
+  as 0.0; the K, M and B abbreviations had the same problem, so 1.25K
+  and 1.3K both read 1.3K. Axis ticks now keep the digits of the step
+  the chart chose, and tooltips show two decimal places, or three
+  significant figures for values below one; whole numbers lose the
+  trailing zero, so 2.0K now reads 2K.
+
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled
   toggle, or a failed delete, replaced the whole page with the error

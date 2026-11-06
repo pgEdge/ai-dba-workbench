@@ -84,16 +84,83 @@ function buildTimeLabelFormatter(
 }
 
 /**
- * Formats a numeric value with SI-style abbreviations for display on
- * Y-axis labels and tooltips.
+ * SI-style abbreviations, largest first, applied to values whose
+ * magnitude reaches the threshold.
  */
-function formatNumericValue(value: number): string {
+const SI_SCALES: readonly [number, string][] = [
+    [1e9, 'B'],
+    [1e6, 'M'],
+    [1e3, 'K'],
+];
+
+/**
+ * Splits a value into its SI-scaled magnitude and suffix, so 1250 is
+ * returned as 1.25 with the suffix "K".
+ */
+function scaleValue(value: number): { scaled: number; suffix: string } {
     const abs = Math.abs(value);
-    if (abs >= 1e9) {return `${(value / 1e9).toFixed(1)}B`;}
-    if (abs >= 1e6) {return `${(value / 1e6).toFixed(1)}M`;}
-    if (abs >= 1e3) {return `${(value / 1e3).toFixed(1)}K`;}
-    if (Number.isInteger(value)) {return value.toString();}
-    return value.toFixed(1);
+    for (const [threshold, suffix] of SI_SCALES) {
+        if (abs >= threshold) {
+            return { scaled: value / threshold, suffix };
+        }
+    }
+    return { scaled: value, suffix: '' };
+}
+
+/**
+ * Number formats for chart values. They are pinned to en-US without
+ * grouping so the output matches the previous fixed-point formatting
+ * (a "." decimal separator and no thousands separator) whatever the
+ * browser locale, and none of them ever produces exponent notation.
+ *
+ * Axis ticks are already rounded to the step ECharts chose, so they
+ * keep every significant digit bar floating-point noise
+ * (0.30000000000000004 shows as 0.3). Tooltip values are raw samples,
+ * so they are shown to two decimal places, or three significant
+ * figures when they are smaller than one, so that 0.04 stays 0.04.
+ */
+const AXIS_FORMAT = new Intl.NumberFormat('en-US', {
+    maximumSignificantDigits: 12,
+    useGrouping: false,
+});
+const TOOLTIP_FORMAT = new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 2,
+    useGrouping: false,
+});
+const TOOLTIP_SMALL_FORMAT = new Intl.NumberFormat('en-US', {
+    maximumSignificantDigits: 3,
+    useGrouping: false,
+});
+
+/**
+ * Applies a number format, folding the negative zero that rounding a
+ * small negative value produces ("-0") back to "0".
+ */
+function applyFormat(format: Intl.NumberFormat, value: number): string {
+    const text = format.format(value);
+    return text === '-0' ? '0' : text;
+}
+
+/**
+ * Formats a y-axis tick value with SI-style abbreviations. Every
+ * digit of the tick is kept, so ticks at a fine step (0.15, 0.2, 0.25
+ * or 1.2K, 1.25K) stay distinct rather than rounding to repeats.
+ */
+function formatAxisValue(value: number): string {
+    const { scaled, suffix } = scaleValue(value);
+    return applyFormat(AXIS_FORMAT, scaled) + suffix;
+}
+
+/**
+ * Formats a sampled value for the tooltip with SI-style abbreviations,
+ * at a precision that keeps small values readable.
+ */
+function formatTooltipValue(value: number): string {
+    const { scaled, suffix } = scaleValue(value);
+    const format = Math.abs(scaled) < 1
+        ? TOOLTIP_SMALL_FORMAT
+        : TOOLTIP_FORMAT;
+    return applyFormat(format, scaled) + suffix;
 }
 
 interface TooltipParam {
@@ -164,7 +231,7 @@ export function buildTooltip(show: boolean): object {
                 } else if (typeof p.value === 'number') {
                     // NaN and +/-Infinity carry no reading either.
                     val = isFiniteNumber(p.value)
-                        ? formatNumericValue(p.value)
+                        ? formatTooltipValue(p.value)
                         : NO_VALUE_LABEL;
                 } else {
                     val = String(p.value);
@@ -264,7 +331,7 @@ export function buildYAxis(
     } = {
         type: 'value',
         axisLabel: {
-            formatter: formatNumericValue,
+            formatter: formatAxisValue,
         },
     };
 

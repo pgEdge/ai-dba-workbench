@@ -990,3 +990,61 @@ func TestCollectorSchema_ClosedPoolErrors(t *testing.T) {
 		t.Error("IsConnectionInCluster succeeded")
 	}
 }
+
+// TestCollectorSchema_RecentEventsIncludeAlertActivity checks that the
+// AI overview snapshot reports alert events and their full count, and
+// that a burst of alert churn cannot push a restart out of the sample
+// the generator's restart detection reads (issue #807).
+func TestCollectorSchema_RecentEventsIncludeAlertActivity(t *testing.T) {
+	e := newCSEnv(t)
+	busy := e.conn("busy", "192.0.2.80", "", nil, nil)
+	e.live(busy, csRole{primary: "standalone"}, "17.2", nil)
+	e.history(busy, "standalone")
+	churn := recentEventSampleLimit + 5
+	for i := 0; i < churn; i++ {
+		e.alert(busy, "warning", "cleared", "Flapping", "10 minutes", "5 minutes")
+	}
+
+	check := func(t *testing.T, snap *EstateSnapshot) {
+		t.Helper()
+		seen := map[string]bool{}
+		for i, ev := range snap.RecentEvents {
+			seen[ev.EventType] = true
+			if i > 0 && ev.OccurredAt.After(snap.RecentEvents[i-1].OccurredAt) {
+				t.Errorf("recent events not in reverse chronological order at %d", i)
+			}
+		}
+		for _, typ := range []string{EventTypeRestart, EventTypeAlertCleared} {
+			if !seen[typ] {
+				t.Errorf("recent events have no %s event", typ)
+			}
+		}
+		if len(snap.RecentEvents) > 2*recentEventSampleLimit {
+			t.Errorf("recent events = %d, want at most %d", len(snap.RecentEvents), 2*recentEventSampleLimit)
+		}
+		// Each churn alert both fires and clears.
+		if snap.RecentAlertEventTotal < 2*churn {
+			t.Errorf("RecentAlertEventTotal = %d, want at least %d", snap.RecentAlertEventTotal, 2*churn)
+		}
+		if snap.RecentEventTotal <= snap.RecentAlertEventTotal || snap.RecentEventTotal < len(snap.RecentEvents) {
+			t.Errorf("RecentEventTotal = %d, alert total %d, sample %d",
+				snap.RecentEventTotal, snap.RecentAlertEventTotal, len(snap.RecentEvents))
+		}
+	}
+
+	t.Run("estate", func(t *testing.T) {
+		snap, err := e.ds.GetEstateSnapshot(e.ctx)
+		if err != nil {
+			t.Fatalf("GetEstateSnapshot: %v", err)
+		}
+		check(t, snap)
+	})
+
+	t.Run("server", func(t *testing.T) {
+		snap, _, err := e.ds.GetServerSnapshot(e.ctx, busy)
+		if err != nil {
+			t.Fatalf("GetServerSnapshot: %v", err)
+		}
+		check(t, snap)
+	})
+}

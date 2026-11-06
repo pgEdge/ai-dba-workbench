@@ -67,6 +67,22 @@ export const isScopeAvailable = (
     return false;
 };
 
+/** Per-scope resolvers for scopeLabel. */
+const SCOPE_LABELS: Record<
+    string,
+    (selection: Selection) => string | undefined
+> = {
+    estate: () => 'All Servers',
+    group: (selection) =>
+        selection.type === 'estate' ? undefined : selection.groupName,
+    cluster: (selection) => {
+        if (selection.type === 'server') {return selection.clusterName;}
+        return selection.type === 'cluster' ? selection.name : undefined;
+    },
+    server: (selection) =>
+        selection.type === 'server' ? selection.name : undefined,
+};
+
 /**
  * Name of the entity a blackout scope would target for the current
  * selection, for display beside the scope option.
@@ -76,33 +92,12 @@ export const scopeLabel = (
     selection: Selection | null | undefined,
 ): string | undefined => {
     if (!selection) {return undefined;}
-
-    if (scopeValue === 'estate') {return 'All Servers';}
-
-    if (scopeValue === 'group') {
-        if (selection.type === 'server' || selection.type === 'cluster') {
-            return selection.groupName || undefined;
-        }
-        return undefined;
-    }
-
-    if (scopeValue === 'cluster') {
-        if (selection.type === 'server') {
-            return selection.clusterName || undefined;
-        }
-        if (selection.type === 'cluster') {
-            return selection.name || undefined;
-        }
-        return undefined;
-    }
-
-    if (scopeValue === 'server') {
-        return selection.type === 'server'
-            ? selection.name || undefined
-            : undefined;
-    }
-
-    return undefined;
+    const known = Object.prototype.hasOwnProperty.call(
+        SCOPE_LABELS,
+        scopeValue,
+    );
+    const resolve = known ? SCOPE_LABELS[scopeValue] : undefined;
+    return resolve?.(selection) || undefined;
 };
 
 /**

@@ -1048,3 +1048,21 @@ func TestCollectorSchema_RecentEventsIncludeAlertActivity(t *testing.T) {
 		check(t, snap)
 	})
 }
+
+// TestCollectorSchema_RecentEventsQueryFailure checks that a failed
+// timeline query leaves the snapshot without events rather than
+// failing the snapshot.
+func TestCollectorSchema_RecentEventsQueryFailure(t *testing.T) {
+	e := newCSEnv(t)
+	busy := e.conn("busy", "192.0.2.81", "", nil, nil)
+	e.history(busy, "standalone")
+
+	ctx, cancel := context.WithCancel(e.ctx)
+	cancel()
+	snap := &EstateSnapshot{}
+	e.ds.gatherRecentEvents(ctx, snap, []int{busy}, "TestCollectorSchema")
+	if len(snap.RecentEvents) != 0 || snap.RecentEventTotal != 0 || snap.RecentAlertEventTotal != 0 {
+		t.Errorf("snapshot = %d events, total %d, alert total %d; want none",
+			len(snap.RecentEvents), snap.RecentEventTotal, snap.RecentAlertEventTotal)
+	}
+}

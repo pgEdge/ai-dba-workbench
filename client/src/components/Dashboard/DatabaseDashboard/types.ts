@@ -178,3 +178,17 @@ export const getVacuumStatus = (
         return 'critical';
     }
 };
+
+/**
+ * Classify a dead tuple ratio, expressed as a percentage, for
+ * coloring: up to 5% is good, up to 20% is a warning, and anything
+ * higher is critical. The thresholds match the dead tuple ratio on
+ * the server dashboard's database summary cards.
+ */
+export const getDeadRatioStatus = (
+    ratio: number
+): 'good' | 'warning' | 'critical' => {
+    if (ratio <= 5) { return 'good'; }
+    if (ratio <= 20) { return 'warning'; }
+    return 'critical';
+};

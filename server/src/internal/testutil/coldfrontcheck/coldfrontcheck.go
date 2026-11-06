@@ -47,11 +47,11 @@ var coldFrontBadShapes = []struct {
 	{regexp.MustCompile(`(?i)\bpg_lsn\b`),
 		"DuckDB has no pg_lsn type; work in bigint byte positions or compute the difference in Go"},
 	{regexp.MustCompile(`(?i)'[-+]?infinity'`),
-		"DuckDB may subtract an infinite bound and fail; to leave a bound open, bind NULL " +
-			"and write col <= COALESCE($n::timestamptz, col)"},
+		"DuckDB may subtract an infinite bound and fail; for an open upper bound, " +
+			"bind a finite far-future timestamp (9999-12-31) and compare with the parameter directly"},
 	{regexp.MustCompile(`(?i)\$(\d+|%d)(::[a-z_ ]+?)?\s+IS\s+(NOT\s+)?NULL\b`),
-		"a NULL test on a parameter cannot be planned, cast or not; write " +
-			"col <= COALESCE($n::timestamptz, col) or test a column instead"},
+		"a NULL test on a parameter cannot be planned, cast or not; bind a finite " +
+			"far-future timestamp (9999-12-31) for an open bound, or test a column instead"},
 }
 
 // paramArithmeticHint is the advice for arithmetic on a parameter.

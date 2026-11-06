@@ -55,11 +55,17 @@ through a long retention history could outlast any request budget.
    `[WARN]` and never blocks the row's removal; tests swap the
    allowlist through `Datastore.isProbeView`), and `purgeMetricsViews`
    clears it with one
-   `DELETE FROM metrics.<view> WHERE connection_id = $1::int` per view,
-   autocommitted, so each runs in a transaction of its own (pg_duckdb
+   `DELETE FROM metrics.<view> WHERE connection_id = $1::int` per view
+   (`purgeMetricsView`), each in a transaction of its own (pg_duckdb
    refuses a transaction that writes a view and an ordinary table, and
-   refuses subtransactions), under `connectionPurgeViewTimeout` (10
-   minutes, as an Iceberg delete rewrites data files). Order: tables in
+   refuses subtransactions) that first runs
+   `SELECT set_config('statement_timeout', $1, true)` with
+   `connectionPurgeViewTimeout` (10 minutes, as an Iceberg delete
+   rewrites data files), because the pool's statement_timeout would
+   otherwise cancel it; verified live on ColdFront, which accepts BEGIN,
+   set_config, the view DELETE and COMMIT and reports `DELETE 1`
+   whatever the row count. `TestPurgeMetricsView_OverridesPoolStatementTimeout`
+   pins the per-view transaction and the override. Order: tables in
    batches, then every view, then the row, then a sweep of the tables
    without a foreign key and of every view. Every view is attempted; if
    any DELETE fails the row is NOT removed and the joined error is
@@ -185,10 +191,11 @@ types (one extra round trip per query), and pgx's default statement
 cache on plain PostgreSQL. `TestDescribeExecKeepsNoStatementAcrossRollback`
 shows the mechanism on plain PostgreSQL (the default mode keeps a
 named statement across a rollback, describe-exec keeps none);
-`TestNewDatastoreDetectsColdFront` pins the detection. Unverified live:
-that describe-exec ends the "ice" error on ColdFront (Exec mode, which
-also parses afresh on every execution, was the verified one), and
-that every server statement runs under it there. The collector and
+`TestNewDatastoreDetectsColdFront` pins the detection. Verified live on
+ColdFront (PG 18.6, pg_duckdb 1.1.0): a metrics read prepared in a
+transaction that rolled back fails with the "ice" catalog error 8 times
+in 8 under the default statement cache, and 0 in 8 under describe-exec
+and under Exec mode. The collector and
 alerter pools are not covered by this change.
 
 - **Result types must agree.** A cast helps only when it changes the
@@ -258,12 +265,14 @@ alerter pools are not covered by this change.
   and `> '-infinity'::timestamptz` fail ("Cannot subtract infinite
   timestamps"). A `+infinity` bound as a parameter ran in one test, but
   whether DuckDB subtracts the bounds depends on the plan (the alerter
-  saw it fail once in about 45 runs), so never bind one either: to
-  leave a bound open, bind NULL and write
-  `col <= COALESCE($2::timestamptz, col)`.
+  saw it fail once in about 45 runs), so never bind one either: for an
+  open upper bound, bind a finite far-future timestamp (9999-12-31) and
+  compare with the parameter directly. Not NULL, which matches no row,
+  and not `COALESCE($n, col)`, which stays a per-row filter with no
+  index condition or partition pruning under a generic plan.
 - **No NULL test on a parameter.** `$n IS NULL` and `$n::type IS NULL`
   (or `IS NOT NULL`) fail at plan time with the UNKNOWN error on PG 16,
-  17 and 18, whatever is bound. Use the `COALESCE` form above. A NULL
+  17 and 18, whatever is bound. Use the far-future bound above. A NULL
   test on a column is fine, and so is `col IS NOT DISTINCT FROM $n::text`
   (the anomaly comparison's database filter, which ran live with NULL
   bound).
@@ -2751,7 +2760,11 @@ and a `42P01` from any of them means the schema is absent, so answer the
 whole request with the empty shape rather than a partial one.
 
 Treat `rows.Err()` as a failure too, since an execution-time error such
-as a statement timeout arrives there rather than from `Query`. pgx v5
+as a statement timeout arrives there rather than from `Query`. On
+ColdFront a statement timeout that fires inside pg_duckdb's executor is
+SQLSTATE `XX000` "(PGDuckDB/Duckdb_ExecCustomScan_Cpp) Executor Error:
+Query cancelled", not `57014` (verified live); query_datastore's
+`isStatementTimeout` treats both as a timeout. pgx v5
 also closes the result set on a `rows.Scan` error, so `continue` after a
 scan error does not skip the row: it ends the loop, and the rows after it
 are lost. Scan nullable columns through pointers and skip NULL rows

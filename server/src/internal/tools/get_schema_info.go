@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
@@ -24,16 +25,26 @@ func GetSchemaInfoTool(dbClient *database.Client, resolver *ConnectionResolver) 
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "get_schema_info",
-			Description: `PRIMARY TOOL for discovering database structure and available tables.
+			Description: `PRIMARY TOOL for discovering the tables, views and columns inside ONE database.
 
 <database_context>
-Specify connection_id to target a particular monitored database.
+Specify connection_id to target a particular monitored server.
 Use list_connections to discover available connection IDs and
-their default databases. Optionally provide database_name to
-override the default database for the connection. If
-connection_id is omitted, the tool uses the currently selected
-connection.
+their configured databases. The tool inspects the connection's
+configured database unless database_name names another one; omit
+database_name unless the user asked about a different database,
+and never pass "postgres" just as a default. If connection_id is
+omitted, the tool uses the currently selected connection. The
+first line of the result names the database that was inspected.
 </database_context>
+
+<not_for_listing_databases>
+This tool never lists the databases on a server. Every schema,
+table and view it returns lives inside the one database it
+inspected, and none of them is a database. To list the databases
+on a server, call query_database with
+"SELECT datname, datistemplate FROM pg_database ORDER BY datname".
+</not_for_listing_databases>
 
 <usecase>
 Use get_schema_info when you need to:
@@ -112,7 +123,7 @@ To avoid rate limits when calling this tool:
 - Call once and cache results in conversation rather than repeatedly
 - If exploring large schemas, filter by schema_name first
 </rate_limit_awareness>`,
-			CompactDescription: `Discover database structure: schemas, tables, columns, types, and constraints. Specify connection_id to target a database; use list_connections to discover IDs. Use compact=true for a quick overview. Filter by schema_name and table_name to reduce output.`,
+			CompactDescription: `Discover the schemas, tables, columns, types, and constraints inside one database: the connection's configured database unless database_name names another. It never lists the databases on a server; for that, run SELECT datname FROM pg_database with query_database. Specify connection_id to target a server; use list_connections to discover IDs. Use compact=true for a quick overview. Filter by schema_name and table_name to reduce output.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]any{
@@ -122,7 +133,7 @@ To avoid rate limits when calling this tool:
 					},
 					"database_name": map[string]any{
 						"type":        "string",
-						"description": "Database name to connect to. If omitted, uses the connection's default database.",
+						"description": "Database to inspect instead of the connection's configured database. Omit it to inspect the configured database; set it only when the user names a different database.",
 					},
 					"schema_name": map[string]any{
 						"type":        "string",
@@ -188,6 +199,7 @@ To avoid rate limits when calling this tool:
 			ca := parseConnectionArgs(args)
 			var activeClient *database.Client
 			var connStr string
+			var scope schemaScope
 
 			if ca.HasConnID {
 				// Explicit connection_id: use full resolver path
@@ -197,13 +209,19 @@ To avoid rate limits when calling this tool:
 				}
 				connStr = resolved.ConnStr
 				activeClient = resolved.Client
+				scope = schemaScope{
+					dbName:       resolved.DBName,
+					configuredDB: resolved.ConfiguredDBName,
+				}
 			} else {
 				// Fallback: use the captured per-token client directly
 				activeClient = dbClient
 				if activeClient != nil {
 					connStr = activeClient.GetDefaultConnection()
 				}
+				scope = schemaScope{dbName: databaseFromConnStr(connStr)}
 			}
+			scope.connStr = database.SanitizeConnStr(connStr)
 
 			if activeClient == nil {
 				return mcp.NewToolError("No database connection available. Specify connection_id or select a connection first.")
@@ -415,13 +433,15 @@ To avoid rate limits when calling this tool:
 
 			// Handle empty results with contextual guidance
 			if matchedTables == 0 {
-				sanitizedConn := database.SanitizeConnStr(connStr)
-
 				var emptyMsg strings.Builder
 				emptyMsg.WriteString("\nNo tables found matching your criteria.\n\n")
 
 				emptyMsg.WriteString("<current_connection>\n")
-				fmt.Fprintf(&emptyMsg, "Connected to: %s\n", sanitizedConn)
+				fmt.Fprintf(&emptyMsg, "Connected to: %s\n", scope.connStr)
+				if scope.dbName != "" {
+					fmt.Fprintf(&emptyMsg, "Database inspected: %s\n", scope.dbName)
+				}
+				emptyMsg.WriteString(scope.overrideNote())
 				emptyMsg.WriteString("</current_connection>\n\n")
 
 				emptyMsg.WriteString("<diagnosis>\n")
@@ -495,10 +515,74 @@ To avoid rate limits when calling this tool:
 			}
 
 			// Prepend database context to the response
-			sanitizedConn := database.SanitizeConnStr(connStr)
-			result := fmt.Sprintf("Database: %s\n\n%s", sanitizedConn, sb.String())
+			result := scope.header() + "\n" + sb.String()
 
 			return mcp.NewToolSuccess(result)
 		},
 	}
+}
+
+// schemaScope records which database a get_schema_info call inspected,
+// so the result can say so. Without it, a model asked to list the
+// databases on a server presented the tables of one database as its
+// databases (issue #800), and an analysis that inspected an overridden,
+// empty postgres database reported the connection as misconfigured
+// (issue #801).
+type schemaScope struct {
+	// dbName is the database inspected; empty when it is unknown.
+	dbName string
+	// configuredDB is the connection's stored database, known only
+	// when connection_id was given.
+	configuredDB string
+	// connStr is the connection string with any password masked.
+	connStr string
+}
+
+// overridden reports whether database_name replaced the connection's
+// configured database with a different one.
+func (s schemaScope) overridden() bool {
+	return s.configuredDB != "" && s.dbName != "" && s.dbName != s.configuredDB
+}
+
+// overrideNote tells the model that the inspected database is not the
+// connection's configured one, and how to inspect that instead. It is
+// empty when no override applied.
+func (s schemaScope) overrideNote() string {
+	if !s.overridden() {
+		return ""
+	}
+	return fmt.Sprintf("Note: database_name %q replaced this connection's "+
+		"configured database, %q. To inspect the configured database, "+
+		"call get_schema_info again without database_name.\n",
+		s.dbName, s.configuredDB)
+}
+
+// header names the inspected database and states that the objects
+// listed are inside it rather than being databases themselves.
+func (s schemaScope) header() string {
+	if s.dbName == "" {
+		return fmt.Sprintf("Database: %s\n", s.connStr)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Database: %s\n", s.dbName)
+	fmt.Fprintf(&b, "Connection: %s\n", s.connStr)
+	fmt.Fprintf(&b, "Scope: every schema, table and view below is inside "+
+		"the %q database; none of them is a database. To list the "+
+		"databases on this server, run SELECT datname FROM pg_database "+
+		"with query_database.\n", s.dbName)
+	b.WriteString(s.overrideNote())
+	return b.String()
+}
+
+// databaseFromConnStr returns the database a connection string names,
+// or an empty string when it cannot be parsed or names none.
+func databaseFromConnStr(connStr string) string {
+	if connStr == "" {
+		return ""
+	}
+	cfg, err := pgconn.ParseConfig(connStr)
+	if err != nil {
+		return ""
+	}
+	return cfg.Database
 }

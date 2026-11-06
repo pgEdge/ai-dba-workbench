@@ -40,6 +40,10 @@ type ResolvedConnection struct {
 	ConnStr string
 	ConnID  int
 	DBName  string
+	// ConfiguredDBName is the database stored on the connection, which
+	// DBName differs from only when the caller passed database_name. It
+	// is empty on the fallback path.
+	ConfiguredDBName string
 }
 
 // NewConnectionResolver creates a ConnectionResolver. All parameters
@@ -300,6 +304,8 @@ func (r *ConnectionResolver) resolveExplicit(
 		ConnStr: connStr,
 		ConnID:  ca.ConnectionID,
 		DBName:  effectiveDB,
+
+		ConfiguredDBName: conn.DatabaseName,
 	}, nil
 }
 

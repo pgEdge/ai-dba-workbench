@@ -29,6 +29,7 @@ import { ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
 import { logger } from '../utils/logger';
 import type { ServerSelection, ClusterSelection } from '../types/selection';
+import type { ClusterServer } from '../contexts/ClusterDataContext';
 
 // Module-level cache for analysis results (persists across dialog open/close)
 const analysisCache = new Map<string, { analysis: string; timestamp: number }>();
@@ -74,6 +75,8 @@ Evaluation of security configuration, access controls, and best practices.
 Prioritized recommendations for improving the server/cluster.
 ${SQL_CODE_BLOCK_RULES}${SQL_PLACEHOLDER_RULES}
 
+DATABASE SCOPE: Each server has a configured database, given as "Configured Database" in the request. Review the schema of that database: call get_schema_info and query_database without database_name so that they use it, and pass database_name only to review another database that you know exists on the server. The postgres database is a default maintenance database that is often empty by design, so an empty postgres database is not a sign of misconfiguration, a wrong connection or missing permissions. Name the database you inspected in the Schema Review.
+
 Keep responses concise and actionable. Do not offer to perform additional actions, run further queries, or investigate anything else. Do not ask follow-up questions or ask what the user would like to do next. Begin your response directly with the first section heading (## Performance Review). Do not include any introductory text, preamble, or conversational remarks before the report. Your analysis is displayed in a read-only report that the user cannot respond to.
 
 If a search_knowledgebase tool is available, use it to look up unfamiliar PostgreSQL features, extensions, or pgEdge-specific concepts before making recommendations. If a get_blackouts tool is available, check whether the server is in a maintenance window before raising concerns about anomalous metrics. If a test_query tool is available, validate all SQL queries before including them in the report.`;
@@ -83,6 +86,18 @@ const CLUSTER_ADDENDUM = `
 IMPORTANT: This is a CLUSTER analysis covering multiple servers. When providing SQL queries, you MUST include a SQL comment as the FIRST LINE of every SQL code block indicating which server the query should run on, using this exact format:
 -- connection_id: {id}
 where {id} is the numeric connection ID of the target server. This comment is used by the UI to route query execution to the correct server.`;
+
+/**
+ * Describe one cluster member for the analysis request, including its
+ * configured database when known so that the model inspects that
+ * database rather than guessing one (issue #801).
+ */
+function describeClusterServer(server: ClusterServer): string {
+    const database = server.database_name || server.database;
+    return database
+        ? `${server.name} (connection_id: ${server.id}, Configured Database: ${database})`
+        : `${server.name} (connection_id: ${server.id})`;
+}
 
 /**
  * Build context for a single server: connection context + timeline events.
@@ -185,13 +200,13 @@ export const useServerAnalysis = (): UseServerAnalysisReturn => {
 
 Server Name: ${input.name}
 Connection ID: ${input.id}
-${contextText}
+${input.database ? `Configured Database: ${input.database}\n` : ''}${contextText}
 
 Analyze performance metrics, schema design, security configuration, and provide prioritized improvement recommendations.`
             : `Perform a comprehensive analysis of this PostgreSQL cluster:
 
 Cluster Name: ${input.name}
-Servers: ${(input.servers || []).map(s => `${s.name} (connection_id: ${s.id})`).join(', ')}
+Servers: ${(input.servers || []).map(describeClusterServer).join(', ')}
 ${contextText}
 
 Analyze performance metrics, schema design, security configuration, and replication health across all servers. Provide prioritized improvement recommendations.`;

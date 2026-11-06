@@ -47,6 +47,23 @@ describe('chatConstants', () => {
             expect(SYSTEM_PROMPT).toContain('query_database');
         });
 
+        // Issue #800: Ellie sometimes answered "list the databases" with
+        // get_schema_info and presented one database's tables as its
+        // databases.
+        it('says how to list databases and that get_schema_info does not', () => {
+            expect(SYSTEM_PROMPT).toContain(
+                'To list the databases on a server, run SELECT datname, datistemplate FROM pg_database',
+            );
+            expect(SYSTEM_PROMPT).toContain('never present those tables as databases');
+            expect(SYSTEM_PROMPT).not.toContain(
+                'Use list_connections to discover available databases',
+            );
+            const schemaTool = CHAT_TOOLS.find(t => t.name === 'get_schema_info');
+            expect(schemaTool?.description).toContain(
+                'never lists the databases on a server',
+            );
+        });
+
         it('contains security instructions', () => {
             expect(SYSTEM_PROMPT).toContain('CRITICAL - Security and identity');
         });

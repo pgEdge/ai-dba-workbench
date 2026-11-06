@@ -60,6 +60,11 @@ Do NOT use this tool if:
 - User already has a connection selected - just use query_metrics without connection_id
 
 To find the CURRENT connection: read the pg://connection_info resource (not this tool).
+
+To list the DATABASES on a server, this tool is not enough: call query_database
+with that connection_id and "SELECT datname, datistemplate FROM pg_database
+ORDER BY datname". Do not use get_schema_info for this either; it lists the
+tables inside one database, and those tables are not databases.
 </when_to_use>
 
 <provided_info>
@@ -68,7 +73,9 @@ Returns a TSV table with:
 - name: User-friendly name for the connection
 - host: PostgreSQL server hostname
 - port: PostgreSQL server port
-- database_name: Default database name
+- database_name: The connection's configured database, which the
+  monitored-database tools use when database_name is omitted. This is one
+  database per connection, NOT the list of databases on the server.
 - is_monitored: Whether the collector is gathering metrics from this server
 - status: Connection status (online, warning, offline, or unknown)
 - error: Connection error message if the connection is unavailable
@@ -93,7 +100,7 @@ For fleet-wide analysis (only when user explicitly requests):
 
 CRITICAL: Never silently analyze multiple connections. Always get explicit user consent.
 </workflow>`,
-			CompactDescription: `List all monitored database connections in the datastore. Returns connection IDs, names, hostnames, ports, and status. Use to discover available connections.`,
+			CompactDescription: `List all monitored database connections in the datastore. Returns connection IDs, names, hostnames, ports, each connection's configured database, and status. Use to discover available connections; to list the databases on a server, run SELECT datname FROM pg_database with query_database.`,
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
 				Properties: map[string]any{},

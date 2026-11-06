@@ -1335,6 +1335,20 @@ project adheres to
 
 ### Fixed
 
+- Stop Ask Ellie and the AI analyses from inspecting the wrong
+  database (#800, #801). Asked to list the databases on a connection,
+  Ellie sometimes inspected the schema of one database instead and
+  reported its tables and views as the server's databases; a server
+  analysis could inspect the empty `postgres` database rather than the
+  connection's configured database, then report the server as
+  misconfigured. The `get_schema_info` tool now names the database it
+  inspected at the top of its result, states that the objects listed
+  are inside that database, and flags a `database_name` override that
+  replaced the configured database. The tool descriptions and Ellie's
+  instructions now say how to list the databases on a server, and the
+  server and cluster analyses now tell the model each server's
+  configured database and that an empty `postgres` database is normal.
+
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled
   toggle, or a failed delete, replaced the whole page with the error

@@ -119,6 +119,13 @@ type OpenAPISecurityScheme struct {
 	Description  string `json:"description,omitempty"`
 }
 
+// Parameter and response descriptions shared by the overview endpoints.
+const (
+	overviewConnectionIDsParam = "Comma-separated connection IDs; cannot be combined with scope_type or scope_id"
+	overviewScopeNameParam     = "Display name for a connection_ids summary; trimmed, stripped of quotes and control characters and capped at 128 characters. Ignored with scope_type or scope_id, whose name is looked up on the server"
+	overviewBadRequest         = "connection_ids combined with scope_type or scope_id, or an invalid parameter"
+)
+
 // BuildOpenAPISpec generates the OpenAPI specification at runtime.
 func BuildOpenAPISpec() *OpenAPISpec {
 	return &OpenAPISpec{
@@ -4174,13 +4181,14 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
 					queryParamBool("refresh", "Force regeneration of the overview"),
-					queryParamString("connection_ids", "Comma-separated connection IDs"),
-					queryParamString("scope_type", "Scope type (estate, group, cluster, server)"),
+					queryParamString("connection_ids", overviewConnectionIDsParam),
+					queryParamString("scope_type", "Scope type (server, cluster, group)"),
 					queryParamString("scope_id", "Scope entity ID"),
-					queryParamString("scope_name", "Scope display name"),
+					queryParamString("scope_name", overviewScopeNameParam),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("OverviewResponse", "Estate overview"),
+					"400": jsonResponse("ErrorResponse", overviewBadRequest),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 				},
 			},
@@ -4194,9 +4202,10 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Tags:        []string{"Overview"},
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
-					queryParamString("connection_ids", "Comma-separated connection IDs"),
-					queryParamString("scope_type", "Scope type (estate, group, cluster, server)"),
+					queryParamString("connection_ids", overviewConnectionIDsParam),
+					queryParamString("scope_type", "Scope type (server, cluster, group)"),
 					queryParamString("scope_id", "Scope entity ID"),
+					queryParamString("scope_name", overviewScopeNameParam),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": {
@@ -4205,6 +4214,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 							"text/event-stream": {Schema: &OpenAPISchema{Type: "string", Description: "Server-Sent Events stream"}},
 						},
 					},
+					"400": jsonResponse("ErrorResponse", overviewBadRequest),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 				},
 			},

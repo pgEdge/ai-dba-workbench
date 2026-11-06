@@ -305,9 +305,9 @@ func TestHandleSSE_GenerationPaths(t *testing.T) {
 		{
 			name:     "restricted connection_ids",
 			target:   "/api/v1/overview/stream?connection_ids=7,8,7&scope_name=mine",
-			cached:   []string{"connections:7"},
-			wantKey:  "connections:7",
-			wantData: `"summary":"Cached connections:7"`,
+			cached:   []string{"connections:7|mine"},
+			wantKey:  "connections:7|mine",
+			wantData: `"summary":"Cached connections:7|mine"`,
 		},
 		{
 			name:       "restricted connection_ids generation failure",

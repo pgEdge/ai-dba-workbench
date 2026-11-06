@@ -168,11 +168,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
         currentUrlRef.current = overviewUrl;
     }, [overviewUrl]);
 
-    const fetchOverview = useCallback(async (isInitial: boolean) => {
-        if (isInitial) {
-            setLoading(true);
-        }
-
+    const fetchOverview = useCallback(async () => {
         try {
             const data = await apiGet<OverviewResponse>(overviewUrl);
             if (currentUrlRef.current !== overviewUrl) {
@@ -246,7 +242,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
             return undefined;
         }
         const safetyTimeout = setTimeout(() => {
-            void fetchOverview(false);
+            void fetchOverview();
         }, 5000);
         return () => {
             clearTimeout(safetyTimeout);
@@ -259,7 +255,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
         const fallbackTimeout = setTimeout(() => {
             if (!sseConnected) {
                 fallbackInterval = setInterval(() => {
-                    void fetchOverview(false);
+                    void fetchOverview();
                 }, 10_000);
             }
         }, 5000);

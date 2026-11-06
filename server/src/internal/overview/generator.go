@@ -13,9 +13,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	_ "github.com/pgEdge/pgedge-go-llm-lib/llm/all"
@@ -314,23 +316,17 @@ func (g *Generator) GetScopedSummary(scopeType string, scopeID int, force bool) 
 
 // GetConnectionsSummary returns a cached or freshly generated overview
 // for an explicit list of connection IDs. The scopeName is used in the
-// LLM prompt to give context (e.g. "Spock Cluster: my-cluster"). The
-// cache key is derived from the sorted connection IDs so that the same
-// set of connections always hits the same cache entry regardless of the
-// order in which the IDs were supplied. Concurrent requests for the
-// same set of connections are deduplicated so that only one LLM call
-// is made.
+// LLM prompt to give context (e.g. "Spock Cluster: my-cluster"); it is
+// passed through sanitizeScopeName first. The cache key is derived from
+// the sorted connection IDs and the sanitized name, so that the same set
+// of connections always hits the same cache entry regardless of the
+// order in which the IDs were supplied, and a summary written around
+// one name is never served to a caller who asked under another.
+// Concurrent requests for the same key are deduplicated so that only
+// one LLM call is made.
 func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string, force bool) (*Overview, error) {
-	// Build a deterministic cache key from sorted connection IDs.
-	sorted := make([]int, len(connectionIDs))
-	copy(sorted, connectionIDs)
-	sortInts(sorted)
-
-	parts := make([]string, len(sorted))
-	for i, id := range sorted {
-		parts[i] = fmt.Sprintf("%d", id)
-	}
-	key := "connections:" + strings.Join(parts, ",")
+	scopeName = sanitizeScopeName(scopeName)
+	key := connectionsKey(connectionIDs, scopeName)
 
 	// Fast path: return cached entry if still fresh.
 	if !force {
@@ -407,6 +403,51 @@ func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string,
 	return overview, nil
 }
 
+// maxScopeNameLen caps, in runes, the scope name placed in a prompt and
+// a cache key.
+const maxScopeNameLen = 128
+
+// sanitizeScopeName prepares a scope name for the LLM prompt and the
+// cache key. The name may come from the caller, so it is trimmed, loses
+// quotes and control and formatting characters, which could otherwise
+// break out of the quoted name in the prompt, and is capped at
+// maxScopeNameLen runes. Applying it twice gives the same result.
+func sanitizeScopeName(name string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range strings.TrimSpace(name) {
+		if r == '"' || r == '\'' || r == '`' || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		if n == maxScopeNameLen {
+			break
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// connectionsKey returns the cache and hub key for a summary of the
+// given connections under the given, already sanitized, scope name:
+// "connections:" and the sorted IDs, then "|" and the name when there
+// is one. The IDs hold only digits and commas, so the name cannot be
+// confused with them.
+func connectionsKey(connectionIDs []int, scopeName string) string {
+	sorted := make([]int, len(connectionIDs))
+	copy(sorted, connectionIDs)
+	sortInts(sorted)
+	parts := make([]string, len(sorted))
+	for i, id := range sorted {
+		parts[i] = strconv.Itoa(id)
+	}
+	key := "connections:" + strings.Join(parts, ",")
+	if scopeName != "" {
+		key += "|" + scopeName
+	}
+	return key
+}
+
 // sortInts sorts a slice of ints in ascending order using insertion sort.
 // The slices are small (typically under 20 elements) so a simple
 // algorithm avoids importing sort.
@@ -457,12 +498,7 @@ func (g *Generator) evictScopedCacheLocked() {
 // is true the significant-change check is skipped and a new summary is
 // always generated.
 func (g *Generator) refresh(force bool) {
-	snapshot, err := g.datastore.GetEstateSnapshot(g.ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to get estate snapshot: %v\n", err)
-		g.recordEstateFailure()
-		return
-	}
+	snapshot := g.datastore.GetEstateSnapshot(g.ctx)
 
 	g.mu.RLock()
 	oldSnapshot := g.lastSnapshot

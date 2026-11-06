@@ -157,11 +157,17 @@ func TestGetClusterTopologyErrorPathsIntegration(t *testing.T) {
 			want:   "failed to query connections with roles",
 		},
 		{
-			// Losing the dismissed column also fails the override
-			// lookup, which GetClusterTopology tolerates.
-			name:   "dismissed keys",
+			// Only the override lookup reads description.
+			name:   "cluster overrides",
+			breaks: []string{`ALTER TABLE clusters RENAME COLUMN description TO description_gone`},
+			want:   "failed to get cluster overrides",
+		},
+		{
+			// The override lookup reads dismissed first, so losing it
+			// fails there rather than at the dismissed-key lookup.
+			name:   "dismissed column",
 			breaks: []string{`ALTER TABLE clusters RENAME COLUMN dismissed TO dismissed_gone`},
-			want:   "failed to get dismissed cluster keys",
+			want:   "failed to get cluster overrides",
 		},
 		{
 			name:   "claimed keys",
@@ -186,5 +192,19 @@ func TestGetClusterTopologyErrorPathsIntegration(t *testing.T) {
 				t.Errorf("GetClusterTopology error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestGetDismissedAutoClusterKeysQueryErrorIntegration covers the query
+// failure that GetClusterTopology can no longer reach through a schema
+// break, since the override lookup reads the same columns first.
+func TestGetDismissedAutoClusterKeysQueryErrorIntegration(t *testing.T) {
+	ds, pool, _, cleanup := newConfigQueriesTestDatastore(t)
+	defer cleanup()
+	mustExecClusterQueries(t, pool,
+		`ALTER TABLE clusters RENAME COLUMN dismissed TO dismissed_gone`)
+	_, err := ds.getDismissedAutoClusterKeys(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "failed to query dismissed cluster keys") {
+		t.Errorf("getDismissedAutoClusterKeys error = %v", err)
 	}
 }

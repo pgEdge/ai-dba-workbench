@@ -1525,6 +1525,19 @@ project adheres to
   new `statement_database_name` parameter for pg_stat_statements,
   which keeps only the statements that ran in the named database.
 
+- Show the PostgreSQL version, operating system, and Spock version on
+  the server information card in the status panel whenever they are
+  known (#805). The card read each value only from a sample written in
+  the last five minutes, or the last hour for the Spock version, but
+  the probes behind them run hourly or every ten minutes and the server
+  and extension probes store a sample only when a value changes, so the
+  fields were usually missing; the card now shows the newest stored
+  value, as the server information dialog does. The same fix restores
+  the match between a binary standby and its primary by system
+  identifier. The collector also now keeps the newest `pg_extension`
+  snapshot for each server past its 30-day retention, so the Spock
+  version is not lost on a server whose extensions do not change.
+
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled
   toggle, or a failed delete, replaced the whole page with the error

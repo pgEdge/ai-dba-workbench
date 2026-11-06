@@ -1295,3 +1295,112 @@ func TestCreateLLMClient_HeadersWiredFromConfig(t *testing.T) {
 		t.Fatal("expected non-nil client when headers are configured")
 	}
 }
+
+// --- Recent event activity (issue #807) ------------------------------------
+
+func TestHasSignificantChange_EventActivity(t *testing.T) {
+	g := &Generator{scopedCache: make(map[string]*scopedEntry)}
+	oldTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	snap := func(ts time.Time, events ...database.EstateEventSummary) *database.EstateSnapshot {
+		return &database.EstateSnapshot{
+			Timestamp:       ts,
+			ServerTotal:     2,
+			ServerOnline:    2,
+			ActiveBlackouts: []database.EstateBlackoutSummary{},
+			RecentEvents:    events,
+		}
+	}
+	newAlert := database.EstateEventSummary{
+		EventType:  "alert_fired",
+		OccurredAt: oldTime.Add(time.Minute),
+	}
+	oldAlert := database.EstateEventSummary{
+		EventType:  "alert_cleared",
+		OccurredAt: oldTime.Add(-time.Minute),
+	}
+
+	tests := []struct {
+		name string
+		cur  *database.EstateSnapshot
+		want bool
+	}{
+		{"new event after stale period", snap(oldTime.Add(staleDuration), newAlert), true},
+		{"new event before stale period", snap(oldTime.Add(staleDuration-time.Second), newAlert), false},
+		{"stale with only older events", snap(oldTime.Add(2*staleDuration), oldAlert), false},
+		{"stale with no events", snap(oldTime.Add(2 * staleDuration)), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := g.hasSignificantChange(snap(oldTime), tt.cur); got != tt.want {
+				t.Errorf("hasSignificantChange = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestContainsEventAfter(t *testing.T) {
+	cutoff := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	s := &database.EstateSnapshot{RecentEvents: []database.EstateEventSummary{
+		{EventType: "config_change", OccurredAt: cutoff},
+		{EventType: "alert_fired", OccurredAt: cutoff.Add(time.Second)},
+	}}
+	if !containsEventAfter(s, cutoff) {
+		t.Error("expected an event after the cutoff")
+	}
+	if containsEventAfter(s, cutoff.Add(time.Second)) {
+		t.Error("expected no event strictly after the newest event")
+	}
+	if containsEventAfter(&database.EstateSnapshot{}, cutoff) {
+		t.Error("expected false for a snapshot with no events")
+	}
+}
+
+func TestWriteSnapshotData_RecentEventTotals(t *testing.T) {
+	ev := database.EstateEventSummary{EventType: "alert_fired", ServerName: "db-1", Title: "High CPU"}
+
+	t.Run("total beyond sample", func(t *testing.T) {
+		var b strings.Builder
+		writeSnapshotData(&b, &database.EstateSnapshot{
+			RecentEvents:          []database.EstateEventSummary{ev},
+			RecentEventTotal:      192,
+			RecentAlertEventTotal: 180,
+		})
+		out := b.String()
+		for _, want := range []string{
+			"- Recent Events (last 24h): 192 total (180 alert events)\n",
+			"- Most recent 1 events:\n",
+			"- alert_fired on db-1: High CPU\n",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output missing %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("sample covers everything", func(t *testing.T) {
+		var b strings.Builder
+		writeSnapshotData(&b, &database.EstateSnapshot{
+			RecentEvents:          []database.EstateEventSummary{ev},
+			RecentEventTotal:      1,
+			RecentAlertEventTotal: 1,
+		})
+		out := b.String()
+		if !strings.Contains(out, "- Recent Events (last 24h): 1 total (1 alert events)\n") {
+			t.Errorf("unexpected total line:\n%s", out)
+		}
+		if strings.Contains(out, "Most recent") {
+			t.Errorf("unexpected sample header:\n%s", out)
+		}
+	})
+
+	t.Run("total never below sample", func(t *testing.T) {
+		var b strings.Builder
+		writeSnapshotData(&b, &database.EstateSnapshot{
+			RecentEvents: []database.EstateEventSummary{ev, ev},
+		})
+		if !strings.Contains(b.String(), "- Recent Events (last 24h): 2 total (0 alert events)\n") {
+			t.Errorf("unexpected total line:\n%s", b.String())
+		}
+	})
+}

@@ -1335,6 +1335,19 @@ project adheres to
 
 ### Fixed
 
+- Include alert activity in the recent events the AI Overview reports
+  (#807). The overview considered only restarts, configuration changes
+  and blackouts, so an estate or server whose Event Timeline showed
+  alerts firing and clearing was described as having no recent events.
+  The overview now draws on every event type the timeline shows,
+  including alert, HBA, ident and extension events, and reports the
+  full count of events in the last 24 hours rather than the sample it
+  passes to the LLM. A restart still reaches the overview however many
+  alert events surround it. The estate summary is now also regenerated
+  when new events have occurred and the current summary is at least
+  five minutes old, so alert churn that leaves the active alert counts
+  unchanged no longer leaves the summary out of date.
+
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled
   toggle, or a failed delete, replaced the whole page with the error

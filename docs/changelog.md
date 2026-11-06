@@ -1335,6 +1335,15 @@ project adheres to
 
 ### Fixed
 
+- Label every server in the Comparative Metrics bar charts on the
+  Cluster Dashboard (#804). The charts reused the time-series axis,
+  which hides labels that collide, so only alternate bars were
+  labelled, and a server name that the browser could read as a date,
+  such as `replica-12`, was shown as a time. Bar charts of named items
+  now label every bar, truncating a long name with an ellipsis and
+  rotating the labels when there are more than three; the tooltip
+  shows the full server name.
+
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled
   toggle, or a failed delete, replaced the whole page with the error

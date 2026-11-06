@@ -253,6 +253,7 @@ func TestSyncInheritedProbeConfigsQuery_Contract(t *testing.T) {
 	for _, want := range []string{
 		"s.scope = 'server'",
 		"NOT s.user_modified",
+		"NOT t.user_modified",
 		"COALESCE(cl.is_enabled, gr.is_enabled, gl.is_enabled)",
 		"IS DISTINCT FROM",
 		sqlmarker.Marker,

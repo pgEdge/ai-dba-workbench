@@ -19,6 +19,14 @@ project adheres to
 
 ### Added
 
+- Limit how many AI Overview summaries each user can cause the server
+  to generate, so that a script in a loop or a browser tab that keeps
+  reconnecting cannot run up the bill on the LLM account (#822). A user
+  over the limit is served the cached summary for the scope, even if it
+  is stale, or an HTTP 429 response with a `Retry-After` header when
+  none is cached, and forced refreshes are throttled per user. The new
+  `llm.rate_limit.overview` settings default to 60 generations an hour
+  with a burst of 20, and one forced refresh every 30 seconds.
 - Add a `-health-check host:port` flag to `ai-dba-server`, which checks
   that a listener accepts TCP connections at the address and exits.
   The example Docker Compose files now use it for the server's health

@@ -4181,6 +4181,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("OverviewResponse", "Estate overview"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"429": overviewRateLimitedResponse(),
 				},
 			},
 		},
@@ -4205,6 +4206,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 						},
 					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"429": overviewRateLimitedResponse(),
 				},
 			},
 		},
@@ -4968,6 +4970,24 @@ func jsonArrayResponseWithHeaders(
 	resp := jsonArrayResponse(itemSchemaRef, description)
 	resp.Headers = headers
 	return resp
+}
+
+// overviewRateLimitedResponse documents the plain-text 429 response the
+// overview endpoints return when the caller has used up their summary
+// generations and no cached summary exists for the scope.
+func overviewRateLimitedResponse() OpenAPIResponse {
+	return OpenAPIResponse{
+		Description: "Generation limit reached and no cached summary exists",
+		Headers: map[string]OpenAPIHeader{
+			"Retry-After": {
+				Description: "Seconds to wait before trying again",
+				Schema:      &OpenAPISchema{Type: "integer"},
+			},
+		},
+		Content: map[string]OpenAPIMediaType{
+			"text/plain": {Schema: &OpenAPISchema{Type: "string"}},
+		},
+	}
 }
 
 // totalCountHeader documents the X-Total-Count response header carrying the

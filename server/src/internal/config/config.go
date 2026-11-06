@@ -637,6 +637,77 @@ type LLMConfig struct {
 	// extra_body, which sit directly under llm and apply to the chat
 	// proxy and the analysis clients alike. Validated by validateConfig.
 	RequestSettings llmsettings.Settings `yaml:",inline"`
+
+	// RateLimit caps how often each user may trigger LLM generations
+	// on the endpoints that adopt it.
+	RateLimit LLMRateLimitConfig `yaml:"rate_limit"`
+}
+
+// LLMRateLimitConfig holds per-user limits on LLM generations, grouped
+// by the endpoint family they govern. It guards the operator's LLM
+// account against accidental runaway cost, such as a client stuck in
+// a loop, rather than against hostile users.
+type LLMRateLimitConfig struct {
+	// Overview limits the AI Overview endpoints.
+	Overview OverviewRateLimitConfig `yaml:"overview"`
+}
+
+// Default per-user limits for AI Overview generations.
+const (
+	DefaultOverviewGenerationsPerHour     = 60
+	DefaultOverviewGenerationBurst        = 20
+	DefaultOverviewRefreshIntervalSeconds = 30
+)
+
+// OverviewRateLimitConfig holds the per-user limits for the AI Overview
+// endpoints. Each field is a pointer so that an omitted setting can be
+// told apart from an explicit 0; read the effective values through the
+// accessor methods, which apply the defaults.
+type OverviewRateLimitConfig struct {
+	// GenerationsPerHourPtr is the sustained number of summary
+	// generations each user may trigger per hour. An explicit 0
+	// disables the limit.
+	GenerationsPerHourPtr *int `yaml:"generations_per_hour"`
+
+	// BurstPtr is the number of generations a user may trigger in
+	// quick succession before the hourly rate applies.
+	BurstPtr *int `yaml:"burst"`
+
+	// RefreshIntervalSecondsPtr is the minimum number of seconds
+	// between forced refreshes (refresh=true) by one user. An explicit
+	// 0 disables the throttle.
+	RefreshIntervalSecondsPtr *int `yaml:"refresh_interval_seconds"`
+}
+
+// GenerationsPerHour returns the effective per-user hourly generation
+// limit, defaulting to DefaultOverviewGenerationsPerHour when the
+// setting was omitted or negative. An explicit 0 disables the limit.
+func (c OverviewRateLimitConfig) GenerationsPerHour() int {
+	if c.GenerationsPerHourPtr == nil || *c.GenerationsPerHourPtr < 0 {
+		return DefaultOverviewGenerationsPerHour
+	}
+	return *c.GenerationsPerHourPtr
+}
+
+// Burst returns the effective per-user generation burst, defaulting to
+// DefaultOverviewGenerationBurst when the setting was omitted or not
+// positive, since a burst below one would deny every generation.
+func (c OverviewRateLimitConfig) Burst() int {
+	if c.BurstPtr == nil || *c.BurstPtr <= 0 {
+		return DefaultOverviewGenerationBurst
+	}
+	return *c.BurstPtr
+}
+
+// RefreshIntervalSeconds returns the effective minimum interval
+// between one user's forced refreshes, defaulting to
+// DefaultOverviewRefreshIntervalSeconds when the setting was omitted
+// or negative. An explicit 0 disables the throttle.
+func (c OverviewRateLimitConfig) RefreshIntervalSeconds() int {
+	if c.RefreshIntervalSecondsPtr == nil || *c.RefreshIntervalSecondsPtr < 0 {
+		return DefaultOverviewRefreshIntervalSeconds
+	}
+	return *c.RefreshIntervalSecondsPtr
 }
 
 // DefaultLLMTemperature is the sampling temperature used when
@@ -1208,6 +1279,15 @@ func mergeConfig(dest, src *Config) {
 	}
 	if len(src.LLM.OllamaCustomHeaders) > 0 {
 		dest.LLM.OllamaCustomHeaders = src.LLM.OllamaCustomHeaders
+	}
+	if src.LLM.RateLimit.Overview.GenerationsPerHourPtr != nil {
+		dest.LLM.RateLimit.Overview.GenerationsPerHourPtr = src.LLM.RateLimit.Overview.GenerationsPerHourPtr
+	}
+	if src.LLM.RateLimit.Overview.BurstPtr != nil {
+		dest.LLM.RateLimit.Overview.BurstPtr = src.LLM.RateLimit.Overview.BurstPtr
+	}
+	if src.LLM.RateLimit.Overview.RefreshIntervalSecondsPtr != nil {
+		dest.LLM.RateLimit.Overview.RefreshIntervalSecondsPtr = src.LLM.RateLimit.Overview.RefreshIntervalSecondsPtr
 	}
 
 	// Knowledgebase - merge if any KB fields are set

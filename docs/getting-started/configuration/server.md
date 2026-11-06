@@ -606,6 +606,9 @@ database analysis.
 | `openai_custom_headers` | mapping | | Headers sent to OpenAI only |
 | `gemini_custom_headers` | mapping | | Headers sent to Gemini only |
 | `ollama_custom_headers` | mapping | | Headers sent to Ollama only |
+| `rate_limit.overview.generations_per_hour` | int | `60` | AI Overview generations per user per hour |
+| `rate_limit.overview.burst` | int | `20` | AI Overview generations allowed in quick succession |
+| `rate_limit.overview.refresh_interval_seconds` | int | `30` | Minimum seconds between forced refreshes |
 
 #### Sampling Temperature (`temperature`)
 
@@ -907,6 +910,53 @@ llm:
     X-Gateway-Token: "/etc/ai-workbench/gateway-token"
   anthropic_custom_headers:
     X-Route: "anthropic-primary"
+```
+
+#### AI Overview Rate Limits (`rate_limit.overview`)
+
+The server limits how many AI Overview summaries each
+user can cause it to generate, so that a script calling
+the overview endpoints in a loop, or a browser tab that
+keeps reconnecting, cannot run up the bill on the LLM
+account. The limits apply per user to the
+`/api/v1/overview` and `/api/v1/overview/stream`
+endpoints. Reading the estate-wide summary, which the
+server regenerates on its own schedule and shares between
+users, is not counted, although forcing a refresh of it
+is; a user over the limit who asks for one is served the
+current estate summary instead.
+
+Each user may trigger `burst` generations in quick
+succession, after which the allowance refills at
+`generations_per_hour`. A request that a fresh cached
+summary answers costs nothing. When a user has no
+generations left, the server serves the cached summary
+for the scope even if it is stale; only when no summary
+is cached does it return an HTTP `429 Too Many Requests`
+response with a `Retry-After` header that gives the wait
+in seconds.
+
+A forced refresh (`refresh=true`) is also throttled to
+one per `refresh_interval_seconds` for each user. A
+refresh within that interval is treated as an ordinary
+request and is answered from the cache where possible.
+
+Set `generations_per_hour` or `refresh_interval_seconds`
+to `0` to disable that limit. The server reads these
+settings at start-up, so a change takes effect on
+restart rather than on a `SIGHUP` reload.
+
+In the following example, each user can trigger ten
+generations at once, then thirty an hour, and refresh at
+most once a minute:
+
+```yaml
+llm:
+  rate_limit:
+    overview:
+      generations_per_hour: 30
+      burst: 10
+      refresh_interval_seconds: 60
 ```
 
 ### Knowledgebase (`knowledgebase`)
@@ -1310,7 +1360,8 @@ kill -SIGHUP $(pgrep ai-dba-server)
 A `SIGHUP` signal reloads the following settings:
 
 - Database connection settings.
-- LLM proxy settings.
+- LLM proxy settings, except the AI Overview rate limits
+  under `llm.rate_limit`, which need a restart.
 - Knowledgebase settings.
 - The federated login policy under `http.auth.oidc`, as
   described in

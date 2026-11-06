@@ -68,8 +68,9 @@ const (
 	// connectionPurgeViewTimeout bounds the one DELETE that removes a
 	// connection's rows from a metrics view. On pgEdge ColdFront that
 	// statement rewrites Iceberg data files rather than deleting heap
-	// rows in batches, so it is given longer than a batch. The pool's
-	// statement_timeout applies too.
+	// rows in batches, so it is given longer than a batch, and its
+	// transaction sets statement_timeout to match, overriding the
+	// pool's.
 	connectionPurgeViewTimeout = 10 * time.Minute
 )
 
@@ -338,25 +339,16 @@ func (d *Datastore) sweepAfterRemoval(ctx context.Context, tables []metricsTable
 }
 
 // purgeMetricsViews deletes connection id's rows from each metrics view
-// with one autocommitted DELETE per view, so each runs in a transaction
-// of its own: pg_duckdb refuses a transaction that writes a ColdFront
-// view and an ordinary table both, and refuses subtransactions, so the
-// deletes cannot share a transaction with each other or with the
-// connection row's removal. Every view is attempted, and the failures
-// are returned together.
+// with purgeMetricsView, one transaction per view: pg_duckdb refuses a
+// transaction that writes a ColdFront view and an ordinary table both,
+// and refuses subtransactions, so the deletes cannot share a
+// transaction with each other or with the connection row's removal.
+// Every view is attempted, and the failures are returned together.
 func (d *Datastore) purgeMetricsViews(ctx context.Context, views []string, id int) error {
 	var errs []error
 	for _, view := range views {
-		// The relation cannot be a bind parameter: view comes from the
-		// catalog, is admitted only when it names a known probe, and is
-		// quoted by pgx.Identifier.Sanitize; the id is bound as $1.
-		stmt := strings.Join([]string{
-			"DELETE FROM",
-			pgx.Identifier{"metrics", view}.Sanitize(),
-			"WHERE connection_id = $1::int",
-		}, " ")
 		viewCtx, cancel := context.WithTimeout(ctx, connectionPurgeViewTimeout)
-		_, err := d.pool.Exec(viewCtx, stmt, id)
+		err := d.purgeMetricsView(viewCtx, view, id)
 		cancel()
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to purge metrics.%s rows of connection %d: %w",
@@ -364,6 +356,43 @@ func (d *Datastore) purgeMetricsViews(ctx context.Context, views []string, id in
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// purgeMetricsView deletes connection id's rows from one metrics view in
+// a transaction of its own. On pgEdge ColdFront the DELETE rewrites
+// Iceberg data files and can outlast the pool's statement_timeout, so
+// the transaction raises it to connectionPurgeViewTimeout with a
+// transaction-local set_config, as removeDeletedConnection does;
+// pg_duckdb accepts the set_config ahead of the view DELETE.
+func (d *Datastore) purgeMetricsView(ctx context.Context, view string, id int) error {
+	// The relation cannot be a bind parameter: view comes from the
+	// catalog, is admitted only when it names a known probe, and is
+	// quoted by pgx.Identifier.Sanitize; the id is bound as $1.
+	stmt := strings.Join([]string{
+		"DELETE FROM",
+		pgx.Identifier{"metrics", view}.Sanitize(),
+		"WHERE connection_id = $1::int",
+	}, " ")
+
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+
+	if _, err := tx.Exec(ctx,
+		`SELECT set_config('statement_timeout', $1, true)`,
+		strconv.FormatInt(connectionPurgeViewTimeout.Milliseconds(), 10),
+	); err != nil {
+		return fmt.Errorf("failed to set statement timeout: %w", err)
+	}
+	if _, err := tx.Exec(ctx, stmt, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+	return nil
 }
 
 // purgeMetricsTables runs purgeMetricsTable over tables, or over only

@@ -939,3 +939,116 @@ func TestPurgeConnection_FinalSweepAttemptsViewsAfterTableFailure(t *testing.T) 
 		t.Errorf("connection rows after the final sweep = %d, want 0", rows)
 	}
 }
+
+// TestPurgeMetricsView_OverridesPoolStatementTimeout checks that each
+// view DELETE runs in a transaction of its own under
+// connectionPurgeViewTimeout rather than the pool's statement_timeout,
+// which on pgEdge ColdFront would otherwise cap the Iceberg rewrite. The
+// pool's timeout is 200ms; a trigger on the stand-in store records the
+// setting each DELETE sees and its transaction, then sleeps past the
+// pool's timeout.
+func TestPurgeMetricsView_OverridesPoolStatementTimeout(t *testing.T) {
+	_, pool, cleanup := newConnPurgeTestDatastore(t)
+	defer cleanup()
+	defer createPurgeTestViews(t, pool, false)()
+	ctx := context.Background()
+
+	mustExecPurgeTest(t, pool, `
+        DROP TABLE IF EXISTS purge_test_cf_seen;
+        CREATE TABLE purge_test_cf_seen (timeout TEXT, xid xid8);
+        CREATE OR REPLACE FUNCTION purge_test_cf_slow() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            INSERT INTO purge_test_cf_seen
+                VALUES (current_setting('statement_timeout'), pg_current_xact_id());
+            PERFORM pg_sleep(0.5);
+            RETURN NULL;
+        END;
+        $$;
+        CREATE TRIGGER purge_test_cf_slow BEFORE DELETE ON purge_test_cf_store
+        FOR EACH STATEMENT EXECUTE FUNCTION purge_test_cf_slow();`)
+	defer mustExecPurgeTest(t, pool, `
+        DROP TABLE IF EXISTS purge_test_cf_seen;
+        DROP FUNCTION IF EXISTS purge_test_cf_slow() CASCADE`)
+	mustExecPurgeTest(t, pool, `CREATE VIEW metrics.purge_test_cf_two AS SELECT * FROM purge_test_cf_store`)
+	mustExecPurgeTest(t, pool, `INSERT INTO purge_test_cf_store VALUES (7, 1), (7, 2), (8, 1)`)
+
+	cfg, err := pgxpool.ParseConfig(pool.Config().ConnString())
+	if err != nil {
+		t.Fatalf("parse the pool config: %v", err)
+	}
+	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "200"
+	cfg.MaxConns = 1
+	shortPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("create the short-timeout pool: %v", err)
+	}
+	defer shortPool.Close()
+	ds := NewTestDatastore(shortPool)
+
+	if err := ds.purgeMetricsViews(ctx, []string{"purge_test_cf", "purge_test_cf_two"}, 7); err != nil {
+		t.Fatalf("purgeMetricsViews under a 200ms pool timeout: %v", err)
+	}
+	wantPurgeRows(t, pool, "metrics.purge_test_cf", 7, 0)
+	wantPurgeRows(t, pool, "metrics.purge_test_cf", 8, 1)
+
+	var timeouts []string
+	var xacts int
+	if err := pool.QueryRow(ctx, `SELECT array_agg(DISTINCT timeout), COUNT(DISTINCT xid)
+        FROM purge_test_cf_seen`).Scan(&timeouts, &xacts); err != nil {
+		t.Fatalf("read the recorded settings: %v", err)
+	}
+	if want := []string{"10min"}; !slices.Equal(timeouts, want) {
+		t.Errorf("statement_timeout seen by the view DELETEs = %v, want %v", timeouts, want)
+	}
+	if xacts != 2 {
+		t.Errorf("view DELETEs ran in %d transactions, want 2 (one per view)", xacts)
+	}
+
+	// The setting is transaction-local, so the pooled session keeps 200ms.
+	var after string
+	if err := shortPool.QueryRow(ctx, `SHOW statement_timeout`).Scan(&after); err != nil {
+		t.Fatalf("read the session statement_timeout: %v", err)
+	}
+	if after != "200ms" {
+		t.Errorf("session statement_timeout after the purge = %q, want 200ms", after)
+	}
+}
+
+// TestPurgeMetricsView_Failures covers the begin and commit failures of
+// a view DELETE's transaction: the begin against a closed pool, and the
+// commit through a deferred constraint trigger on the stand-in store.
+func TestPurgeMetricsView_Failures(t *testing.T) {
+	ds, pool, cleanup := newConnPurgeTestDatastore(t)
+	defer cleanup()
+	defer createPurgeTestViews(t, pool, false)()
+	ctx := context.Background()
+
+	scratchPool, err := pgxpool.New(ctx, pool.Config().ConnString())
+	if err != nil {
+		t.Fatalf("scratch pool creation failed: %v", err)
+	}
+	scratchPool.Close()
+	err = NewTestDatastore(scratchPool).purgeMetricsView(ctx, "purge_test_cf", 1)
+	if err == nil || !strings.Contains(err.Error(), "failed to begin") {
+		t.Errorf("purgeMetricsView against a closed pool = %v, want a begin failure", err)
+	}
+
+	mustExecPurgeTest(t, pool, `
+        CREATE OR REPLACE FUNCTION purge_test_cf_block_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'view purge commit blocked by test trigger';
+        END;
+        $$;
+        CREATE CONSTRAINT TRIGGER purge_test_cf_block_commit
+        AFTER DELETE ON purge_test_cf_store
+        DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW EXECUTE FUNCTION purge_test_cf_block_commit();`)
+	defer mustExecPurgeTest(t, pool, `DROP FUNCTION IF EXISTS purge_test_cf_block_commit() CASCADE`)
+	mustExecPurgeTest(t, pool, `INSERT INTO purge_test_cf_store VALUES (3, 1)`)
+
+	err = ds.purgeMetricsView(ctx, "purge_test_cf", 3)
+	if err == nil || !strings.Contains(err.Error(), "failed to commit") {
+		t.Errorf("purgeMetricsView with a blocked commit = %v, want a commit failure", err)
+	}
+	wantPurgeRows(t, pool, "metrics.purge_test_cf", 3, 1)
+}

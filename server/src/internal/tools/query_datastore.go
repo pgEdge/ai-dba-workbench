@@ -216,6 +216,30 @@ const datastoreDefaultWindowHint = "No rows in the default window (the hour befo
 // statement timeout raises.
 const sqlstateQueryCanceled = "57014"
 
+// On pgEdge ColdFront, a statement timeout that fires while pg_duckdb
+// is executing a metrics view read is reported as an internal_error
+// (XX000) from DuckDB's executor whose message contains
+// duckdbQueryCanceledMarker (DuckDB's own spelling), not as 57014.
+const (
+	sqlstateInternalError     = "XX000"
+	duckdbQueryCanceledMarker = "Query cancelled" //nolint:misspell // DuckDB's message text
+)
+
+// isStatementTimeout reports whether err is a statement canceled by a
+// timeout: PostgreSQL's 57014, pg_duckdb's canceled-query error, or a
+// context deadline.
+func isStatementTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == sqlstateQueryCanceled ||
+		(pgErr.Code == sqlstateInternalError && strings.Contains(pgErr.Message, duckdbQueryCanceledMarker))
+}
+
 // Messages for a datastore statement that fails once it is running.
 const (
 	datastoreQueryFailedMsg  = "The query failed; check the filter values and column types."
@@ -231,8 +255,7 @@ const (
 func datastoreQueryErrorFormatter(source string) queryErrorFormatter {
 	return func(stage string, err error) string {
 		logging.Error("query_datastore_failed", "source", source, "stage", stage, "error", err)
-		var pgErr *pgconn.PgError
-		if (errors.As(err, &pgErr) && pgErr.Code == sqlstateQueryCanceled) || errors.Is(err, context.DeadlineExceeded) {
+		if isStatementTimeout(err) {
 			return datastoreQueryTimeoutMsg
 		}
 		return datastoreQueryFailedMsg

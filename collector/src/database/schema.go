@@ -4286,6 +4286,36 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #32: the collector now copies the parent settings onto
+	// every server-level probe_configs row whose user_modified flag is
+	// FALSE on each reload (issue #810). Before this release the
+	// PUT /api/v1/probe-configs/{id} endpoint edited a server row
+	// without setting that flag, so an override made that way would be
+	// lost on upgrade. The endpoint always set updated_at, whereas the
+	// collector creates the row with updated_at equal to created_at, so
+	// a server row updated after it was created is treated as an
+	// explicit override and keeps its settings.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     32,
+		Description: "Mark server probe configs edited through the API as user overrides",
+		Up: func(tx pgx.Tx) error {
+			_, err := tx.Exec(context.Background(), `
+				UPDATE probe_configs
+				SET user_modified = TRUE
+				WHERE scope = 'server'
+				  AND NOT user_modified
+				  AND updated_at > created_at;
+
+				COMMENT ON COLUMN probe_configs.user_modified IS
+					'Whether this config is an explicit override set by a user; the collector keeps a server row that is not in step with its cluster, group or global parent';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to mark edited server probe configs as overrides: %w", err)
+			}
+			return nil
+		},
+	})
 }
 
 // statementTextUpdates holds, for each column that stores statement text,

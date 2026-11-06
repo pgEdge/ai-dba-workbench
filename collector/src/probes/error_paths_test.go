@@ -154,6 +154,10 @@ func TestCheckHelpers_ErrorPath(t *testing.T) {
 			_, err := LoadProbeConfigs(ctx, c)
 			return err
 		}},
+		{"sync_inherited_probe_configs", func(ctx context.Context, c *pgxpool.Conn) error {
+			_, err := SyncInheritedProbeConfigs(ctx, c)
+			return err
+		}},
 		{"ensure_probe_config", func(ctx context.Context, c *pgxpool.Conn) error {
 			_, err := EnsureProbeConfig(ctx, c, 1, ProbeNamePgNodeRole)
 			return err

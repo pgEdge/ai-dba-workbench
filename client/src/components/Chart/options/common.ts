@@ -54,6 +54,36 @@ function formatDateTimeFull(d: Date): string {
 }
 
 /**
+ * Matches an ISO 8601 date or date-time: the format of every timestamp
+ * category the client builds (`toISOString`) or receives from the
+ * server (RFC 3339). Anything else is a plain label. `Date` parsing on
+ * its own is far too lenient for that test, since V8 reads server
+ * names such as "pg-1" or "replica-12" as dates in 2001.
+ */
+const ISO_TIMESTAMP_RE =
+    /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?)?$/i;
+
+/**
+ * Parses a category as a timestamp, returning null for anything that
+ * is not an ISO 8601 date or date-time.
+ */
+function parseTimestamp(value: string): Date | null {
+    if (!ISO_TIMESTAMP_RE.test(value)) {return null;}
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * True when every category is a timestamp, so the axis is a time
+ * series rather than a set of named items such as servers. An empty
+ * list counts as a time series, which keeps the axis that every chart
+ * without categories has always drawn.
+ */
+export function isTimeCategories(categories?: string[]): boolean {
+    return (categories ?? []).every(c => parseTimestamp(c) !== null);
+}
+
+/**
  * Detects the time span of the categories array and returns an
  * appropriate formatter for axis labels.
  */
@@ -62,16 +92,16 @@ function buildTimeLabelFormatter(
 ): (value: string) => string {
     let spanMs = 0;
     if (categories.length >= 2) {
-        const first = new Date(categories[0]).getTime();
-        const last = new Date(categories[categories.length - 1]).getTime();
-        if (!Number.isNaN(first) && !Number.isNaN(last)) {
-            spanMs = Math.abs(last - first);
+        const first = parseTimestamp(categories[0]);
+        const last = parseTimestamp(categories[categories.length - 1]);
+        if (first && last) {
+            spanMs = Math.abs(last.getTime() - first.getTime());
         }
     }
 
     return (value: string) => {
-        const d = new Date(value);
-        if (Number.isNaN(d.getTime())) {return value;}
+        const d = parseTimestamp(value);
+        if (!d) {return value;}
 
         if (spanMs < MS_PER_DAY) {
             return formatTime(d);
@@ -219,10 +249,8 @@ export function buildTooltip(show: boolean): object {
             const list = Array.isArray(params) ? params : [params];
             if (list.length === 0) {return '';}
 
-            const d = new Date(list[0].axisValue);
-            const header = Number.isNaN(d.getTime())
-                ? list[0].axisValue
-                : formatDateTimeFull(d);
+            const d = parseTimestamp(list[0].axisValue);
+            const header = d ? formatDateTimeFull(d) : list[0].axisValue;
 
             const lines = list.map((p) => {
                 let val: string;
@@ -276,6 +304,52 @@ export function buildXAxis(categories?: string[]): object {
         axisLabel: {
             formatter,
             hideOverlap: true,
+        },
+    };
+}
+
+/** Widest a named category label may grow before it is truncated. */
+const LABEL_MAX_WIDTH = 96;
+
+/**
+ * Number of named categories above which a horizontal axis rotates its
+ * labels so that each can still be shown.
+ */
+const LABEL_ROTATE_THRESHOLD = 3;
+
+/** Rotation, in degrees, of crowded named category labels. */
+const LABEL_ROTATION = 30;
+
+/**
+ * Builds a category axis for named items, such as the servers of a
+ * comparative bar chart. Unlike the time-series axis from `buildXAxis`,
+ * which thins its labels to the ones that fit, every item is labelled
+ * (`interval: 0`): a long name is truncated with an ellipsis whilst the
+ * tooltip keeps the full name, and when there are more than a few
+ * items on a horizontal axis the labels are rotated so that they do
+ * not collide. A vertical axis (a horizontal bar chart) stacks its
+ * labels, so it truncates them but never rotates them.
+ */
+export function buildLabelAxis(
+    categories?: string[],
+    vertical?: boolean,
+): object {
+    const cats = categories ?? [];
+    const rotate = !vertical && cats.length > LABEL_ROTATE_THRESHOLD
+        ? LABEL_ROTATION
+        : 0;
+
+    return {
+        type: 'category',
+        data: cats,
+        boundaryGap: true,
+        axisTick: { alignWithLabel: true },
+        axisLabel: {
+            interval: 0,
+            hideOverlap: false,
+            rotate,
+            width: LABEL_MAX_WIDTH,
+            overflow: 'truncate',
         },
     };
 }

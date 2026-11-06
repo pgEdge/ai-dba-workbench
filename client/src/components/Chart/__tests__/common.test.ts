@@ -27,6 +27,8 @@ import {
     buildDataZoom,
     buildSeriesData,
     buildFilledMarkArea,
+    buildLabelAxis,
+    isTimeCategories,
 } from '../options/common';
 
 const isoMinusHours = (h: number) =>
@@ -123,6 +125,104 @@ describe('buildXAxis formatter', () => {
         expect(
             xAxis.axisLabel.formatter('2026-04-20T03:07:00Z'),
         ).toMatch(/^\d{2}:\d{2}$/);
+    });
+
+    it('leaves names that Date would misread as dates untouched', () => {
+        // V8 parses "pg-1" and "replica-12" as dates in 2001, which
+        // once turned every server name into "00:00".
+        const cats = ['pg-1', 'replica-12'];
+        const xAxis = buildXAxis(cats) as unknown as AxisOpts;
+        expect(xAxis.axisLabel.formatter('pg-1')).toBe('pg-1');
+        expect(xAxis.axisLabel.formatter('replica-12')).toBe('replica-12');
+    });
+
+    it('formats RFC 3339 timestamps with an offset or fraction', () => {
+        const xAxis = buildXAxis([
+            '2026-04-20T14:05:00.123456+00:00',
+            '2026-04-20T15:05:00+01:00',
+        ]) as unknown as AxisOpts;
+        expect(
+            xAxis.axisLabel.formatter('2026-04-20T14:05:00.123456+00:00'),
+        ).toMatch(/^\d{2}:\d{2}$/);
+    });
+});
+
+describe('isTimeCategories', () => {
+    it('accepts ISO 8601 dates and date-times', () => {
+        expect(isTimeCategories([
+            '2026-04-20T14:05:00Z',
+            '2026-04-20T14:05:00.000Z',
+            '2026-04-20T14:05:00+01:00',
+            '2026-04-20 14:05',
+            '2026-04-20',
+        ])).toBe(true);
+    });
+
+    it('treats a missing or empty list as a time series', () => {
+        expect(isTimeCategories()).toBe(true);
+        expect(isTimeCategories([])).toBe(true);
+    });
+
+    it('rejects names, including ones Date would misread', () => {
+        expect(isTimeCategories(['pg-1', 'pg-2'])).toBe(false);
+        expect(isTimeCategories(['server 1'])).toBe(false);
+        expect(isTimeCategories(['2026-04-20T14:05:00Z', 'primary']))
+            .toBe(false);
+    });
+
+    it('rejects a well-formed but impossible date', () => {
+        expect(isTimeCategories(['2026-13-45'])).toBe(false);
+    });
+});
+
+describe('buildLabelAxis', () => {
+    interface LabelAxisOpts {
+        type: string;
+        data: string[];
+        axisLabel: {
+            interval: number;
+            hideOverlap: boolean;
+            rotate: number;
+            width: number;
+            overflow: string;
+            formatter?: unknown;
+        };
+    }
+
+    it('labels every category without a time formatter', () => {
+        const axis = buildLabelAxis(['pg-1', 'pg-2']) as unknown as LabelAxisOpts;
+        expect(axis.type).toBe('category');
+        expect(axis.data).toEqual(['pg-1', 'pg-2']);
+        expect(axis.axisLabel.interval).toBe(0);
+        expect(axis.axisLabel.hideOverlap).toBe(false);
+        expect(axis.axisLabel.overflow).toBe('truncate');
+        expect(axis.axisLabel.width).toBeGreaterThan(0);
+        expect(axis.axisLabel.formatter).toBeUndefined();
+    });
+
+    it('keeps a few labels level', () => {
+        const axis = buildLabelAxis(['a', 'b', 'c']) as unknown as LabelAxisOpts;
+        expect(axis.axisLabel.rotate).toBe(0);
+    });
+
+    it('rotates labels when there are more than a few', () => {
+        const axis = buildLabelAxis(['a', 'b', 'c', 'd']) as unknown as LabelAxisOpts;
+        expect(axis.axisLabel.rotate).toBe(30);
+    });
+
+    it('never rotates labels on a vertical axis', () => {
+        const axis = buildLabelAxis(
+            ['a', 'b', 'c', 'd', 'e'],
+            true,
+        ) as unknown as LabelAxisOpts;
+        expect(axis.axisLabel.rotate).toBe(0);
+        expect(axis.axisLabel.interval).toBe(0);
+    });
+
+    it('falls back to an empty category list when categories is omitted', () => {
+        const axis = buildLabelAxis() as unknown as LabelAxisOpts;
+        expect(axis.data).toEqual([]);
+        expect(axis.axisLabel.rotate).toBe(0);
     });
 });
 
@@ -568,6 +668,17 @@ describe('buildTooltip formatter', () => {
         expect(line(1_250)).toContain('Rate: 1.25K');
         expect(line(-0)).toContain('Rate: 0');
         expect(line(-0)).not.toContain('Rate: -0');
+    });
+
+    it('shows a server name in the header rather than a misread date', () => {
+        const tooltip = buildTooltip(true) as TooltipOpts;
+        const html = tooltip.formatter([{
+            axisValue: 'replica-12',
+            marker: '*',
+            seriesName: 'Commits/sec',
+            value: 5,
+        }]);
+        expect(html).toContain('<strong>replica-12</strong>');
     });
 
     it('falls back to the raw axisValue when the date is unparseable', () => {

@@ -16,6 +16,8 @@ import {
     buildLegend,
     buildGrid,
     buildXAxis,
+    buildLabelAxis,
+    isTimeCategories,
     buildYAxis,
     buildDataZoom,
     buildSeriesData,
@@ -39,7 +41,12 @@ export function buildBarOptions(
         barMaxWidth: 50,
     }));
 
-    const categoryAxis = buildXAxis(data.categories);
+    // Time buckets use the time-series axis, which formats timestamps
+    // and thins labels to fit; named items such as servers label every
+    // bar instead.
+    const categoryAxis = isTimeCategories(data.categories)
+        ? buildXAxis(data.categories)
+        : buildLabelAxis(data.categories, options.horizontal);
     // Bars always grow from the zero baseline, so the value axis is
     // zero-anchored regardless of whether the series are stacked.
     const valueAxis = buildYAxis(

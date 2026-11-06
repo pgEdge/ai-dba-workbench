@@ -53,6 +53,11 @@ The query detail view displays the following tiles:
 - The Avg Rows/Call tile divides the rows returned within
   the range by the calls made within the range.
 
+The Total Calls, Total Time and Mean Time tiles name the
+selected range in their labels, such as Mean Time (Last
+24h) or Mean Time (Custom Range), so that they read as
+windowed figures beside the lifetime minimum and maximum.
+
 PostgreSQL reports `pg_stat_statements` counters
 cumulatively, so the Workbench derives a windowed figure
 by subtracting consecutive collected samples. That

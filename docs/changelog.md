@@ -1433,6 +1433,15 @@ project adheres to
   matches any cluster offers no Cluster scope. Standalone servers
   still offer no Cluster scope.
 
+- Colour the Dead Ratio column of the Database Dashboard's Vacuum
+  Status section by the ratio itself, and leave system catalogs and
+  TOAST tables out of the list (#806). The column took its colour from
+  how long ago the table was last vacuumed, so a table with a dead
+  ratio above 90% showed green when autovacuum had run recently. The
+  ratio is now green up to 5%, amber up to 20% and red above that, as
+  on the Server Dashboard's database cards, and the list shows only
+  the tables that `pg_stat_user_tables` would.
+
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled
   toggle, or a failed delete, replaced the whole page with the error

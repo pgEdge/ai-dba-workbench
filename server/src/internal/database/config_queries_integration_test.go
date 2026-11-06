@@ -436,7 +436,7 @@ func TestUpdateProbeConfig(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	globalID, _ := seedProbeConfigs(t, pool, fx.ConnID)
+	globalID, serverID := seedProbeConfigs(t, pool, fx.ConnID)
 
 	// validation
 	bad := -1
@@ -470,6 +470,30 @@ func TestUpdateProbeConfig(t *testing.T) {
 	// merge with no fields set just refreshes timestamps.
 	if _, err := ds.UpdateProbeConfig(ctx, int64(globalID), ProbeConfigUpdate{}); err != nil {
 		t.Fatalf("noop update: %v", err)
+	}
+
+	// An edit to a server row marks it as an explicit override, so the
+	// collector does not copy the global default back over it; an edit
+	// to the global row leaves user_modified alone (issues #810, #811).
+	if _, err := ds.UpdateProbeConfig(ctx, int64(serverID), ProbeConfigUpdate{
+		IsEnabled: &enabled,
+	}); err != nil {
+		t.Fatalf("Update server row: %v", err)
+	}
+	userModified := func(id int) bool {
+		t.Helper()
+		var v bool
+		if err := pool.QueryRow(ctx,
+			`SELECT user_modified FROM probe_configs WHERE id = $1`, id).Scan(&v); err != nil {
+			t.Fatalf("read user_modified: %v", err)
+		}
+		return v
+	}
+	if !userModified(serverID) {
+		t.Error("server row edited through UpdateProbeConfig is not marked user_modified")
+	}
+	if userModified(globalID) {
+		t.Error("global row edited through UpdateProbeConfig was marked user_modified")
 	}
 
 	// not found
@@ -1057,4 +1081,58 @@ func TestAlertRuleErrorPaths(t *testing.T) {
 	if err := ds.DeleteAlertThreshold(ctx, "server", fx.ConnID, 1); err == nil {
 		t.Error("expected error from DeleteAlertThreshold")
 	}
+}
+
+// TestUpdateProbeConfig_UpdateFailures drives the UPDATE's own error
+// paths, which the earlier fetch cannot reach: a BEFORE UPDATE trigger
+// that raises makes the statement fail, and one that returns NULL makes
+// it update nothing, which must read as not found.
+func TestUpdateProbeConfig_UpdateFailures(t *testing.T) {
+	ds, pool, fx, cleanup := newConfigQueriesTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_, serverID := seedProbeConfigs(t, pool, fx.ConnID)
+
+	exec := func(sql string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatalf("exec %q: %v", sql, err)
+		}
+	}
+	exec(`
+		CREATE OR REPLACE FUNCTION raise_on_probe_configs() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected probe_configs failure';
+		END $$;
+		CREATE OR REPLACE FUNCTION skip_on_probe_configs() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			RETURN NULL;
+		END $$;`)
+	// The functions outlive the tables the cleanup drops.
+	defer exec(`
+		DROP FUNCTION IF EXISTS raise_on_probe_configs() CASCADE;
+		DROP FUNCTION IF EXISTS skip_on_probe_configs() CASCADE;`)
+
+	t.Run("update fails", func(t *testing.T) {
+		exec(`CREATE TRIGGER raise_on_update BEFORE UPDATE ON probe_configs
+			FOR EACH ROW EXECUTE FUNCTION raise_on_probe_configs()`)
+		defer exec(`DROP TRIGGER raise_on_update ON probe_configs`)
+		_, err := ds.UpdateProbeConfig(ctx, int64(serverID), ProbeConfigUpdate{})
+		if err == nil || errors.Is(err, ErrProbeConfigNotFound) {
+			t.Errorf("UpdateProbeConfig: error = %v, want the update failure", err)
+		}
+	})
+
+	t.Run("update changes nothing", func(t *testing.T) {
+		exec(`CREATE TRIGGER skip_on_update BEFORE UPDATE ON probe_configs
+			FOR EACH ROW EXECUTE FUNCTION skip_on_probe_configs()`)
+		defer exec(`DROP TRIGGER skip_on_update ON probe_configs`)
+		_, err := ds.UpdateProbeConfig(ctx, int64(serverID), ProbeConfigUpdate{})
+		if !errors.Is(err, ErrProbeConfigNotFound) {
+			t.Errorf("UpdateProbeConfig: error = %v, want %v", err, ErrProbeConfigNotFound)
+		}
+	})
 }

@@ -219,6 +219,13 @@ func (gc *GarbageCollector) collectGarbage(ctx context.Context) error {
 	seenProbes := make(map[string]bool)
 	for _, configs := range configsByConnection {
 		for _, config := range configs {
+			// LoadProbeConfigs returns disabled rows too, for the
+			// scheduler's benefit; retention has always been taken
+			// from an enabled row only.
+			if !config.IsEnabled {
+				continue
+			}
+
 			// Skip if we've already processed this probe (same probe may exist for multiple connections)
 			// We only need to drop partitions once per probe, not per connection
 			if seenProbes[config.Name] {

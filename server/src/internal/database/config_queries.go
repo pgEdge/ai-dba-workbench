@@ -230,10 +230,16 @@ func (d *Datastore) UpdateProbeConfig(ctx context.Context, id int64, update Prob
 		retention = *update.RetentionDays
 	}
 
+	// An edit to a server, cluster or group row is an explicit
+	// override, so it is marked user_modified. The collector copies
+	// the parent settings onto every server row that is not, and would
+	// otherwise undo this edit on its next reload (issues #810, #811).
 	var c ProbeConfig
 	err = d.pool.QueryRow(ctx,
 		`UPDATE probe_configs
-         SET is_enabled = $2, collection_interval_seconds = $3, retention_days = $4, updated_at = NOW()
+         SET is_enabled = $2, collection_interval_seconds = $3, retention_days = $4,
+             user_modified = user_modified OR scope <> 'global',
+             updated_at = NOW()
          WHERE id = $1
          RETURNING id, connection_id, is_enabled, name, description,
                    collection_interval_seconds, retention_days, created_at, updated_at`,

@@ -298,6 +298,16 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 	}
 	defer ps.datastore.ReturnConnection(conn)
 
+	// Bring copied server-level rows back in step with Probe Defaults
+	// and any cluster or group override before reading them (issue
+	// #810). A failure here leaves the existing rows in force, which
+	// is no worse than skipping the reload, so collection carries on.
+	if synced, err := probes.SyncInheritedProbeConfigs(ctx, conn); err != nil {
+		logger.Errorf("Error syncing inherited probe configurations: %v", err)
+	} else if synced > 0 {
+		logger.Infof("Updated %d inherited probe configuration(s) from their defaults", synced)
+	}
+
 	configsByConnection, err := probes.LoadProbeConfigs(ctx, conn)
 	if err != nil {
 		return err
@@ -347,7 +357,9 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 			ps.probesByConn[conn.ID] = make(map[string]probes.MetricsProbe)
 		}
 
-		// Get global default probe configs (connection_id = 0)
+		// Get global default probe configs (connection_id = 0). Disabled
+		// globals are included: a server-level override may enable the
+		// probe, and an inherited disabled row must stop it.
 		globalConfigs := configsByConnection[0]
 
 		// For each global probe, ensure a connection-specific config exists
@@ -381,8 +393,21 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 				}
 			}
 
-			// Create probe if it doesn't exist or if interval changed
 			existingProbe := ps.probesByConn[conn.ID][config.Name]
+
+			// A disabled probe must not run (issue #811). Dropping it
+			// from the map is enough: its scheduling goroutine checks
+			// isCurrentProbe before every execution and exits.
+			if !config.IsEnabled {
+				if existingProbe != nil {
+					delete(ps.probesByConn[conn.ID], config.Name)
+					logger.Infof("Stopped probe %s for connection %d (disabled)",
+						config.Name, conn.ID)
+				}
+				continue
+			}
+
+			// Create probe if it doesn't exist or if interval changed
 			if existingProbe == nil || existingProbe.GetConfig().CollectionIntervalSeconds != config.CollectionIntervalSeconds {
 				probe := ps.createProbe(config)
 				if probe != nil {
@@ -391,8 +416,8 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 						config.Name, conn.ID, config.CollectionIntervalSeconds, config.RetentionDays)
 
 					// Start scheduling goroutine for new probes and when interval changes.
-					// When interval changes, the old goroutine will detect the config
-					// mismatch on its next tick and exit gracefully.
+					// When interval changes, the old goroutine finds it has been
+					// replaced on its next wake-up and exits gracefully.
 					ps.wg.Add(1)
 					go ps.scheduleProbeForConnection(probe, conn.ID)
 				}
@@ -488,8 +513,7 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 			logger.Infof("Context canceled, stopping probe scheduler for %s on %s during initial delay", config.Name, conn.Name)
 			return
 		case <-time.After(initialDelay):
-			// Initial delay elapsed, execute probe now
-			ps.executeProbeForConnection(ps.ctx, probe, conn)
+			// Initial delay elapsed; execute below
 		}
 	} else {
 		// The probe is past due, has never run, or its last collection
@@ -516,9 +540,15 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 			case <-time.After(jitter):
 			}
 		}
-
-		ps.executeProbeForConnection(ps.ctx, probe, conn)
 	}
+
+	// The configuration may have been reloaded whilst this goroutine
+	// waited, disabling the probe or replacing it with a new interval.
+	if !ps.isCurrentProbe(connectionID, probe) {
+		logger.Infof("Probe %s for %s has changed, stopping scheduler", config.Name, conn.Name)
+		return
+	}
+	ps.executeProbeForConnection(ps.ctx, probe, conn)
 
 	// Realign the ticker with the first execution: it was created before
 	// the initial wait, so a tick may already be buffered.
@@ -533,13 +563,8 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 			logger.Infof("Context canceled, stopping probe scheduler for %s on %s", config.Name, conn.Name)
 			return
 		case <-ticker.C:
-			// Check if probe still exists and config hasn't changed
-			ps.probesMutex.RLock()
-			currentProbe, exists := ps.probesByConn[connectionID][config.Name]
-			ps.probesMutex.RUnlock()
-
-			if !exists || currentProbe.GetConfig().CollectionIntervalSeconds != config.CollectionIntervalSeconds {
-				// Probe was removed or interval changed, stop this goroutine
+			if !ps.isCurrentProbe(connectionID, probe) {
+				// Probe was removed, disabled or replaced, stop this goroutine
 				logger.Infof("Probe %s for %s has changed, stopping scheduler", config.Name, conn.Name)
 				return
 			}
@@ -555,6 +580,20 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 			ps.executeProbeForConnection(ps.ctx, probe, conn)
 		}
 	}
+}
+
+// isCurrentProbe reports whether probe is still the instance registered
+// for its name on the connection. loadConfigs replaces the instance when
+// the interval changes and removes it when the probe is disabled, so a
+// goroutine whose probe is no longer current must stop. Comparing the
+// instance rather than the interval also stops the old goroutine when a
+// probe is disabled and re-enabled at the same interval between two of
+// its ticks, which would otherwise leave two goroutines collecting.
+func (ps *ProbeScheduler) isCurrentProbe(connectionID int, probe probes.MetricsProbe) bool {
+	ps.probesMutex.RLock()
+	defer ps.probesMutex.RUnlock()
+	current, exists := ps.probesByConn[connectionID][probe.GetName()]
+	return exists && current == probe
 }
 
 // getMonitoredConnectionByID retrieves a single monitored connection by its ID.

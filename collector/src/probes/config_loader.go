@@ -30,18 +30,86 @@ import (
 // IS NULL and would otherwise collapse into the global-default bucket
 // (key 0) when grouped by COALESCE(connection_id, 0). Cluster and
 // group inheritance is resolved separately by EnsureProbeConfig when
-// a server-level row is materialized for each connection.
+// a server-level row is materialized for each connection, and by
+// SyncInheritedProbeConfigs on every reload.
+//
+// Disabled rows are deliberately included: the scheduler has to see a
+// disabled server-level row to stop the probe it is running, and a
+// disabled global row still names a probe that a server-level
+// override may enable (issue #811).
 const loadProbeConfigsQuery = `
         SELECT id, name, description, collection_interval_seconds, retention_days, is_enabled, connection_id
         FROM probe_configs
-        WHERE is_enabled = TRUE
-          AND scope IN ('global', 'server')
+        WHERE scope IN ('global', 'server')
         ORDER BY COALESCE(connection_id, 0), name
     `
 
-// LoadProbeConfigs loads enabled global and server-scoped probe
-// configurations from the database. The returned map keys server-scoped
-// rows by their connection_id and global rows by 0.
+// syncInheritedProbeConfigsQuery copies the effective parent settings
+// onto every server-level row that no user has overridden.
+//
+// A server-level row is materialized by EnsureProbeConfig with
+// user_modified = FALSE, as a copy of the first parent that resolves
+// (cluster, then group, then global). Without this statement the copy
+// never changes again, so later edits to Probe Defaults or to a
+// cluster or group override would never reach a connection that is
+// already monitored (issue #810).
+//
+// The joins follow the same resolution order as EnsureProbeConfig.
+// The partial unique indexes on probe_configs allow at most one row
+// per join, and the copied columns are NOT NULL, so COALESCE over the
+// three parents picks every value from the first parent that exists.
+// Rows with no parent at all keep the hardcoded defaults they were
+// created with, and rows already in step are left untouched.
+var syncInheritedProbeConfigsQuery = sqlmarker.Tag(`
+        UPDATE probe_configs AS t
+        SET is_enabled = r.is_enabled,
+            collection_interval_seconds = r.collection_interval_seconds,
+            retention_days = r.retention_days,
+            updated_at = NOW()
+        FROM (
+            SELECT s.id,
+                   COALESCE(cl.is_enabled, gr.is_enabled, gl.is_enabled) AS is_enabled,
+                   COALESCE(cl.collection_interval_seconds, gr.collection_interval_seconds,
+                            gl.collection_interval_seconds) AS collection_interval_seconds,
+                   COALESCE(cl.retention_days, gr.retention_days, gl.retention_days) AS retention_days
+            FROM probe_configs s
+            JOIN connections c ON c.id = s.connection_id
+            LEFT JOIN clusters k ON k.id = c.cluster_id
+            LEFT JOIN probe_configs cl
+                   ON cl.scope = 'cluster' AND cl.cluster_id = c.cluster_id AND cl.name = s.name
+            LEFT JOIN probe_configs gr
+                   ON gr.scope = 'group' AND gr.group_id = k.group_id AND gr.name = s.name
+            LEFT JOIN probe_configs gl
+                   ON gl.scope = 'global' AND gl.connection_id IS NULL AND gl.name = s.name
+            WHERE s.scope = 'server'
+              AND NOT s.user_modified
+        ) AS r
+        WHERE t.id = r.id
+          -- Re-checked against the latest row version when a concurrent
+          -- PUT marks it an override; s keeps the statement snapshot.
+          AND NOT t.user_modified
+          AND r.is_enabled IS NOT NULL
+          AND (t.is_enabled, t.collection_interval_seconds, t.retention_days)
+              IS DISTINCT FROM (r.is_enabled, r.collection_interval_seconds, r.retention_days)
+    `)
+
+// SyncInheritedProbeConfigs brings every server-level probe_configs row
+// that no user has overridden (user_modified = FALSE) back in step
+// with the cluster, group or global row it inherits from, and returns
+// the number of rows it changed. Rows a user has overridden are never
+// touched.
+func SyncInheritedProbeConfigs(ctx context.Context, conn *pgxpool.Conn) (int64, error) {
+	tag, err := conn.Exec(ctx, syncInheritedProbeConfigsQuery)
+	if err != nil {
+		return 0, fmt.Errorf("failed to sync inherited probe configs: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// LoadProbeConfigs loads global and server-scoped probe configurations
+// from the database, enabled or not; callers check IsEnabled. The
+// returned map keys server-scoped rows by their connection_id and
+// global rows by 0.
 //
 // Cluster- and group-scoped rows are intentionally excluded because they
 // also have connection_id IS NULL and would otherwise collapse into the

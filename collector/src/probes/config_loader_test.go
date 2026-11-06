@@ -13,6 +13,8 @@ package probes
 import (
 	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
 
 // allProbeNameConstants returns all probe name constants defined in constants.go.
@@ -229,16 +231,37 @@ func TestLoadProbeConfigsQuery_FiltersByScope(t *testing.T) {
 			"Got query:\n%s", loadProbeConfigsQuery)
 	}
 
-	// Sanity: the query must still require the row to be enabled and
-	// must select from probe_configs. These are not the bug fix but
-	// they pin the contract the test is asserting.
-	if !strings.Contains(loadProbeConfigsQuery, "is_enabled = TRUE") {
-		t.Errorf("loadProbeConfigsQuery must filter on is_enabled = TRUE; got:\n%s",
+	// The query must return disabled rows as well, so the scheduler can
+	// stop a probe whose configuration has been disabled (issue #811),
+	// and must select from probe_configs.
+	if strings.Contains(loadProbeConfigsQuery, "is_enabled = TRUE") {
+		t.Errorf("loadProbeConfigsQuery must not filter on is_enabled; got:\n%s",
 			loadProbeConfigsQuery)
 	}
 	if !strings.Contains(loadProbeConfigsQuery, "FROM probe_configs") {
 		t.Errorf("loadProbeConfigsQuery must select FROM probe_configs; got:\n%s",
 			loadProbeConfigsQuery)
+	}
+}
+
+// TestSyncInheritedProbeConfigsQuery_Contract pins the parts of the
+// inherited-settings sync (issue #810) that must not drift: it touches
+// only server rows no user has overridden, resolves the parents in the
+// same order as EnsureProbeConfig, and carries the Workbench-internal
+// marker so it stays out of the Top Queries panel.
+func TestSyncInheritedProbeConfigsQuery_Contract(t *testing.T) {
+	for _, want := range []string{
+		"s.scope = 'server'",
+		"NOT s.user_modified",
+		"NOT t.user_modified",
+		"COALESCE(cl.is_enabled, gr.is_enabled, gl.is_enabled)",
+		"IS DISTINCT FROM",
+		sqlmarker.Marker,
+	} {
+		if !strings.Contains(syncInheritedProbeConfigsQuery, want) {
+			t.Errorf("syncInheritedProbeConfigsQuery is missing %q; got:\n%s",
+				want, syncInheritedProbeConfigsQuery)
+		}
 	}
 }
 

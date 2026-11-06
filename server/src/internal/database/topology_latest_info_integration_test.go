@@ -43,15 +43,17 @@ func seedStaleServerInfo(t *testing.T, ds *Datastore, connectionID int) {
 }
 
 // TestTopologyReadersUseLatestServerInfoIntegration checks that the
-// topology readers return the newest stored PostgreSQL version, system
-// identifier, OS and Spock version however old that row is, rather than
-// only a row written in the last few minutes (issue #805).
+// three topology readers (all connections, persisted members of
+// auto-detected clusters and members of manual clusters) return the
+// newest stored PostgreSQL version, system identifier, OS and Spock
+// version however old that row is, rather than only a row written in
+// the last few minutes (issue #805).
 func TestTopologyReadersUseLatestServerInfoIntegration(t *testing.T) {
 	ds, _, fx, cleanup := newConfigQueriesTestDatastore(t)
 	defer cleanup()
 	ctx := context.Background()
 
-	var clusterID, standaloneID, memberID int
+	var clusterID, manualClusterID, standaloneID, memberID, manualID int
 	if err := ds.pool.QueryRow(ctx, `INSERT INTO clusters (group_id, name, auto_cluster_key)
         VALUES ($1, 'auto-cls', 'spock:latest-info') RETURNING id`, fx.GroupID).Scan(&clusterID); err != nil {
 		t.Fatalf("seed auto cluster: %v", err)
@@ -64,8 +66,17 @@ func TestTopologyReadersUseLatestServerInfoIntegration(t *testing.T) {
         VALUES ('stale-info-member', $1) RETURNING id`, clusterID).Scan(&memberID); err != nil {
 		t.Fatalf("seed member connection: %v", err)
 	}
-	seedStaleServerInfo(t, ds, standaloneID)
-	seedStaleServerInfo(t, ds, memberID)
+	if err := ds.pool.QueryRow(ctx, `INSERT INTO clusters (group_id, name)
+        VALUES ($1, 'manual-cls') RETURNING id`, fx.GroupID).Scan(&manualClusterID); err != nil {
+		t.Fatalf("seed manual cluster: %v", err)
+	}
+	if err := ds.pool.QueryRow(ctx, `INSERT INTO connections (name, cluster_id)
+        VALUES ('stale-info-manual', $1) RETURNING id`, manualClusterID).Scan(&manualID); err != nil {
+		t.Fatalf("seed manual member connection: %v", err)
+	}
+	for _, id := range []int{standaloneID, memberID, manualID} {
+		seedStaleServerInfo(t, ds, id)
+	}
 
 	conns, err := ds.getAllConnectionsWithRoles(ctx)
 	if err != nil {
@@ -102,8 +113,24 @@ func TestTopologyReadersUseLatestServerInfoIntegration(t *testing.T) {
 	if len(got) != 1 || got[0].ID != memberID {
 		t.Fatalf("getPersistedClusterMembers = %+v, want only connection %d", members, memberID)
 	}
-	if got[0].Version != "17.2" || got[0].OS != "Linux" {
-		t.Errorf("getPersistedClusterMembers Version = %q, OS = %q, want 17.2 and Linux",
-			got[0].Version, got[0].OS)
+	assertLatestServerInfo(t, "getPersistedClusterMembers", got[0])
+
+	manual, err := ds.getServersInClusterWithRolesInternal(ctx, manualClusterID)
+	if err != nil {
+		t.Fatalf("getServersInClusterWithRolesInternal: %v", err)
+	}
+	if len(manual) != 1 || manual[0].ID != manualID {
+		t.Fatalf("getServersInClusterWithRolesInternal = %+v, want only connection %d", manual, manualID)
+	}
+	assertLatestServerInfo(t, "getServersInClusterWithRolesInternal", manual[0])
+}
+
+// assertLatestServerInfo checks that a topology entry carries the newest
+// values seedStaleServerInfo wrote.
+func assertLatestServerInfo(t *testing.T, reader string, s TopologyServerInfo) {
+	t.Helper()
+	if s.Version != "17.2" || s.OS != "Linux" || s.SpockVersion != "5.0.1" {
+		t.Errorf("%s Version = %q, OS = %q, SpockVersion = %q, want 17.2, Linux and 5.0.1",
+			reader, s.Version, s.OS, s.SpockVersion)
 	}
 }

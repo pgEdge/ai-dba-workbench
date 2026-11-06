@@ -110,7 +110,8 @@ func TestTopologyQueriesMaskConnectionErrorIntegration(t *testing.T) {
 }
 
 // TestTopologyConnectionReadersErrorPathsIntegration checks that both
-// readers report a row they cannot scan and a query that fails.
+// readers, and the manual-cluster member reader, report a row they
+// cannot scan and a query that fails.
 func TestTopologyConnectionReadersErrorPathsIntegration(t *testing.T) {
 	ds, pool, fx, cleanup := newConfigQueriesTestDatastore(t)
 	defer cleanup()
@@ -126,6 +127,9 @@ func TestTopologyConnectionReadersErrorPathsIntegration(t *testing.T) {
 	if _, err := ds.getPersistedClusterMembers(ctx, nil); err == nil || !strings.Contains(err.Error(), "failed to scan") {
 		t.Errorf("getPersistedClusterMembers scan error = %v", err)
 	}
+	if _, err := ds.getServersInClusterWithRolesInternal(ctx, fx.ClusterID); err == nil || !strings.Contains(err.Error(), "failed to read servers") {
+		t.Errorf("getServersInClusterWithRolesInternal scan error = %v", err)
+	}
 
 	mustExecClusterQueries(t, pool, `DROP TABLE alerts CASCADE`)
 	if _, err := ds.getAllConnectionsWithRoles(ctx); err == nil || !strings.Contains(err.Error(), "failed to query") {
@@ -133,6 +137,9 @@ func TestTopologyConnectionReadersErrorPathsIntegration(t *testing.T) {
 	}
 	if _, err := ds.getPersistedClusterMembers(ctx, nil); err == nil || !strings.Contains(err.Error(), "failed to query") {
 		t.Errorf("getPersistedClusterMembers query error = %v", err)
+	}
+	if _, err := ds.getServersInClusterWithRolesInternal(ctx, fx.ClusterID); err == nil || !strings.Contains(err.Error(), "failed to query servers") {
+		t.Errorf("getServersInClusterWithRolesInternal query error = %v", err)
 	}
 }
 

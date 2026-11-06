@@ -1742,8 +1742,9 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"OverviewResponse": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"status":       {Type: "string", Description: "Overview status (ready, generating)"},
-				"summary":      {Type: "object", Description: "AI-generated summary", Nullable: true},
+				"status":       {Type: "string", Description: "Present only when no summary is available: generating (no summary yet), empty (no visible connections, SSE stream only) or error (generation failed)"},
+				"error":        {Type: "string", Description: "Generic failure message, present when status is error"},
+				"summary":      {Type: "string", Description: "AI-generated summary; null while a status is reported", Nullable: true},
 				"generated_at": {Type: "string", Format: "date-time", Description: "When the overview was generated"},
 			},
 		},
@@ -4190,7 +4191,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/overview/stream": {
 			Get: &OpenAPIOperation{
 				Summary:     "Stream overview generation",
-				Description: "Streams overview generation progress via Server-Sent Events (SSE)",
+				Description: "Streams overviews via Server-Sent Events (SSE). Each overview event carries an OverviewResponse payload; the stream opens with the cached summary or a status notice (generating, empty or error), and status notices carry no event id",
 				OperationID: "streamOverview",
 				Tags:        []string{"Overview"},
 				Security:    bearerAuth,

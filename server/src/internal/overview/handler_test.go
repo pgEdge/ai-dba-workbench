@@ -703,19 +703,30 @@ func TestHandleSSE_BroadcastDelivery(t *testing.T) {
 	ov := newTestOverview("New broadcast overview.")
 	hub.Broadcast(ov, "")
 
-	// Read the SSE event.
+	// Read the SSE events: the stream opens with a generating notice,
+	// since no estate summary exists yet, then delivers the broadcast.
 	scanner := bufio.NewScanner(resp.Body)
-	var dataLine string
-	for scanner.Scan() {
+	var dataLines []string
+	for len(dataLines) < 2 && scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
-			dataLine = strings.TrimPrefix(line, "data: ")
-			break
+			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
 		}
+	}
+	if len(dataLines) < 2 {
+		t.Fatalf("expected two SSE events, got %d", len(dataLines))
+	}
+
+	var status generatingResponse
+	if err := json.Unmarshal([]byte(dataLines[0]), &status); err != nil {
+		t.Fatalf("failed to parse SSE status data: %v", err)
+	}
+	if status.Status != statusGenerating {
+		t.Errorf("expected first event status %q, got %q", statusGenerating, status.Status)
 	}
 
 	var overview Overview
-	if err := json.Unmarshal([]byte(dataLine), &overview); err != nil {
+	if err := json.Unmarshal([]byte(dataLines[1]), &overview); err != nil {
 		t.Fatalf("failed to parse SSE data: %v", err)
 	}
 	if overview.Summary != "New broadcast overview." {

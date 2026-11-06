@@ -8022,7 +8022,7 @@
     "/overview/stream": {
       "get": {
         "summary": "Stream overview generation",
-        "description": "Streams overview generation progress via Server-Sent Events (SSE)",
+        "description": "Streams overviews via Server-Sent Events (SSE). Each overview event carries an OverviewResponse payload; the stream opens with the cached summary or a status notice (generating, empty or error), and status notices carry no event id",
         "operationId": "streamOverview",
         "tags": [
           "Overview"
@@ -14192,6 +14192,10 @@
       "OverviewResponse": {
         "type": "object",
         "properties": {
+          "error": {
+            "type": "string",
+            "description": "Generic failure message, present when status is error"
+          },
           "generated_at": {
             "type": "string",
             "format": "date-time",
@@ -14199,11 +14203,11 @@
           },
           "status": {
             "type": "string",
-            "description": "Overview status (ready, generating)"
+            "description": "Present only when no summary is available: generating (no summary yet), empty (no visible connections, SSE stream only) or error (generation failed)"
           },
           "summary": {
-            "type": "object",
-            "description": "AI-generated summary",
+            "type": "string",
+            "description": "AI-generated summary; null while a status is reported",
             "nullable": true
           }
         }

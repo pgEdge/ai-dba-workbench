@@ -9,7 +9,7 @@
  */
 
 import type React from 'react';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     Box,
     Typography,
@@ -184,41 +184,49 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
 
     if (overviewUrl !== lastFetchedUrl) {
         setOverview(null);
+        setError(null);
         setLoading(true);
         setRateLimitMessage(null);
         setLastFetchedUrl(overviewUrl);
     }
 
+    // The URL the component is currently showing, so that a REST
+    // response for a previous selection is discarded on arrival.
+    const currentUrlRef = useRef(overviewUrl);
+    currentUrlRef.current = overviewUrl;
+
     const fetchOverview = useCallback(async (isInitial: boolean) => {
         if (isInitial) {
             setLoading(true);
         }
-        setError(null);
 
         try {
             const data = await apiGet<OverviewResponse>(overviewUrl);
-            setOverview(data);
-            setRateLimitMessage(null);
+            if (currentUrlRef.current !== overviewUrl) {
+                return;
+            }
+            setError(null);
+            // A "generating" response never hides a summary that the
+            // stream has already delivered.
+            setOverview(prev =>
+                prev?.summary != null && data.summary == null ? prev : data,
+            );
             if (data.restart_detected) {
                 clearAnalysisCache();
             }
         } catch (err) {
-            const limited = rateLimitMessageFor(err);
-            if (limited) {
-                // The server had nothing cached to serve and the user
-                // has no generations left; say so rather than hiding
-                // the card.
-                setRateLimitMessage(limited);
-            } else if (err instanceof ApiError && err.statusCode === 401) {
+            if (currentUrlRef.current !== overviewUrl) {
+                return;
+            }
+            if (err instanceof ApiError && err.statusCode === 401) {
                 // User is not authenticated; suppress the error silently
                 setError(null);
             } else {
                 logger.error('Failed to fetch AI overview:', err);
                 setError('Unable to load AI overview');
             }
-        } finally {
-            setLoading(false);
         }
+        setLoading(false);
     }, [overviewUrl]);
 
     // Dedicated refresh handler for the manual refresh button.
@@ -248,7 +256,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
     useEffect(() => {
         if (sseOverview) {
             setOverview(sseOverview);
-            setRateLimitMessage(null);
+            setError(null);
             setLoading(false);
             setRefreshing(false);
             if (sseOverview.restart_detected) {
@@ -256,6 +264,21 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
             }
         }
     }, [sseOverview]);
+
+    // Safety net: if nothing has arrived for this selection 5 seconds
+    // after it changed, fetch once over REST rather than leave the
+    // skeleton waiting on a stream event that may never come.
+    useEffect(() => {
+        if (!loading) {
+            return undefined;
+        }
+        const safetyTimeout = setTimeout(() => {
+            void fetchOverview(false);
+        }, 5000);
+        return () => {
+            clearTimeout(safetyTimeout);
+        };
+    }, [loading, fetchOverview]);
 
     // Fallback polling: if SSE isn't connected after 5 seconds, poll every 10s
     useEffect(() => {
@@ -410,26 +433,32 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
         );
     }
 
-    // Rate limited with no summary to show: explain why the card is empty
-    if (rateLimitMessage && !summaryText) {
+    // Generation or fetch failure: say so rather than leave the card
+    // blank or loading forever.
+    const errorText = error ?? (
+        overview?.status === 'error'
+            ? overview.error ?? 'The AI overview could not be generated.'
+            : null
+    );
+    if (errorText) {
         return (
             <Paper elevation={0} sx={paperSx}>
                 {headerRow()}
                 <Collapse in={!collapsed}>
                     <Typography
                         variant="body2"
-                        role="status"
+                        role="alert"
                         sx={{ color: 'text.secondary', fontStyle: 'italic' }}
                     >
-                        {rateLimitMessage}
+                        {errorText}
                     </Typography>
                 </Collapse>
             </Paper>
         );
     }
 
-    // Error state or no data: render nothing to avoid cluttering the UI
-    if (error || !overview) {
+    // No data, or no visible connections to summarise: render nothing
+    if (!overview || overview.status === 'empty') {
         return null;
     }
 

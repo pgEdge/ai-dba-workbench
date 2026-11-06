@@ -226,23 +226,29 @@ func (ps *ProbeScheduler) createProbe(
 ### 5. Add Database Migration
 
 Add a migration to
-`/collector/src/database/schema.go`. In the following
-example, the migration creates the metrics table:
+`/collector/src/database/schema.go`, and create the
+metrics table through `sm.execMetricsDDL` rather than
+`tx.Exec`. In the default mode, `execMetricsDDL` runs
+the DDL block as written; when the collector stores
+metrics in pgEdge ColdFront, the function creates the
+table through `coldfront.create_iceberg_table` instead.
+In the following example, the migration creates the
+metrics table:
 
 ```go
 // Migration N: Create pg_stat_custom table
 sm.migrations = append(sm.migrations, Migration{
     Version:     N,
     Description: "Create pg_stat_custom table",
-    Up: func(conn *pgxpool.Conn) error {
+    Up: func(tx pgx.Tx) error {
         ctx := context.Background()
-        _, err := conn.Exec(ctx, `
+        err := sm.execMetricsDDL(ctx, tx, "pg_stat_custom", `
             CREATE TABLE IF NOT EXISTS
                 metrics.pg_stat_custom (
                 connection_id INTEGER NOT NULL,
                 collected_at TIMESTAMP NOT NULL,
                 metric_name TEXT NOT NULL,
-                metric_value NUMERIC,
+                metric_value DOUBLE PRECISION,
                 recorded_at TIMESTAMP,
                 PRIMARY KEY (
                     connection_id,
@@ -263,6 +269,37 @@ sm.migrations = append(sm.migrations, Migration{
     },
 })
 ```
+
+In the same change, add the table's column
+specification to the `tables` list in
+`/collector/src/coldfront/spec.go`. The specification
+lists every column in order with the type that
+`format_type()` reports, and `CreatedIn` names the
+migration that creates the table. In the following
+example, the entry matches the migration above:
+
+```go
+{Name: "pg_stat_custom", CreatedIn: N, Columns: []Column{
+    {Name: "connection_id", PGType: "integer"},
+    {Name: "collected_at", PGType: "timestamp without time zone"},
+    {Name: "metric_name", PGType: "text"},
+    {Name: "metric_value", PGType: "double precision"},
+    {Name: "recorded_at", PGType: "timestamp without time zone"},
+}},
+```
+
+Under ColdFront, `execMetricsDDL` checks the
+`CREATE TABLE` statement against the specification and
+refuses a table that has none, and the
+`TestColdFrontSpecMatchesMigratedSchema` test fails
+when the two differ. ColdFront stores an unbounded
+`NUMERIC` column as `numeric(38,0)`, which discards
+any fractional part, so use `DOUBLE PRECISION` or a
+bounded `NUMERIC(p,s)` for a value that is not a whole
+number. A later migration that adds a column must give
+the column a type that ColdFront stores natively, and
+must set the column's `AddedIn` field to that
+migration's version.
 
 ### 6. Insert Probe Configuration
 

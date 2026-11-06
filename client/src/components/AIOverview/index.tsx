@@ -192,8 +192,12 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
 
     // The URL the component is currently showing, so that a REST
     // response for a previous selection is discarded on arrival.
+    // Declared before the effects that call fetchOverview, so it runs
+    // first after each commit.
     const currentUrlRef = useRef(overviewUrl);
-    currentUrlRef.current = overviewUrl;
+    useEffect(() => {
+        currentUrlRef.current = overviewUrl;
+    }, [overviewUrl]);
 
     const fetchOverview = useCallback(async (isInitial: boolean) => {
         if (isInitial) {

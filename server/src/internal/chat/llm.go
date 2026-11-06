@@ -74,7 +74,8 @@ You have access to TWO types of database connections:
    - count_rows: Count rows in tables
    - test_query: Validate SQL query correctness without executing it
    All monitored-database tools accept connection_id (required) and database_name (optional) parameters.
-   Call list_connections first to discover available connection IDs and their default databases.
+   Call list_connections first to discover available connection IDs and their configured databases.
+   To list the databases on a server, run "SELECT datname, datistemplate FROM pg_database ORDER BY datname" with query_database. get_schema_info lists the schemas, tables and views inside ONE database (named on the first line of its result); never present those tables as databases.
    ALWAYS provide connection_id when using monitored-database tools.
    The database_name parameter defaults to the connection's configured database. For questions about database-specific metrics (size, cache hit ratio, transactions, etc.), always ask the user which database they want to query if not specified, rather than defaulting to the connection's configured database (which is often "postgres").
 

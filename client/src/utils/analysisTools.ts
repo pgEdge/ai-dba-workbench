@@ -11,6 +11,17 @@
 import type { AnalysisTool } from './mcpTools';
 
 /**
+ * Parameter schema for the optional database_name override on the
+ * monitored-database tools. Left undescribed, models filled it with
+ * "postgres" and inspected that database instead of the connection's
+ * configured one (issue #801).
+ */
+const DATABASE_NAME_PARAM = {
+    type: "string",
+    description: "Database to use instead of the connection's configured database. Omit it to use the configured database; set it only to target a different database that you know exists on the server. Never pass \"postgres\" as a default.",
+};
+
+/**
  * Tool definitions shared across analysis hooks. Each constant is a
  * single MCP tool descriptor that can be composed into the tools array
  * for any analysis prompt.
@@ -83,7 +94,7 @@ export const TOOL_QUERY_DATABASE: AnalysisTool = {
         properties: {
             connection_id: { type: "integer", description: "Connection ID to query" },
             query: { type: "string", description: "SQL query to execute (read-only)" },
-            database_name: { type: "string", description: "Optional database name to connect to" },
+            database_name: DATABASE_NAME_PARAM,
         },
         required: ["connection_id", "query"],
     },
@@ -91,13 +102,13 @@ export const TOOL_QUERY_DATABASE: AnalysisTool = {
 
 export const TOOL_GET_SCHEMA_INFO: AnalysisTool = {
     name: "get_schema_info",
-    description: "Get schema information for a database including tables, indexes, and constraints",
+    description: "List the schemas, tables, views, columns and constraints inside one database: the connection's configured database unless database_name names another. The first line of the result names the database inspected. It never lists the databases on a server.",
     inputSchema: {
         type: "object",
         properties: {
             connection_id: { type: "integer", description: "Connection ID to query" },
-            database_name: { type: "string", description: "Database name" },
-            schema_name: { type: "string", description: "Schema name (default: public)" },
+            database_name: DATABASE_NAME_PARAM,
+            schema_name: { type: "string", description: "Schema to restrict the result to (default: all schemas)" },
         },
         required: ["connection_id"],
     },
@@ -135,7 +146,7 @@ export const TOOL_TEST_QUERY: AnalysisTool = {
         properties: {
             connection_id: { type: "integer", description: "Connection ID to validate against" },
             query: { type: "string", description: "SQL query to validate" },
-            database_name: { type: "string", description: "Optional database name" },
+            database_name: DATABASE_NAME_PARAM,
         },
         required: ["connection_id", "query"],
     },

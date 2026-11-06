@@ -238,6 +238,24 @@ func TestGarbageCollector_DueAfterRecordedRunAges(t *testing.T) {
 // full pass against a real datastore and checks that a partition older
 // than its probe's retention_days actually goes.
 func TestGarbageCollector_DropsExpiredPartitionForConfiguredProbe(t *testing.T) {
+	checkAgedPartition(t, false)
+}
+
+// TestGarbageCollector_KeepsPartitionsOfDisabledProbe checks that a
+// disabled probe's rows give no retention window: LoadProbeConfigs
+// returns disabled rows for the scheduler (issue #811), but retention
+// has only ever been applied from enabled rows, so the aged partition
+// stays.
+func TestGarbageCollector_KeepsPartitionsOfDisabledProbe(t *testing.T) {
+	checkAgedPartition(t, true)
+}
+
+// checkAgedPartition creates a pg_stat_statements partition past the
+// probe's retention window, optionally disables the probe everywhere,
+// runs one collection pass and checks the partition is dropped only
+// when the probe is enabled.
+func checkAgedPartition(t *testing.T, disabled bool) {
+	t.Helper()
 	ds, cleanup := gcTestDatastore(t)
 	defer cleanup()
 
@@ -278,6 +296,16 @@ func TestGarbageCollector_DropsExpiredPartitionForConfiguredProbe(t *testing.T) 
 		return out
 	}
 
+	if disabled {
+		if _, err := conn.Exec(ctx, `
+            UPDATE probe_configs SET is_enabled = FALSE
+            WHERE name = 'pg_stat_statements'
+        `); err != nil {
+			ds.ReturnConnection(conn)
+			t.Fatalf("disabling pg_stat_statements: %v", err)
+		}
+	}
+
 	before := partitions(conn)
 
 	// Create a partition comfortably past the configured window, using
@@ -313,7 +341,11 @@ func TestGarbageCollector_DropsExpiredPartitionForConfiguredProbe(t *testing.T) 
 	}
 	defer ds.ReturnConnection(conn)
 
-	if partitions(conn)[aged] {
+	kept := partitions(conn)[aged]
+	if disabled && !kept {
+		t.Errorf("partition %s of a disabled probe was dropped", aged)
+	}
+	if !disabled && kept {
 		t.Errorf("partition %s is older than retention_days=%d but was not dropped",
 			aged, retention)
 	}

@@ -436,7 +436,7 @@ func TestUpdateProbeConfig(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	globalID, _ := seedProbeConfigs(t, pool, fx.ConnID)
+	globalID, serverID := seedProbeConfigs(t, pool, fx.ConnID)
 
 	// validation
 	bad := -1
@@ -470,6 +470,30 @@ func TestUpdateProbeConfig(t *testing.T) {
 	// merge with no fields set just refreshes timestamps.
 	if _, err := ds.UpdateProbeConfig(ctx, int64(globalID), ProbeConfigUpdate{}); err != nil {
 		t.Fatalf("noop update: %v", err)
+	}
+
+	// An edit to a server row marks it as an explicit override, so the
+	// collector does not copy the global default back over it; an edit
+	// to the global row leaves user_modified alone (issues #810, #811).
+	if _, err := ds.UpdateProbeConfig(ctx, int64(serverID), ProbeConfigUpdate{
+		IsEnabled: &enabled,
+	}); err != nil {
+		t.Fatalf("Update server row: %v", err)
+	}
+	userModified := func(id int) bool {
+		t.Helper()
+		var v bool
+		if err := pool.QueryRow(ctx,
+			`SELECT user_modified FROM probe_configs WHERE id = $1`, id).Scan(&v); err != nil {
+			t.Fatalf("read user_modified: %v", err)
+		}
+		return v
+	}
+	if !userModified(serverID) {
+		t.Error("server row edited through UpdateProbeConfig is not marked user_modified")
+	}
+	if userModified(globalID) {
+		t.Error("global row edited through UpdateProbeConfig was marked user_modified")
 	}
 
 	// not found

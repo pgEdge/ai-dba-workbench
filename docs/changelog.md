@@ -101,6 +101,18 @@ project adheres to
   requires Go 1.26.10, so the collector, server and alerter now build
   with Go 1.26.10.
 
+- Store metrics in pgEdge ColdFront (#755). The new collector option
+  `use_coldfront_for_metrics` (default `false`), or the
+  `-use-coldfront-for-metrics` flag, creates each `metrics.*` table as
+  a PostgreSQL view over an Apache Iceberg table on object storage;
+  the server and alerter need no setting. The datastore needs
+  ColdFront 1.0.0-beta3 or later, prepared before the collector's
+  first start; the operator must schedule ColdFront's compactor, and
+  an existing datastore cannot switch between storage modes. The
+  [Storing Metrics in pgEdge ColdFront](getting-started/configuration/coldfront-metrics.md)
+  page describes the prerequisites, the setup and every difference
+  from a standard datastore.
+
 - Classify tier 3 anomaly candidates with an optional decision
   model (#626). The new `llm.decision_provider` option selects
   `typesafe` (the TypeSafe Jev models, configured in the new
@@ -609,6 +621,21 @@ project adheres to
   for up to an hour.
 
 ### Changed
+
+- List and serve only the collector's probes from the metrics schema
+  (#755). The `list_probes`, `describe_probe`, `query_metrics`,
+  `describe_datastore` and `query_datastore` tools and the
+  `GET /api/v1/metrics/latest` and `GET /api/v1/metrics/query`
+  endpoints now admit only the probe names the collector writes, on
+  plain PostgreSQL and ColdFront datastores alike; other tables,
+  partitions and views in the `metrics` schema are no longer listed or
+  served.
+
+- Return a `query_datastore` `avg` aggregate as double precision, and
+  print floating-point values in tool output in plain decimal rather
+  than exponent notation (#755). A `sum` of an interval column now
+  reports the total in hours, as in `26:00:00`, rather than in days
+  and hours.
 
 - Build the server, collector and alerter container images on
   `alpine:3` instead of `debian:bookworm-slim`, removing the Debian

@@ -25,7 +25,10 @@ architecture:
 ### list_probes
 
 The `list_probes` tool lists all available metrics
-probes in the datastore.
+probes in the datastore. The tool lists only the
+probes that the collector writes; the metrics tools
+do not list or serve any other table, partition or
+view in the `metrics` schema.
 
 **Parameters**: None
 
@@ -35,7 +38,10 @@ probes in the datastore.
   `describe_probe` and `query_metrics`.
 - `description` contains a human-readable description.
 - `row_count` contains the approximate number of
-  metric rows collected.
+  metric rows collected, or `unknown` for a probe
+  stored as a view, such as a probe on a pgEdge
+  ColdFront datastore; the tool never counts the rows
+  of a view.
 - `scope` indicates "server" for server-wide metrics
   or "database" for per-database metrics.
 

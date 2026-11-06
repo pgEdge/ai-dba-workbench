@@ -422,7 +422,12 @@ The system optimizes storage in several ways:
 ## Data Retention
 
 The garbage collector manages data retention
-automatically.
+automatically. When the `use_coldfront_for_metrics`
+option is enabled, the collector creates no partitions,
+does not start the garbage collector, and ignores
+`retention_days`; the
+[Storing Metrics in pgEdge ColdFront](../../getting-started/configuration/coldfront-metrics.md)
+document describes that mode.
 
 ### Automatic Cleanup
 
@@ -440,7 +445,11 @@ The garbage collector performs the following steps:
 ### Manual Cleanup
 
 To manually drop a partition, first check existing
-partitions and then drop the target partition.
+partitions and then drop the target partition. Manual
+cleanup applies to PostgreSQL storage only; a ColdFront
+datastore has no partitions, and the
+[Managing Metrics Retention](../../getting-started/configuration/coldfront-metrics.md#managing-metrics-retention)
+section describes how to delete old rows in that mode.
 
 In the following example, the query lists all
 partitions for `pg_stat_activity`:
@@ -463,8 +472,15 @@ DROP TABLE metrics.pg_stat_activity_20251104;
 ### Adjusting Retention
 
 Update the `probe_configs` table to change retention
-settings. In the following example, the command
-updates the global default retention:
+settings. The `retention_days` value applies to
+PostgreSQL storage only; the collector ignores the
+value when the `use_coldfront_for_metrics` option is
+enabled, as the
+[Managing Metrics Retention](../../getting-started/configuration/coldfront-metrics.md#managing-metrics-retention)
+section describes.
+
+In the following example, the command updates the
+global default retention:
 
 ```sql
 UPDATE probe_configs

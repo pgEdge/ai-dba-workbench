@@ -352,6 +352,37 @@ datastore failed.
 - Note: The collector realigns the probe's timer after that first
   execution, so the offset also spreads out steady-state collection.
 
+## Metrics Storage Options
+
+The metrics storage option selects where the collector stores the
+tables in the `metrics` schema. The option is a top-level key in the
+YAML file.
+
+### use_coldfront_for_metrics
+
+The `use_coldfront_for_metrics` option stores each metrics table in
+pgEdge ColdFront, as a PostgreSQL view over an Apache Iceberg table on
+object storage, instead of as a partitioned PostgreSQL table.
+
+- Type: boolean
+- Default: `false`
+- Required: No
+- Command-line: `-use-coldfront-for-metrics`
+- Example: `use_coldfront_for_metrics: true`
+- Note: Only the collector reads this option; the server and alerter
+  work against either kind of datastore without a setting.
+- Note: Choose the mode when you create the datastore; the collector
+  refuses to start when the value does not match the existing metrics
+  tables.
+- Note: The Workbench performs no metrics retention in this mode, and
+  the collector ignores every `retention_days` setting.
+- Note: The operator must schedule the ColdFront compactor for every
+  metrics table in this mode.
+
+The [Storing Metrics in pgEdge ColdFront](coldfront-metrics.md)
+document describes the prerequisites, the compactor requirement, and
+the behavioural differences of this mode.
+
 ## Security Options
 
 The collector uses a secret file and AES-256-GCM encryption to protect
@@ -417,6 +448,7 @@ The following table lists all available command-line flags.
 | `-pg-sslcert` | Client SSL certificate | none |
 | `-pg-sslkey` | Client SSL key | none |
 | `-pg-sslrootcert` | Root SSL certificate | none |
+| `-use-coldfront-for-metrics` | Store metrics tables in pgEdge ColdFront | `false` |
 
 In the following example, the command uses flags to override
 configuration file settings:
@@ -495,7 +527,9 @@ The collector reloads probe configurations from the database every
 
 Collection interval and enabled status changes take effect within
 5 minutes. Retention changes take effect on the next garbage
-collection run (within 24 hours).
+collection run (within 24 hours). A collector that stores metrics in
+pgEdge ColdFront runs no garbage collection and ignores retention
+changes.
 
 ### Viewing Current Configuration
 
@@ -701,6 +735,60 @@ configured wait period.
 - Increase the pool sizes for the affected component.
 - Check network connectivity to the database server.
 - Verify that the database server is responsive.
+
+### ColdFront Metrics Storage Errors
+
+The collector checks the metrics storage mode before running any
+migration and refuses to start when the datastore does not match the
+`use_coldfront_for_metrics` setting. The collector logs each startup
+error after the prefix `Failed to initialize datastore: failed to
+initialize schema: `, so the message text appears within a longer log
+line. The following table describes each startup error and the
+corrective step:
+
+| Error Message Contains | Cause | Fix |
+|------------------------|-------|-----|
+| `use_coldfront_for_metrics is enabled but the coldfront extension is not installed in the datastore` | The option is enabled, but the datastore has no `coldfront.create_iceberg_table` function, so the `coldfront` extension is not installed. | Install ColdFront 1.0.0-beta3 or later and run `CREATE EXTENSION coldfront`, or disable the option. |
+| `use_coldfront_for_metrics is enabled but the installed coldfront extension is too old` | The installed ColdFront build lacks `coldfront._partition_clause(jsonb,text[])` or `coldfront.ensure_attached()`; the message names the missing function. | Install ColdFront 1.0.0-beta3 or later, which provides both the `coldfront._partition_clause(jsonb,text[])` and `coldfront.ensure_attached()` functions; a development build must include pgEdge ColdFront pull request #92. |
+| `use_coldfront_for_metrics is enabled but the datastore already stores metrics in PostgreSQL tables` | The datastore was created in standard mode. | Use a new datastore for ColdFront storage, or disable the option. |
+| `use_coldfront_for_metrics is disabled but the datastore stores metrics in ColdFront views` | The datastore was created in ColdFront mode. | Enable the option, or use a new datastore for standard storage. |
+| `failed to create the Iceberg namespace "metrics" for the ColdFront metrics tables` | The collector could not attach the Lakekeeper catalog or create the `metrics` namespace in the warehouse. | Check that the warehouse named in `coldfront.warehouse` is reachable from the datastore and writable, and that the ColdFront catalog settings are correct. |
+| `the workbench_coldfront schema is owned by role` | Another role owns the helper schema that the collector writes metrics through. | Drop the `workbench_coldfront` schema, or make the collector's datastore role its owner. |
+| `the workbench_coldfront schema holds functions owned by other roles` | Another role owns a function in the helper schema; the message lists each such function. | Drop the listed functions before starting the collector. |
+| `failed to create the workbench_coldfront schema` | The collector's datastore role cannot create a schema in the datastore database. | Grant the role the `CREATE` privilege on the datastore database. |
+
+The two mismatch errors name up to three of the affected metrics
+relations. The
+[Storing Metrics in pgEdge ColdFront](coldfront-metrics.md) document
+describes the prerequisites of ColdFront mode.
+
+ColdFront reports `Namespace with name 'metrics' does not exist` when
+a metrics table is created before its Iceberg namespace exists on a
+Lakekeeper catalog. The collector creates the namespace before the
+first migration, so this error means that the namespace step did not
+take effect. Check that the warehouse named in `coldfront.warehouse`
+is reachable and writable, and then restart the collector.
+
+### ColdFront Object Storage Errors
+
+On a running ColdFront datastore, object-store input and output errors,
+slow metrics reads, or PostgreSQL backends that pg_duckdb aborts,
+followed by a crash restart of the datastore server, usually mean that
+snapshots and small data files have accumulated in the metrics tables.
+Take the following steps:
+
+- Schedule the ColdFront compactor with the `--expire-snapshots`
+  option and a lowered `--expire-older-than` value for every metrics
+  table, as the
+  [Scheduling the ColdFront Compactor](coldfront-metrics.md#scheduling-the-coldfront-compactor)
+  section describes.
+- Reduce the number of monitored connections or the probe frequency
+  when the snapshot count grows faster than the compactor expires
+  snapshots.
+- Check that the object storage is healthy, reachable from the
+  datastore, and not rejecting or throttling requests.
+- Lengthen the collection interval of high-frequency probes when the
+  compactor cannot keep up.
 
 ## Security Best Practices
 

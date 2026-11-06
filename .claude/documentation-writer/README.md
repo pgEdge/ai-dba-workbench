@@ -47,6 +47,21 @@ manually alongside it.
   `TestExampleConfigsParse` in `alerter/src/internal/config/config_test.go`
   parses all three examples, so run it after editing them.
 
+- Collector configuration keys are documented in
+  `docs/getting-started/configuration/collector.md` (reference) and in the
+  example configs `examples/ai-dba-collector.yaml` and
+  `docker/config/ai-dba-collector.yaml`. The ColdFront metrics storage
+  mode (`use_coldfront_for_metrics`) has its own page,
+  `docs/getting-started/configuration/coldfront-metrics.md`, which the
+  retention and purge sections in `docs/admin-guide/probes.md`,
+  `docs/admin-guide/connections.md` and
+  `docs/developer-guide/collector/` link to; keep them in agreement.
+  The "ColdFront Metrics Storage Errors" table in the collector page's
+  Troubleshooting section quotes the start of each startup error in
+  `collector/src/database/coldfront_check.go` and
+  `collector/src/database/coldfront_insert.go`; update it when those
+  messages change.
+
 ## Maintenance
 
 Update this file in the same change whenever the documentation layout,

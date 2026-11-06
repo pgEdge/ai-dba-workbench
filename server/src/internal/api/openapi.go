@@ -429,6 +429,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"cluster_type":     {Type: "string", Description: "Auto-detected cluster type (spock, spock_ha, binary, logical, server, manual)"},
 				"replication_type": {Type: "string", Description: "User-set replication type from the database", Nullable: true},
 				"auto_cluster_key": {Type: "string", Description: "Auto-detection key for the cluster", Nullable: true},
+				"db_cluster_id":    {Type: "integer", Description: "Numeric ID of the clusters row backing an auto-detected cluster, for use as cluster_id in cluster-scoped requests such as blackouts; omitted for standalone servers and clusters without a row"},
 				"servers": {
 					Type:  "array",
 					Items: &OpenAPISchema{Ref: "#/components/schemas/TopologyServer"},

@@ -607,3 +607,50 @@ func TestNormalizeTopologyGroups_MixedNilAndNonNilSlices(t *testing.T) {
 		t.Errorf("Expected no \"servers\":null in JSON, got %s", string(encoded))
 	}
 }
+
+// TestAttachDBClusterIDs verifies that auto-detected clusters with a
+// clusters row gain its numeric ID, and that standalone entries,
+// entries without an auto_cluster_key and entries without a row are
+// left alone. The ID must also reach the JSON as db_cluster_id so the
+// client can create cluster-scoped blackouts. Issue #809.
+func TestAttachDBClusterIDs(t *testing.T) {
+	groups := []TopologyGroup{{
+		ID: "group-1",
+		Clusters: []TopologyCluster{
+			{ID: "server-5", ClusterType: "binary", AutoClusterKey: "binary:5"},
+			{ID: "cluster-spock-pg17", ClusterType: "spock", AutoClusterKey: "spock:pg17"},
+			{ID: "server-9", ClusterType: "server", AutoClusterKey: "standalone:9"},
+			{ID: "server-11", ClusterType: "logical", AutoClusterKey: "logical:11"},
+			{ID: "cluster-3", ClusterType: "manual"},
+		},
+	}}
+	overrides := map[string]clusterOverride{
+		"binary:5":     {ID: 42},
+		"spock:pg17":   {ID: 43},
+		"standalone:9": {ID: 44},
+	}
+
+	attachDBClusterIDs(groups, overrides)
+
+	want := []int{42, 43, 0, 0, 0}
+	for i, c := range groups[0].Clusters {
+		if c.DBClusterID != want[i] {
+			t.Errorf("cluster %s DBClusterID = %d, want %d", c.ID, c.DBClusterID, want[i])
+		}
+	}
+
+	encoded, err := json.Marshal(groups[0].Clusters[0])
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"db_cluster_id":42`) {
+		t.Errorf("Expected db_cluster_id in JSON, got %s", encoded)
+	}
+	encoded, err = json.Marshal(groups[0].Clusters[2])
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "db_cluster_id") {
+		t.Errorf("Expected standalone entry to omit db_cluster_id, got %s", encoded)
+	}
+}

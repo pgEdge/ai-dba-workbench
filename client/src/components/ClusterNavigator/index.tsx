@@ -50,6 +50,7 @@ import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import AddMenu from '../AddMenu';
 import { apiFetch, apiGet } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
+import { getDbClusterId } from '../../utils/clusterHelpers';
 
 // Import sub-components
 import { STORAGE_KEYS } from './constants';
@@ -370,17 +371,30 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         return map;
     }, [data]);
 
+    // Map each topology cluster ID to its numeric clusters.id, so that
+    // auto-detected clusters (whose IDs are server-{id} or
+    // cluster-spock-{prefix}) match their cluster blackouts. #809.
+    const clusterDbIdMap = useMemo(() => {
+        const map = new Map<string, number>();
+        data.forEach(group => {
+            group.clusters?.forEach(cluster => {
+                const dbId = getDbClusterId(cluster);
+                if (dbId !== undefined) {map.set(cluster.id, dbId);}
+            });
+        });
+        return map;
+    }, [data]);
+
     // Check if a cluster has a direct or inherited blackout
     const getClusterBlackoutStatus = useCallback((clusterId: string): { active: boolean; inherited: boolean } => {
-        // Parse numeric ID from cluster-{id} format
-        const numericId = parseInt(clusterId.replace('cluster-', ''), 10);
-        const directBlackout = !Number.isNaN(numericId) && activeBlackouts.some(
+        const numericId = clusterDbIdMap.get(clusterId);
+        const directBlackout = numericId !== undefined && activeBlackouts.some(
             b => b.scope === 'cluster' && b.cluster_id === numericId,
         );
         if (directBlackout) {return { active: true, inherited: false };}
         if (isEstateBlackedOut) {return { active: true, inherited: true };}
         return { active: false, inherited: false };
-    }, [activeBlackouts, isEstateBlackedOut]);
+    }, [activeBlackouts, isEstateBlackedOut, clusterDbIdMap]);
 
     // Check if a server has a direct or inherited blackout
     const getServerBlackoutStatus = useCallback((serverId: number): { active: boolean; inherited: boolean } => {

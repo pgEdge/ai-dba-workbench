@@ -14,7 +14,7 @@ import type {
     ClusterServer,
 } from '../contexts/ClusterDataContext';
 import type { Selection } from '../types/selection';
-import { collectServers } from './clusterHelpers';
+import { collectServers, getDbClusterId } from './clusterHelpers';
 
 /**
  * Selection type discriminator used by `useCluster`. Mirrors the
@@ -45,6 +45,7 @@ export const buildSelection = (
     if (selectionType === 'server' && selectedServer) {
         let clusterId: string | undefined;
         let clusterName: string | undefined;
+        let dbClusterId: number | undefined;
         let isStandalone: boolean | undefined;
         let groupId: string | undefined;
         let groupName: string | undefined;
@@ -55,6 +56,7 @@ export const buildSelection = (
                 if (allServers.some(s => s.id === selectedServer.id)) {
                     clusterId = cluster.id;
                     clusterName = cluster.name;
+                    dbClusterId = getDbClusterId(cluster);
                     isStandalone = cluster.isStandalone;
                     groupId = group.id;
                     groupName = group.name;
@@ -82,6 +84,7 @@ export const buildSelection = (
             spockVersion: selectedServer.spock_version,
             clusterId,
             clusterName,
+            dbClusterId,
             isStandalone,
             groupId,
             groupName,
@@ -112,6 +115,7 @@ export const buildSelection = (
             description: selectedCluster.description ?? '',
             servers: servers,
             serverIds: serverIds,
+            dbClusterId: getDbClusterId(selectedCluster),
             status: servers.every(s => s.status === 'offline') && servers.length > 0
                 ? 'offline'
                 : servers.some(s => s.status === 'offline' || s.status === 'warning')

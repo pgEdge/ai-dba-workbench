@@ -490,6 +490,17 @@ func TestCollectorSchema_TopologyEstateAndRelationships(t *testing.T) {
 		if !ok || !g.IsDefault || bin.ClusterType != "binary" {
 			t.Fatalf("binary cluster missing or misplaced: %+v", bin)
 		}
+		// Issue #809: the auto-detected cluster exposes its clusters
+		// row, and that ID reaches its members through
+		// connections.cluster_id, which is how both the blackout RBAC
+		// check and the alerter resolve a cluster-scoped blackout.
+		if bin.DBClusterID != f.binCluster {
+			t.Errorf("binary cluster DBClusterID = %d, want %d", bin.DBClusterID, f.binCluster)
+		}
+		members, err := ds.GetConnectionIDsForCluster(ctx, bin.DBClusterID)
+		if err != nil || !containsInt(members, f.binPrimary) || !containsInt(members, f.binStandby) {
+			t.Errorf("GetConnectionIDsForCluster(%d) = %v, %v", bin.DBClusterID, members, err)
+		}
 		var primary TopologyServerInfo
 		var topIDs []int
 		for _, s := range bin.Servers {
@@ -516,6 +527,8 @@ func TestCollectorSchema_TopologyEstateAndRelationships(t *testing.T) {
 
 		if _, spk, ok := findCluster(groups, func(c TopologyCluster) bool { return c.AutoClusterKey == "spock:spk" }); !ok || spk.ClusterType != "spock_ha" || len(spk.Servers) != 2 {
 			t.Errorf("spock cluster = %+v", spk)
+		} else if want := e.clusterIDForKey("spock:spk"); spk.DBClusterID != want {
+			t.Errorf("spock cluster DBClusterID = %d, want %d", spk.DBClusterID, want)
 		}
 
 		g, logical, ok := findCluster(groups, func(c TopologyCluster) bool {
@@ -565,6 +578,10 @@ func TestCollectorSchema_TopologyEstateAndRelationships(t *testing.T) {
 			return c.AutoClusterKey == "standalone:"+itoa(f.standalone)
 		}); !ok || lone.Description != "Lonely" || lone.Servers[0].ConnectionError != "connection refused" {
 			t.Errorf("standalone cluster = %+v", lone)
+		} else if lone.DBClusterID != 0 {
+			// A standalone server has no members via cluster_id, so it
+			// must not offer a cluster target even with a clusters row.
+			t.Errorf("standalone cluster DBClusterID = %d, want 0", lone.DBClusterID)
 		}
 
 		visible, err := ds.GetClusterTopology(ctx, []int{f.binPrimary, f.gone})

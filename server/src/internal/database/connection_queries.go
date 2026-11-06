@@ -273,6 +273,58 @@ func resolveStatementTimeout(value string) (string, error) {
 	return strconv.FormatInt(timeout.Milliseconds(), 10), nil
 }
 
+// coldFrontDatastoreQuery reports whether the datastore stores metrics in
+// pgEdge ColdFront: the coldfront extension is installed, or a relation
+// in the metrics schema is a view, as every one is there (issue #755).
+// It reads the catalog only. The extension is checked as well as the
+// views because it is installed before the collector's migrations
+// create them, so a server started first still detects ColdFront.
+const coldFrontDatastoreQuery = `
+    SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'coldfront')
+        OR EXISTS (SELECT 1 FROM pg_class c
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE n.nspname = 'metrics' AND c.relkind = 'v')
+`
+
+// datastoreExecMode returns the query execution mode for the datastore
+// pool. On plain PostgreSQL it is pgx's default, which caches a named
+// prepared statement per query on each connection.
+//
+// On a pgEdge ColdFront datastore that cache is unsafe. ColdFront
+// attaches its Iceberg catalog ("ice") inside the transaction that first
+// plans a statement over a metrics view; when that transaction rolls
+// back, as every statement timeout, cancellation and read-only
+// rollback.Tx does, the attach is undone, and executing the cached
+// statement again on that pooled connection fails with 'Binder Error:
+// Catalog "ice" does not exist!'. QueryExecModeDescribeExec never
+// creates a named prepared statement: each execution parses the
+// statement afresh on the unnamed statement, in its own transaction,
+// while parameter and result types still come from the server's
+// description, as in the default mode. It costs one extra round trip
+// per query.
+func datastoreExecMode(coldFront bool) pgx.QueryExecMode {
+	if coldFront {
+		return pgx.QueryExecModeDescribeExec
+	}
+	return pgx.QueryExecModeCacheStatement
+}
+
+// detectColdFrontDatastore opens one connection with connConfig and
+// reports whether the datastore is a pgEdge ColdFront one
+// (coldFrontDatastoreQuery).
+func detectColdFrontDatastore(ctx context.Context, connConfig *pgx.ConnConfig) (bool, error) {
+	conn, err := pgx.ConnectConfig(ctx, connConfig.Copy())
+	if err != nil {
+		return false, fmt.Errorf("failed to connect to datastore: %w", err)
+	}
+	defer conn.Close(context.WithoutCancel(ctx)) //nolint:errcheck // best-effort close of a probe connection
+	var coldFront bool
+	if err := conn.QueryRow(ctx, coldFrontDatastoreQuery).Scan(&coldFront); err != nil {
+		return false, fmt.Errorf("failed to detect the datastore kind: %w", err)
+	}
+	return coldFront, nil
+}
+
 // NewDatastore creates a new datastore connection
 func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, error) {
 	if cfg == nil {
@@ -287,10 +339,8 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
 	}
 
-	// Set application name
-	if poolConfig.ConnConfig.RuntimeParams == nil {
-		poolConfig.ConnConfig.RuntimeParams = make(map[string]string)
-	}
+	// Set application name. ParseConfig always allocates RuntimeParams,
+	// so the map needs no nil check.
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "pgEdge AI DBA Workbench - Server"
 
 	// Bound every statement server-side. See
@@ -321,10 +371,16 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 		poolConfig.MaxConnIdleTime = idleTime
 	}
 
-	// Create pool
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	coldFront, err := detectColdFrontDatastore(ctx, poolConfig.ConnConfig)
+	if err != nil {
+		return nil, err
+	}
+	poolConfig.ConnConfig.DefaultQueryExecMode = datastoreExecMode(coldFront)
+
+	// Create pool
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection pool: %w", err)

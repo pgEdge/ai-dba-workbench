@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // testNow is the fixed clock every builder test uses.
@@ -354,12 +356,12 @@ func TestBuildDatastoreQueryPageSizeCap(t *testing.T) {
 // scopeFragments gives, for each scoping rule, a fragment the SQL must
 // contain for a restricted caller.
 var scopeFragments = map[datastoreScope]string{
-	scopeConnection: "= ANY($",
-	scopeAlert:      `"connection_id" = ANY($`,
-	scopeViaAlert:   "EXISTS (SELECT 1 FROM public.alerts a WHERE a.id = t.\"alert_id\"",
-	scopeHierarchy:  "EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = t.\"cluster_id\"",
-	scopeCluster:    "EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = t.\"id\"",
-	scopeGroup:      "JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t.\"id\"",
+	scopeConnection: "= ANY(string_to_array($",
+	scopeAlert:      `"connection_id" = ANY(string_to_array($`,
+	scopeViaAlert:   "EXISTS (SELECT 1 FROM alerts a WHERE a.id = t.\"alert_id\"",
+	scopeHierarchy:  "EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = t.\"cluster_id\"",
+	scopeCluster:    "EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = t.\"id\"",
+	scopeGroup:      "JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t.\"id\"",
 }
 
 func TestBuildDatastoreQueryScopesEverySource(t *testing.T) {
@@ -402,7 +404,7 @@ func TestBuildDatastoreQueryScopesEverySource(t *testing.T) {
 				t.Errorf("visible set not bound: %v", qargs)
 			}
 			if !bindPlaceholder.MatchString(sql) {
-				t.Errorf("SQL for %s lacks a $n::int[] placeholder:\n%s", src.Name, sql)
+				t.Errorf("SQL for %s lacks a string_to_array($n) visible set:\n%s", src.Name, sql)
 			}
 			// The text masking patterns contain braces, so look for
 			// the opening of an array literal rather than any brace.
@@ -413,8 +415,11 @@ func TestBuildDatastoreQueryScopesEverySource(t *testing.T) {
 	}
 }
 
-// bindPlaceholder matches the visible-set parameter the builder emits.
-var bindPlaceholder = regexp.MustCompile(`\$[0-9]+::int\[\]`)
+// bindPlaceholder matches the visible-set parameter the builder emits:
+// one text parameter expanded by string_to_array, which a pgEdge
+// ColdFront datastore can type where it cannot type an array parameter
+// (issue #755).
+var bindPlaceholder = regexp.MustCompile(`string_to_array\(\$[0-9]+, ','\)::integer\[\]`)
 
 func containsArg(args []any, want any) bool {
 	for _, a := range args {
@@ -425,23 +430,10 @@ func containsArg(args []any, want any) bool {
 	return false
 }
 
+// containsIntSlice reports whether args binds want as the comma-separated
+// list metrics.IntArrayExpr expands.
 func containsIntSlice(args []any, want []int) bool {
-	for _, a := range args {
-		ids, ok := a.([]int)
-		if !ok || len(ids) != len(want) {
-			continue
-		}
-		match := true
-		for i := range ids {
-			if ids[i] != want[i] {
-				match = false
-			}
-		}
-		if match {
-			return true
-		}
-	}
-	return false
+	return containsArg(args, metrics.IntListArg(want))
 }
 
 func TestBuildDatastoreQueryUnrestrictedSkipsScoping(t *testing.T) {
@@ -457,12 +449,16 @@ func TestBuildDatastoreQueryUnrestrictedSkipsScoping(t *testing.T) {
 // connection-scoped source keeps to live connections for every caller,
 // one who may read every connection included (issue #669), and that a
 // source with no connection column, or the connections source, which
-// tests its own deleted_at, is not given the predicate.
+// tests its own deleted_at, is not given the predicate. Every source
+// names connections unqualified, resolved through the role's search_path
+// as the collector's migrations create it, which a pgEdge ColdFront
+// datastore can also resolve where it cannot resolve a qualified name
+// (issue #755).
 func TestBuildDatastoreQueryKeepsToLiveConnections(t *testing.T) {
-	live := `EXISTS (SELECT 1 FROM public.connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL)`
 	for _, vis := range []visibleSet{{All: true}, {IDs: []int{3}}} {
 		for _, src := range append(configurationSources(), testMetricSource()) {
 			sql, _ := mustBuild(t, src, map[string]any{"source": src.Name}, vis)
+			live := `EXISTS (SELECT 1 FROM connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL)`
 			want := src.Scope == scopeConnection && src.ConnectionColumn != "" && src.LiveColumn == ""
 			if got := strings.Contains(sql, live); got != want {
 				t.Errorf("%s (all=%v): live connection predicate present = %v, want %v: %s",
@@ -477,12 +473,13 @@ func TestBuildDatastoreQueryKeepsToLiveConnections(t *testing.T) {
 
 func TestBuildDatastoreQueryEmptyVisibleSet(t *testing.T) {
 	sql, qargs := mustBuild(t, testMetricSource(), map[string]any{"source": "pg_stat_database"}, visibleSet{})
-	if !strings.Contains(sql, `t."connection_id" = ANY($1::int[])`) {
+	if !strings.Contains(sql, `t."connection_id" = ANY(string_to_array($1, ',')::integer[])`) {
 		t.Errorf("empty visible set should still scope: %s", sql)
 	}
-	ids, ok := qargs[0].([]int)
-	if !ok || ids == nil || len(ids) != 0 {
-		t.Errorf("empty visible set should bind an empty, non-nil array: %#v", qargs[0])
+	// An empty list binds the empty string, which string_to_array turns
+	// into an empty array that matches nothing.
+	if ids, ok := qargs[0].(string); !ok || ids != "" {
+		t.Errorf("empty visible set should bind an empty list: %#v", qargs[0])
 	}
 }
 
@@ -514,20 +511,20 @@ func TestBuildDatastoreQueryAlertScoping(t *testing.T) {
 			name: "restricted with system alerts",
 			src:  alerts, args: map[string]any{"source": "alerts"},
 			vis:  visibleSet{IDs: []int{3}, SystemAlerts: true},
-			want: []string{`(t."connection_id" = ANY($1::int[]) OR t."alert_type" = $2)`},
+			want: []string{`(t."connection_id" = ANY(string_to_array($1, ',')::integer[]) OR t."alert_type" = $2)`},
 		},
 		{
 			name: "restricted without system alerts",
 			src:  alerts, args: map[string]any{"source": "alerts"},
 			vis:     visibleSet{IDs: []int{3}},
-			want:    []string{`t."connection_id" = ANY($1::int[])`},
+			want:    []string{`t."connection_id" = ANY(string_to_array($1, ',')::integer[])`},
 			notWant: []string{`"alert_type" = $`},
 		},
 		{
 			name: "explicit connections exclude system alerts",
 			src:  alerts, args: map[string]any{"source": "alerts", "connection_ids": []any{3}},
 			vis:     visibleSet{All: true, SystemAlerts: true},
-			want:    []string{`t."connection_id" = ANY($1::int[])`},
+			want:    []string{`t."connection_id" = ANY(string_to_array($1, ',')::integer[])`},
 			notWant: []string{`"alert_type" = $`},
 		},
 		{
@@ -540,13 +537,13 @@ func TestBuildDatastoreQueryAlertScoping(t *testing.T) {
 			name: "acks all without system alerts",
 			src:  acks, args: map[string]any{"source": "alert_acknowledgments"},
 			vis:  visibleSet{All: true},
-			want: []string{`EXISTS (SELECT 1 FROM public.alerts a WHERE a.id = t."alert_id" AND a."connection_id" IS NOT NULL)`},
+			want: []string{`EXISTS (SELECT 1 FROM alerts a WHERE a.id = t."alert_id" AND a."connection_id" IS NOT NULL)`},
 		},
 		{
 			name: "acks restricted with system alerts",
 			src:  acks, args: map[string]any{"source": "alert_acknowledgments"},
 			vis:  visibleSet{IDs: []int{3}, SystemAlerts: true},
-			want: []string{`(a."connection_id" = ANY($1::int[]) OR a."alert_type" = $2)`},
+			want: []string{`(a."connection_id" = ANY(string_to_array($1, ',')::integer[]) OR a."alert_type" = $2)`},
 		},
 	}
 	for _, tc := range cases {
@@ -578,9 +575,9 @@ func TestBuildDatastoreQueryHierarchyPredicate(t *testing.T) {
 	sql, qargs := mustBuild(t, configSource(t, "blackouts"), map[string]any{"source": "blackouts"}, restricted)
 	for _, w := range []string{
 		`t."connection_id" IS NULL AND t."cluster_id" IS NULL AND t."group_id" IS NULL AND t."scope" IN ($2, $3)`,
-		`t."connection_id" IS NOT NULL AND t."connection_id" = ANY($1::int[])`,
-		`t."connection_id" IS NULL AND t."cluster_id" IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = t."cluster_id" AND c.id = ANY($1::int[]))`,
-		`t."connection_id" IS NULL AND t."cluster_id" IS NULL AND t."group_id" IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t."group_id" AND c.id = ANY($1::int[]))`,
+		`t."connection_id" IS NOT NULL AND t."connection_id" = ANY(string_to_array($1, ',')::integer[])`,
+		`t."connection_id" IS NULL AND t."cluster_id" IS NOT NULL AND EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = t."cluster_id" AND c.id = ANY(string_to_array($1, ',')::integer[]))`,
+		`t."connection_id" IS NULL AND t."cluster_id" IS NULL AND t."group_id" IS NOT NULL AND EXISTS (SELECT 1 FROM connections c JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = t."group_id" AND c.id = ANY(string_to_array($1, ',')::integer[]))`,
 	} {
 		if !strings.Contains(sql, w) {
 			t.Errorf("SQL lacks %q:\n%s", w, sql)
@@ -593,14 +590,14 @@ func TestBuildDatastoreQueryHierarchyPredicate(t *testing.T) {
 
 func TestBuildDatastoreQueryConnectionIDs(t *testing.T) {
 	sql, qargs := mustBuild(t, testMetricSource(), map[string]any{"source": "pg_stat_database", "connection_ids": []any{7}}, restricted)
-	if !strings.Contains(sql, `t."connection_id" = ANY($1::int[])`) || !containsIntSlice(qargs, []int{7}) {
+	if !strings.Contains(sql, `t."connection_id" = ANY(string_to_array($1, ',')::integer[])`) || !containsIntSlice(qargs, []int{7}) {
 		t.Errorf("connection_ids should narrow the scope: %s %v", sql, qargs)
 	}
 	sql, qargs = mustBuild(t, configSource(t, "connections"), map[string]any{"source": "connections", "connection_ids": []any{3}}, everyone)
-	if !strings.Contains(sql, `t."id" = ANY($1::int[])`) || !containsIntSlice(qargs, []int{3}) {
+	if !strings.Contains(sql, `t."id" = ANY(string_to_array($1, ',')::integer[])`) || !containsIntSlice(qargs, []int{3}) {
 		t.Errorf("connections should scope on id: %s %v", sql, qargs)
 	}
-	if !strings.HasPrefix(sql, `SELECT t."id", t."name"`) || !strings.Contains(sql, "FROM public.\"connections\" t WHERE") {
+	if !strings.HasPrefix(sql, `SELECT t."id", t."name"`) || !strings.Contains(sql, "FROM \"connections\" t WHERE") {
 		t.Errorf("connections query shape: %s", sql)
 	}
 }
@@ -609,7 +606,7 @@ func TestBuildDatastoreQueryConnectionIDs(t *testing.T) {
 
 func TestBuildDatastoreQueryMetricDefaultWindow(t *testing.T) {
 	sql, qargs := mustBuild(t, testMetricSource(), map[string]any{"source": "pg_stat_database"}, everyone)
-	want := `SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE EXISTS (SELECT 1 FROM public.connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $1 AND t."collected_at" <= $2 OFFSET 0) t ORDER BY t."collected_at" DESC, t."connection_id" ASC, t."datname" ASC LIMIT $3 OFFSET $4`
+	want := `SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE EXISTS (SELECT 1 FROM connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $1 AND t."collected_at" <= $2 OFFSET 0) t ORDER BY t."collected_at" DESC, t."connection_id" ASC, t."datname" ASC LIMIT $3 OFFSET $4`
 	if sql != want {
 		t.Errorf("SQL =\n%s\nwant\n%s", sql, want)
 	}
@@ -656,7 +653,7 @@ func TestBuildDatastoreQueryConfigTimeRange(t *testing.T) {
 	if strings.Contains(sql, `"start_time" >=`) {
 		t.Errorf("config source without range should be unbounded: %s", sql)
 	}
-	if !strings.Contains(sql, `FROM public."blackouts" t ORDER BY t."start_time" DESC, t."id" ASC LIMIT`) {
+	if !strings.Contains(sql, `FROM "blackouts" t ORDER BY t."start_time" DESC, t."id" ASC LIMIT`) {
 		t.Errorf("config source should order by its time column: %s", sql)
 	}
 	sql, qargs := mustBuild(t, src, map[string]any{"source": "blackouts", "time_start": "7d"}, everyone)
@@ -697,20 +694,34 @@ func TestBuildDatastoreQueryFilters(t *testing.T) {
 		map[string]any{"column": "datname", "op": "=", "value": true},
 		map[string]any{"column": "cache_ratio", "op": "<", "value": 2},
 		map[string]any{"column": "stats_reset", "op": "<", "value": "2026-10-01T00:00:00Z"},
+		map[string]any{"column": "xact_commit", "op": "in", "values": []any{float64(7), "8"}},
+		map[string]any{"column": "cache_ratio", "op": "not in", "values": []any{0.25, "0.75"}},
+		map[string]any{"column": "datname", "op": "not in", "values": []any{"template1"}},
+		map[string]any{"column": "connection_id", "op": "in", "values": []any{float64(6)}},
 	}
 	sql, qargs := mustBuild(t, src, map[string]any{"source": "pg_stat_database", "filters": filters}, everyone)
 	for _, w := range []string{
 		`t."datname" = $3`, `t."datname" <> $4`, `t."xact_commit" < $5`,
 		`t."xact_commit" <= $6`, `t."xact_commit" > $7`, `t."cache_ratio" >= $8`,
-		`t."datname" IN ($9, $10)`, `t."connection_id" NOT IN ($11, $12)`,
-		`t."datname" LIKE $13`, `t."stats_reset" IS NULL`, `t."blks_hit" IS NOT NULL`,
-		`t."datname" = $14`, `t."datname" = $15`, `t."cache_ratio" < $16`, `t."stats_reset" < $17`,
+		// in and not in take the shape a ColdFront datastore can type
+		// for the column (issue #755): typed text parameters, one text
+		// parameter for an integer list, and otherwise a chain of
+		// comparisons.
+		`t."datname" IN ($9::text, $10::text)`,
+		`NOT (t."connection_id" = ANY(string_to_array($11, ',')::integer[]))`,
+		`t."datname" LIKE $12`, `t."stats_reset" IS NULL`, `t."blks_hit" IS NOT NULL`,
+		`t."datname" = $13`, `t."datname" = $14`, `t."cache_ratio" < $15`, `t."stats_reset" < $16`,
+		`(t."xact_commit" = $17 OR t."xact_commit" = $18)`,
+		`(t."cache_ratio" <> $19 AND t."cache_ratio" <> $20)`,
+		`t."datname" NOT IN ($21::text)`,
+		`t."connection_id" = ANY(string_to_array($22, ',')::integer[])`,
 	} {
 		if !strings.Contains(sql, w) {
 			t.Errorf("SQL lacks %q:\n%s", w, sql)
 		}
 	}
-	want := []any{"app", "template0", int64(10), int64(11), int64(1), 0.5, "a", "b", int64(4), int64(5), "app%", "12", "true", float64(2), "2026-10-01T00:00:00Z"}
+	want := []any{"app", "template0", int64(10), int64(11), int64(1), 0.5, "a", "b", "4,5", "app%", "12", "true",
+		float64(2), "2026-10-01T00:00:00Z", int64(7), int64(8), 0.25, 0.75, "template1", "6"}
 	for i, w := range want {
 		if qargs[i+2] != w {
 			t.Errorf("arg %d = %#v, want %#v", i+3, qargs[i+2], w)
@@ -719,6 +730,21 @@ func TestBuildDatastoreQueryFilters(t *testing.T) {
 	for _, v := range []string{"app", "template0", "app%"} {
 		if strings.Contains(sql, v) {
 			t.Errorf("value %q interpolated into SQL", v)
+		}
+	}
+}
+
+// TestBuildDatastoreQueryIntegerListRange checks that an in filter on an
+// integer column refuses a value IntArrayExpr's integer[] cast could not
+// hold, rather than failing the statement in the database.
+func TestBuildDatastoreQueryIntegerListRange(t *testing.T) {
+	for _, v := range []any{float64(2147483648), "-2147483649"} {
+		_, _, err := buildDatastoreQuery(testMetricSource(), mustParse(t, map[string]any{
+			"source":  "pg_stat_database",
+			"filters": []any{map[string]any{"column": "connection_id", "op": "in", "values": []any{float64(1), v}}},
+		}), everyone, testNow)
+		if err == nil || !strings.Contains(err.Error(), "outside its range") {
+			t.Errorf("value %v: err = %v, want outside its range", v, err)
 		}
 	}
 }
@@ -757,7 +783,7 @@ func TestBuildDatastoreQueryLatest(t *testing.T) {
 		"columns": []any{"datname", "xact_commit"},
 		"filters": []any{map[string]any{"column": "datname", "op": "!=", "value": "template1"}},
 	}, restricted)
-	want := `SELECT "datname", "xact_commit" FROM (SELECT DISTINCT ON (t."connection_id", t."datname") t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY($1::int[]) AND EXISTS (SELECT 1 FROM public.connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $2 AND t."collected_at" <= $3 OFFSET 0) t WHERE t."datname" <> $4 ORDER BY t."connection_id", t."datname", t."collected_at" DESC) latest ORDER BY "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
+	want := `SELECT "datname", "xact_commit" FROM (SELECT DISTINCT ON (t."connection_id", t."datname") t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY(string_to_array($1, ',')::integer[]) AND EXISTS (SELECT 1 FROM connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $2 AND t."collected_at" <= $3 OFFSET 0) t WHERE t."datname" <> $4 ORDER BY t."connection_id", t."datname", t."collected_at" DESC) latest ORDER BY "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
 	if sql != want {
 		t.Errorf("SQL =\n%s\nwant\n%s", sql, want)
 	}
@@ -780,7 +806,7 @@ func TestBuildDatastoreQueryAggregate(t *testing.T) {
 		"group_by":    []any{"connection_id", "datname"},
 		"buckets":     6,
 	}, restricted)
-	want := `SELECT date_bin($4::interval, t."collected_at", $2::timestamptz) AS "bucket_time", t."connection_id", t."datname", avg(t."xact_commit") AS "avg_xact_commit", avg(t."cache_ratio") AS "avg_cache_ratio" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY($1::int[]) AND EXISTS (SELECT 1 FROM public.connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $2 AND t."collected_at" <= $3 OFFSET 0) t GROUP BY 1, 2, 3 ORDER BY "bucket_time" ASC, "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
+	want := `SELECT date_bin($4::interval, t."collected_at", $2::timestamptz) AS "bucket_time", t."connection_id", t."datname", avg(t."xact_commit")::float8 AS "avg_xact_commit", avg(t."cache_ratio")::float8 AS "avg_cache_ratio" FROM (SELECT t."connection_id", t."collected_at", t."datname", t."xact_commit", t."blks_hit", t."cache_ratio", t."stats_reset" FROM metrics."pg_stat_database" t WHERE t."connection_id" = ANY(string_to_array($1, ',')::integer[]) AND EXISTS (SELECT 1 FROM connections lc WHERE lc.id = t."connection_id" AND lc.deleted_at IS NULL) AND t."collected_at" >= $2 AND t."collected_at" <= $3 OFFSET 0) t GROUP BY 1, 2, 3 ORDER BY "bucket_time" ASC, "connection_id" ASC, "datname" ASC LIMIT $5 OFFSET $6`
 	if sql != want {
 		t.Errorf("SQL =\n%s\nwant\n%s", sql, want)
 	}
@@ -806,7 +832,7 @@ func TestBuildDatastoreQueryAggregate(t *testing.T) {
 		"order_by":    []any{map[string]any{"column": "max_triggered_at", "direction": "desc"}},
 	}, everyone)
 	if !strings.Contains(sql, `SELECT t."severity", max(t."triggered_at") AS "max_triggered_at" FROM (SELECT t."id", `) ||
-		!strings.Contains(sql, `FROM public."alerts" t WHERE t."connection_id" IS NOT NULL OFFSET 0) t GROUP BY 1`) ||
+		!strings.Contains(sql, `FROM "alerts" t WHERE t."connection_id" IS NOT NULL OFFSET 0) t GROUP BY 1`) ||
 		!strings.Contains(sql, `GROUP BY 1 ORDER BY "max_triggered_at" DESC, "severity" ASC LIMIT`) {
 		t.Errorf("max SQL = %s", sql)
 	}

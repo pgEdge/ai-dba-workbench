@@ -353,87 +353,100 @@ func ResolveCustomWindowAt(start, end, now time.Time, startParam, endParam strin
 	return TimeWindow{Start: start, End: end}, nil
 }
 
+// dimensionColumns are probe columns that identify or describe an
+// entity rather than measure it, whatever their type.
+//
+// The last group are identifier columns that are oid or xid on plain
+// PostgreSQL, which IsMetricColumn already treats as dimensions by type,
+// but bigint on a pgEdge ColdFront datastore, which widens oid and xid
+// to bigint (mappedTypes in collector/src/coldfront/types.go on the
+// collector's ColdFront branch). Without them every one would count as
+// a metric there. The other remapped oid columns (datid, usesysid,
+// relid, indexrelid, funcid) are listed above already.
+var dimensionColumns = map[string]bool{
+	"connection_id":    true,
+	"collected_at":     true,
+	"inserted_at":      true,
+	"datid":            true,
+	"datname":          true,
+	"database_name":    true,
+	"pid":              true,
+	"usesysid":         true,
+	"usename":          true,
+	"application_name": true,
+	"client_addr":      true,
+	"client_hostname":  true,
+	"client_port":      true,
+	"backend_start":    true,
+	"xact_start":       true,
+	"query_start":      true,
+	"state_change":     true,
+	"wait_event_type":  true,
+	"wait_event":       true,
+	"state":            true,
+	"backend_xid":      true,
+	"backend_xmin":     true,
+	"query":            true,
+	"backend_type":     true,
+	"relid":            true,
+	"relname":          true,
+	"schemaname":       true,
+	"indexrelid":       true,
+	"indexrelname":     true,
+	"funcid":           true,
+	"funcname":         true,
+	"queryid":          true,
+	"slot_name":        true,
+	"plugin":           true,
+	"slot_type":        true,
+	"sender_host":      true,
+	"sender_port":      true,
+	"conninfo":         true,
+	"status":           true,
+	"name":             true,
+	"setting":          true,
+	"unit":             true,
+	"category":         true,
+	"short_desc":       true,
+	"extra_desc":       true,
+	"context":          true,
+	"vartype":          true,
+	"source":           true,
+	"boot_val":         true,
+	"reset_val":        true,
+	"sourcefile":       true,
+	"sourceline":       true,
+
+	// oid or xid on plain PostgreSQL, bigint on ColdFront.
+	"datdba":        true, // pg_database
+	"dattablespace": true, // pg_database
+	"datfrozenxid":  true, // pg_database
+	"datminmxid":    true, // pg_database
+	"userid":        true, // pg_stat_statements
+	"dbid":          true, // pg_stat_statements
+	"subid":         true, // pg_stat_subscription
+	"remote_origin": true, // spock_exception_log
+	"local_origin":  true, // spock_exception_log
+}
+
+// metricTypes are the column types IsMetricColumn counts as metrics.
+// Every other type is a dimension: timestamps, dates and times, text,
+// name, inet and oid among them.
+var metricTypes = map[string]bool{
+	"bigint":           true,
+	"integer":          true,
+	"smallint":         true,
+	"numeric":          true,
+	"double precision": true,
+	"real":             true,
+	"interval":         true,
+}
+
 // IsMetricColumn determines whether a column represents a numeric metric
-// as opposed to a dimension identifier.
+// as opposed to a dimension identifier: a column of a metricTypes type
+// that dimensionColumns does not name.
 func IsMetricColumn(name, dataType string) bool {
-	dimensionColumns := map[string]bool{
-		"connection_id":    true,
-		"collected_at":     true,
-		"inserted_at":      true,
-		"datid":            true,
-		"datname":          true,
-		"database_name":    true,
-		"pid":              true,
-		"usesysid":         true,
-		"usename":          true,
-		"application_name": true,
-		"client_addr":      true,
-		"client_hostname":  true,
-		"client_port":      true,
-		"backend_start":    true,
-		"xact_start":       true,
-		"query_start":      true,
-		"state_change":     true,
-		"wait_event_type":  true,
-		"wait_event":       true,
-		"state":            true,
-		"backend_xid":      true,
-		"backend_xmin":     true,
-		"query":            true,
-		"backend_type":     true,
-		"relid":            true,
-		"relname":          true,
-		"schemaname":       true,
-		"indexrelid":       true,
-		"indexrelname":     true,
-		"funcid":           true,
-		"funcname":         true,
-		"queryid":          true,
-		"slot_name":        true,
-		"plugin":           true,
-		"slot_type":        true,
-		"sender_host":      true,
-		"sender_port":      true,
-		"conninfo":         true,
-		"status":           true,
-		"name":             true,
-		"setting":          true,
-		"unit":             true,
-		"category":         true,
-		"short_desc":       true,
-		"extra_desc":       true,
-		"context":          true,
-		"vartype":          true,
-		"source":           true,
-		"boot_val":         true,
-		"reset_val":        true,
-		"sourcefile":       true,
-		"sourceline":       true,
-	}
-
-	if dimensionColumns[name] {
-		return false
-	}
-
-	// Timestamp types are dimensions
-	if strings.Contains(dataType, "timestamp") || dataType == "date" || dataType == "time" {
-		return false
-	}
-
-	// Text types are typically dimensions
-	if dataType == "text" || dataType == "character varying" ||
-		dataType == "name" || dataType == "inet" || dataType == "oid" {
-		return false
-	}
-
-	// Numeric types are metrics
-	if dataType == "bigint" || dataType == "integer" || dataType == "smallint" ||
-		dataType == "numeric" || dataType == "double precision" || dataType == "real" ||
-		dataType == "interval" {
-		return true
-	}
-
-	return false
+	return !dimensionColumns[name] && metricTypes[dataType]
 }
 
 // textStatusColumns lists text-typed probe columns that hold a changing
@@ -444,6 +457,18 @@ func IsMetricColumn(name, dataType string) bool {
 // in the window rather than only its current one.
 var textStatusColumns = map[string]bool{
 	"wal_status": true,
+}
+
+// coldFrontTextColumns are probe columns that are text on a pgEdge
+// ColdFront datastore but not on plain PostgreSQL, where IsEntityKeyColumn
+// does not treat them as entity keys: client_addr in pg_stat_activity and
+// pg_stat_replication is inet, and pg_database's datlocprovider is
+// "char" (mappedTypes in the collector's coldfront package). An address
+// or a locale provider is an attribute of a session or database, not its
+// identity, so they are kept out on ColdFront too.
+var coldFrontTextColumns = map[string]bool{
+	"client_addr":    true,
+	"datlocprovider": true,
 }
 
 // IsEntityKeyColumn reports whether a probe output column is an
@@ -464,12 +489,15 @@ var textStatusColumns = map[string]bool{
 // therefore excluded here even though they are text. No genuine
 // identity column in the schema ends in "_pretty", so the exclusion
 // is a pure bug fix that changes nothing for existing probes. The
-// columns named in textStatusColumns are excluded for the same reason.
+// columns named in textStatusColumns are excluded for the same reason,
+// and those in coldFrontTextColumns so that a ColdFront datastore keys
+// entities as plain PostgreSQL does.
 func IsEntityKeyColumn(name, dataType string) bool {
 	if latestRowInternalColumns[name] {
 		return false
 	}
-	if strings.HasSuffix(name, "_pretty") || textStatusColumns[name] {
+	if strings.HasSuffix(name, "_pretty") || textStatusColumns[name] ||
+		coldFrontTextColumns[name] {
 		return false
 	}
 	switch dataType {
@@ -492,6 +520,16 @@ func EntityKeyColumns(cols []string, colTypes map[string]string) []string {
 		}
 	}
 	return keys
+}
+
+// ProbeExists reports whether probeName is a probe the server may read
+// (LookupProbeRelation): a relation in the metrics schema, other than a
+// partition, under a known probe's name. Any other name is reported
+// missing, because the read-side masking is keyed by probe name and
+// could not protect its rows. An error means the check itself failed.
+func ProbeExists(ctx context.Context, pool *pgxpool.Pool, probeName string) (bool, error) {
+	_, ok, err := LookupProbeRelation(ctx, pool, probeName)
+	return ok, err
 }
 
 // IsValidIdentifier checks whether a string is a valid SQL identifier.
@@ -564,7 +602,26 @@ func GetProbeMetricColumns(ctx context.Context, pool *pgxpool.Pool, probeName st
 // value columns such as pg_stat_wal's last_archived_wal are deliberately
 // not treated as entity keys, which is why this reads the constraint
 // rather than reusing EntityKeyColumns.
+//
+// On a pgEdge ColdFront datastore every probe is a view, which has no
+// primary key (issue #755). When the probe has none, the keys come from
+// probeEntityKeyFallback instead, which holds what the primary key gives
+// on plain PostgreSQL; a probe missing from it has no entity keys. The
+// map is consulted only when there is no primary key, so nothing changes
+// on plain PostgreSQL.
 func GetProbeEntityKeyColumns(ctx context.Context, pool *pgxpool.Pool, probeName string) ([]string, error) {
+	keys, hasKey, err := primaryKeyEntityColumns(ctx, pool, probeName)
+	if err != nil || hasKey {
+		return keys, err
+	}
+	return slices.Clone(probeEntityKeyFallback[probeName]), nil
+}
+
+// primaryKeyEntityColumns returns the entity-key columns of probeName's
+// primary key, as GetProbeEntityKeyColumns describes, and whether the
+// probe has a primary key at all. A key of only connection_id and
+// collected_at gives no columns but hasKey true.
+func primaryKeyEntityColumns(ctx context.Context, pool *pgxpool.Pool, probeName string) (keys []string, hasKey bool, err error) {
 	query := `
         SELECT kcu.column_name
         FROM information_schema.table_constraints tc
@@ -579,26 +636,26 @@ func GetProbeEntityKeyColumns(ctx context.Context, pool *pgxpool.Pool, probeName
 
 	rows, err := pool.Query(ctx, query, probeName)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 
-	var keys []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			return nil, err
+			return nil, false, err
 		}
+		hasKey = true
 		if name == "connection_id" || name == "collected_at" {
 			continue
 		}
 		if !IsValidIdentifier(name) {
-			return nil, fmt.Errorf("invalid entity key column %q", name)
+			return nil, false, fmt.Errorf("invalid entity key column %q", name)
 		}
 		keys = append(keys, name)
 	}
 
-	return keys, rows.Err()
+	return keys, hasKey, rows.Err()
 }
 
 // ResolveDatabaseColumn discovers which database-name column exists in a
@@ -653,8 +710,13 @@ func IsValidAggregation(agg string) bool {
 
 // GetAggSelectCols returns aggregated SELECT expressions with quoted
 // identifiers to prevent SQL injection. The aggregation must already have
-// passed IsValidAggregation; the builders enforce that.
-func GetAggSelectCols(metricCols []string, aggregation string) []string {
+// passed IsValidAggregation; the builders enforce that. colTypes gives
+// each column's data type, so the aggregate can take a form PostgreSQL
+// and a ColdFront datastore type alike (AggregateExpr). An interval
+// column is averaged or summed as seconds: DuckDB has no sum over an
+// interval, and the series reader converts an interval to seconds in any
+// case (toFloat64), so the values are unchanged.
+func GetAggSelectCols(metricCols []string, aggregation string, colTypes map[string]string) []string {
 	var cols []string
 	for _, col := range metricCols {
 		quotedCol := QuoteIdentifier(col)
@@ -662,10 +724,14 @@ func GetAggSelectCols(metricCols []string, aggregation string) []string {
 			cols = append(cols,
 				fmt.Sprintf("(array_agg(%s ORDER BY collected_at DESC))[1] AS %s",
 					quotedCol, quotedCol))
-		} else {
-			cols = append(cols,
-				fmt.Sprintf("%s(%s) AS %s", aggregation, quotedCol, quotedCol))
+			continue
 		}
+		expr, dataType := quotedCol, colTypes[col]
+		if dataType == "interval" && (aggregation == "avg" || aggregation == "sum") {
+			expr, dataType = EpochSeconds(quotedCol), "double precision"
+		}
+		cols = append(cols,
+			AggregateExpr(aggregation, expr, dataType)+" AS "+quotedCol)
 	}
 	return cols
 }
@@ -726,7 +792,7 @@ func BuildMetricsQuery(
         LEFT JOIN data_buckets ON all_buckets.bucket_time = data_buckets.bucket_time
         ORDER BY all_buckets.bucket_time
     `,
-		strings.Join(GetAggSelectCols(metricCols, aggregation), ", "),
+		strings.Join(GetAggSelectCols(metricCols, aggregation, colTypes), ", "),
 		QuoteIdentifier(probeName),
 		whereSQL,
 		strings.Join(GetQualifiedSelectCols(metricCols, "data_buckets"), ", "),
@@ -735,10 +801,12 @@ func BuildMetricsQuery(
 	return query, queryArgs, nil
 }
 
-// lookbackBound is the SQL interval expression bounding how far before the
-// window start the rate/delta lookback (metricQueryParts.lookbackWhere) may
-// reach for a predecessor sample. It is expressed in the query's own bucket
-// width ($1) so it needs no extra argument, and it is the larger of:
+// lookbackBound returns how far before the window start the rate/delta
+// lookback (metricQueryParts.lookbackWhere) may reach for a predecessor
+// sample, for a query whose bucket interval is bucketWidth. It is
+// computed here and the resulting bound bound as a plain timestamp,
+// because a ColdFront datastore cannot plan arithmetic on a bound
+// timestamp (issue #755). It is the larger of:
 //
 //   - Three bucket widths. The stale-predecessor harm scales with the
 //     bucket: a borrowed sample k widths back can inflate the first bucket
@@ -756,7 +824,18 @@ func BuildMetricsQuery(
 // At the 7d and 30d presets the bucket term dominates (67 minutes and 4.8
 // hours a bucket), so a collector outage of a day or more falls outside
 // the bound and the window starts from zero instead of a spike.
-const lookbackBound = "GREATEST($1::interval * 3, INTERVAL '30 minutes')"
+//
+// The width is truncated to whole seconds first, exactly as the bucket
+// interval argument ($1) is rendered, so the bound is the one the SQL
+// expression GREATEST($1::interval * 3, INTERVAL '30 minutes') gave.
+func lookbackBound(bucketWidth time.Duration) time.Duration {
+	const (
+		lookbackBuckets = 3
+		lookbackFloor   = 30 * time.Minute
+	)
+	width := time.Duration(int(bucketWidth.Seconds())) * time.Second
+	return max(lookbackBuckets*width, lookbackFloor)
+}
 
 // metricQueryParts holds the decomposed pieces of the shared metric query
 // WHERE clause, so that a caller needing a variant of it (notably the
@@ -810,13 +889,15 @@ func (p metricQueryParts) where() string {
 // still presents a multi-day average as the first bucket's rate. Beyond
 // the bound the first bucket under-reports by one probe interval instead,
 // which is the lesser harm. The bound also confines the MAX scan to at
-// most a couple of partitions of the probe table.
-func (p metricQueryParts) lookbackWhere(probeName string) string {
+// most a couple of partitions of the probe table. lowerParam is the
+// placeholder of that bound, the window start less lookbackBound,
+// computed by the caller.
+func (p metricQueryParts) lookbackWhere(probeName, lowerParam string) string {
 	priorClauses := make([]string, 0, len(p.filterClauses)+3)
 	priorClauses = append(priorClauses,
 		"connection_id = $2",
 		"collected_at < $3",
-		"collected_at >= $3 - "+lookbackBound)
+		"collected_at >= "+lowerParam)
 	priorClauses = append(priorClauses, p.filterClauses...)
 
 	lowerBound := fmt.Sprintf(
@@ -1106,8 +1187,12 @@ func BuildDerivedMetricsQuery(
 	// is only bound when a counter-derived metric references it, since
 	// PostgreSQL rejects an argument no placeholder uses.
 	maxElapsedArg := fmt.Sprintf("$%d::float8", len(parts.args)+1)
+	// The lookback's lower bound follows it, computed here rather than in
+	// SQL (see lookbackBound).
+	lookbackArg := fmt.Sprintf("$%d", len(parts.args)+2)
 	if len(counters) > 0 {
-		queryArgs = append(queryArgs, maxElapsed.Seconds())
+		queryArgs = append(queryArgs, maxElapsed.Seconds(),
+			timeStart.Add(-lookbackBound(bucketWidth)))
 	}
 
 	hasColumn := make(map[string]bool, len(allCols))
@@ -1249,7 +1334,7 @@ func BuildDerivedMetricsQuery(
                         %s,
                         EXTRACT(EPOCH FROM collected_at
                             - LAG(collected_at) OVER (%sORDER BY collected_at)
-                        ) AS elapsed_sec
+                        )::float8 AS elapsed_sec
                     FROM metrics.%s
                     WHERE %s
                     GROUP BY %s
@@ -1264,7 +1349,7 @@ func BuildDerivedMetricsQuery(
 			strings.Join(innerCols, ",\n                        "),
 			partition,
 			QuoteIdentifier(probeName),
-			parts.lookbackWhere(probeName),
+			parts.lookbackWhere(probeName, lookbackArg),
 			groupBy,
 		))
 
@@ -1649,17 +1734,11 @@ func QueryTimeSeries(
 	timeStart, timeEnd := window.Start, window.End
 
 	// Verify probe exists
-	var count int
-	existsQuery := `
-        SELECT COUNT(*) FROM information_schema.tables
-        WHERE table_schema = 'metrics'
-            AND table_name = $1
-            AND table_type = 'BASE TABLE'
-    `
-	if err := pool.QueryRow(ctx, existsQuery, probeName).Scan(&count); err != nil {
+	exists, err := ProbeExists(ctx, pool, probeName)
+	if err != nil {
 		return nil, fmt.Errorf("failed to verify probe: %w", err)
 	}
-	if count == 0 {
+	if !exists {
 		return nil, fmt.Errorf("probe %q not found", probeName)
 	}
 
@@ -2124,14 +2203,13 @@ func buildLatestRowsQuery(
 	var args []any
 	argNum := 1
 
-	var connPlaceholders []string
-	for _, id := range connectionIDs {
-		connPlaceholders = append(connPlaceholders, fmt.Sprintf("$%d", argNum))
-		args = append(args, id)
-		argNum++
-	}
-	whereClauses = append(whereClauses,
-		fmt.Sprintf("connection_id IN (%s)", strings.Join(connPlaceholders, ", ")))
+	// The connections are bound as one text list (IntArrayExpr), which a
+	// ColdFront datastore can type where it cannot type an IN list of
+	// integer parameters.
+	whereClauses = append(whereClauses, fmt.Sprintf("connection_id = ANY(%s)",
+		IntArrayExpr(fmt.Sprintf("$%d", argNum))))
+	args = append(args, IntListArg(connectionIDs))
+	argNum++
 
 	if filters.DatabaseName != "" && filters.DatabaseColumn != "" {
 		whereClauses = append(whereClauses,
@@ -2269,17 +2347,11 @@ func discoverLatestRowColumns(
 	orderBy string,
 	filters *MetricFilters,
 ) ([]string, map[string]string, string, error) {
-	var count int
-	existsQuery := `
-        SELECT COUNT(*) FROM information_schema.tables
-        WHERE table_schema = 'metrics'
-            AND table_name = $1
-            AND table_type = 'BASE TABLE'
-    `
-	if err := pool.QueryRow(ctx, existsQuery, probeName).Scan(&count); err != nil {
+	exists, err := ProbeExists(ctx, pool, probeName)
+	if err != nil {
 		return nil, nil, "", fmt.Errorf("failed to verify probe: %w", err)
 	}
-	if count == 0 {
+	if !exists {
 		return nil, nil, "", fmt.Errorf("probe %q not found", probeName)
 	}
 
@@ -2383,7 +2455,8 @@ func QueryLatestRows(
 	// string: the only identifiers interpolated into the text are probeName,
 	// orderCol, the output column names, and the entity-key (DISTINCT ON)
 	// columns, each of which is validated against a live-discovered allow-list
-	// (the information_schema.tables existence check, ResolveOrderByColumn, and
+	// (ProbeExists / LookupProbeRelation, the known-probe allowlist,
+	// ResolveOrderByColumn, and
 	// GetProbeAllColumns) and then QuoteIdentifier-wrapped before it reaches the
 	// query. Every runtime value (connection IDs, filter strings, and the
 	// limit) is bound through $N placeholders in args and is never concatenated

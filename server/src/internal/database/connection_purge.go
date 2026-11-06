@@ -12,13 +12,17 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // Deleting a connection happens in two steps (issue #669).
@@ -60,6 +64,14 @@ const (
 	// statement_timeout applies too; this also covers acquiring a
 	// connection from a busy pool.
 	connectionPurgeBatchTimeout = time.Minute
+
+	// connectionPurgeViewTimeout bounds the one DELETE that removes a
+	// connection's rows from a metrics view. On pgEdge ColdFront that
+	// statement rewrites Iceberg data files rather than deleting heap
+	// rows in batches, so it is given longer than a batch, and its
+	// transaction sets statement_timeout to match, overriding the
+	// pool's.
+	connectionPurgeViewTimeout = 10 * time.Minute
 )
 
 // listDeletedConnectionsQuery lists the connections marked for purge,
@@ -79,15 +91,23 @@ const connectionMarkedQuery = `
     )
 `
 
-// metricsLeafTablesQuery lists the tables that hold rows in the metrics
-// schema and carry a connection_id column: the partitions of every
-// partitioned metrics table, and any unpartitioned one. Partitioned
+// metricsLeafTablesQuery lists the relations in the metrics schema that
+// carry a connection_id column: the partitions of every partitioned
+// metrics table, any unpartitioned one, and any view. Partitioned
 // parents (relkind 'p') hold no rows and are skipped. Discovering the
 // tables, rather than listing the foreign keys, also reaches the
 // metrics tables that have no foreign key to connections at all; the
 // second column reports whether the table has one (a foreign key on a
 // partitioned table is cloned onto each partition, so checking the
 // leaf itself is enough).
+//
+// The third column marks a view. On a pgEdge ColdFront datastore every
+// metrics relation is a view over Apache Iceberg storage (issue #755).
+// A view has no ctid for the batch DELETE to locate rows by, so
+// purgeMetricsViews deletes its rows in one statement instead. On a
+// plain PostgreSQL datastore no metrics relation is a view, so this
+// changes nothing there. Only a view named for a known probe is purged
+// (purgeableViews); tables keep the batched path whatever their name.
 const metricsLeafTablesQuery = `
     SELECT c.relname,
            EXISTS (
@@ -95,12 +115,13 @@ const metricsLeafTablesQuery = `
                WHERE con.conrelid = c.oid
                  AND con.contype = 'f'
                  AND con.confrelid = 'connections'::regclass
-           )
+           ),
+           c.relkind = 'v'
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     JOIN pg_attribute a ON a.attrelid = c.oid
     WHERE n.nspname = 'metrics'
-      AND c.relkind = 'r'
+      AND c.relkind IN ('r', 'v')
       AND a.attname = 'connection_id'
       AND NOT a.attisdropped
     ORDER BY c.relname
@@ -175,23 +196,95 @@ func (d *Datastore) ListDeletedConnectionIDs(ctx context.Context) ([]int, error)
 }
 
 // PurgeConnection removes a deleted connection's metrics, batchSize
-// rows per statement, and then the connection row itself. It does
-// nothing for a connection that is not marked deleted. Each batch is
-// its own short transaction, so the purge never holds one long
-// transaction, and an interrupted purge resumes from what is left.
+// rows per statement from each table and in one statement from each
+// view, and then the connection row itself. It does nothing for a
+// connection that is not marked deleted. Each statement is its own short
+// transaction, so the purge never holds one long transaction, and an
+// interrupted purge resumes from what is left.
 func (d *Datastore) PurgeConnection(ctx context.Context, id int, batchSize int) error {
 	return d.purgeConnection(ctx, id, batchSize, nil)
 }
 
-// metricsTable is one metrics leaf table the purge works through.
+// metricsTable is one metrics leaf table the purge works through, or a
+// view.
 type metricsTable struct {
-	name  string
-	hasFK bool
+	name   string
+	hasFK  bool
+	isView bool
+}
+
+// splitMetricsViews separates the views among relations, which the purge
+// clears with purgeMetricsViews, from the tables it purges in batches,
+// keeping their order.
+func splitMetricsViews(relations []metricsTable) (tables []metricsTable, views []string) {
+	for _, r := range relations {
+		if r.isView {
+			views = append(views, r.name)
+			continue
+		}
+		tables = append(tables, r)
+	}
+	return tables, views
+}
+
+// listMetricsRelations returns the metrics leaf tables the purge works
+// through and the metrics views it clears (metricsLeafTablesQuery).
+func (d *Datastore) listMetricsRelations(ctx context.Context) ([]metricsTable, []string, error) {
+	rows, err := d.pool.Query(ctx, metricsLeafTablesQuery)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to list metrics tables: %w", err)
+	}
+	relations, err := scanAll(rows, func(r pgx.Rows, t *metricsTable) error {
+		return r.Scan(&t.name, &t.hasFK, &t.isView)
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read metrics tables: %w", err)
+	}
+	tables, views := splitMetricsViews(relations)
+	return tables, d.purgeableViews(views), nil
+}
+
+// skippedPurgeViews records the non-probe metrics views the purge has
+// already warned about, so each is logged once per process rather than
+// on every pass for every deleted connection.
+var skippedPurgeViews sync.Map
+
+// purgeableViews keeps only the views named for a known probe
+// (metrics.IsKnownProbe, or d.isProbeView when set), the same allowlist
+// the metrics readers apply (metrics.LookupProbeRelation). The purge
+// deletes through a view as the datastore owner, so a view an operator
+// created in the metrics schema for another purpose, and whose DELETE
+// may reach rows outside the probe data, is skipped with a warning
+// rather than written through. A skipped view does not hold up the
+// removal of the connection row.
+func (d *Datastore) purgeableViews(views []string) []string {
+	isProbe := d.isProbeView
+	if isProbe == nil {
+		isProbe = metrics.IsKnownProbe
+	}
+	var kept []string
+	for _, view := range views {
+		if isProbe(view) {
+			kept = append(kept, view)
+			continue
+		}
+		if _, warned := skippedPurgeViews.LoadOrStore(view, struct{}{}); !warned {
+			log.Printf("[WARN] Connection purge: skipping non-probe view %s",
+				pgx.Identifier{"metrics", view}.Sanitize())
+		}
+	}
+	return kept
 }
 
 // purgeConnection is PurgeConnection with a hook that runs between the
-// batch loop and the removal of the row, so tests can write in that
+// metrics deletes and the removal of the row, so tests can write in that
 // window. Production passes nil.
+//
+// The row is removed only once every metrics view has been cleared. A
+// view failure leaves the row marked and returns an error, so the
+// purger retries the whole connection on its next pass rather than
+// removing the row that is the only record that the view still holds
+// the connection's rows.
 func (d *Datastore) purgeConnection(ctx context.Context, id int, batchSize int,
 	beforeRemove func(context.Context) error) error {
 	if batchSize <= 0 {
@@ -206,18 +299,14 @@ func (d *Datastore) purgeConnection(ctx context.Context, id int, batchSize int,
 		return nil
 	}
 
-	rows, err := d.pool.Query(ctx, metricsLeafTablesQuery)
+	tables, views, err := d.listMetricsRelations(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to list metrics tables: %w", err)
+		return err
 	}
-	tables, err := scanAll(rows, func(r pgx.Rows, t *metricsTable) error {
-		return r.Scan(&t.name, &t.hasFK)
-	})
-	if err != nil {
-		return fmt.Errorf("failed to read metrics tables: %w", err)
-	}
-
 	if err := d.purgeMetricsTables(ctx, tables, id, batchSize, false); err != nil {
+		return err
+	}
+	if err := d.purgeMetricsViews(ctx, views, id); err != nil {
 		return err
 	}
 
@@ -231,14 +320,79 @@ func (d *Datastore) purgeConnection(ctx context.Context, id int, batchSize int,
 		return err
 	}
 
-	// A table without a foreign key can have gained rows since its batch
-	// loop finished, and the DELETE above does not cascade to it. Sweep
-	// those tables once more now the row is gone: from here on the id is
-	// no longer marked, so no later pass would find them. A failure is
-	// returned so it is logged, but the stragglers it leaves are then
-	// orphaned, which the metrics readers tolerate by joining on
-	// connections.
-	return d.purgeMetricsTables(ctx, tables, id, batchSize, true)
+	return d.sweepAfterRemoval(ctx, tables, views, id, batchSize)
+}
+
+// sweepAfterRemoval clears rows written since the first sweep from the
+// tables without a foreign key and from the views, as the removal of
+// the connection row does not cascade to them. From here on the id is
+// no longer marked, so no later pass would find these rows: the table
+// sweep and the view sweep are therefore each attempted whatever the
+// other's outcome, and their failures are returned together so they
+// are logged. Stragglers a failure leaves are then orphaned, which the
+// metrics readers tolerate by joining on connections.
+func (d *Datastore) sweepAfterRemoval(ctx context.Context, tables []metricsTable,
+	views []string, id int, batchSize int) error {
+	tableErr := d.purgeMetricsTables(ctx, tables, id, batchSize, true)
+	viewErr := d.purgeMetricsViews(ctx, views, id)
+	return errors.Join(tableErr, viewErr)
+}
+
+// purgeMetricsViews deletes connection id's rows from each metrics view
+// with purgeMetricsView, one transaction per view: pg_duckdb refuses a
+// transaction that writes a ColdFront view and an ordinary table both,
+// and refuses subtransactions, so the deletes cannot share a
+// transaction with each other or with the connection row's removal.
+// Every view is attempted, and the failures are returned together.
+func (d *Datastore) purgeMetricsViews(ctx context.Context, views []string, id int) error {
+	var errs []error
+	for _, view := range views {
+		viewCtx, cancel := context.WithTimeout(ctx, connectionPurgeViewTimeout)
+		err := d.purgeMetricsView(viewCtx, view, id)
+		cancel()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to purge metrics.%s rows of connection %d: %w",
+				view, id, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// purgeMetricsView deletes connection id's rows from one metrics view in
+// a transaction of its own. On pgEdge ColdFront the DELETE rewrites
+// Iceberg data files and can outlast the pool's statement_timeout, so
+// the transaction raises it to connectionPurgeViewTimeout with a
+// transaction-local set_config, as removeDeletedConnection does;
+// pg_duckdb accepts the set_config ahead of the view DELETE.
+func (d *Datastore) purgeMetricsView(ctx context.Context, view string, id int) error {
+	// The relation cannot be a bind parameter: view comes from the
+	// catalog, is admitted only when it names a known probe, and is
+	// quoted by pgx.Identifier.Sanitize; the id is bound as $1.
+	stmt := strings.Join([]string{
+		"DELETE FROM",
+		pgx.Identifier{"metrics", view}.Sanitize(),
+		"WHERE connection_id = $1::int",
+	}, " ")
+
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+
+	if _, err := tx.Exec(ctx,
+		`SELECT set_config('statement_timeout', $1, true)`,
+		strconv.FormatInt(connectionPurgeViewTimeout.Milliseconds(), 10),
+	); err != nil {
+		return fmt.Errorf("failed to set statement timeout: %w", err)
+	}
+	if _, err := tx.Exec(ctx, stmt, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+	return nil
 }
 
 // purgeMetricsTables runs purgeMetricsTable over tables, or over only

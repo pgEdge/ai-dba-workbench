@@ -13,11 +13,36 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+// formatFloat renders f in plain decimal notation with the fewest digits
+// that read back as the same value of the given bit size (32 or 64), so
+// 1431655765 stays 1431655765 rather than %v's 1.431655765e+09. That
+// keeps a float8 result reading as the numeric one it replaced: avg() is
+// cast to float8 so a pgEdge ColdFront datastore and PostgreSQL type it
+// alike (issue #755), and the numeric avg() was always printed in full.
+// NaN and the infinities read NaN, +Inf and -Inf, as %v printed them.
+func formatFloat(f float64, bitSize int) string {
+	return strconv.FormatFloat(f, 'f', -1, bitSize)
+}
+
+// formatGoFloat renders a Go float32 or float64 with formatFloat at its
+// own precision; any other value falls back to %v.
+func formatGoFloat(v any) string {
+	switch f := v.(type) {
+	case float32:
+		return formatFloat(float64(f), 32)
+	case float64:
+		return formatFloat(f, 64)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
 
 // FormatValue converts a value to a TSV-safe string.
 // Handles NULLs, special characters, and complex types.
@@ -43,7 +68,7 @@ func FormatValue(v any) string {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		s = fmt.Sprintf("%d", val)
 	case float32, float64:
-		s = fmt.Sprintf("%v", val)
+		s = formatGoFloat(val)
 	case pgtype.Numeric:
 		s = formatNumeric(val)
 	// Integer types
@@ -67,12 +92,12 @@ func FormatValue(v any) string {
 		if !val.Valid {
 			return ""
 		}
-		s = fmt.Sprintf("%v", val.Float32)
+		s = formatFloat(float64(val.Float32), 32)
 	case pgtype.Float8:
 		if !val.Valid {
 			return ""
 		}
-		s = fmt.Sprintf("%v", val.Float64)
+		s = formatFloat(val.Float64, 64)
 	// Text and Bool types
 	case pgtype.Text:
 		if !val.Valid {

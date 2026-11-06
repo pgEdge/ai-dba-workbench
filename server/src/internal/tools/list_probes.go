@@ -12,18 +12,22 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // ProbeInfo represents metadata about a metrics probe
 type ProbeInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	RowCount    int64  `json:"row_count"`
-	Scope       string `json:"scope"` // "server" or "database"
+	// RowCount is nil when the count is unknown: a probe stored as a
+	// view, as on a pgEdge ColdFront datastore, is not counted.
+	RowCount *int64 `json:"row_count"`
+	Scope    string `json:"scope"` // "server" or "database"
 }
 
 // ListProbesTool creates the list_probes tool for listing available metrics probes
@@ -49,7 +53,9 @@ Use this tool to:
 Returns a TSV table with:
 - name: Probe name (use with describe_probe and query_metrics)
 - description: Human-readable description of what the probe collects
-- row_count: Approximate number of metric rows collected
+- row_count: Approximate number of metric rows collected, or "unknown" for a
+  probe stored in pgEdge ColdFront (a view over Apache Iceberg storage), whose
+  rows are not counted because counting them would scan the whole history
 - scope: "server" for server-wide metrics, "database" for per-database metrics
 </provided_info>
 
@@ -76,59 +82,34 @@ Returns a TSV table with:
 				ctx = context.Background()
 			}
 
-			// Query for the probe tables in the metrics schema with their
-			// descriptions and row counts. The collector stores each probe
-			// in a partitioned parent table with weekly partitions named
-			// <probe>_<YYYYMMDD>; partitions are excluded by catalog state
-			// (relispartition) rather than by name, because a name pattern
-			// cannot tell a partition from a probe reliably (issue #644).
-			// relkind 'r' and 'p' are the ordinary and partitioned tables
-			// that information_schema.tables reports as BASE TABLE, and the
-			// privilege check keeps tables the datastore role cannot read
-			// out of the list, as information_schema.tables did. A
-			// partitioned table holds no rows itself, so its row count is the
-			// sum over the leaf partitions at every level of its tree.
-			query := `
-				SELECT
-					c.relname::text AS table_name,
-					COALESCE(obj_description(c.oid, 'pg_class'), '') AS description,
-					CASE WHEN c.relkind = 'p' THEN (
-						SELECT COALESCE(SUM(ps.n_live_tup), 0)
-						FROM pg_partition_tree(c.oid) pt
-						JOIN pg_stat_user_tables ps ON ps.relid = pt.relid
-						WHERE pt.isleaf
-					)::bigint
-					ELSE COALESCE(s.n_live_tup, 0)
-					END AS row_count
-				FROM pg_class c
-				JOIN pg_namespace n ON n.oid = c.relnamespace
-				LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
-				WHERE n.nspname = 'metrics'
-					AND c.relkind IN ('r', 'p')
-					AND NOT c.relispartition
-					AND has_table_privilege(c.oid, 'SELECT')
-				ORDER BY c.relname
-			`
-
-			rows, err := pool.Query(ctx, query)
+			// The probes come from metrics.ListProbeRelations, the catalog
+			// lookup every route shares, so list_probes lists exactly what
+			// describe_probe, query_metrics and the datastore tools accept:
+			// known probes only, never a partition (issue #644) or a
+			// relation the datastore role cannot read. The masking of
+			// statement text and settings is keyed by probe name, so a
+			// relation under any other name could not be read safely.
+			//
+			// On a pgEdge ColdFront datastore every probe is a view over
+			// Apache Iceberg storage (issue #755). A view is listed only
+			// when it carries the connection_id and collected_at columns
+			// every probe has, and its row count is reported as unknown.
+			relations, err := metrics.ListProbeRelations(ctx, pool)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to query metrics probes: %v", err))
 			}
-			defer rows.Close()
 
 			var probes []ProbeInfo
-			for rows.Next() {
-				var probe ProbeInfo
-				if err := rows.Scan(&probe.Name, &probe.Description, &probe.RowCount); err != nil {
-					return mcp.NewToolError(fmt.Sprintf("Failed to scan probe: %v", err))
+			for _, rel := range relations {
+				if rel.IsView && !rel.HasBookkeeping {
+					continue
 				}
-				// Determine scope based on probe name patterns
-				probe.Scope = determineProbeScope(probe.Name)
-				probes = append(probes, probe)
-			}
-
-			if err := rows.Err(); err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Error iterating probes: %v", err))
+				probes = append(probes, ProbeInfo{
+					Name:        rel.Name,
+					Description: rel.Description,
+					RowCount:    rel.RowCount,
+					Scope:       determineProbeScope(rel.Name),
+				})
 			}
 
 			if len(probes) == 0 {
@@ -140,16 +121,29 @@ Returns a TSV table with:
 			fmt.Fprintf(&sb, "Found %d metrics probes:\n\n", len(probes))
 			sb.WriteString("name\tdescription\trow_count\tscope\n")
 			for _, probe := range probes {
-				fmt.Fprintf(&sb, "%s\t%s\t%d\t%s\n",
+				fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\n",
 					sanitizeTSVField(probe.Name),
 					sanitizeTSVField(probe.Description),
-					probe.RowCount,
+					formatProbeRowCount(probe.RowCount),
 					sanitizeTSVField(probe.Scope))
 			}
 
 			return mcp.NewToolSuccess(sb.String())
 		},
 	}
+}
+
+// unknownRowCount is what list_probes reports as the row count of a probe
+// it does not count.
+const unknownRowCount = "unknown"
+
+// formatProbeRowCount renders a probe's row count for the TSV output:
+// the number, or unknownRowCount when count is nil.
+func formatProbeRowCount(count *int64) string {
+	if count == nil {
+		return unknownRowCount
+	}
+	return strconv.FormatInt(*count, 10)
 }
 
 // determineProbeScope determines if a probe is server-wide or database-scoped

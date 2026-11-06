@@ -628,7 +628,9 @@ func (h *ServerInfoHandler) queryKeySettings(
 	args := make([]any, len(keySettings)+1)
 	args[0] = connectionID
 	for i, name := range keySettings {
-		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		// Each name is typed: a ColdFront datastore cannot type an IN
+		// list of untyped parameters (issue #755).
+		placeholders[i] = fmt.Sprintf("$%d::text", i+2)
 		args[i+1] = name
 	}
 

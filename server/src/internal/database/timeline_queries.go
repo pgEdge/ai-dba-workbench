@@ -152,14 +152,14 @@ func buildConnectionFilter(filter TimelineFilter) (string, []any, int) {
 		argNum++
 	}
 
+	// The list is bound as one text parameter (metrics.IntArrayExpr):
+	// the condition also filters metrics views, and a ColdFront datastore
+	// cannot type an IN list of integer parameters (issue #755).
 	if len(filter.ConnectionIDs) > 0 {
-		placeholders := make([]string, len(filter.ConnectionIDs))
-		for i, id := range filter.ConnectionIDs {
-			placeholders[i] = fmt.Sprintf("$%d", argNum)
-			args = append(args, id)
-			argNum++
-		}
-		conditions = append(conditions, fmt.Sprintf("connection_id IN (%s)", strings.Join(placeholders, ", ")))
+		conditions = append(conditions, fmt.Sprintf("connection_id = ANY(%s)",
+			metrics.IntArrayExpr(fmt.Sprintf("$%d", argNum))))
+		args = append(args, metrics.IntListArg(filter.ConnectionIDs))
+		argNum++
 	}
 
 	if len(conditions) == 0 {
@@ -364,13 +364,20 @@ func buildCountQuery(connCondition, timeCondition, typeCondition string, filter 
 	return fmt.Sprintf("SELECT %s AS total_count", strings.Join(countQueries, " + "))
 }
 
-// timelineLiveConnectionCondition keeps a connection marked for deletion
-// out of the event counts, as the event queries keep it out by joining
-// live connections, so TotalCount matches the events it totals (issue
-// #668). The count builders rewrite connection_id with their own table
-// alias, which is why the subquery names no column of that spelling;
-// connections.id is NOT NULL, so NOT IN is safe here.
-const timelineLiveConnectionCondition = "connection_id NOT IN (SELECT id FROM connections WHERE deleted_at IS NOT NULL)"
+// timelineLiveConnectionCondition keeps the events of any connection that
+// is not live out of the event counts, as the event queries keep them out
+// by joining live connections, so TotalCount matches the events it
+// totals (issue #668). That covers a connection marked for deletion and
+// also one the purge has already removed: on a pgEdge ColdFront
+// datastore a metrics view has no foreign key to connections (issue
+// #755), so a row written after the purge's last sweep of the view, or
+// one a failed sweep left, outlives its connection row, and a test for
+// marked rows alone (NOT IN the marked IDs) would still count it.
+// The count builders rewrite connection_id with their own table alias,
+// which is why the subquery names no column of that spelling. It names
+// connections unqualified and joins no catalog, so DuckDB can plan it
+// when the statement also reads metrics views.
+const timelineLiveConnectionCondition = "connection_id IN (SELECT id FROM connections WHERE deleted_at IS NULL)"
 
 // buildWhereClause combines conditions into a WHERE clause
 func buildWhereClause(connCondition, timeCondition, extraCondition string) string {
@@ -393,6 +400,12 @@ func buildWhereClause(connCondition, timeCondition, extraCondition string) strin
 // buildConfigChangeQuery creates the subquery for configuration changes.
 // Uses LAG() window functions directly on value columns to detect changes
 // in a single table scan without self-joins.
+//
+// A string literal passed as a jsonb_build_object value, here and in the
+// HBA and extension change queries, is cast to text: on a pgEdge
+// ColdFront datastore the JSON builders are rewritten for DuckDB, which
+// cannot resolve an untyped literal ("could not determine polymorphic
+// type because input has type unknown", issue #755).
 func buildConfigChangeQuery(whereClause string) string {
 	// Build filter for the outer query (uses changes.connection_id, changes.collected_at)
 	outerWhere := strings.ReplaceAll(whereClause, "event_time", "changes.collected_at")
@@ -425,7 +438,7 @@ func buildConfigChangeQuery(whereClause string) string {
                     'name', changes.name,
                     'old_value', %[4]s,
                     'new_value', %[5]s,
-                    'change_type', 'modified'
+                    'change_type', 'modified'::text
                 ) ORDER BY changes.name)
             )::TEXT AS details
         FROM (
@@ -543,7 +556,7 @@ func buildHBAChangeQuery(whereClause string) string {
                     'prev_user_name', changes.prev_user_name,
                     'prev_address', changes.prev_address,
                     'prev_auth_method', changes.prev_auth_method,
-                    'change_type', 'modified'
+                    'change_type', 'modified'::text
                 ) ORDER BY changes.rule_number)
             )::TEXT AS details
         FROM (
@@ -886,19 +899,27 @@ func buildAlertClearedQuery(whereClause string) string {
 //   - diff < 60       -> "Ns"
 //   - diff < 3600     -> "Nm Ms"
 //   - diff >= 3600    -> "Nh Mm"
+//
+// The divisions are written as floor(n::float8 / d)::BIGINT rather than
+// n / d. The timeline's UNION also reads metrics views, so on a pgEdge
+// ColdFront datastore DuckDB runs the whole statement, and DuckDB's /
+// is a floating-point division even between integers, which turned
+// 125 seconds into "2.0833333333333335m 5s" (issue #755). The floor
+// form gives the integer quotient on both datastores; the operands are
+// non-negative and far below 2^53, so float8 holds them exactly.
 const alertClearedDurationSQL = `
             CASE
                 WHEN GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) < 60 THEN
                     GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0)::TEXT || 's'
                 WHEN GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) < 3600 THEN
-                    (GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) / 60)::TEXT
+                    floor(GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0)::float8 / 60)::BIGINT::TEXT
                     || 'm '
                     || (GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) % 60)::TEXT
                     || 's'
                 ELSE
-                    (GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) / 3600)::TEXT
+                    floor(GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0)::float8 / 3600)::BIGINT::TEXT
                     || 'h '
-                    || ((GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) % 3600) / 60)::TEXT
+                    || floor((GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) % 3600)::float8 / 60)::BIGINT::TEXT
                     || 'm'
             END
         `
@@ -1019,7 +1040,7 @@ func buildExtensionChangeQuery(whereClause string) string {
                     'version', changes.extversion,
                     'old_version', changes.prev_extversion,
                     'database', changes.database_name,
-                    'change_type', 'modified'
+                    'change_type', 'modified'::text
                 ) ORDER BY changes.extname)
             )::TEXT AS details
         FROM (

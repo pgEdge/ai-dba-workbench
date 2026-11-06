@@ -53,7 +53,7 @@ CREATE TABLE alert_thresholds (
     enabled BOOLEAN
 );
 
-CREATE TABLE metrics.cov_probe (
+CREATE TABLE metrics.pg_sys_cpu_usage_info (
     connection_id INTEGER NOT NULL,
     collected_at TIMESTAMPTZ NOT NULL,
     database_name TEXT,
@@ -61,7 +61,7 @@ CREATE TABLE metrics.cov_probe (
     PRIMARY KEY (connection_id, collected_at)
 );
 
-CREATE TABLE metrics.cov_empty (
+CREATE TABLE metrics.pg_sys_cpu_info (
     connection_id INTEGER NOT NULL,
     collected_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (connection_id, collected_at)
@@ -335,7 +335,7 @@ func TestQueryMetricsTool_Coverage(t *testing.T) {
 	pool := newCoverageToolsPool(t)
 	connID := seedBaselineConnection(t, pool, "metrics-conn", true, "")
 	if _, err := pool.Exec(context.Background(), `
-        INSERT INTO metrics.cov_probe (connection_id, collected_at, database_name, value_count)
+        INSERT INTO metrics.pg_sys_cpu_usage_info (connection_id, collected_at, database_name, value_count)
         VALUES ($1, NOW() - INTERVAL '10 minutes', 'postgres', 5),
                ($1, NOW() - INTERVAL '5 minutes', 'postgres', 9)`, connID); err != nil {
 		t.Fatalf("failed to seed probe rows: %v", err)
@@ -343,7 +343,7 @@ func TestQueryMetricsTool_Coverage(t *testing.T) {
 
 	conn := float64(connID)
 	withProbe := func(extra map[string]any) map[string]any {
-		args := map[string]any{"probe_name": "cov_probe", "connection_id": conn}
+		args := map[string]any{"probe_name": "pg_sys_cpu_usage_info", "connection_id": conn}
 		for k, v := range extra {
 			args[k] = v
 		}
@@ -353,11 +353,11 @@ func TestQueryMetricsTool_Coverage(t *testing.T) {
 		{name: "missing probe_name", wantErr: true, want: "Missing or invalid 'probe_name'"},
 		{name: "invalid probe_name", args: map[string]any{"probe_name": "bad-name"},
 			wantErr: true, want: "Invalid probe name"},
-		{name: "missing connection_id", args: map[string]any{"probe_name": "cov_probe"},
+		{name: "missing connection_id", args: map[string]any{"probe_name": "pg_sys_cpu_usage_info"},
 			wantErr: true, want: "Missing or invalid 'connection_id'"},
 		{name: "no context denies", raw: true, args: withProbe(nil),
 			wantErr: true, want: "connection not found or not accessible"},
-		{name: "unknown connection", args: map[string]any{"probe_name": "cov_probe", "connection_id": float64(999)},
+		{name: "unknown connection", args: map[string]any{"probe_name": "pg_sys_cpu_usage_info", "connection_id": float64(999)},
 			wantErr: true, want: "connection not found or not accessible"},
 		{name: "invalid time range", args: withProbe(map[string]any{"time_start": "garbage"}),
 			wantErr: true, want: "Invalid time range"},
@@ -371,7 +371,7 @@ func TestQueryMetricsTool_Coverage(t *testing.T) {
 			wantErr: true, want: "Invalid metric name"},
 		{name: "unknown metric", args: withProbe(map[string]any{"metrics": "missing"}),
 			wantErr: true, want: "Metric 'missing' not found"},
-		{name: "probe without metrics", args: map[string]any{"probe_name": "cov_empty", "connection_id": conn},
+		{name: "probe without metrics", args: map[string]any{"probe_name": "pg_sys_cpu_info", "connection_id": conn},
 			wantErr: true, want: "No numeric metrics found"},
 		{name: "filter on a missing column fails the query", args: withProbe(map[string]any{
 			"schema_name": "public", "table_name": "t"}),
@@ -379,7 +379,7 @@ func TestQueryMetricsTool_Coverage(t *testing.T) {
 		{name: "success", args: withProbe(map[string]any{
 			"metrics": "value_count", "aggregation": "MAX", "buckets": float64(4),
 			"database_name": "postgres", "time_start": "1h"}),
-			want: "Probe: cov_probe"},
+			want: "Probe: pg_sys_cpu_usage_info"},
 	})
 }
 

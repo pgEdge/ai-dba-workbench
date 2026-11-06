@@ -42,8 +42,13 @@ func TestDatastoreQueryErrorFormatter(t *testing.T) {
 	}{
 		"statement timeout": {&pgconn.PgError{Code: sqlstateQueryCanceled, Message: "canceling statement"}, datastoreQueryTimeoutMsg},
 		"deadline":          {fmt.Errorf("wrapped: %w", context.DeadlineExceeded), datastoreQueryTimeoutMsg},
-		"data error":        {&pgconn.PgError{Code: "22P02", Message: `invalid input syntax for type integer: "secret"`}, datastoreQueryFailedMsg},
-		"other":             {errors.New("connection reset"), datastoreQueryFailedMsg},
+		"coldfront statement timeout": {fmt.Errorf("wrapped: %w", &pgconn.PgError{Code: "XX000",
+			Message: "(PGDuckDB/Duckdb_ExecCustomScan_Cpp) Executor Error: " + duckdbQueryCanceledMarker}), datastoreQueryTimeoutMsg},
+		"coldfront other internal error": {&pgconn.PgError{Code: "XX000",
+			Message: "(PGDuckDB/Duckdb_ExecCustomScan_Cpp) Catalog Error: Table does not exist"}, datastoreQueryFailedMsg},
+		"canceled marker with another code": {&pgconn.PgError{Code: "22P02", Message: duckdbQueryCanceledMarker}, datastoreQueryFailedMsg},
+		"data error":                        {&pgconn.PgError{Code: "22P02", Message: `invalid input syntax for type integer: "secret"`}, datastoreQueryFailedMsg},
+		"other":                             {errors.New("connection reset"), datastoreQueryFailedMsg},
 	} {
 		if got := format(queryStageExecute, tc.err); got != tc.want {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)

@@ -409,13 +409,15 @@ func QueryComparisonBaselines(
 // connection, one database (NULL for server-level metrics) and the
 // window, whose start the caller has already moved back to the start of
 // the bucket that holds it for a bucketed metric. Only the registry's own
-// SQL is spliced in, never request input.
+// SQL is spliced in, never request input. The outer parameters are typed
+// so the wrapper states its own types to a pgEdge ColdFront datastore
+// rather than leaving DuckDB to infer them (issue #755).
 func comparisonSeriesQuery(def anomaly.MetricDef) string {
 	return `SELECT h.value::float8, h.collected_at
         FROM (` + def.HistoricalSQL + `) AS h
-        WHERE h.connection_id = $3
+        WHERE h.connection_id = $3::int
           AND h.database_name IS NOT DISTINCT FROM $4::text
-          AND h.collected_at BETWEEN $5 AND $6
+          AND h.collected_at BETWEEN $5::timestamptz AND $6::timestamptz
           AND h.value IS NOT NULL
         ORDER BY h.collected_at`
 }

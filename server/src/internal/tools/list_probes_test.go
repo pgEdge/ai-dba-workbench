@@ -48,6 +48,26 @@ func TestListProbes_NilPool(t *testing.T) {
 	}
 }
 
+func TestFormatProbeRowCount(t *testing.T) {
+	zero, many := int64(0), int64(1234567)
+	tests := []struct {
+		name  string
+		count *int64
+		want  string
+	}{
+		{"unknown for a view", nil, "unknown"},
+		{"zero", &zero, "0"},
+		{"counted", &many, "1234567"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatProbeRowCount(tt.count); got != tt.want {
+				t.Errorf("formatProbeRowCount() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDetermineProbeScope(t *testing.T) {
 	tests := []struct {
 		probeName string

@@ -74,7 +74,7 @@ const topQueriesCTEHead = "WITH latest AS ( " +
 	"), last_client AS ( " +
 	"SELECT DISTINCT ON (query_id, datid, usesysid) " +
 	"query_id, datid, usesysid, " +
-	"COALESCE(host(client_addr), 'local') AS client_addr, " +
+	"COALESCE(host(client_addr::inet), 'local') AS client_addr, " +
 	"client_hostname, collected_at " +
 	"FROM metrics.pg_stat_activity " +
 	"WHERE connection_id = $1 " +

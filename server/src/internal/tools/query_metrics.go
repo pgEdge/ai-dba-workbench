@@ -224,17 +224,11 @@ To manage response sizes:
 			}
 
 			// Verify probe exists
-			existsQuery := `
-				SELECT COUNT(*) FROM information_schema.tables
-				WHERE table_schema = 'metrics'
-					AND table_name = $1
-					AND table_type = 'BASE TABLE'
-			`
-			var count int
-			if err := pool.QueryRow(ctx, existsQuery, probeName).Scan(&count); err != nil {
+			exists, err := metrics.ProbeExists(ctx, pool, probeName)
+			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to verify probe: %v", err))
 			}
-			if count == 0 {
+			if !exists {
 				return mcp.NewToolError(fmt.Sprintf("Probe '%s' not found. Use list_probes to see available probes.", probeName))
 			}
 

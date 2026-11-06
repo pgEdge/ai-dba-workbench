@@ -80,10 +80,10 @@ var maskedProbes = []maskedProbe{
             collected_at timestamptz NOT NULL, relname text, local_tuple text, remote_tuple text)`,
 		insert: `INSERT INTO metrics.spock_resolutions VALUES ($1, now() - interval '1 minute', 'users',
             '{"id": 1, "password": "example-secret"}', '{"id": 1, "secret": "example-secret"}')`},
-	{name: "ds_masking_secret_probe", drop: `DROP TABLE IF EXISTS metrics.ds_masking_secret_probe`, hidden: "api_token",
-		create: `CREATE TABLE metrics.ds_masking_secret_probe (connection_id integer NOT NULL,
+	{name: "pg_sys_process_info", drop: `DROP TABLE IF EXISTS metrics.pg_sys_process_info`, hidden: "api_token",
+		create: `CREATE TABLE metrics.pg_sys_process_info (connection_id integer NOT NULL,
             collected_at timestamptz NOT NULL, name text, api_token text, calls bigint)`,
-		insert: `INSERT INTO metrics.ds_masking_secret_probe VALUES ($1, now() - interval '1 minute', 'app', 'example-secret', 1)`},
+		insert: `INSERT INTO metrics.pg_sys_process_info VALUES ($1, now() - interval '1 minute', 'app', 'example-secret', 1)`},
 }
 
 // probesToMask returns a maskedProbes fixture for every probe in
@@ -133,6 +133,11 @@ func TestMaskedProbesCoverProbeRedactions(t *testing.T) {
 // of GET /api/v1/metrics/query, and checks none returns the credential,
 // a quoteShiftStatements secret or the stored statement text each route
 // selects beside a masked statement column (issues #670 and #724).
+//
+// Each probe is partitioned by week, as the collector stores it, and
+// its rows land in a weekly partition. The masking is keyed by the
+// probe's exact name, so the partition, a detached partition and a
+// renamed view of the probe must each be refused by every route.
 func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 	f := newDatastoreFixture(t)
 	ctx := context.Background()
@@ -154,6 +159,7 @@ func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 					t.Logf("%s: %v", p.drop, err)
 				}
 			})
+			partition := partitionProbeByWeek(t, f, p.name)
 			if _, err := f.pool.Exec(ctx, p.insert, f.visible); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
@@ -224,7 +230,186 @@ func TestMaskedProbesOnEveryRouteIntegration(t *testing.T) {
 					t.Errorf("%s should show the masked value:\n%s", route, out)
 				}
 			}
+
+			checkRenamedViewRefused(t, f, mux, p.name)
+			checkPartitionRefused(t, f, mux, p.name, partition)
 		})
+	}
+}
+
+// partitionProbeByWeek turns the plain table probe into a table
+// partitioned on collected_at with the same columns, as the collector
+// creates it, and gives it one partition named <probe>_<YYYYMMDD> after
+// the UTC week that holds the current time (collector/src/probes/
+// partition.go). The partition spans two weeks, so a row stamped a
+// minute ago lands in it across a week boundary too. It returns the
+// partition's name. The server quotes every name with format('%I'), so
+// the SQL text sent is never assembled here.
+func partitionProbeByWeek(t *testing.T, f *datastoreFixture, probe string) string {
+	t.Helper()
+	ctx := context.Background()
+	var partition string
+	var ddl []string
+	if err := f.pool.QueryRow(ctx, `
+        WITH w AS (SELECT date_trunc('week', now() AT TIME ZONE 'UTC') AS start)
+        SELECT $1::text || '_' || to_char(w.start, 'YYYYMMDD'),
+               ARRAY[
+                   format('ALTER TABLE metrics.%I RENAME TO %I', $1::text, $1::text || '_seed'),
+                   format('CREATE TABLE metrics.%I (LIKE metrics.%I) PARTITION BY RANGE (collected_at)',
+                       $1::text, $1::text || '_seed'),
+                   format('CREATE TABLE metrics.%I PARTITION OF metrics.%I FOR VALUES FROM (%L) TO (%L)',
+                       $1::text || '_' || to_char(w.start, 'YYYYMMDD'), $1::text,
+                       (w.start - interval '7 days') AT TIME ZONE 'UTC',
+                       (w.start + interval '7 days') AT TIME ZONE 'UTC'),
+                   format('DROP TABLE metrics.%I', $1::text || '_seed')]
+        FROM w`, probe).Scan(&partition, &ddl); err != nil {
+		t.Fatalf("build the partitioning DDL: %v", err)
+	}
+	for _, stmt := range ddl {
+		if _, err := f.pool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	return partition
+}
+
+// checkPartitionRefused checks that no route lists or reads probe's
+// partition, which it finds through pg_inherits, and then that none
+// does once the partition is detached, when the catalog no longer marks
+// it as one. The partition holds the probe's rows, and the masking is
+// keyed by the probe's exact name, so a route that admitted it would
+// return the credentials in clear.
+func checkPartitionRefused(t *testing.T, f *datastoreFixture, mux *http.ServeMux, probe, partition string) {
+	t.Helper()
+	ctx := context.Background()
+	var leaf, detach, drop string
+	if err := f.pool.QueryRow(ctx, `
+        SELECT c.relname::text,
+               format('ALTER TABLE metrics.%I DETACH PARTITION metrics.%I', $1::text, c.relname),
+               format('DROP TABLE IF EXISTS metrics.%I', c.relname)
+        FROM pg_inherits i
+        JOIN pg_class c ON c.oid = i.inhrelid
+        WHERE i.inhparent = to_regclass(format('metrics.%I', $1::text))`, probe).Scan(&leaf, &detach, &drop); err != nil {
+		t.Fatalf("find the partition of %s: %v", probe, err)
+	}
+	if leaf != partition {
+		t.Fatalf("partition of %s is %s, want %s", probe, leaf, partition)
+	}
+	var rows int
+	// query_to_xml runs the count with the name quoted by format('%I').
+	if err := f.pool.QueryRow(ctx, `
+        SELECT (xpath('/row/c/text()', query_to_xml(
+            format('SELECT count(*) AS c FROM metrics.%I', $1::text), false, true, '')))[1]::text::int`,
+		leaf).Scan(&rows); err != nil || rows == 0 {
+		t.Fatalf("partition %s holds %d rows (%v); want the probe's rows", leaf, rows, err)
+	}
+	checkRelationRefused(t, f, mux, probe, leaf)
+
+	if _, err := f.pool.Exec(ctx, detach); err != nil {
+		t.Fatalf("detach %s: %v", leaf, err)
+	}
+	t.Cleanup(func() {
+		if _, err := f.pool.Exec(context.Background(), drop); err != nil {
+			t.Logf("drop detached partition: %v", err)
+		}
+	})
+	checkRelationRefused(t, f, mux, probe, leaf)
+}
+
+// checkRenamedViewRefused creates a view of probe under another name and
+// checks that no route lists or reads it. The masking is keyed by probe
+// name, so such a view would return the probe's credentials in clear
+// were it admitted; every route must refuse it, as it refused any
+// unknown view before ColdFront support (issue #755).
+func checkRenamedViewRefused(t *testing.T, f *datastoreFixture, mux *http.ServeMux, probe string) {
+	t.Helper()
+	ctx := context.Background()
+	view := probe + "_report"
+	// The server quotes both names with format('%I'), so the SQL text
+	// sent is never assembled here.
+	var create, drop string
+	if err := f.pool.QueryRow(ctx, `
+        SELECT format('CREATE VIEW metrics.%I AS SELECT * FROM metrics.%I', $1::text, $2::text),
+               format('DROP VIEW IF EXISTS metrics.%I', $1::text)`, view, probe).Scan(&create, &drop); err != nil {
+		t.Fatalf("build the renamed view's DDL: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, create); err != nil {
+		t.Fatalf("create renamed view: %v", err)
+	}
+	// The probe's drop has no CASCADE, so the view must go first;
+	// cleanups run last-registered first.
+	t.Cleanup(func() {
+		if _, err := f.pool.Exec(context.Background(), drop); err != nil {
+			t.Logf("drop renamed view: %v", err)
+		}
+	})
+	checkRelationRefused(t, f, mux, probe, view)
+}
+
+// checkRelationRefused checks that each of the seven routes that take a
+// probe or source name (query_datastore, describe_datastore,
+// list_probes, describe_probe, query_metrics, /metrics/latest and
+// /metrics/query) refuses or leaves out the relation view, which holds
+// probe's rows under another name, and that no refusal returns a
+// credential.
+func checkRelationRefused(t *testing.T, f *datastoreFixture, mux *http.ServeMux, probe, view string) {
+	t.Helper()
+	refusals := map[string]string{}
+	latest := map[string]any{"source": view, "shape": "latest"}
+	if probe == "pg_stat_activity" || probe == "pg_stat_statements" {
+		// The shape a restricted user would ask for to read statements.
+		latest["columns"] = []any{"datname", "query"}
+	}
+	for name, args := range map[string]map[string]any{
+		"query_datastore rows":   {"source": view, "shape": "rows"},
+		"query_datastore latest": latest,
+	} {
+		text, isErr := call(t, f.tool(), f.userCtx(), args)
+		if !isErr || !strings.Contains(text, "unknown source") {
+			t.Errorf("%s on %s = %q (error %v), want unknown source", name, view, text, isErr)
+		}
+		refusals[name] = text
+	}
+	for name, tool := range map[string]Tool{
+		"describe_probe": DescribeProbeTool(f.pool),
+		"query_metrics":  QueryMetricsTool(f.pool, f.checker, nil),
+	} {
+		text, isErr := call(t, tool, superuserContext(),
+			map[string]any{"probe_name": view, "connection_id": float64(f.visible)})
+		if !isErr || !strings.Contains(text, "not found") {
+			t.Errorf("%s on %s = %q (error %v), want not found", name, view, text, isErr)
+		}
+		refusals[name] = text
+	}
+	for name, tool := range map[string]Tool{
+		"describe_datastore": DescribeDatastoreTool(f.pool),
+		"list_probes":        ListProbesTool(f.pool),
+	} {
+		text, isErr := call(t, tool, superuserContext(), map[string]any{})
+		if isErr {
+			t.Fatalf("%s: %s", name, text)
+		}
+		if strings.Contains(text, view) {
+			t.Errorf("%s lists %s:\n%s", name, view, text)
+		}
+	}
+	params := "probe_name=" + view + "&connection_id=" + strconv.Itoa(f.visible)
+	for route, target := range map[string]string{
+		"metrics/latest": "/api/v1/metrics/latest?" + params,
+		"metrics/query":  "/api/v1/metrics/query?limit=10&" + params,
+	} {
+		req := httptest.NewRequest(http.MethodGet, target, nil).WithContext(superuserContext())
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "not found") {
+			t.Errorf("%s on %s returned %d, want 400 not found: %s", route, view, rec.Code, rec.Body.String())
+		}
+		refusals[route] = rec.Body.String()
+	}
+	for route, out := range refusals {
+		if strings.Contains(out, "example-secret") {
+			t.Errorf("%s returned a credential through %s:\n%s", route, view, out)
+		}
 	}
 }
 

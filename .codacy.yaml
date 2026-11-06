@@ -83,6 +83,12 @@ engines:
       # the constant refusing-helper SQL; the connection ID is bound.
       - 'collector/src/probes/change_tracking_refused_test.go'
       - 'server/src/internal/api/perf_summary_handlers.go'
+      # Test-only: statements assembled from the metrics package's own
+      # SQL helpers (AggregateExpr, EpochSeconds) and test constants.
+      - 'server/src/internal/metrics/portable_sql_test.go'
+      # Test-only DDL over compile-time identifiers quoted with
+      # QuoteIdentifier.
+      - 'server/src/internal/metrics/probe_view_db_test.go'
       - 'server/src/internal/tools/get_metric_baselines.go'
 
   # Codacy's ESLint8 ruleset enables eslint-plugin-xss and

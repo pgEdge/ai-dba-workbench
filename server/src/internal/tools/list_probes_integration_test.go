@@ -198,6 +198,63 @@ func TestListProbes_ExcludesPartitionsNotProbes(t *testing.T) {
 	}
 }
 
+// TestListProbes_ListsColdFrontViews checks that on a pgEdge ColdFront
+// datastore, where every probe is a view (issue #755), a view carrying
+// the probe bookkeeping columns is listed with an unknown row count,
+// whilst a view without them, or under a name that is not a known
+// probe's, is still left out.
+func TestListProbes_ListsColdFrontViews(t *testing.T) {
+	pool, _, cleanup := newToolsTestPool(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		CREATE VIEW metrics.pg_stat_wal AS
+		    SELECT 1::integer AS connection_id,
+		           now() AS collected_at,
+		           42::bigint AS wal_records;
+		COMMENT ON VIEW metrics.pg_stat_wal IS 'WAL statistics';
+
+		CREATE VIEW metrics.pg_helper_view AS
+		    SELECT 1::integer AS connection_id;
+
+		CREATE VIEW metrics.activity_report AS
+		    SELECT 1::integer AS connection_id,
+		           now() AS collected_at,
+		           'ALTER ROLE app PASSWORD ''example-secret'''::text AS query;`); err != nil {
+		t.Fatalf("failed to create probe views: %v", err)
+	}
+
+	text := mustSuccess(t, ListProbesTool(pool), map[string]any{"__context": ctx})
+	probes := listProbesNames(t, text)
+
+	want := map[string][]string{
+		"pg_connectivity": {"", "0", "server"},
+		"pg_stat_wal":     {"WAL statistics", unknownRowCount, "server"},
+	}
+	for name, fields := range want {
+		got, ok := probes[name]
+		if !ok {
+			t.Errorf("probe %q missing from list_probes output:\n%s", name, text)
+			continue
+		}
+		if strings.Join(got, "\t") != strings.Join(fields, "\t") {
+			t.Errorf("probe %q = %q, want %q", name, got, fields)
+		}
+	}
+	if _, ok := probes["pg_helper_view"]; ok {
+		t.Errorf("a view without collected_at should not be listed:\n%s", text)
+	}
+	// The masking is keyed by probe name, so a view under any other name
+	// is not a probe, bookkeeping columns or not.
+	if _, ok := probes["activity_report"]; ok {
+		t.Errorf("a view under a name that is not a known probe's should not be listed:\n%s", text)
+	}
+	if len(probes) != len(want) {
+		t.Errorf("got %d probes, want %d:\n%s", len(probes), len(want), text)
+	}
+}
+
 // TestListProbes_OmitsUnreadableTables checks that a table the datastore
 // role cannot SELECT from is left out of the list.
 func TestListProbes_OmitsUnreadableTables(t *testing.T) {
@@ -224,7 +281,7 @@ func TestListProbes_OmitsUnreadableTables(t *testing.T) {
 			EXECUTE format('GRANT USAGE ON SCHEMA metrics TO %I', r);
 			EXECUTE format('GRANT SELECT ON metrics.pg_connectivity TO %I', r);
 		END $$;
-		CREATE TABLE metrics.pg_restricted (
+		CREATE TABLE metrics.pg_sys_cpu_info (
 		    connection_id INTEGER NOT NULL,
 		    collected_at TIMESTAMPTZ NOT NULL
 		);`); err != nil {
@@ -236,7 +293,7 @@ func TestListProbes_OmitsUnreadableTables(t *testing.T) {
 			DECLARE r text;
 			BEGIN
 				SELECT name INTO r FROM metrics.list_probes_test_role;
-				DROP TABLE IF EXISTS metrics.pg_restricted;
+				DROP TABLE IF EXISTS metrics.pg_sys_cpu_info;
 				EXECUTE format('REVOKE ALL ON metrics.pg_connectivity FROM %I', r);
 				EXECUTE format('REVOKE ALL ON SCHEMA metrics FROM %I', r);
 				EXECUTE format('DROP ROLE IF EXISTS %I', r);
@@ -262,14 +319,14 @@ func TestListProbes_OmitsUnreadableTables(t *testing.T) {
 	// The superuser pool sees both tables.
 	all := listProbesNames(t, mustSuccess(t, ListProbesTool(pool),
 		map[string]any{"__context": ctx}))
-	if _, ok := all["pg_restricted"]; !ok {
-		t.Fatalf("pg_restricted missing for a role that can read it: %v", all)
+	if _, ok := all["pg_sys_cpu_info"]; !ok {
+		t.Fatalf("pg_sys_cpu_info missing for a role that can read it: %v", all)
 	}
 
 	probes := listProbesNames(t, mustSuccess(t, ListProbesTool(restricted),
 		map[string]any{"__context": ctx}))
-	if _, ok := probes["pg_restricted"]; ok {
-		t.Errorf("pg_restricted listed for a role that cannot read it")
+	if _, ok := probes["pg_sys_cpu_info"]; ok {
+		t.Errorf("pg_sys_cpu_info listed for a role that cannot read it")
 	}
 	if _, ok := probes["pg_connectivity"]; !ok {
 		t.Errorf("pg_connectivity missing for a role that can read it: %v", probes)

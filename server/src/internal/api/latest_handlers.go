@@ -229,20 +229,14 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 
 	pool := h.datastore.GetPool()
 
-	// Verify the probe table exists
-	var tableCount int
-	existsQuery := `
-        SELECT COUNT(*) FROM information_schema.tables
-        WHERE table_schema = 'metrics'
-            AND table_name = $1
-            AND table_type = 'BASE TABLE'
-    `
-	if err := pool.QueryRow(ctx, existsQuery, probeName).Scan(&tableCount); err != nil {
+	// Verify the probe table (or ColdFront view) exists
+	exists, err := metrics.ProbeExists(ctx, pool, probeName)
+	if err != nil {
 		RespondError(w, http.StatusInternalServerError,
 			"Failed to verify probe table")
 		return
 	}
-	if tableCount == 0 {
+	if !exists {
 		RespondError(w, http.StatusBadRequest,
 			fmt.Sprintf("Probe %q not found", probeName))
 		return
@@ -567,10 +561,12 @@ func queryLatestSnapshot(
 		outerWhereParts = append(outerWhereParts, systemSchemaPredicate)
 	}
 	if len(schemas.exclude) > 0 {
+		// Each name is typed: a ColdFront datastore cannot type an IN
+		// list of untyped parameters (issue #755).
 		var placeholders []string
 		for _, schema := range schemas.exclude {
 			placeholders = append(placeholders,
-				fmt.Sprintf("$%d", argNum))
+				fmt.Sprintf("$%d::text", argNum))
 			args = append(args, schema)
 			argNum++
 		}

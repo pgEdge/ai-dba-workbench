@@ -46,7 +46,357 @@ through a long retention history could outlast any request budget.
    with no foreign key to `connections` is swept once more after the
    row is gone, because an in-flight collector write can land there
    after its batch loop and nothing would cascade it. It is
-   restart-safe, because the marked row is the work queue.
+   restart-safe, because the marked row is the work queue. A view
+   under `metrics` with a `connection_id` column (every probe on a
+   pgEdge ColdFront datastore, issue #755) has no ctid, so
+   `metricsLeafTablesQuery` returns it flagged, `splitMetricsViews` sets
+   it apart, `purgeableViews` keeps only a view named for a known probe
+   (`metrics.IsKnownProbe`; any other is skipped with a once-per-view
+   `[WARN]` and never blocks the row's removal; tests swap the
+   allowlist through `Datastore.isProbeView`), and `purgeMetricsViews`
+   clears it with one
+   `DELETE FROM metrics.<view> WHERE connection_id = $1::int` per view
+   (`purgeMetricsView`), each in a transaction of its own (pg_duckdb
+   refuses a transaction that writes a view and an ordinary table, and
+   refuses subtransactions) that first runs
+   `SELECT set_config('statement_timeout', $1, true)` with
+   `connectionPurgeViewTimeout` (10 minutes, as an Iceberg delete
+   rewrites data files), because the pool's statement_timeout would
+   otherwise cancel it; verified live on ColdFront, which accepts BEGIN,
+   set_config, the view DELETE and COMMIT and reports `DELETE 1`
+   whatever the row count. `TestPurgeMetricsView_OverridesPoolStatementTimeout`
+   pins the per-view transaction and the override. Order: tables in
+   batches, then every view, then the row, then a sweep of the tables
+   without a foreign key and of every view. Every view is attempted; if
+   any DELETE fails the row is NOT removed and the joined error is
+   returned, so the row stays marked and the purger retries the whole
+   connection with backoff, and no view's rows are silently left. The
+   table batches before the removal still stop at the first failure,
+   which also keeps the row. In the sweep after the row is gone
+   (`sweepAfterRemoval`) no later pass would retry the id, so the table
+   sweep and the view sweep each run whatever the other's outcome and
+   their errors are joined, returned and logged; any stragglers are
+   then orphaned, which is another reason the orphan joins below must
+   stay. Tests stand plain views in
+   (`TestPurgeConnection_ClearsColdFrontViews`,
+   `..._ViewFailureKeepsConnection`, `..._SweepsLateViewRows`,
+   `..._FinalSweepAttemptsViewsAfterTableFailure`); the
+   DELETE through a real ColdFront view is not yet verified live.
+
+## Metrics Relations May Be Views (pgEdge ColdFront)
+
+On a ColdFront datastore every `metrics.*` relation is a view (relkind
+`'v'`, `table_type` `VIEW`) over Apache Iceberg storage; on plain
+PostgreSQL they are partitioned tables. The server has no setting for
+this, so probe discovery accepts both. It lives in one place,
+`internal/metrics/probe_relations.go`: `LookupProbeRelation` (behind
+`metrics.ProbeExists`, which `QueryTimeSeries`,
+`discoverLatestRowColumns`, the latest-snapshot handler, `query_metrics`
+and `describe_probe` share, and behind the datastore catalog's
+`lookupMetricTable`) and `ListProbeRelations` (behind `list_probes` and
+describe_datastore's `listDatastoreSources`). Both read `pg_class` and
+`pg_namespace` only, never a metrics relation (on ColdFront DuckDB
+would plan it): relkind `'r', 'p', 'v'`, `NOT c.relispartition` and
+`has_table_privilege(c.oid, 'SELECT')`, plus whether the relation is a
+view and has the `connection_id`/`collected_at` bookkeeping columns.
+Only the list computes a row count (planner estimate, summed over the
+partition tree; NULL for a view, reported as `unknown`; never run
+`count(*)` against an Iceberg view). `list_probes` drops a view without
+bookkeeping columns, the datastore catalog any relation without them.
+Do not write another catalog query over `metrics` for a route; call
+these.
+
+Only a known probe's name is admitted, whatever the relkind, and this is
+a security rule, not a tidiness one. The read-side masking
+(`ProbeRedactions`, `ProbeColumnMask`, `RedactProbeRows`,
+`MaskedProbeColumn`, `RawStatementColumns`) is keyed by the probe's exact
+name, so a relation holding a probe's rows under another name would be
+served in clear: a weekly partition such as `pg_stat_activity_20261102`
+(information_schema reports it as a BASE TABLE, which the old
+`ProbeExists` admitted), a detached partition, a table created under
+another name, or `CREATE VIEW metrics.activity_report AS SELECT * FROM
+metrics.pg_stat_activity`. `LookupProbeRelation` refuses a name that is
+not `IsKnownProbe` before any query, and `ListProbeRelations` drops one.
+`knownProbes` (guarded by `knownProbesMu`) must hold every probe the
+collector creates: `TestKnownProbesMatchCollectorSchema` migrates a
+scratch database and fails in either direction, and
+`TestKnownProbesCoverMaskedAndKeyedProbes` checks that every
+`ProbeRedactions` and `probeEntityKeyFallback` entry is known.
+`TestMaskedProbesOnEveryRouteIntegration` partitions each masked probe
+by week and, through `checkPartitionRefused` and
+`checkRenamedViewRefused`, fails if query_datastore, describe_datastore,
+list_probes, describe_probe, query_metrics, `/metrics/latest` or
+`/metrics/query` admits the partition (found through `pg_inherits`), the
+detached partition or a `<probe>_report` view.
+
+Test fixtures must therefore take a real probe's name, or be registered.
+In `internal/metrics`, `registerFixtureProbeForTest(t, name)`
+(`known_probes_test.go`) adds a fixture name such as
+`pg_stat_all_tables_ts_test` to `knownProbes` for one test, so those
+fixtures keep names no other package's test creates. Other packages
+cannot reach it and use real names: in `internal/tools` and
+`internal/api` each fixture drops and recreates its probe table, and
+takes a probe whose `probeEntityKeyFallback` entry is empty or matches
+its columns (a PK-less fixture under a name with fallback keys it lacks
+would break the latest-row query), for example `pg_sys_os_info` for
+query_datastore's former `ds_probe`. View fixtures standing in for
+ColdFront use `pg_sys_process_info`, `pg_stat_user_functions`,
+`pg_stat_recovery_prefetch`, `pg_statio_all_sequences` and
+`pg_stat_subscription`, which no other fixture in their package seeds.
+
+A view has no primary key, so `GetProbeEntityKeyColumns`
+falls back to `probeEntityKeyFallback` on ColdFront (see the entity-key
+section below). JSONB
+columns read back as `json` there: `->`, `->>` and `::text`/`::jsonb`
+casts work, but `?`, `@>`, `jsonb_*` functions, `=`, `ORDER BY`,
+`min`/`max` on the raw column do not.
+
+### Writing metrics SQL that runs on ColdFront
+
+Every query that reads a ColdFront view is planned and run by DuckDB
+(pg_duckdb), the whole statement included, heap tables and other UNION
+branches too, but PostgreSQL has already described the result columns.
+Verified against a live ColdFront datastore (main 16bdab9, pg_duckdb
+1.1.0, PG 18.6), and the parameter, literal and `pg_lsn` rules again
+through pgx on PG 16, 17 and 18 (2026-11-02); the helpers are in
+`internal/metrics/portable_sql.go`.
+
+Test a statement the way pgx runs it: through pgx itself, or psql's
+`\bind` (unnamed) or, from psql 18, `\parse` and `\bind_named` (named,
+as pgx's statement cache does). SQL-level `PREPARE`/`EXECUTE` is not
+equivalent: it rejected the top-queries page with "query result type
+does not match portal result type" (text versus `character varying` in
+`database_name`) on PG 16, 17 and 18, while pgx, in both its
+cache-statement and exec modes, ran that page with rows under every
+filter. Do not "fix" a statement on the strength of `PREPARE` alone.
+
+A harness that rolls back must also use a fresh connection, or exec
+mode, per statement. ColdFront attaches its Iceberg catalog (`ice`)
+inside the transaction that first plans a metrics statement; a rollback
+undoes the attach, and re-executing pgx's cached prepared statement on
+that connection then fails with 'Binder Error: Catalog "ice" does not
+exist!' (every other run, on PG 16, 17 and 18). Committing, autocommit
+and `QueryExecModeExec` were unaffected. The server's datastore pool
+would hit the same failure on any pooled connection after a statement
+timeout, cancellation or read-only `rollback.Tx`, so `NewDatastore`
+(`connection_queries.go`) detects ColdFront before building the pool
+(`detectColdFrontDatastore`: one connection running
+`coldFrontDatastoreQuery`, the `coldfront` extension or any view in
+`metrics`; the extension is checked because it exists before the
+collector's migrations create the views) and sets
+`DefaultQueryExecMode` from `datastoreExecMode`:
+`QueryExecModeDescribeExec` on ColdFront, which never creates a named
+prepared statement but keeps server-described parameter and result
+types (one extra round trip per query), and pgx's default statement
+cache on plain PostgreSQL. `TestDescribeExecKeepsNoStatementAcrossRollback`
+shows the mechanism on plain PostgreSQL (the default mode keeps a
+named statement across a rollback, describe-exec keeps none);
+`TestNewDatastoreDetectsColdFront` pins the detection. Verified live on
+ColdFront (PG 18.6, pg_duckdb 1.1.0): a metrics read prepared in a
+transaction that rolled back fails with the "ice" catalog error 8 times
+in 8 under the default statement cache, and 0 in 8 under describe-exec
+and under Exec mode. The collector and
+alerter pools are not covered by this change.
+
+- **Result types must agree.** A cast helps only when it changes the
+  PostgreSQL type; casting to the type PostgreSQL already infers is a
+  no-op and the bytes stay wrong. `avg()` and `EXTRACT(EPOCH ...)` are
+  numeric to PostgreSQL, DOUBLE to DuckDB (pgx: "numeric incomplete"):
+  cast to `::float8` (`EpochSeconds`). `sum()` of an `integer` column is
+  bigint to PostgreSQL, HUGEINT to DuckDB ("invalid length for int8";
+  `sum(x)::bigint` does not fix it): sum `x::bigint`. Integer and
+  numeric `/` are DOUBLE in DuckDB, silently (`bigint / int` scans as a
+  garbage int8): divide `x::float8 / y`, and use `floor(...)::BIGINT`
+  for an integer quotient (`alertClearedDurationSQL`). DuckDB has no
+  `sum(interval)` and no `div()`/`make_interval()`. `AggregateExpr` and
+  `GetAggSelectCols` apply these rules. `sum(bigint)` (numeric),
+  `count`, `min`/`max`, `(array_agg(...))[1]`, `round(float8 ...)` and
+  float arithmetic are fine.
+  Two output consequences on plain PostgreSQL. A float8 `avg` scans as
+  a Go `float64`, so `tsv.FormatValue` prints floats with
+  `strconv.FormatFloat(v, 'f', -1, bitSize)` (plain decimal, shortest
+  round-trip; NaN, `+Inf`, `-Inf` as before) and query_datastore still
+  prints `1431655765` rather than `%v`'s `1.431655765e+09`; that applies
+  to every FormatValue caller (query_database, query_metrics, the API's
+  query results), so a float8 of 1e300 now prints all 301 digits. And an
+  interval sum, computed as `sum(EXTRACT(EPOCH ...)::float8) * INTERVAL
+  '1 second'`, carries the whole duration in the time field:
+  `50:00:00.100003` where PostgreSQL's own `sum(interval)` printed
+  `1 day 26:00:00.100003`. The duration is equal, and the only interval
+  columns the collector stores (pg_stat_replication's `write_lag`,
+  `flush_lag`, `replay_lag`) never carry a day field, so real sums are
+  unchanged. Summing the month, day and time fields apart would restore
+  PostgreSQL's form, but DuckDB's `EXTRACT(SECOND FROM interval)` and
+  `date_trunc` on an interval are unverified on ColdFront and epoch
+  arithmetic treats months differently in the two engines, so it was
+  not done. `TestQueryDatastoreAggregateFormatIntegration` pins both
+  outputs.
+- **No array parameters.** `= ANY($1)`, `= ANY($1::int[])`,
+  `unnest($1)` and even a literal `'{2,3}'::int[]` or `'{a,b}'::text[]`
+  fail ("Could not convert DuckDB type: UNKNOWN", or "Type VARCHAR ...
+  can't be cast to the destination type INTEGER[]"; `ARRAY[2, 3]` and a
+  JSON object literal such as `'{}'::jsonb` work), as does an IN list
+  of more than one
+  integer parameter, typed or not, and an IN list of untyped text
+  parameters. Bind integers as one text parameter with `IntListArg` and
+  compare with `col = ANY(IntArrayExpr("$n"))`; text lists as
+  `IN ($n::text, ...)`. query_datastore's in/not in filters
+  (`listFilterCondition`) follow the same rules by column type: text as
+  `[NOT] IN ($n::text, ...)`, integer and smallint as
+  `[NOT (]col = ANY(IntArrayExpr($n))[)]` with values outside the
+  int32 range refused in Go, and every other type (bigint, float,
+  boolean, timestamp) as a chain of `=`/`<>` comparisons. bigint stays
+  on the chain only because `string_to_array(...)::bigint[]` has not
+  been run on ColdFront; move it to an array once it has. A single
+  parameter compared with a column works untyped.
+- **No arithmetic on parameters, with one exception.** An interval
+  literal multiplied by an integer-typed parameter works, in either
+  order: `INTERVAL '1 day' * $1::int`, `$1::bigint * INTERVAL '1 day'`.
+  Everything else fails, cast or not: `INTERVAL '1 day' * $1` (untyped),
+  `INTERVAL '1 day' * $1::float8`, `$1::timestamptz - INTERVAL '1 hour'`,
+  `$1::timestamptz + INTERVAL '1 hour'`, `now() - $1::interval`,
+  `$1::int - 1`, `$1::int / 2`, `$1::bigint + 1` and a bare
+  `$1::interval` in a select list. Compute bounds in Go and bind them.
+  `date_bin($1::interval, col, $2)`,
+  `generate_series($1::timestamptz, $2::timestamptz, $3::interval)`,
+  `col + $1::interval`, `NOW() - INTERVAL '5 minutes'` (no parameter)
+  and `(SELECT max(...)) - INTERVAL '1 hour'` work.
+- **No infinite timestamps.** `collected_at <= 'infinity'::timestamptz`
+  and `> '-infinity'::timestamptz` fail ("Cannot subtract infinite
+  timestamps"). A `+infinity` bound as a parameter ran in one test, but
+  whether DuckDB subtracts the bounds depends on the plan (the alerter
+  saw it fail once in about 45 runs), so never bind one either: for an
+  open upper bound, bind a finite far-future timestamp (9999-12-31) and
+  compare with the parameter directly. Not NULL, which matches no row,
+  and not `COALESCE($n, col)`, which stays a per-row filter with no
+  index condition or partition pruning under a generic plan.
+- **No NULL test on a parameter.** `$n IS NULL` and `$n::type IS NULL`
+  (or `IS NOT NULL`) fail at plan time with the UNKNOWN error on PG 16,
+  17 and 18, whatever is bound. Use the far-future bound above. A NULL
+  test on a column is fine, and so is `col IS NOT DISTINCT FROM $n::text`
+  (the anomaly comparison's database filter, which ran live with NULL
+  bound).
+- **No `pg_lsn`.** DuckDB has no such type ("Type with name pg_lsn does
+  not exist"), so `sent_lsn::pg_lsn - replay_lsn::pg_lsn` fails even on
+  literals. pkg/anomaly's `pg_stat_replication.lag_bytes` historical
+  query used it; that SQL is the alerter branch's to change.
+- **Types read back differently.** `inet` is text, so write
+  `host(client_addr::inet)`; text is `character varying`, oid is
+  bigint, jsonb is json. The collector's ColdFront spec
+  (`mappedTypes` in `collector/src/coldfront/types.go`) widens oid and
+  xid to bigint, inet, `"char"` and name to text, and numeric to
+  numeric(38,0). Column classification must not change with it:
+  `dimensionColumns` in `internal/metrics/query.go` names every
+  identifier that becomes bigint (`datdba`, `dattablespace`,
+  `datfrozenxid`, `datminmxid`, `userid`, `dbid`, `subid`,
+  `remote_origin`, `local_origin`, beside the older `datid`,
+  `usesysid`, `relid`, `indexrelid`, `funcid`), and
+  `coldFrontTextColumns` keeps `client_addr` and `datlocprovider` out
+  of the entity keys. `TestColumnClassificationSurvivesColdFrontTypes`
+  (`coldfront_types_test.go`) lists all 25 remapped columns and fails
+  when `IsMetricColumn` or `IsEntityKeyColumn` answers differently for
+  the two types; add a row when the collector remaps a new column.
+- **No functions.** DuckDB execution is refused inside a PL/pgSQL or SQL
+  function; the server defines none that read metrics.
+- **No schema-qualified ordinary tables.** DuckDB resolves an
+  unqualified `connections` (through the search_path) but not
+  `public.connections` ("relation does not exist"), so every statement
+  that reads a metrics view names its ordinary tables unqualified.
+  Only the `metrics` schema, which the collector creates by name, is
+  ever qualified. Splitting such statements into two queries joined in
+  Go was rejected: it costs a round trip and the join's atomicity for no
+  gain.
+  The rule holds beyond ColdFront, for every statement and every
+  datastore: the Workbench's ordinary tables (`connections`, `alerts`,
+  `alert_rules`, `clusters`, ...) are resolved through the role's
+  search_path everywhere, because the collector's migrations create
+  them unqualified. They therefore live in the first schema on that
+  search_path, which is not necessarily `public`: on a datastore whose
+  role is named `coldfront`, the default `"$user", public` puts them in
+  ColdFront's `coldfront` schema. query_datastore's configuration
+  sources once hard-coded `public.<table>` and failed there with
+  `relation "public.connections" does not exist` (42P01) at Parse; they,
+  the scope subqueries and `datastoreConnectionsExist` now name the
+  tables unqualified, and `TestQueryDatastoreFollowsSearchPathIntegration`
+  (`query_datastore_search_path_integration_test.go`) runs query_datastore
+  with the tables in a schema placed ahead of `public`. Never write
+  `public.<workbench table>` in server SQL. The deliberate exceptions are
+  the collector's own `public.anomaly_embeddings` and its
+  `public.chat_memories` embedding column and indexes, which the
+  collector qualifies itself; the server does not read either through
+  query_datastore.
+  Do not pin the server's datastore pool to `search_path=public` (pgx
+  `ConnConfig.RuntimeParams`): it would break every deployment whose
+  tables live in another schema, such as one whose role is named
+  `coldfront`.
+  Accepted risk: because the tables resolve through the search_path, a
+  role with DDL rights on a schema searched before the real one could
+  create a same-named table or view there and shadow it; in
+  `liveConnectionCondition` and list_connections' statement that table
+  would decide which connections a caller sees. Exposure needs DDL rights
+  on the datastore beyond the Workbench's own, which already means
+  control of the data. The documented mitigation is a dedicated role for
+  the Workbench with its `search_path` set before the collector's first
+  start, so the tables are created in, and later read from, the schema
+  that role controls (see the ColdFront metrics page,
+  `docs/getting-started/configuration/coldfront-metrics.md`, on the
+  #755 docs branch).
+- **Type JSON builder literals.** ColdFront rewrites the JSON builders
+  for DuckDB, which cannot type an untyped string literal passed as a
+  value (`jsonb_build_object('change_type', 'modified')` fails with
+  "could not determine polymorphic type"): write `'modified'::text`.
+  Keys are fine.
+- **Text of a timestamp differs.** `collected_at::TEXT` renders in UTC
+  under DuckDB (`2026-10-29 14:30:28.338612+00`) but in the session
+  time zone on plain PostgreSQL, so the timeline's event IDs differ in
+  form between datastores; they stay stable within one, which is all
+  the client relies on.
+
+The checker is `internal/testutil/coldfrontcheck` (`ShapeProblems` for
+one statement or literal, `UnitProblems` for a unit's literals together,
+`BareHost`), a test-only package like `scratchdb` that the server binary
+must never import. `UnitProblems` requires every bare placeholder
+literal (`$%d`, `$%d::int`, ...) in a unit that formats an `IN (%s)` to
+be `$%d::text`, so one typed list cannot excuse an untyped one beside it.
+`TestMetricsSQLAvoidsColdFrontShapes` (`coldfront_sql_guard_test.go`)
+scans every server unit that reads `metrics.*` for an array parameter,
+an untyped or integer IN list, parameter arithmetic other than an
+interval times an integer-cast parameter (`intervalTimesIntParam`), an
+uncast `avg` or `EXTRACT`, an untyped run-time IN list, a bare
+`host(client_addr)`, a schema-qualified table other than `metrics.`
+(no unit is exempt), an untyped JSON builder
+value, `pg_lsn`, an `'infinity'`/`'-infinity'` literal, a `'{...}'`
+literal not cast to json or jsonb, and a `$n [::type] IS [NOT] NULL`
+test. These rules mirror `coldfrontsql.Violations`, the shared checker
+the alerter branch adds in `pkg/coldfrontsql`; once that lands, consider
+running server SQL through it too. On `inet` the two now agree: #791's
+checker allows `host(<expr>::inet)` and flags a `host()` whose argument
+is not cast to inet and an `::inet` cast anywhere else, as the server's
+`BareHost` rule intends. They still differ on parameters: the
+alerter's checker requires a cast on every parameter, whereas the server
+keeps untyped comparison parameters, which ran live.
+It cannot see column types, so an integer `sum` or `/` is left to
+review, and it does not see SQL assembled in a function that names no
+metrics relation itself (the timeline's connection filter): keep those
+on the helpers by hand. query_datastore's statements are assembled at
+run time, so `TestDatastoreQueryAvoidsColdFrontShapes`
+(`internal/tools/datastore_coldfront_shapes_test.go`) builds one for
+every shape, every aggregation over every column it accepts (with and
+without buckets and a group), and every in/not in filter on a column of
+each type, for an unrestricted and a restricted caller, and runs each
+through `ShapeProblems`; knowing the column types, it also fails an
+integer or smallint `sum` not cast to bigint, and it accepts the uncast
+`avg` over an interval that `AggregateExpr` writes on purpose. Building
+an aggregate as `req.Aggregation+"("` instead of through
+`AggregateExpr` fails it.
+The anomaly comparison is one such function, so
+`TestComparisonSeriesQueryAvoidsColdFrontShapes` runs the same check
+over `comparisonSeriesQuery(def)` for every metric in
+`anomaly.BaselineMetrics()`, with the registry's `HistoricalSQL` replaced
+by a stand-in, and also requires every wrapper placeholder to carry a
+cast. It checks only the server's wrapper: the historical SQL belongs to
+`pkg/anomaly`, whose untyped `INTERVAL '1 day' * $1` and `pg_lsn` fail on
+ColdFront until the alerter branch's `pkg/anomaly` changes land.
 
 Every reader must therefore filter `deleted_at IS NULL`: the server's
 connection, cluster, topology, estate and tool queries, the collector's
@@ -65,7 +415,13 @@ cascaded until the purge removes the row, so readers of those tables
 filter by connection too: `liveAlertConnectionCondition` in
 `alert_queries.go` (keeps system alerts with no connection) for
 `GetAlerts` and the alert counts, `timelineLiveConnectionCondition` in
-`timeline_queries.go` for the timeline total, and `deleted_at IS NULL`
+`timeline_queries.go` for the timeline total (written as
+`connection_id IN (SELECT id FROM connections WHERE deleted_at IS
+NULL)`, a test for liveness rather than for the marked IDs, because on
+ColdFront a view has no foreign key, so a row written after the purge's
+last sweep of it outlives the connection row, and the event queries'
+join to `connections` drops it; `TestTimeline_PurgedConnectionOnViews`
+pins it), and `deleted_at IS NULL`
 beside `cluster_id` in the cluster and group connection-ID lookups of
 `estate_queries.go`, as defence in depth against a racing update that
 re-sets `cluster_id`. Each reader is pinned by a marked-connection test:
@@ -232,10 +588,11 @@ the per-database sibling scans `datname` into a `string`, so a NULL
 
 Metrics tables live under the `metrics` schema
 (`metrics.pg_stat_activity`, `metrics.pg_stat_database`, etc.). The
-`connections` table lives in the default schema (unqualified
-`connections`) and is managed by the collector. The alerter and server
-both read from `connections` by unqualified name; do not add schema
-qualifiers unless the caller's search_path requires it.
+`connections` table, like the collector's other ordinary tables, is
+created unqualified and so lives in the first schema on the role's
+search_path, which need not be `public`. The alerter and server both
+read it by unqualified name; never qualify it with `public.` (see "No
+schema-qualified ordinary tables" above).
 
 ## Latest-Row Queries (server)
 
@@ -334,10 +691,36 @@ allow-list: the probe name is checked against
 runtime values bind through `$N` placeholders. golangci-lint/gosec is
 satisfied without a `//nolint`, but Codacy's Opengrep flags the
 `pool.Query(ctx, query, args...)` call in `QueryLatestRows` as
-`go_sql_rule-concat-sqli`. That is a false positive; it is cleared with a
-`// nosemgrep: go_sql_rule-concat-sqli` line immediately above the call,
-kept alongside the existing justification comment. Use `nosemgrep`, not
-`//nolint:gosec`, for Opengrep-only findings.
+`go_sql_rule-concat-sqli`. That is a false positive. The
+`// nosemgrep: go_sql_rule-concat-sqli` line above the call is kept for
+local semgrep runs, but do not rely on it for Codacy: no inline
+`nosemgrep` has cleared a Codacy finding on this repository in practice,
+and `.codacy.yaml` records that Codacy ignores inline disables. (One
+attempt sat above the statement's assignment rather than the flagged
+sink line, so whether a correctly placed one works on Codacy is
+unconfirmed; treat it as ineffective.) `//nolint` does not reach
+Opengrep either. The Codacy suppression known to work is path-based,
+an entry under `engines: opengrep: exclude_paths` in `.codacy.yaml`
+with a justification comment, and the reviewer accepts new entries
+there for test files only.
+
+For production code, use a construction the rule does not match. The
+rule (GitLab sast-rules `go/sql/rule-concat-sqli.yml`)
+is a taint rule with no sanitizers: its sources are `fmt.Sprintf(...)`
+(unless every argument is a literal), `"..." + $X`, and
+`strings.Builder.String()`, and its sinks are any `$DB.Exec`, `Query` or
+`QueryRow` (with or without `Context`). A statement built with
+`strings.Join([]string{...}, sep)` matches no source, so the sink is not
+flagged, while the identifier inside it still goes through
+`IsValidIdentifier` / a known-probe check and `QuoteIdentifier` /
+`pgx.Identifier.Sanitize`, and values stay bound. `ObserveSampleSpacing`
+(`probe_interval.go`) and `purgeMetricsViews`
+(`database/connection_purge.go`) use this form; Codacy's re-analysis
+cleared the findings it had raised in both files after commit 3b2c710d
+switched them to it. A `strings.Builder` is not an alternative: its
+`String()` is itself a source. Running
+`pipx run --spec semgrep semgrep --disable-nosem --config <rule.yml>
+<file>` reproduces Codacy's finding locally.
 
 ### Integration tests
 
@@ -527,10 +910,23 @@ only that entity's share.
 
 The entity keys come from `GetProbeEntityKeyColumns`: the columns of the
 probe table's primary key other than `connection_id` and `collected_at`,
-in key order (`interface_name`; `datname`; `database_name, queryid,
-userid, dbid, toplevel`; nothing for a single-row probe such as
-`pg_stat_wal`, which then reduces to the unpartitioned form). Every
-`metrics.*` table declares such a key. Do not substitute
+in key order (`interface_name`; `database_name` for `pg_stat_database`;
+`database_name, queryid, userid, dbid, toplevel`; nothing for a
+single-row probe such as `pg_stat_wal`, which then reduces to the
+unpartitioned form). On plain PostgreSQL the keyed probes declare such a
+key (`primaryKeyEntityColumns` reads it and also reports whether any key
+exists). A pgEdge ColdFront view declares none (issue #755), so when
+there is no primary key at all the keys come from the static
+`probeEntityKeyFallback` map in `internal/metrics/entity_keys.go`
+instead; a probe absent from the map gets no keys, as before. The map is
+never consulted when a key exists, so plain PostgreSQL is unchanged.
+`TestProbeEntityKeyFallbackMatchesCollectorSchema`
+(`entity_keys_db_test.go`) migrates the collector schema into a scratch
+database (`_metrics_schema` suffix) and fails when an entry differs
+from a probe's primary key, a keyed probe is missing, or an entry is
+stale, so a collector migration that changes a probe's key must update
+the map in the same change. `TestQueryTimeSeries_ViewRatesPerEntity`
+shows a key-less `pg_stat_database` view rating per database. Do not substitute
 `EntityKeyColumns`/`IsEntityKeyColumn` here: those treat every text
 column as identity, and `pg_stat_wal.last_archived_wal` or
 `pg_sys_network_info.ip_address` would fragment the partition so that
@@ -553,8 +949,9 @@ between the last sample before the window start and it would be lost: a
 inner sample query therefore widens its lower bound with
 `metricQueryParts.lookbackWhere`, which replaces `collected_at >= $3` with
 `collected_at >= COALESCE((SELECT MAX(collected_at) FROM metrics.<probe>
-WHERE connection_id = $2 AND collected_at < $3 AND collected_at >= $3 -
-<lookbackBound> AND <same dimension filters>), $3)`, and the CTE's middle
+WHERE connection_id = $2 AND collected_at < $3 AND collected_at >= $N
+AND <same dimension filters>), $3)`, where `$N` is the window start less
+`lookbackBound`, and the CTE's middle
 `WHERE collected_at >= $3` then drops the borrowed sample again so it never
 becomes a bucket of its own. The `COALESCE` fallback means a window with
 no earlier sample within reach behaves exactly as it did before the
@@ -562,10 +959,13 @@ lookback existed. The collector stamps every entity of one probe run
 with the same `collected_at`, which is why one borrowed timestamp serves
 every partition.
 
-The search is bounded below by the `lookbackBound` constant,
-`GREATEST($1::interval * 3, INTERVAL '30 minutes')`: the larger of three
-bucket widths and a 30-minute floor, expressed in the query's own bucket
-argument so it adds nothing to the argument list. The bound exists
+The search is bounded below by `lookbackBound(bucketWidth)`: the larger
+of three bucket widths (truncated to whole seconds, as `$1` is rendered)
+and a 30-minute floor. It is computed in Go and bound as the last
+argument, after the gap bound, because a ColdFront datastore cannot plan
+arithmetic on a bound timestamp (issue #755); it was once the SQL
+expression `$3 - GREATEST($1::interval * 3, INTERVAL '30 minutes')`. The
+bound exists
 because a predecessor left behind by a long collection gap inflates the
 first bucket: a collector down for three days followed by a 1h window on
 `xact_commit_delta` reported three days of commits in the first bucket
@@ -2128,7 +2528,7 @@ it takes `DISTINCT ON (query_id, datid, usesysid)` over the same window,
 ordered by `collected_at DESC`, and is `LEFT JOIN`ed on all three of
 `latest_sample`'s `queryid`, `dbid` and `userid` (the identity of each
 statement's most recent sample in the window) to fill the `client_addr`
-(via `host(client_addr)`, the repo's convention for rendering `inet`),
+(via `host(client_addr::inet)`, the repo's convention for rendering `inet`),
 `client_hostname` and `client_observed_at` columns of `TopQueryRow`.
 
 The three-way key is not optional. `pg_stat_statements` is keyed on
@@ -2146,7 +2546,7 @@ off, and on idle backends, so the join resolves nothing on such servers.
 Because `pg_stat_activity` is sampled, the attribution is the most
 recently observed client, not the only one; keep any UI wording to
 "last observed client". `client_addr` is rendered
-`COALESCE(host(client_addr), 'local')`, so it is non-null for every
+`COALESCE(host(client_addr::inet), 'local')`, so it is non-null for every
 observed row and a statement never caught in flight is signaled solely
 by a null `client_observed_at`; both the `TopQueryRow` doc comment and
 the OpenAPI descriptions say so, and any UI logic must test
@@ -2279,9 +2679,10 @@ Two further conventions matter when reading `metrics.pg_stat_activity`:
   `inet`, and the standard `inet` text output carries the netmask on
   every supported PostgreSQL version (it reproduces identically on 16
   and 18), so a cast yields `192.0.2.10/32` rather than `192.0.2.10`.
-  Use `host(client_addr)` instead. A NULL `client_addr` means the backend
-  arrived over a Unix-domain socket, which is worth labelling as local
-  rather than unknown.
+  Use `host(client_addr::inet)` instead (the cast is a no-op on
+  PostgreSQL and required on ColdFront, where the column is text). A
+  NULL `client_addr` means the backend arrived over a Unix-domain
+  socket, which is worth labelling as local rather than unknown.
 
 ### Compose query variants as compile-time constants, not with Sprintf
 
@@ -2309,11 +2710,13 @@ escaping wrinkle in `LIKE 'idle in transaction%'` disappears with the
 format string. And Codacy's Opengrep `go_sql_rule-concat-sqli` rule fires
 Error-level on `tx.Query(ctx, query, args...)` whenever `query` came from a
 `Sprintf`, even with every value bound; removing the pattern clears the
-finding on its merits instead of needing a `nosemgrep` suppression. Prefer
-this shape over `nosemgrep` for new code where the variants are a small
-fixed set; the existing `nosemgrep` in `internal/metrics/query.go` remains
-appropriate there, because its identifiers are discovered from
-`information_schema` at run time and genuinely cannot be constants.
+finding on its merits, which matters because an inline `nosemgrep` has
+not cleared a Codacy finding here in practice. Prefer this shape for new
+code where the variants are a small fixed set. Where identifiers are
+discovered at run time and cannot be constants, as in
+`internal/metrics/query.go`, assemble the statement with `strings.Join`
+in new code rather than adding a `nosemgrep` like the one `query.go`
+still carries (see "Identifier safety and the Codacy suppression").
 
 One caveat: the `LIMIT` cannot be formatted from a Go integer constant
 inside a constant expression, so the literal is written into the tail and a
@@ -2357,7 +2760,11 @@ and a `42P01` from any of them means the schema is absent, so answer the
 whole request with the empty shape rather than a partial one.
 
 Treat `rows.Err()` as a failure too, since an execution-time error such
-as a statement timeout arrives there rather than from `Query`. pgx v5
+as a statement timeout arrives there rather than from `Query`. On
+ColdFront a statement timeout that fires inside pg_duckdb's executor is
+SQLSTATE `XX000` "(PGDuckDB/Duckdb_ExecCustomScan_Cpp) Executor Error:
+Query cancelled", not `57014` (verified live); query_datastore's
+`isStatementTimeout` treats both as a timeout. pgx v5
 also closes the result set on a `rows.Scan` error, so `continue` after a
 scan error does not skip the row: it ends the loop, and the rows after it
 are lost. Scan nullable columns through pointers and skip NULL rows

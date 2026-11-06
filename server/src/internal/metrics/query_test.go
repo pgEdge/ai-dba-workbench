@@ -476,17 +476,39 @@ func TestBuildMetricsQuery(t *testing.T) {
 }
 
 func TestGetAggSelectCols(t *testing.T) {
-	cols := GetAggSelectCols([]string{"col_a", "col_b"}, "avg")
+	types := map[string]string{
+		"col_a": "bigint", "col_b": "double precision",
+		"col_i": "integer", "col_lag": "interval",
+	}
+	cols := GetAggSelectCols([]string{"col_a", "col_b"}, "avg", types)
 	if len(cols) != 2 {
 		t.Fatalf("expected 2 cols, got %d", len(cols))
 	}
-	if !strings.Contains(cols[0], `avg("col_a")`) {
-		t.Errorf("expected avg aggregation, got %s", cols[0])
+	// avg is cast to float8 so a ColdFront datastore, which computes it
+	// as DOUBLE, describes it as PostgreSQL does (issue #755).
+	if cols[0] != `avg("col_a")::float8 AS "col_a"` {
+		t.Errorf("expected a float8 avg, got %s", cols[0])
 	}
 
-	lastCols := GetAggSelectCols([]string{"col_a"}, "last")
+	lastCols := GetAggSelectCols([]string{"col_a"}, "last", types)
 	if !strings.Contains(lastCols[0], "array_agg") {
 		t.Errorf("expected array_agg for last, got %s", lastCols[0])
+	}
+
+	tests := []struct {
+		agg, col, want string
+	}{
+		{"sum", "col_i", `sum("col_i"::bigint) AS "col_i"`},
+		{"sum", "col_a", `sum("col_a") AS "col_a"`},
+		{"max", "col_i", `max("col_i") AS "col_i"`},
+		{"avg", "col_lag", `avg(EXTRACT(EPOCH FROM "col_lag")::float8)::float8 AS "col_lag"`},
+		{"sum", "col_lag", `sum(EXTRACT(EPOCH FROM "col_lag")::float8) AS "col_lag"`},
+		{"min", "col_lag", `min("col_lag") AS "col_lag"`},
+	}
+	for _, tt := range tests {
+		if got := GetAggSelectCols([]string{tt.col}, tt.agg, types)[0]; got != tt.want {
+			t.Errorf("GetAggSelectCols(%s, %s) = %s, want %s", tt.col, tt.agg, got, tt.want)
+		}
 	}
 }
 
@@ -1519,7 +1541,7 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		if !strings.Contains(query, `metrics."pg_stat_all_tables"`) {
 			t.Error("query should reference the probe table")
 		}
-		if !strings.Contains(query, "connection_id IN ($1)") {
+		if !strings.Contains(query, "connection_id = ANY(string_to_array($1, ',')::integer[])") {
 			t.Error("query should filter by connection_id")
 		}
 		// The inner query reduces each entity (keyed by connection_id plus
@@ -1540,7 +1562,7 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		if len(args) != 2 {
 			t.Fatalf("expected 2 args, got %d", len(args))
 		}
-		if args[0] != 1 || args[1] != 1 {
+		if args[0] != "1" || args[1] != 1 {
 			t.Errorf("unexpected args: %v", args)
 		}
 	})
@@ -1561,19 +1583,21 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 			"idx_scan", "asc", 5,
 		)
 
-		if !strings.Contains(query, "connection_id IN ($1, $2)") {
-			t.Error("query should list multiple connection placeholders")
+		// The connections are bound as one text list, which a ColdFront
+		// datastore can type where it cannot type an IN list (issue #755).
+		if !strings.Contains(query, "connection_id = ANY(string_to_array($1, ',')::integer[])") || args[0] != "2,3" {
+			t.Errorf("query should bind the connections as one list: %v", args)
 		}
-		if !strings.Contains(query, `"database_name" = $3`) {
+		if !strings.Contains(query, `"database_name" = $2`) {
 			t.Error("query should filter by database_name")
 		}
-		if !strings.Contains(query, "schemaname = $4") {
+		if !strings.Contains(query, "schemaname = $3") {
 			t.Error("query should filter by schemaname")
 		}
-		if !strings.Contains(query, "relname = $5") {
+		if !strings.Contains(query, "relname = $4") {
 			t.Error("query should filter by relname")
 		}
-		if !strings.Contains(query, "indexrelname = $6") {
+		if !strings.Contains(query, "indexrelname = $5") {
 			t.Error("query should filter by indexrelname")
 		}
 		if !strings.Contains(query, `DISTINCT ON (connection_id, "indexrelname")`) {
@@ -1582,15 +1606,15 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		if !strings.Contains(query, `ORDER BY "idx_scan" asc, collected_at DESC`) {
 			t.Errorf("query should rank by idx_scan asc, got: %s", query)
 		}
-		if !strings.Contains(query, "LIMIT $7") {
-			t.Error("query should apply LIMIT placeholder at $7")
+		if !strings.Contains(query, "LIMIT $6") {
+			t.Error("query should apply LIMIT placeholder at $6")
 		}
-		// 2 connections + 4 filters + 1 limit
-		if len(args) != 7 {
-			t.Fatalf("expected 7 args, got %d", len(args))
+		// 1 connection list + 4 filters + 1 limit
+		if len(args) != 6 {
+			t.Fatalf("expected 6 args, got %d", len(args))
 		}
-		if args[6] != 5 {
-			t.Errorf("expected limit arg 5, got %v", args[6])
+		if args[5] != 5 {
+			t.Errorf("expected limit arg 5, got %v", args[5])
 		}
 	})
 
@@ -1972,8 +1996,8 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		if strings.Contains(query, "ratio_buckets") {
 			t.Error("query should not reference ratio_buckets")
 		}
-		if len(args) != 5 {
-			t.Errorf("expected 5 args, got %d", len(args))
+		if len(args) != 6 {
+			t.Errorf("expected 6 args, got %d", len(args))
 		}
 		if args[1] != 1 {
 			t.Errorf("expected connection_id=1, got %v", args[1])
@@ -2092,8 +2116,8 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				t.Errorf("query missing filter %q", c)
 			}
 		}
-		if len(args) != 8 {
-			t.Errorf("expected 8 args, got %d", len(args))
+		if len(args) != 9 {
+			t.Errorf("expected 9 args, got %d", len(args))
 		}
 	})
 
@@ -2130,8 +2154,8 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		if strings.Count(query, "indexrelname = $7") < 1 {
 			t.Error("query should filter by indexrelname")
 		}
-		if len(args) != 8 {
-			t.Fatalf("expected 8 args, got %d", len(args))
+		if len(args) != 9 {
+			t.Fatalf("expected 9 args, got %d", len(args))
 		}
 		if args[6] != "pk_orders" {
 			t.Errorf("expected indexrelname arg 'pk_orders', got %v", args[6])
@@ -2156,8 +2180,8 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		if !strings.Contains(query, "queryid = $5") {
 			t.Errorf("query should filter by queryid, got:\n%s", query)
 		}
-		if len(args) != 6 {
-			t.Fatalf("expected 6 args, got %d", len(args))
+		if len(args) != 7 {
+			t.Fatalf("expected 7 args, got %d", len(args))
 		}
 		if args[4] != int64(42) {
 			t.Errorf("expected int64 queryid arg 42, got %#v", args[4])
@@ -2293,8 +2317,8 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		if strings.Contains(query, "rate_0") {
 			t.Errorf("delta-only query should not emit a rate column:\n%s", query)
 		}
-		if len(args) != 5 {
-			t.Errorf("expected 5 args, got %d", len(args))
+		if len(args) != 6 {
+			t.Errorf("expected 6 args, got %d", len(args))
 		}
 	})
 
@@ -2444,8 +2468,8 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		if strings.Contains(query, "delta_") || strings.Contains(query, "ratio_buckets") {
 			t.Error("scaled rates must not emit delta or ratio CTE columns")
 		}
-		if len(args) != 5 {
-			t.Errorf("expected 5 args, got %d", len(args))
+		if len(args) != 6 {
+			t.Errorf("expected 6 args, got %d", len(args))
 		}
 	})
 
@@ -2516,8 +2540,7 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 	// predecessor left behind by a long collection gap is not borrowed.
 	const wantLookback = `collected_at >= COALESCE((SELECT MAX(collected_at) ` +
 		`FROM metrics."pg_stat_all_tables" WHERE connection_id = $2 ` +
-		`AND collected_at < $3 AND collected_at >= $3 - ` + lookbackBound +
-		`), $3)`
+		`AND collected_at < $3 AND collected_at >= $6), $3)`
 
 	for _, tc := range []struct {
 		name    string
@@ -2546,8 +2569,14 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 			if !strings.Contains(query, "collected_at <= $4") {
 				t.Error("query missing the window upper bound")
 			}
-			if len(args) != 5 {
-				t.Errorf("expected 5 args, got %d", len(args))
+			// The gap bound is $5 and the lookback's lower bound $6,
+			// computed in Go: the window start less 30 minutes, the floor,
+			// since three one-minute buckets fall short of it.
+			if len(args) != 6 {
+				t.Fatalf("expected 6 args, got %d", len(args))
+			}
+			if got, want := args[5], start.Add(-30*time.Minute); got != want {
+				t.Errorf("lookback bound = %v, want %v", got, want)
 			}
 		})
 	}
@@ -2568,15 +2597,15 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 		}
 		want := `COALESCE((SELECT MAX(collected_at) ` +
 			`FROM metrics."pg_stat_all_tables" WHERE connection_id = $2 ` +
-			`AND collected_at < $3 AND collected_at >= $3 - ` + lookbackBound +
+			`AND collected_at < $3 AND collected_at >= $9` +
 			` AND "database_name" = $5 ` +
 			`AND schemaname = $6 AND relname = $7), $3)`
 		if !strings.Contains(query, want) {
 			t.Errorf("query missing filtered lookback %q\n---\n%s", want, query)
 		}
 		// Same placeholders as the outer clause: no renumbering.
-		if len(args) != 8 {
-			t.Errorf("expected 8 args, got %d", len(args))
+		if len(args) != 9 {
+			t.Errorf("expected 9 args, got %d", len(args))
 		}
 	})
 
@@ -2592,8 +2621,8 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		want := `AND collected_at < $3 AND collected_at >= $3 - ` +
-			lookbackBound + ` AND queryid = $5), $3)`
+		want := `AND collected_at < $3 AND collected_at >= $7` +
+			` AND queryid = $5), $3)`
 		if !strings.Contains(query, want) {
 			t.Errorf("query missing %q\n---\n%s", want, query)
 		}
@@ -2683,7 +2712,7 @@ func TestMetricQueryParts(t *testing.T) {
 
 	t.Run("lookbackWhere leaves the other clauses alone", func(t *testing.T) {
 		parts := metricQueryClauses("pg_stat_all_tables", 1, start, end, time.Minute, MetricFilters{})
-		got := parts.lookbackWhere("pg_stat_all_tables")
+		got := parts.lookbackWhere("pg_stat_all_tables", "$5")
 		if strings.Contains(got, " AND collected_at >= $3 AND") {
 			t.Errorf("lookbackWhere kept the plain lower bound: %q", got)
 		}
@@ -2704,7 +2733,7 @@ func TestMetricQueryParts(t *testing.T) {
 		parts := metricQueryClauses("pg_stat_all_tables", 1, start, end, time.Minute,
 			MetricFilters{SchemaName: "public"})
 		_ = parts.where()
-		_ = parts.lookbackWhere("pg_stat_all_tables")
+		_ = parts.lookbackWhere("pg_stat_all_tables", "$6")
 		if len(parts.filterClauses) != 1 || parts.filterClauses[0] != "schemaname = $5" {
 			t.Errorf("filterClauses mutated: %v", parts.filterClauses)
 		}
@@ -2716,19 +2745,26 @@ func TestMetricQueryParts(t *testing.T) {
 }
 
 func TestLookbackBound(t *testing.T) {
-	// The bound is expressed in the query's own bucket-width argument so the
-	// $N layout stays shared with BuildMetricsQuery, and it is the larger of
-	// a few bucket widths and a fixed floor covering the coarsest charted
-	// probe interval (600s) several times over on a 1h window.
-	if !strings.HasPrefix(lookbackBound, "GREATEST($1::interval * ") {
-		t.Errorf("lookbackBound must scale with the bucket width: %q", lookbackBound)
+	// The bound is the larger of three bucket widths and a fixed floor
+	// covering the coarsest charted probe interval (600s) several times
+	// over on a 1h window. It is computed in Go and bound as a timestamp,
+	// because a ColdFront datastore cannot plan arithmetic on a bound
+	// value (issue #755); the width is truncated to whole seconds, as the
+	// bucket interval argument is rendered.
+	tests := []struct {
+		width, want time.Duration
+	}{
+		{24 * time.Second, 30 * time.Minute},
+		{10 * time.Minute, 30 * time.Minute},
+		{67 * time.Minute, 201 * time.Minute},
+		{4*time.Hour + 48*time.Minute, 14*time.Hour + 24*time.Minute},
+		{1500 * time.Millisecond * 1000, 75 * time.Minute},
+		{20*time.Minute + 999*time.Millisecond, 60 * time.Minute},
 	}
-	if !strings.Contains(lookbackBound, "INTERVAL '30 minutes'") {
-		t.Errorf("lookbackBound must keep the 30-minute floor: %q", lookbackBound)
-	}
-	if strings.ContainsAny(lookbackBound, "26789") {
-		t.Errorf("lookbackBound multiplier changed; revisit the justification: %q",
-			lookbackBound)
+	for _, tt := range tests {
+		if got := lookbackBound(tt.width); got != tt.want {
+			t.Errorf("lookbackBound(%v) = %v, want %v", tt.width, got, tt.want)
+		}
 	}
 }
 
@@ -2776,8 +2812,8 @@ func TestBuildDerivedMetricsQueryEntityPartition(t *testing.T) {
 			t.Errorf("expected 4 partitioned window functions, got %d:\n%s", n, query)
 		}
 		// Entity keys are identifiers, never bound values.
-		if len(args) != 5 {
-			t.Errorf("expected 5 args, got %d", len(args))
+		if len(args) != 6 {
+			t.Errorf("expected 6 args, got %d", len(args))
 		}
 	})
 
@@ -2902,8 +2938,8 @@ func TestBuildDerivedMetricsQueryGuards(t *testing.T) {
 					t.Errorf("%s: query missing %q\n---\n%s", tc.name, c, query)
 				}
 			}
-			if len(args) != 5 || args[4] != 180.0 {
-				t.Errorf("%s: args = %v, want the 180s gap bound as the fifth", tc.name, args)
+			if len(args) != 6 || args[4] != 180.0 {
+				t.Errorf("%s: args = %v, want the 180s gap bound as the fifth, then the lookback bound", tc.name, args)
 			}
 		}
 	})
@@ -2943,7 +2979,7 @@ func TestBuildDerivedMetricsQueryGuards(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(args) != 7 || args[4] != "app" || args[5] != qid || args[6] != 120.0 {
+		if len(args) != 8 || args[4] != "app" || args[5] != qid || args[6] != 120.0 {
 			t.Errorf("args = %v, want filters then the 120s gap bound", args)
 		}
 		for _, c := range []string{`"datname" = $5`, `queryid = $6`, `elapsed_sec <= $7::float8`} {

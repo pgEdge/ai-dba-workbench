@@ -783,7 +783,7 @@ func (h *PerfSummaryHandler) queryTransactions(
                        AS previous_collected_at,
                    EXTRACT(EPOCH FROM collected_at - LAG(collected_at) OVER (
                        ORDER BY collected_at
-                   )) AS elapsed_sec
+                   ))::float8 AS elapsed_sec
             FROM (
                 SELECT DISTINCT collected_at
                 FROM metrics.pg_stat_database
@@ -838,7 +838,7 @@ func (h *PerfSummaryHandler) queryTransactions(
             GROUP BY bucket
         )
         SELECT d.bucket,
-               d.delta_commit / e.elapsed_sec AS commits_per_sec,
+               d.delta_commit::float8 / e.elapsed_sec AS commits_per_sec,
                CASE WHEN d.delta_commit + d.delta_rollback = 0 THEN 0
                     ELSE d.delta_rollback::float /
                          (d.delta_commit + d.delta_rollback)::float * 100.0
@@ -965,7 +965,7 @@ func (h *PerfSummaryHandler) queryConnectionCount(
 ) int {
 	var count int
 	err := tx.QueryRow(ctx, `
-        SELECT COALESCE(SUM(numbackends), 0)
+        SELECT COALESCE(SUM(numbackends::bigint), 0)::bigint
         FROM metrics.pg_stat_database
         WHERE connection_id = $1
           AND collected_at >= $2
@@ -1372,9 +1372,9 @@ func (h *PerfSummaryHandler) queryTransactionRates(
               AND collected_at IN (SELECT collected_at FROM latest_two)
         )
         SELECT p1.datname,
-               CASE WHEN EXTRACT(EPOCH FROM p1.collected_at - p2.collected_at) > 0
+               CASE WHEN EXTRACT(EPOCH FROM p1.collected_at - p2.collected_at)::float8 > 0
                     THEN (p1.xact_commit - p2.xact_commit)::float /
-                         EXTRACT(EPOCH FROM p1.collected_at - p2.collected_at)
+                         EXTRACT(EPOCH FROM p1.collected_at - p2.collected_at)::float8
                     ELSE 0
                END AS tx_rate
         FROM pivoted p1
@@ -1748,7 +1748,9 @@ func buildTopQueriesSQL(
 	//
 	// A NULL client_addr means the backend arrived over a Unix-domain
 	// socket rather than that the client is unknown, so it is reported as
-	// "local", matching connectionGroupsQueryByClient. client_addr is
+	// "local", matching connectionGroupsQueryByClient, and is cast to inet
+	// for host() as it is there, since a ColdFront datastore stores it as
+	// text (issue #755). client_addr is
 	// therefore non-null for every row last_client observed, and a query
 	// never caught in flight is distinguished solely by a null
 	// client_observed_at.
@@ -1880,7 +1882,7 @@ func buildTopQueriesSQL(
         last_client AS (
             SELECT DISTINCT ON (query_id, datid, usesysid)
                 query_id, datid, usesysid,
-                COALESCE(host(client_addr), 'local') AS client_addr,
+                COALESCE(host(client_addr::inet), 'local') AS client_addr,
                 client_hostname, collected_at
             FROM metrics.pg_stat_activity
             WHERE connection_id = $1

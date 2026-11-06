@@ -672,11 +672,19 @@ func serverConditions(q *datastoreQuery, src datastoreSource, req datastoreReque
 // caller (issue #669). It also hides rows a metrics table without a
 // foreign key still holds for a connection already purged. It binds
 // nothing, so it leaves the parameter numbering alone.
+//
+// connections is named unqualified and resolved through the role's
+// search_path, as fromClause names a configuration source: the
+// collector's migrations create the ordinary tables unqualified, so they
+// live in whichever schema leads that search_path, not necessarily
+// public. On a pgEdge ColdFront datastore DuckDB also plans the whole
+// statement once it reads a metrics view, and it cannot resolve a
+// schema-qualified PostgreSQL table (issue #755).
 func liveConnectionCondition(src datastoreSource) string {
 	if src.Scope != scopeConnection || src.ConnectionColumn == "" {
 		return ""
 	}
-	return "EXISTS (SELECT 1 FROM public.connections lc WHERE lc.id = " +
+	return "EXISTS (SELECT 1 FROM connections lc WHERE lc.id = " +
 		qualified(datastoreTableAlias, src.ConnectionColumn) +
 		" AND lc.deleted_at IS NULL)"
 }
@@ -772,16 +780,19 @@ func checkColumnList(src datastoreSource, names []string, param string) error {
 	return nil
 }
 
-// fromClause names the source table, schema-qualified: metric sources
-// live in the metrics schema and configuration sources in public, where
-// the collector's migrations create them. Qualifying the name keeps a
-// table of the same name earlier on the search_path from being read.
+// fromClause names the source table. A metric source lives in the
+// metrics schema, which the collector creates by name. A configuration
+// source is named unqualified and resolved through the role's
+// search_path, as the collector and every other server query name it:
+// the collector's migrations create the ordinary tables unqualified, so
+// on a datastore whose role has its own schema first on the search_path
+// (a role named coldfront, say) they live there rather than in public.
 func fromClause(src datastoreSource) (string, error) {
 	switch src.Kind {
 	case datastoreKindMetric:
 		return "metrics." + metrics.QuoteIdentifier(src.Table) + " " + datastoreTableAlias, nil
 	case datastoreKindConfiguration:
-		return "public." + metrics.QuoteIdentifier(src.Table) + " " + datastoreTableAlias, nil
+		return metrics.QuoteIdentifier(src.Table) + " " + datastoreTableAlias, nil
 	default:
 		return "", fmt.Errorf("source %q has an unknown kind", src.Name)
 	}
@@ -877,7 +888,10 @@ func scopeCondition(q *datastoreQuery, src datastoreSource, req datastoreRequest
 	if err != nil {
 		return "", err
 	}
-	visible := func() string { return q.bind(ids) + "::int[]" }
+	// The visible set is bound as one text list (metrics.IntArrayExpr):
+	// a pgEdge ColdFront datastore cannot type an array parameter
+	// (issue #755), and the same shape serves every source.
+	visible := func() string { return metrics.IntArrayExpr(q.bind(metrics.IntListArg(ids))) }
 
 	switch src.Scope {
 	case scopeAlert:
@@ -934,7 +948,7 @@ func viaAlertCondition(q *datastoreQuery, req datastoreRequest, vis visibleSet, 
 	if cond == "" {
 		return ""
 	}
-	return "EXISTS (SELECT 1 FROM public.alerts a WHERE a.id = " +
+	return "EXISTS (SELECT 1 FROM alerts a WHERE a.id = " +
 		qualified(datastoreTableAlias, "alert_id") + " AND " + cond + ")"
 }
 
@@ -949,10 +963,10 @@ func restrictedScopeCondition(q *datastoreQuery, src datastoreSource, visible fu
 	case scopeHierarchy:
 		return hierarchyCondition(q, visible())
 	case scopeCluster:
-		return "EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = " +
+		return "EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = " +
 			qualified(datastoreTableAlias, "id") + " AND c.id = ANY(" + visible() + "))"
 	case scopeGroup:
-		return "EXISTS (SELECT 1 FROM public.connections c JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
+		return "EXISTS (SELECT 1 FROM connections c JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
 			qualified(datastoreTableAlias, "id") + " AND c.id = ANY(" + visible() + "))"
 	default:
 		return ""
@@ -999,9 +1013,9 @@ func hierarchyCondition(q *datastoreQuery, visible string) string {
 	return "((" + conn + " IS NULL AND " + cluster + " IS NULL AND " + group + " IS NULL AND " +
 		scope + " IN (" + estate + ", " + global + "))" +
 		" OR (" + conn + " IS NOT NULL AND " + conn + " = ANY(" + visible + "))" +
-		" OR (" + conn + " IS NULL AND " + cluster + " IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c WHERE c.cluster_id = " +
+		" OR (" + conn + " IS NULL AND " + cluster + " IS NOT NULL AND EXISTS (SELECT 1 FROM connections c WHERE c.cluster_id = " +
 		cluster + " AND c.id = ANY(" + visible + ")))" +
-		" OR (" + conn + " IS NULL AND " + cluster + " IS NULL AND " + group + " IS NOT NULL AND EXISTS (SELECT 1 FROM public.connections c JOIN public.clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
+		" OR (" + conn + " IS NULL AND " + cluster + " IS NULL AND " + group + " IS NOT NULL AND EXISTS (SELECT 1 FROM connections c JOIN clusters cl ON cl.id = c.cluster_id WHERE cl.group_id = " +
 		group + " AND c.id = ANY(" + visible + "))))"
 }
 
@@ -1125,34 +1139,117 @@ func filterCondition(q *datastoreQuery, src datastoreSource, f datastoreFilter, 
 		}
 		return column + " " + op, nil
 	case "in", "not in":
-		return listFilterCondition(q, c, f, column+" "+op, where)
+		return listFilterCondition(q, c, f, column, where)
 	default:
 		return scalarFilterCondition(q, c, f, column+" "+op, where)
 	}
 }
 
-// listFilterCondition renders an in or not in filter, binding each of
-// its values. lhs is the rendered column and operator.
-func listFilterCondition(q *datastoreQuery, c datastoreColumn, f datastoreFilter, lhs, where string) (string, error) {
+// listFilterCondition renders an in or not in filter on column, in the
+// one shape per column type that a pgEdge ColdFront datastore can type
+// (issue #755), which cannot type an array parameter, an IN list of
+// more than one integer parameter or an IN list of untyped text
+// parameters:
+//
+//   - a text column as IN ($1::text, $2::text, ...), one typed
+//     parameter per value;
+//   - an integer or smallint column as = ANY(metrics.IntArrayExpr($n)),
+//     every value bound as one comma-separated text parameter;
+//   - any other column (bigint, floating point, boolean, timestamp) as a
+//     chain of = (or <>) comparisons with one parameter each, which
+//     ColdFront types from the column. A bigint column stays here
+//     because a bigint[] cast of string_to_array has not been run on
+//     ColdFront.
+//
+// Every shape means what col [NOT] IN (...) means, a NULL column
+// included: col NOT IN (a, b), NOT (col = ANY('{a,b}')) and
+// (col <> a AND col <> b) are all NULL then.
+func listFilterCondition(q *datastoreQuery, c datastoreColumn, f datastoreFilter, column, where string) (string, error) {
+	values, err := listFilterValues(c, f, where)
+	if err != nil {
+		return "", err
+	}
+	negate := f.Op == "not in"
+	switch {
+	case slices.Contains(datastoreTextTypes, c.DataType):
+		return textListCondition(q, values, column, negate), nil
+	case c.DataType == typeInteger || c.DataType == "smallint":
+		return integerListCondition(q, c, values, column, negate, where)
+	default:
+		return comparisonChain(q, values, column, negate), nil
+	}
+}
+
+// listFilterValues checks an in or not in filter's values and coerces
+// each to the column's type.
+func listFilterValues(c datastoreColumn, f datastoreFilter, where string) ([]any, error) {
 	if f.HasValue {
-		return "", fmt.Errorf("%s: operator %s takes values (an array), not value", where, f.Op)
+		return nil, fmt.Errorf("%s: operator %s takes values (an array), not value", where, f.Op)
 	}
 	list, ok := f.Values.([]any)
 	if !ok || len(list) == 0 {
-		return "", fmt.Errorf("%s: operator %s needs values, a non-empty array", where, f.Op)
+		return nil, fmt.Errorf("%s: operator %s needs values, a non-empty array", where, f.Op)
 	}
 	if len(list) > datastoreMaxInValues {
-		return "", fmt.Errorf("%s: operator %s takes at most %d values", where, f.Op, datastoreMaxInValues)
+		return nil, fmt.Errorf("%s: operator %s takes at most %d values", where, f.Op, datastoreMaxInValues)
 	}
-	placeholders := make([]string, len(list))
+	values := make([]any, len(list))
 	for j, item := range list {
 		v, err := coerceFilterValue(c, item, where)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		placeholders[j] = q.bind(v)
+		values[j] = v
 	}
-	return lhs + " (" + strings.Join(placeholders, ", ") + ")", nil
+	return values, nil
+}
+
+// textListCondition renders column [NOT] IN ($n::text, ...), binding
+// each value.
+func textListCondition(q *datastoreQuery, values []any, column string, negate bool) string {
+	params := make([]string, len(values))
+	for j, v := range values {
+		params[j] = q.bind(v) + "::text"
+	}
+	op := " IN ("
+	if negate {
+		op = " NOT IN ("
+	}
+	return column + op + strings.Join(params, ", ") + ")"
+}
+
+// integerListCondition renders column = ANY(IntArrayExpr($n)), negated
+// for not in, binding the values as one comma-separated text parameter.
+// IntArrayExpr casts to integer[], so a value outside the integer range
+// is refused here rather than failing the cast in the database.
+func integerListCondition(q *datastoreQuery, c datastoreColumn, values []any, column string, negate bool, where string) (string, error) {
+	parts := make([]string, len(values))
+	for j, v := range values {
+		n, ok := v.(int64)
+		if !ok || n < math.MinInt32 || n > math.MaxInt32 {
+			return "", fmt.Errorf("%s: column %q is %s, and %v is outside its range", where, c.Name, c.DataType, v)
+		}
+		parts[j] = strconv.FormatInt(n, 10)
+	}
+	cond := column + " = ANY(" + metrics.IntArrayExpr(q.bind(strings.Join(parts, ","))) + ")"
+	if negate {
+		return "NOT (" + cond + ")", nil
+	}
+	return cond, nil
+}
+
+// comparisonChain renders (column = $1 OR column = $2 ...), or for not
+// in (column <> $1 AND column <> $2 ...), binding each value.
+func comparisonChain(q *datastoreQuery, values []any, column string, negate bool) string {
+	compare, joiner := " = ", " OR "
+	if negate {
+		compare, joiner = " <> ", " AND "
+	}
+	terms := make([]string, len(values))
+	for j, v := range values {
+		terms[j] = column + compare + q.bind(v)
+	}
+	return "(" + strings.Join(terms, joiner) + ")"
 }
 
 // scalarFilterCondition renders a filter that compares the column with
@@ -1497,7 +1594,10 @@ func aggregateStatement(q *datastoreQuery, src datastoreSource, req datastoreReq
 			}
 		}
 		alias := req.Aggregation + "_" + name
-		selects = append(selects, req.Aggregation+"("+qualified(datastoreTableAlias, name)+") AS "+metrics.QuoteIdentifier(alias))
+		// AggregateExpr gives avg and an integer sum a type a ColdFront
+		// datastore describes as PostgreSQL does (issue #755).
+		selects = append(selects, metrics.AggregateExpr(req.Aggregation,
+			qualified(datastoreTableAlias, name), c.DataType)+" AS "+metrics.QuoteIdentifier(alias))
 		outputs = append(outputs, alias)
 	}
 	selects = append(selects, aggregateRawStatements(src, req)...)

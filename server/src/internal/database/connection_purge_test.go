@@ -80,6 +80,49 @@ func captureLog() (func(string, ...any), func() []string) {
 		}
 }
 
+// TestSplitMetricsViews checks that views are set apart, in order, for
+// purgeMetricsViews, and that the tables keep their foreign-key flags.
+func TestSplitMetricsViews(t *testing.T) {
+	relations := []metricsTable{
+		{name: "a_part", hasFK: true},
+		{name: "b_view", isView: true},
+		{name: "c_nofk"},
+		{name: "d_view", isView: true},
+	}
+	tables, views := splitMetricsViews(relations)
+	wantTables := []metricsTable{{name: "a_part", hasFK: true}, {name: "c_nofk"}}
+	if !slices.Equal(tables, wantTables) {
+		t.Errorf("tables = %v, want %v", tables, wantTables)
+	}
+	if !slices.Equal(views, []string{"b_view", "d_view"}) {
+		t.Errorf("views = %v, want [b_view d_view]", views)
+	}
+
+	tables, views = splitMetricsViews([]metricsTable{{name: "only_table"}})
+	if len(tables) != 1 || views != nil {
+		t.Errorf("a plain datastore: tables = %v, views = %v; want one table, no views", tables, views)
+	}
+}
+
+// TestPurgeableViews checks that only views named for a known probe are
+// purged, by default through metrics.IsKnownProbe, and that a skipped
+// view is dropped from the list however often it is seen.
+func TestPurgeableViews(t *testing.T) {
+	ds := &Datastore{}
+	views := []string{"pg_stat_activity", "operator_report", "pg_settings", "operator_report"}
+	if got := ds.purgeableViews(views); !slices.Equal(got, []string{"pg_stat_activity", "pg_settings"}) {
+		t.Errorf("purgeable views = %v, want [pg_stat_activity pg_settings]", got)
+	}
+	if got := ds.purgeableViews([]string{"operator_report"}); got != nil {
+		t.Errorf("purgeable views of only a non-probe view = %v, want none", got)
+	}
+
+	ds.isProbeView = func(name string) bool { return name == "operator_report" }
+	if got := ds.purgeableViews(views); !slices.Equal(got, []string{"operator_report", "operator_report"}) {
+		t.Errorf("purgeable views with a custom allowlist = %v", got)
+	}
+}
+
 func TestConnectionPurger_RunOnce(t *testing.T) {
 	tests := []struct {
 		name       string

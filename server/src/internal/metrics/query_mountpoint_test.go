@@ -119,7 +119,7 @@ func TestMetricQueryClausesMountPoint(t *testing.T) {
 			mountFilterStart, mountFilterEnd, time.Minute,
 			MetricFilters{MountPoint: "/srv/data"})
 
-		got := parts.lookbackWhere("pg_sys_disk_info")
+		got := parts.lookbackWhere("pg_sys_disk_info", "$6")
 		if !strings.Contains(got, "mount_point = $5") {
 			t.Errorf("lookbackWhere missing mount_point clause: %q", got)
 		}
@@ -169,8 +169,9 @@ func TestBuildDerivedMetricsQueryMountPoint(t *testing.T) {
 	if !strings.Contains(query, "mount_point = $5") {
 		t.Errorf("query should filter by mount_point, got:\n%s", query)
 	}
-	if len(args) != 6 {
-		t.Fatalf("expected 6 args, got %d: %v", len(args), args)
+	// The gap bound and the lookback's lower bound follow the filter.
+	if len(args) != 7 {
+		t.Fatalf("expected 7 args, got %d: %v", len(args), args)
 	}
 	if args[4] != "/srv/data" {
 		t.Errorf("expected mount_point arg %q, got %v", "/srv/data", args[4])
@@ -226,24 +227,27 @@ func TestBuildLatestRowsQueryMountPoint(t *testing.T) {
 		)
 
 		for _, want := range []string{
-			"connection_id IN ($1, $2)",
-			`"database_name" = $3`,
-			"schemaname = $4",
-			"relname = $5",
-			"indexrelname = $6",
-			"mount_point = $7",
-			"queryid = $8",
-			"LIMIT $9",
+			"connection_id = ANY(string_to_array($1, ',')::integer[])",
+			`"database_name" = $2`,
+			"schemaname = $3",
+			"relname = $4",
+			"indexrelname = $5",
+			"mount_point = $6",
+			"queryid = $7",
+			"LIMIT $8",
 		} {
 			if !strings.Contains(query, want) {
 				t.Errorf("query missing %q, got:\n%s", want, query)
 			}
 		}
-		if len(args) != 9 {
-			t.Fatalf("expected 9 args, got %d: %v", len(args), args)
+		if len(args) != 8 {
+			t.Fatalf("expected 8 args, got %d: %v", len(args), args)
 		}
-		if args[6] != "/srv/data" {
-			t.Errorf("expected mount_point at arg 7, got %v", args[6])
+		if args[0] != "2,3" {
+			t.Errorf("expected the connection list at arg 1, got %v", args[0])
+		}
+		if args[5] != "/srv/data" {
+			t.Errorf("expected mount_point at arg 6, got %v", args[5])
 		}
 	})
 

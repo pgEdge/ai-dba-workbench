@@ -25,19 +25,22 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
-// latestTablesProbe is a fixture probe shaped like pg_stat_all_tables, so
-// that the test owns its rows and can drop the table afterwards without
-// disturbing collected data in the test database.
-const latestTablesProbe = "pg_stat_all_tables_latest_test"
+// The fixture probes take real probe names, because the server serves a
+// metrics relation only under a known probe's name
+// (metrics.LookupProbeRelation). Each fixture drops and recreates its
+// table, and each name's entity-key fallback matches its columns.
+
+// latestTablesProbe is a fixture probe shaped like pg_stat_all_tables.
+const latestTablesProbe = "pg_stat_all_tables"
 
 // latestNoSchemaProbe is a fixture probe with a text dimension but no
 // schemaname column, used to prove the schema filters are ignored for
 // probes they cannot apply to.
-const latestNoSchemaProbe = "pg_latest_noschema_test"
+const latestNoSchemaProbe = "pg_database"
 
 // latestNoDimensionProbe is a fixture probe with no text dimension column
 // at all, which the latest-snapshot query cannot key a DISTINCT ON on.
-const latestNoDimensionProbe = "pg_latest_nodim_test"
+const latestNoDimensionProbe = "pg_sys_load_avg_info"
 
 // latestFixtureRow is one sample inserted into the pg_stat_all_tables
 // shaped fixture.
@@ -431,6 +434,78 @@ func TestLatestSnapshot_OrderingAndLimits(t *testing.T) {
 		}
 	})
 }
+
+// latestViewProbe is a view over the latest-tables fixture, standing in
+// for a pgEdge ColdFront datastore, where every probe is a view over
+// Apache Iceberg storage (issue #755). A view is served only under a
+// known probe's name (metrics.LookupProbeRelation), so it takes the name
+// of a real probe no other fixture in this package seeds.
+const (
+	latestViewProbe     = "pg_stat_subscription"
+	latestViewCreateSQL = `CREATE VIEW metrics."` + latestViewProbe +
+		`" AS SELECT * FROM metrics."` + latestTablesProbe + `"`
+	latestViewDropSQL = `DROP VIEW IF EXISTS metrics."` + latestViewProbe + `"`
+)
+
+// TestLatestSnapshot_View checks that the endpoint finds a probe stored as
+// a view and returns the same rows as from the table beneath it.
+func TestLatestSnapshot_View(t *testing.T) {
+	h := setupLatestTablesFixture(t)
+	pool := h.datastore.GetPool()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, latestViewCreateSQL); err != nil {
+		t.Fatalf("failed to create the probe view: %v", err)
+	}
+	// Cleanups run last-registered first, so the view is gone before the
+	// fixture drops the table it depends on.
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), latestViewDropSQL); err != nil {
+			t.Logf("failed to drop the probe view: %v", err)
+		}
+		tableColumnCache.Delete(latestViewProbe)
+		tableDBColCache.Delete(latestViewProbe)
+	})
+
+	const params = "&order_by=n_live_tup&exclude_system_schemas=true"
+	fromTable := decodeLatest(t, getLatest(t, h,
+		"connection_id=1&probe_name="+latestTablesProbe+params))
+	fromView := decodeLatest(t, getLatest(t, h,
+		"connection_id=1&probe_name="+latestViewProbe+params))
+
+	if fromView.TotalCount == 0 || fromView.TotalCount != fromTable.TotalCount {
+		t.Fatalf("view total_count = %d, table %d; want the same non-zero count",
+			fromView.TotalCount, fromTable.TotalCount)
+	}
+	got := strings.Join(qualifiedNames(fromView.Rows), ",")
+	want := strings.Join(qualifiedNames(fromTable.Rows), ",")
+	if got != want {
+		t.Errorf("view rows = %s, want %s", got, want)
+	}
+
+	// The same view under a name that is not a known probe's is refused:
+	// the masking is keyed by probe name and could not protect it.
+	if _, err := pool.Exec(ctx, latestRenamedViewCreateSQL); err != nil {
+		t.Fatalf("failed to create the renamed view: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), latestRenamedViewDropSQL); err != nil {
+			t.Logf("failed to drop the renamed view: %v", err)
+		}
+	})
+	rec := getLatest(t, h, "connection_id=1&probe_name="+latestRenamedView+params)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "not found") {
+		t.Errorf("renamed view returned %d, want 400 not found: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// latestRenamedView is a view over the latest-tables fixture under a
+// name that is not a known probe's.
+const (
+	latestRenamedView          = latestTablesProbe + "_report"
+	latestRenamedViewCreateSQL = `CREATE VIEW metrics."` + latestRenamedView +
+		`" AS SELECT * FROM metrics."` + latestTablesProbe + `"`
+	latestRenamedViewDropSQL = `DROP VIEW IF EXISTS metrics."` + latestRenamedView + `"`
+)
 
 // TestLatestSnapshot_RequestErrors covers the validation failures that need
 // a real datastore to reach.

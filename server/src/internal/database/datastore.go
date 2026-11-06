@@ -27,4 +27,9 @@ type Datastore struct {
 	pool         *pgxpool.Pool
 	serverSecret string
 	mu           sync.RWMutex
+
+	// isProbeView decides which metrics views the connection purge
+	// deletes through (purgeableViews). Nil selects
+	// metrics.IsKnownProbe; tests set it to admit their fixture views.
+	isProbeView func(string) bool
 }

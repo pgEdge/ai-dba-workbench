@@ -44,6 +44,7 @@ func setupGuardFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 	}
 
 	dropTable(ctx, pool, guardTestProbe)
+	registerFixtureProbeForTest(t, guardTestProbe)
 	registerProbeKindsForTest(t, guardTestProbe, probeRegistryEntry{
 		kinds:       columnKinds(counters("xact_commit")),
 		resetColumn: fixedReset("stats_reset"),

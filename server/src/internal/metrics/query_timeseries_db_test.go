@@ -61,6 +61,7 @@ func setupTimeSeriesFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()
 	}
 
 	dropTable(ctx, pool, timeSeriesTestProbe)
+	registerFixtureProbeForTest(t, timeSeriesTestProbe)
 	// The fixture table is not a real probe, so it has to register its
 	// counters itself or every _per_sec request is refused as a gauge.
 	registerProbeKindsForTest(t, timeSeriesTestProbe,
@@ -658,6 +659,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	t.Run("probe with no numeric columns rejected", func(t *testing.T) {
 		const internalOnly = "ts_internal_only_test"
 		dropTable(ctx, pool, internalOnly)
+		registerFixtureProbeForTest(t, internalOnly)
 		ddl := `CREATE TABLE metrics."` + internalOnly + `" (
             connection_id integer NOT NULL,
             collected_at  timestamp with time zone NOT NULL,
@@ -884,6 +886,7 @@ func setupDeltaFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 	}
 
 	dropTable(ctx, pool, deltaTestProbe)
+	registerFixtureProbeForTest(t, deltaTestProbe)
 	// The registry names a reset marker the fixture table does not carry,
 	// as a server sees against a collector schema predating the column:
 	// the builder must drop it silently and fall back to the negative
@@ -1172,6 +1175,7 @@ func setupNetworkFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 	}
 
 	dropTable(ctx, pool, networkTestProbe)
+	registerFixtureProbeForTest(t, networkTestProbe)
 	// The real probe excludes the loopback interface; the fixture carries
 	// the same exclusion and a lo row on every sample so both the raw and
 	// the derived path can be shown to ignore it.
@@ -1465,6 +1469,7 @@ func setupLookbackFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) 
 	}
 
 	dropTable(ctx, pool, lookbackTestProbe)
+	registerFixtureProbeForTest(t, lookbackTestProbe)
 	registerProbeKindsForTest(t, lookbackTestProbe, countersForTest("wal_records"))
 	// Connections 1 to 3 run the probe every minute; 4 and 5 are hourly,
 	// so their 2-hour windows keep two buckets and a predecessor up to
@@ -1681,6 +1686,7 @@ func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
 		// guards the interpolation path against a table someone adds later.
 		const odd = "pg_odd_key_test"
 		dropTable(ctx, pool, odd)
+		registerFixtureProbeForTest(t, odd)
 		defer dropTable(ctx, pool, odd)
 		ddl := `CREATE TABLE metrics."` + odd + `" (
             connection_id integer NOT NULL,
@@ -1725,6 +1731,7 @@ func setupTimeShareFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func())
 	}
 
 	dropTable(ctx, pool, timeShareTestProbe)
+	registerFixtureProbeForTest(t, timeShareTestProbe)
 	setProbeIntervalForTest(t, pool, timeShareTestProbe, 0, 60)
 	registerProbeKindsForTest(t, timeShareTestProbe, probeRegistryEntry{
 		kinds: columnKinds(

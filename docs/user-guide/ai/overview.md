@@ -19,8 +19,9 @@ The AI Overview provides the following capabilities:
   cluster navigator.
 - The system caches summaries for five minutes to reduce
   LLM calls.
-- Estate-wide summaries refresh automatically every 60
-  seconds.
+- The system checks the estate for changes every 60
+  seconds and refreshes the estate-wide summary when the
+  state changes.
 - The panel displays a stale indicator when the cached
   summary expires.
 - Users can collapse the overview panel; the collapse
@@ -105,10 +106,21 @@ using the format
 The system caches overview summaries for five minutes to
 reduce LLM usage and improve response times.
 
-Estate-wide summaries refresh automatically every 60
-seconds in the background. The client displays the cached
-summary immediately and updates the panel when a new
-summary arrives.
+The system checks the estate every 60 seconds in the
+background and regenerates the estate-wide summary when
+the state changes. A change in the server or active alert
+counts, a blackout starting or ending, or a server restart
+triggers a new summary at once; other events, such as
+alerts firing and clearing, trigger a new summary once
+the current summary is at least five minutes old. The
+client displays the cached summary immediately and
+updates the panel when a new summary arrives.
+
+The recent events sent to the LLM cover the last 24 hours
+and include every event type that the Event Timeline
+shows, such as alerts, restarts, and configuration
+changes. The system sends the total number of events
+alongside a sample of the most recent ones.
 
 Scoped summaries for clusters, servers, and groups are
 generated on demand. The system returns a cached summary

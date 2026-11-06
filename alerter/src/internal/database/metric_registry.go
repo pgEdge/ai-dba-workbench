@@ -36,7 +36,14 @@ const (
 	historicalScanBasicWithSamples = anomaly.HistoricalScanBasicWithSamples
 )
 
-// metricQueryConfig holds SQL and scan type for a metric
+// metricQueryConfig holds SQL and scan type for a metric.
+//
+// Every query here must run unchanged on plain PostgreSQL and on a pgEdge
+// ColdFront datastore, where each metrics.* relation is a view over an
+// Iceberg table and pg_duckdb hands the whole query to DuckDB (GitHub
+// issue #755). The rules, shared with the historical queries, are on
+// metricDefs in pkg/anomaly; TestMetricsSQLColdFrontShapes enforces the
+// textual rules and TestMetricsSQLResultTypes the result types.
 type metricQueryConfig struct {
 	latestSQL string
 	scan      scanType
@@ -108,6 +115,12 @@ const (
 	cpuBusyPercentExpr        = anomaly.CPUBusyPercentExpr
 	pseudoFilesystemExclusion = anomaly.PseudoFilesystemExclusion
 )
+
+// replicationLagBytesExpr is the lag_bytes value expression, shared with
+// the historical query in pkg/anomaly. It computes the lag from the text
+// LSNs rather than by casting them to pg_lsn, which DuckDB does not have
+// (GitHub issue #755).
+var replicationLagBytesExpr = anomaly.ReplicationLagBytesExpr
 
 // metricRegistry maps metric names to their query configurations.
 // Each entry contains the SQL for the latest query and the scan type that
@@ -290,7 +303,7 @@ var metricRegistry = withBaselineQueries(map[string]metricQueryConfig{
 				GROUP BY connection_id
 			)
 			SELECT r.connection_id,
-			       MAX((r.sent_lsn::pg_lsn - r.replay_lsn::pg_lsn)::float) as value,
+			       MAX(` + replicationLagBytesExpr + `) as value,
 			       r.collected_at
 			FROM metrics.pg_stat_replication r
 			JOIN newest_sample n

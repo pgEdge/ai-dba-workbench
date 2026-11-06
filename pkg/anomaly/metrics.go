@@ -11,7 +11,9 @@
 package anomaly
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -61,13 +63,20 @@ type MetricDef struct {
 	ProbeName string
 
 	// HistoricalSQL reads the samples a baseline is computed from. $1 is
-	// the lookback in days and $2 an inclusive upper bound on
-	// collected_at, applied in the same predicate as the lookback so a
-	// caller reading a past window does not scan up to the present (the
-	// alerter passes +infinity); rows are (connection_id, database_name,
-	// value, collected_at), plus a trailing sample_count for the
-	// *WithSamples scan kinds, ordered by connection and time. Every
-	// query joins live connections only.
+	// the lookback in days, used as INTERVAL '1 day' * $1::int, and $2
+	// an inclusive upper bound on collected_at, applied beside the
+	// lookback as collected_at <= $2::timestamptz so a caller reading a
+	// past window does not scan up to the present. $2 is always a finite
+	// timestamp: a caller with no upper bound binds a far-future one (the
+	// alerter binds 9999-12-31 00:00:00 UTC), never +infinity, which
+	// DuckDB on a ColdFront datastore can fail to subtract, and never
+	// NULL, under which the bound matches no row. The plain comparison
+	// stays an index condition and prunes partitions under a generic
+	// plan, which a COALESCE or $2 IS NULL form would not (and DuckDB
+	// cannot plan the latter; GitHub issue #755). Rows are
+	// (connection_id, database_name, value, collected_at), plus a
+	// trailing sample_count for the *WithSamples scan kinds, ordered by
+	// connection and time. Every query joins live connections only.
 	HistoricalSQL string
 
 	// HistoricalScan is the layout of HistoricalSQL's rows.
@@ -173,6 +182,50 @@ const PseudoFilesystemExclusion = `COALESCE(file_system_type, '') NOT IN (
 			      'efivarfs', 'nsfs', 'bpf'
 			  )`
 
+// hexDigits is the lookup string lsnHalfSQL indexes into; a digit's value
+// is its position in the string less one.
+const hexDigits = "0123456789ABCDEF"
+
+// lsnHalfSQL returns a SQL expression for the bigint value of one half
+// of the text LSN in column col: part 1 is the high 32 bits (the text
+// before the slash) and part 2 the low 32 bits. Each half is at most
+// eight hex digits, so it is padded to eight and decoded digit by digit
+// with strpos into hexDigits, which is plain string arithmetic that
+// PostgreSQL 14 and later and DuckDB both run. The ::bigint on each
+// digit keeps PostgreSQL from overflowing int4 on the top digit.
+func lsnHalfSQL(col string, part int) string {
+	padded := fmt.Sprintf("lpad(upper(split_part(%s, '/', %d)), 8, '0')", col, part)
+	terms := make([]string, 0, 8)
+	for i := 1; i <= 8; i++ {
+		weight := int64(1) << (4 * (8 - i))
+		terms = append(terms, fmt.Sprintf(
+			"(strpos('%s', substr(%s, %d, 1)) - 1)::bigint * %d",
+			hexDigits, padded, i, weight))
+	}
+	return "(" + strings.Join(terms, " + ") + ")"
+}
+
+// LSNDiffBytesSQL returns a SQL expression for the number of bytes
+// between two LSNs stored as text, from - to, as float8.
+//
+// It replaces (from::pg_lsn - to::pg_lsn)::float. The metrics tables
+// store LSNs as text, and on a ColdFront datastore every query that
+// reads metrics.* runs in DuckDB, which has no pg_lsn type, so the cast
+// failed the lag_bytes queries outright (GitHub issue #755). The
+// difference is taken half by half, high halves times 2^32 plus low
+// halves, in bigint, so it is exact and cannot overflow for any lag a
+// real server can reach, and the float8 result equals the pg_lsn one.
+func LSNDiffBytesSQL(from, to string) string {
+	return fmt.Sprintf("((%s - %s) * 4294967296 + (%s - %s))::float",
+		lsnHalfSQL(from, 1), lsnHalfSQL(to, 1),
+		lsnHalfSQL(from, 2), lsnHalfSQL(to, 2))
+}
+
+// ReplicationLagBytesExpr is the byte lag between a standby row's
+// sent_lsn and replay_lsn in metrics.pg_stat_replication aliased r,
+// shared by the latest and historical lag_bytes queries.
+var ReplicationLagBytesExpr = LSNDiffBytesSQL("r.sent_lsn", "r.replay_lsn")
+
 // metricDefs holds every baselined metric's historical query. Only
 // metrics listed here are baselined and scored; the alerter's metric
 // registry (alerter/src/internal/database/metric_registry.go) reads its
@@ -181,8 +234,27 @@ const PseudoFilesystemExclusion = `COALESCE(file_system_type, '') NOT IN (
 // historical query must compute the statistic its latest query computes,
 // so change the two together.
 //
+// Every query here must run unchanged on plain PostgreSQL and on a pgEdge
+// ColdFront datastore, where each metrics.* relation is a view over an
+// Iceberg table and pg_duckdb hands the whole query to DuckDB (GitHub
+// issue #755); the alerter and the server have no ColdFront setting, so
+// there is one SQL text for both. In short: cast every bound parameter
+// ($1::int, never a bare $1, which DuckDB types as UNKNOWN and refuses),
+// bind no arrays, cast avg() and EXTRACT() results to float before they
+// are selected, and use no PostgreSQL-only type or function (pg_lsn,
+// make_interval(), host() over text; host(col::inet) runs). The
+// golang-expert knowledge base
+// (coldfront-queries.md) has the reasons and the tests that enforce them.
+//
 // Name and PerDatabase are filled in by Metric.
 var metricDefs = map[string]MetricDef{
+	// The query gives each pg_settings row a validity range
+	// [valid_from, valid_to). The ends are open as NULL, not as
+	// -infinity and infinity: the first row's NULL valid_from covers
+	// every earlier sample and the last row's NULL valid_to every later
+	// one. On ColdFront DuckDB may plan the range join in a way that
+	// subtracts the bounds and fails on infinite timestamps (GitHub
+	// issue #755).
 	"connection_utilization_percent": {
 		ProbeName:      "pg_stat_activity",
 		HistoricalScan: HistoricalScanBasic,
@@ -191,19 +263,17 @@ var metricDefs = map[string]MetricDef{
 				SELECT psa.connection_id, psa.collected_at, COUNT(*) as active
 				FROM metrics.pg_stat_activity psa
 				JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
-				WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND psa.collected_at <= $2
+				WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
+				  AND psa.collected_at <= $2::timestamptz
 				  AND psa.backend_type = 'client backend'
 				GROUP BY psa.connection_id, psa.collected_at
 			),
 			max_conns AS (
 				SELECT ps.connection_id,
 				       ps.setting::float as max_connections,
-				       CASE WHEN LAG(ps.collected_at) OVER w IS NULL
-				            THEN '-infinity'::timestamptz
-				            ELSE ps.collected_at END as valid_from,
-				       COALESCE(LEAD(ps.collected_at) OVER w,
-				                'infinity'::timestamptz) as valid_to
+				       CASE WHEN LAG(ps.collected_at) OVER w IS NOT NULL
+				            THEN ps.collected_at END as valid_from,
+				       LEAD(ps.collected_at) OVER w as valid_to
 				FROM metrics.pg_settings ps
 				JOIN connections c ON c.id = ps.connection_id AND c.deleted_at IS NULL
 				WHERE ps.name = 'max_connections'
@@ -215,8 +285,8 @@ var metricDefs = map[string]MetricDef{
 			FROM activity_counts a
 			JOIN max_conns m
 			  ON a.connection_id = m.connection_id
-			 AND a.collected_at >= m.valid_from
-			 AND a.collected_at < m.valid_to
+			 AND (m.valid_from IS NULL OR a.collected_at >= m.valid_from)
+			 AND (m.valid_to IS NULL OR a.collected_at < m.valid_to)
 			ORDER BY a.connection_id, a.collected_at
 		`,
 	},
@@ -228,8 +298,8 @@ var metricDefs = map[string]MetricDef{
 			       COUNT(*)::float as value, psa.collected_at
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
-			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND psa.collected_at <= $2
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
 			ORDER BY psa.connection_id, psa.collected_at
@@ -240,12 +310,12 @@ var metricDefs = map[string]MetricDef{
 		HistoricalScan: HistoricalScanBasic,
 		HistoricalSQL: `
 			SELECT r.connection_id, NULL::text as database_name,
-			       MAX((r.sent_lsn::pg_lsn - r.replay_lsn::pg_lsn)::float) as value,
+			       MAX(` + ReplicationLagBytesExpr + `) as value,
 			       r.collected_at
 			FROM metrics.pg_stat_replication r
 			JOIN connections c ON c.id = r.connection_id AND c.deleted_at IS NULL
-			WHERE r.collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND r.collected_at <= $2
+			WHERE r.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			  AND r.collected_at <= $2::timestamptz
 			  AND r.sent_lsn IS NOT NULL
 			  AND r.replay_lsn IS NOT NULL
 			GROUP BY r.connection_id, r.collected_at
@@ -262,8 +332,8 @@ var metricDefs = map[string]MetricDef{
 			       s.collected_at
 			  FROM metrics.pg_replication_slots s
 			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
-			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
-			   AND s.collected_at <= $2
+			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			   AND s.collected_at <= $2::timestamptz
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
@@ -278,8 +348,8 @@ var metricDefs = map[string]MetricDef{
 			       s.collected_at
 			  FROM metrics.spock_exception_log s
 			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
-			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
-			   AND s.collected_at <= $2
+			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			   AND s.collected_at <= $2::timestamptz
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
@@ -294,8 +364,8 @@ var metricDefs = map[string]MetricDef{
 			       s.collected_at
 			  FROM metrics.spock_resolutions s
 			  JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
-			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
-			   AND s.collected_at <= $2
+			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			   AND s.collected_at <= $2::timestamptz
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
@@ -308,8 +378,8 @@ var metricDefs = map[string]MetricDef{
 			       COUNT(*)::float as value, psa.collected_at
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
-			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND psa.collected_at <= $2
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.wait_event_type = 'Lock'
 			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
@@ -325,8 +395,8 @@ var metricDefs = map[string]MetricDef{
 			       psa.collected_at
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
-			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND psa.collected_at <= $2
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.state = 'idle in transaction'
 			  AND psa.xact_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
@@ -343,8 +413,8 @@ var metricDefs = map[string]MetricDef{
 			       psa.collected_at
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
-			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND psa.collected_at <= $2
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.wait_event_type = 'Lock'
 			  AND psa.query_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
@@ -361,8 +431,8 @@ var metricDefs = map[string]MetricDef{
 			       psa.collected_at
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
-			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND psa.collected_at <= $2
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.state = 'active'
 			  AND psa.query_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
@@ -379,8 +449,8 @@ var metricDefs = map[string]MetricDef{
 			       psa.collected_at
 			FROM metrics.pg_stat_activity psa
 			JOIN connections c ON c.id = psa.connection_id AND c.deleted_at IS NULL
-			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND psa.collected_at <= $2
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			  AND psa.collected_at <= $2::timestamptz
 			  AND psa.xact_start IS NOT NULL
 			  AND psa.backend_type = 'client backend'
 			GROUP BY psa.connection_id, psa.collected_at
@@ -404,8 +474,8 @@ var metricDefs = map[string]MetricDef{
 				       ) as prev_num_requested
 				FROM metrics.pg_stat_checkpointer m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
-				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND m.collected_at <= $2
+				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
+				  AND m.collected_at <= $2::timestamptz
 			),
 			bucket_role AS (
 				SELECT DISTINCT ON (connection_id, date_trunc('hour', collected_at AT TIME ZONE 'UTC'))
@@ -413,8 +483,8 @@ var metricDefs = map[string]MetricDef{
 				       date_trunc('hour', collected_at AT TIME ZONE 'UTC') as bucket,
 				       is_in_recovery
 				FROM metrics.pg_node_role
-				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND collected_at <= $2
+				WHERE collected_at > NOW() - INTERVAL '1 day' * $1::int
+				  AND collected_at <= $2::timestamptz
 				ORDER BY connection_id,
 				         date_trunc('hour', collected_at AT TIME ZONE 'UTC'),
 				         collected_at DESC
@@ -463,8 +533,8 @@ var metricDefs = map[string]MetricDef{
 				       ) as prev_collected_at
 				FROM metrics.pg_stat_database m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
-				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND m.collected_at <= $2
+				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
+				  AND m.collected_at <= $2::timestamptz
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			),
@@ -508,8 +578,8 @@ var metricDefs = map[string]MetricDef{
 				       ) as prev_deadlocks
 				FROM metrics.pg_stat_database m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
-				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND m.collected_at <= $2
+				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
+				  AND m.collected_at <= $2::timestamptz
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			)
@@ -541,8 +611,8 @@ var metricDefs = map[string]MetricDef{
 				       ) as prev_temp_files
 				FROM metrics.pg_stat_database m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
-				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND m.collected_at <= $2
+				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
+				  AND m.collected_at <= $2::timestamptz
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			)
@@ -576,8 +646,8 @@ var metricDefs = map[string]MetricDef{
 				       s.collected_at
 				FROM metrics.pg_stat_statements s
 				JOIN connections c ON c.id = s.connection_id AND c.deleted_at IS NULL
-				WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND s.collected_at <= $2
+				WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1::int
+				  AND s.collected_at <= $2::timestamptz
 				ORDER BY s.connection_id, s.queryid, s.userid, s.dbid,
 				         s.toplevel, s.collected_at, s.database_name
 			),
@@ -634,8 +704,8 @@ var metricDefs = map[string]MetricDef{
 			       m.collected_at
 			FROM metrics.pg_sys_cpu_usage_info m
 			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
-			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND m.collected_at <= $2
+			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			  AND m.collected_at <= $2::timestamptz
 			ORDER BY m.connection_id, m.collected_at
 		`,
 	},
@@ -648,8 +718,8 @@ var metricDefs = map[string]MetricDef{
 				       MAX((m.used_space::float / NULLIF(m.total_space, 0)) * 100) as value
 				FROM metrics.pg_sys_disk_info m
 				JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
-				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND m.collected_at <= $2
+				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
+				  AND m.collected_at <= $2::timestamptz
 				  AND m.total_space > 0
 				  AND ` + PseudoFilesystemExclusion + `
 				GROUP BY m.connection_id, m.collected_at
@@ -669,8 +739,8 @@ var metricDefs = map[string]MetricDef{
 			       m.collected_at
 			FROM metrics.pg_sys_load_avg_info m
 			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
-			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND m.collected_at <= $2
+			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			  AND m.collected_at <= $2::timestamptz
 			ORDER BY m.connection_id, m.collected_at
 		`,
 	},
@@ -687,8 +757,8 @@ var metricDefs = map[string]MetricDef{
 			       m.collected_at
 			FROM metrics.pg_sys_memory_info m
 			JOIN connections c ON c.id = m.connection_id AND c.deleted_at IS NULL
-			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND m.collected_at <= $2
+			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1::int
+			  AND m.collected_at <= $2::timestamptz
 			ORDER BY m.connection_id, m.collected_at
 		`,
 	},

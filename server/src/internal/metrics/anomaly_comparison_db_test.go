@@ -14,9 +14,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/pgedge/ai-workbench/pkg/anomaly"
 )
@@ -373,9 +376,12 @@ func TestLoadComparison_PastWindowBucketEnd(t *testing.T) {
 
 // TestComparisonSeriesQuery_Plan logs the plan of the wrapped series
 // query for a CTE and LAG metric with a connection and database bound,
-// to show whether those predicates reach the inner scan, and checks that
-// the upper bound sits beside the lookback in the inner scan's condition
-// rather than only in the outer window predicate (GitHub issue #776).
+// and checks that the $2 upper bound reaches the inner scan's index
+// condition rather than only the outer window predicate (GitHub issue
+// #776). The plan is generic (plan_cache_mode = force_generic_plan), as
+// pgx's cached statements can reach, where PostgreSQL cannot fold a
+// COALESCE over $2 and keeps it as a per-row filter; the same check
+// over the COALESCE form must fail (GitHub issue #755).
 func TestComparisonSeriesQuery_Plan(t *testing.T) {
 	pool := newCollectorSchemaPool(t)
 	ctx := context.Background()
@@ -384,35 +390,93 @@ func TestComparisonSeriesQuery_Plan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveComparisonMetric: %v", err)
 	}
-	now := time.Now().UTC()
-	rows, err := pool.Query(ctx, "EXPLAIN "+comparisonSeriesQuery(def),
-		2, now, 1, db, now.Add(-24*time.Hour), now)
-	if err != nil {
-		t.Fatalf("EXPLAIN: %v", err)
-	}
-	defer rows.Close()
-	var plan []string
-	for rows.Next() {
-		var line string
-		if err := rows.Scan(&line); err != nil {
-			t.Fatalf("scan plan: %v", err)
-		}
-		plan = append(plan, line)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("plan rows: %v", err)
-	}
-	t.Logf("plan:\n%s", strings.Join(plan, "\n"))
 
-	bounded := false
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "SET plan_cache_mode = force_generic_plan"); err != nil {
+		t.Fatalf("force a generic plan: %v", err)
+	}
+	// Return the session to the default before the pool reuses it.
+	defer func() {
+		if _, err := conn.Exec(ctx, "RESET plan_cache_mode"); err != nil {
+			t.Errorf("reset plan_cache_mode: %v", err)
+		}
+	}()
+
+	// EXPLAIN over bound parameters plans with their values, so prepare
+	// the query and EXPLAIN EXECUTE it, which the forced mode plans
+	// generically. The simple protocol sends each statement as is.
+	simple := pgx.QueryExecModeSimpleProtocol
+	explain := func(sql string) []string {
+		t.Helper()
+		if _, err := conn.Exec(ctx, "PREPARE plan_probe AS "+sql, simple); err != nil {
+			t.Fatalf("PREPARE: %v", err)
+		}
+		defer func() {
+			if _, err := conn.Exec(ctx, "DEALLOCATE plan_probe", simple); err != nil {
+				t.Errorf("DEALLOCATE: %v", err)
+			}
+		}()
+		now := time.Now().UTC()
+		rows, err := conn.Query(ctx, "EXPLAIN EXECUTE plan_probe($1, $2, $3, $4, $5, $6)",
+			simple, 2, now, 1, db, now.Add(-24*time.Hour), now)
+		if err != nil {
+			t.Fatalf("EXPLAIN: %v", err)
+		}
+		defer rows.Close()
+		var plan []string
+		for rows.Next() {
+			var line string
+			if err := rows.Scan(&line); err != nil {
+				t.Fatalf("scan plan: %v", err)
+			}
+			plan = append(plan, line)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("plan rows: %v", err)
+		}
+		return plan
+	}
+
+	plan := explain(comparisonSeriesQuery(def))
+	t.Logf("plan:\n%s", strings.Join(plan, "\n"))
+	if !upperBoundIndexed(plan) {
+		t.Error("no inner index scan bounds collected_at above by $2 in its Index Cond")
+	}
+
+	coalesced := coalesceUpperBound.ReplaceAllString(def.HistoricalSQL,
+		"${1}collected_at <= COALESCE($$2::timestamptz, ${1}collected_at)")
+	if coalesced == def.HistoricalSQL {
+		t.Fatal("found no upper bound to rewrite in the COALESCE form")
+	}
+	def.HistoricalSQL = coalesced
+	plan = explain(comparisonSeriesQuery(def))
+	if upperBoundIndexed(plan) {
+		t.Errorf("the check passed the COALESCE form, so it cannot tell "+
+			"the two apart:\n%s", strings.Join(plan, "\n"))
+	}
+}
+
+// coalesceUpperBound matches a historical query's plain $2 upper bound,
+// capturing the column's qualifier, so a test can rewrite it into the
+// COALESCE form a generic plan cannot index.
+var coalesceUpperBound = regexp.MustCompile(`(\w+\.)collected_at <= \$2::timestamptz`)
+
+// upperBoundIndexed reports whether a plan has an index condition that
+// bounds collected_at above by the $2 parameter itself, not through a
+// COALESCE.
+func upperBoundIndexed(plan []string) bool {
 	for _, line := range plan {
-		if strings.Contains(line, "(now() - ") && strings.Contains(line, "collected_at <= ") {
-			bounded = true
+		if strings.Contains(line, "Index Cond:") &&
+			strings.Contains(line, "collected_at <= $2") &&
+			!strings.Contains(line, "COALESCE") {
+			return true
 		}
 	}
-	if !bounded {
-		t.Error("no inner scan bounds collected_at above alongside the lookback")
-	}
+	return false
 }
 
 // TestLoadScoringSettings_MissingSchema checks that a server upgraded

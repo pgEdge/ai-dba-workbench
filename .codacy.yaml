@@ -67,6 +67,10 @@ engines:
   opengrep:
     exclude_paths:
       - 'alerter/src/internal/database/anomaly_queries.go'
+      # Test-only: the LSN difference check joins the fixed fragment
+      # from anomaly.LSNDiffBytesSQL over literal column names and
+      # binds both LSNs as $1 and $2.
+      - 'alerter/src/internal/database/coldfront_compat_test.go'
       - 'alerter/src/internal/engine/anomalies_test.go'
       - 'alerter/src/internal/engine/baselines_test.go'
       - 'collector/src/database/migration_v6_test.go'
@@ -83,6 +87,10 @@ engines:
       # the constant refusing-helper SQL; the connection ID is bound.
       - 'collector/src/probes/change_tracking_refused_test.go'
       - 'server/src/internal/api/perf_summary_handlers.go'
+      # Test-only: the generic-plan check prepares the package's own
+      # comparison query (and a COALESCE rewrite of it) behind a fixed
+      # "PREPARE plan_probe AS " prefix; all values are bound.
+      - 'server/src/internal/metrics/anomaly_comparison_db_test.go'
       # Test-only: statements assembled from the metrics package's own
       # SQL helpers (AggregateExpr, EpochSeconds) and test constants.
       - 'server/src/internal/metrics/portable_sql_test.go'

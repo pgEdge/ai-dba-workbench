@@ -254,11 +254,10 @@ func TestNewDatastoreInvalidConfig(t *testing.T) {
 	}
 }
 
-// TestNewDatastorePingFailure exercises the failed-Ping branch of
-// NewDatastore by pointing it at an unreachable port. The connection
-// pool can be constructed (lazy), but the Ping() at the end of
-// NewDatastore must fail and trigger pool.Close + error return.
-func TestNewDatastorePingFailure(t *testing.T) {
+// TestNewDatastoreConnectFailure exercises the connection-failure branch
+// of NewDatastore by pointing it at an unreachable port: the ColdFront
+// detection connection, made before the pool is built, must fail.
+func TestNewDatastoreConnectFailure(t *testing.T) {
 	cfg := &config.Config{
 		Datastore: datastoreconfig.DatastoreConfig{
 			Host:     "127.0.0.1",
@@ -273,7 +272,7 @@ func TestNewDatastorePingFailure(t *testing.T) {
 		},
 	}
 	if _, err := NewDatastore(cfg); err == nil {
-		t.Errorf("expected ping failure on unreachable port")
+		t.Errorf("expected a connection failure on an unreachable port")
 	}
 }
 

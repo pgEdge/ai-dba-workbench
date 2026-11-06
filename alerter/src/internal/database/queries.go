@@ -674,6 +674,44 @@ func (d *Datastore) GetAlertRuleByID(ctx context.Context, id int64) (*AlertRule,
 	return &rule, nil
 }
 
+// connectionsWithExtensionSQL lists the connections whose newest
+// metrics.pg_extension snapshot contains the extension named by $1. Like
+// every query that reads metrics.*, it must also run on a ColdFront
+// datastore, so its parameter carries an explicit cast (GitHub issue
+// #755; see metricQueryConfig).
+const connectionsWithExtensionSQL = `
+		WITH newest AS (
+			SELECT connection_id, MAX(collected_at) AS collected_at
+			FROM metrics.pg_extension
+			GROUP BY connection_id
+		)
+		SELECT DISTINCT e.connection_id
+		FROM metrics.pg_extension e
+		JOIN newest n
+		  ON n.connection_id = e.connection_id
+		 AND n.collected_at = e.collected_at
+		WHERE e.extname = $1::text
+	`
+
+// clusterPeersSQL lists the other connections in the cluster of
+// connection $1 with each one's newest metrics.pg_node_role role. Its
+// parameter is cast for the reason given on connectionsWithExtensionSQL.
+const clusterPeersSQL = `
+		SELECT c.id, c.name, COALESCE(lr.primary_role, 'unknown')
+		FROM connections c
+		LEFT JOIN LATERAL (
+			SELECT primary_role
+			FROM metrics.pg_node_role
+			WHERE connection_id = c.id
+			ORDER BY collected_at DESC
+			LIMIT 1
+		) lr ON true
+		WHERE c.cluster_id = (SELECT cluster_id FROM connections WHERE id = $1::int)
+		  AND c.cluster_id IS NOT NULL
+		  AND c.id != $1::int
+		ORDER BY c.name, c.id
+	`
+
 // GetConnectionsWithExtension returns the set of connection IDs whose
 // newest metrics.pg_extension snapshot contains extname in any database.
 //
@@ -688,19 +726,7 @@ func (d *Datastore) GetConnectionsWithExtension(ctx context.Context, extname str
 	// Tagged internal: this reads metrics.pg_extension on the Workbench's
 	// own datastore once per rule with a required_extension on every
 	// evaluation cycle.
-	rows, err := d.queryInternal(ctx, `
-		WITH newest AS (
-			SELECT connection_id, MAX(collected_at) AS collected_at
-			FROM metrics.pg_extension
-			GROUP BY connection_id
-		)
-		SELECT DISTINCT e.connection_id
-		FROM metrics.pg_extension e
-		JOIN newest n
-		  ON n.connection_id = e.connection_id
-		 AND n.collected_at = e.collected_at
-		WHERE e.extname = $1
-	`, extname)
+	rows, err := d.queryInternal(ctx, connectionsWithExtensionSQL, extname)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get connections with extension %s: %w", extname, err)
 	}
@@ -727,21 +753,7 @@ func (d *Datastore) GetConnectionsWithExtension(ctx context.Context, extname str
 func (d *Datastore) GetClusterPeers(ctx context.Context, connectionID int) ([]*ClusterPeerInfo, error) {
 	// Tagged internal: this reads metrics.pg_node_role on the
 	// Workbench's own datastore on every alert evaluation cycle.
-	rows, err := d.queryInternal(ctx, `
-		SELECT c.id, c.name, COALESCE(lr.primary_role, 'unknown')
-		FROM connections c
-		LEFT JOIN LATERAL (
-			SELECT primary_role
-			FROM metrics.pg_node_role
-			WHERE connection_id = c.id
-			ORDER BY collected_at DESC
-			LIMIT 1
-		) lr ON true
-		WHERE c.cluster_id = (SELECT cluster_id FROM connections WHERE id = $1)
-		  AND c.cluster_id IS NOT NULL
-		  AND c.id != $1
-		ORDER BY c.name, c.id
-	`, connectionID)
+	rows, err := d.queryInternal(ctx, clusterPeersSQL, connectionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster peers: %w", err)
 	}

@@ -117,12 +117,17 @@ func TestSharedFragmentsEmbedded(t *testing.T) {
 // lookbackPredicate matches a historical query's lookback on
 // collected_at, capturing the column as written.
 var lookbackPredicate = regexp.MustCompile(
-	`((?:\w+\.)?collected_at) > NOW\(\) - INTERVAL '1 day' \* \$1`)
+	`((?:\w+\.)?collected_at) > NOW\(\) - INTERVAL '1 day' \* \$1::int`)
 
 // TestHistoricalUpperBound checks that every lookback on collected_at is
 // followed at once by the $2 upper bound on the same column, so a reader
 // of a past window can keep each inner scan off the present (GitHub
-// issue #776).
+// issue #776). The bound is a plain collected_at <= $2::timestamptz, so
+// PostgreSQL keeps it as an index condition and prunes partitions on it
+// even under a generic plan, which a COALESCE($2, col) or $2 IS NULL
+// form defeats; a caller with no upper bound binds a finite far-future
+// timestamp, never +infinity, which DuckDB on a ColdFront datastore can
+// fail to subtract (GitHub issue #755).
 func TestHistoricalUpperBound(t *testing.T) {
 	for _, def := range BaselineMetrics() {
 		sql := def.HistoricalSQL
@@ -137,7 +142,8 @@ func TestHistoricalUpperBound(t *testing.T) {
 		for _, m := range matches {
 			column := sql[m[2]:m[3]]
 			rest := strings.TrimLeft(sql[m[1]:], " \t\n")
-			if !strings.HasPrefix(rest, "AND "+column+" <= $2") {
+			bound := "AND " + column + " <= $2::timestamptz"
+			if !strings.HasPrefix(rest, bound) {
 				t.Errorf("%s HistoricalSQL lookback on %s has no $2 upper bound beside it",
 					def.Name, column)
 			}
@@ -192,5 +198,31 @@ func TestBucketStart(t *testing.T) {
 				t.Errorf("BucketStart(%v) = %v, want %v in UTC", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestConnectionUtilizationHistoricalOpenBounds pins the NULL-open
+// validity ranges of connection_utilization_percent's historical query.
+// It once bounded them with -infinity and infinity, which failed
+// intermittently on ColdFront with "Cannot subtract infinite timestamps"
+// when DuckDB chose a range join plan. GitHub issue #755.
+func TestConnectionUtilizationHistoricalOpenBounds(t *testing.T) {
+	def, ok := Metric("connection_utilization_percent")
+	if !ok {
+		t.Fatal("connection_utilization_percent is not defined")
+	}
+	sql := strings.Join(strings.Fields(def.HistoricalSQL), " ")
+	for _, want := range []string{
+		"CASE WHEN LAG(ps.collected_at) OVER w IS NOT NULL THEN ps.collected_at END as valid_from",
+		"LEAD(ps.collected_at) OVER w as valid_to",
+		"(m.valid_from IS NULL OR a.collected_at >= m.valid_from)",
+		"(m.valid_to IS NULL OR a.collected_at < m.valid_to)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("HistoricalSQL lacks %q:\n%s", want, sql)
+		}
+	}
+	if strings.Contains(strings.ToLower(sql), "infinity") {
+		t.Errorf("HistoricalSQL bounds a range with an infinite timestamp:\n%s", sql)
 	}
 }

@@ -40,6 +40,25 @@ const (
 	scopedCacheMaxEntries = 100
 )
 
+// Status values sent to clients in place of an overview. They match
+// the status field of the REST generatingResponse.
+const (
+	// statusGenerating reports that no summary exists yet.
+	statusGenerating = "generating"
+
+	// statusEmpty reports that the caller can see no connections in
+	// the requested scope, so no summary will be generated.
+	statusEmpty = "empty"
+
+	// statusError reports that the summary could not be generated.
+	statusError = "error"
+)
+
+// generationFailedMessage is the client-facing text for a failed
+// summary generation. Provider errors stay in the server log, since
+// they can name the provider, endpoint or account.
+const generationFailedMessage = "The AI overview could not be generated; see the server log for details."
+
 // Overview holds the current AI-generated estate summary and metadata.
 type Overview struct {
 	Summary         string                   `json:"summary"`
@@ -47,6 +66,18 @@ type Overview struct {
 	StaleAt         time.Time                `json:"stale_at"`
 	Snapshot        *database.EstateSnapshot `json:"snapshot"`
 	RestartDetected bool                     `json:"restart_detected,omitempty"`
+
+	// Status, when set, marks a status notice rather than a summary;
+	// the handler sends it to clients as a generatingResponse. Error
+	// carries the client-facing message for statusError.
+	Status string `json:"-"`
+	Error  string `json:"-"`
+}
+
+// statusOverview returns a status notice to send in place of an
+// overview.
+func statusOverview(status, message string) *Overview {
+	return &Overview{Status: status, Error: message}
 }
 
 // scopedEntry is a cached scoped overview together with the time it
@@ -66,6 +97,7 @@ type Generator struct {
 	llmConfig    *llmproxy.Config
 	mu           sync.RWMutex
 	current      *Overview
+	estateFailed bool // The last refresh failed before any summary existed
 	lastSnapshot *database.EstateSnapshot
 	scopedCache  map[string]*scopedEntry
 	inflight     singleflight.Group
@@ -157,6 +189,39 @@ func (g *Generator) GetOverview() *Overview {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.current
+}
+
+// EstateStatus returns the current estate-wide overview or, when none
+// has been generated yet, a status notice: statusError when the last
+// refresh failed and statusGenerating otherwise. It never returns nil.
+func (g *Generator) EstateStatus() *Overview {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	if g.current != nil {
+		return g.current
+	}
+	if g.estateFailed {
+		return statusOverview(statusError, generationFailedMessage)
+	}
+	return statusOverview(statusGenerating, "")
+}
+
+// recordEstateFailure notes a failed refresh. While no estate summary
+// exists it broadcasts an error notice to estate subscribers, which
+// would otherwise wait for a summary that is not coming; once one
+// exists, clients keep it and the failure is only logged.
+func (g *Generator) recordEstateFailure() {
+	g.mu.Lock()
+	noSummary := g.current == nil
+	if noSummary {
+		g.estateFailed = true
+	}
+	hub := g.hub
+	g.mu.Unlock()
+
+	if noSummary && hub != nil {
+		hub.Broadcast(statusOverview(statusError, generationFailedMessage), "")
+	}
 }
 
 // GetScopedSummary returns a cached or freshly generated overview for
@@ -395,6 +460,7 @@ func (g *Generator) refresh(force bool) {
 	snapshot, err := g.datastore.GetEstateSnapshot(g.ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to get estate snapshot: %v\n", err)
+		g.recordEstateFailure()
 		return
 	}
 
@@ -409,9 +475,18 @@ func (g *Generator) refresh(force bool) {
 	summary, err := g.generateSummary(g.ctx, snapshot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to generate summary: %v\n", err)
+		g.recordEstateFailure()
 		return
 	}
 
+	g.publishEstateOverview(oldSnapshot, snapshot, summary)
+}
+
+// publishEstateOverview stores a newly generated estate summary as the
+// current overview and broadcasts it to estate subscribers. When the
+// snapshot holds a restart newer than oldSnapshot, it flushes the
+// scoped cache and runs the restart callback.
+func (g *Generator) publishEstateOverview(oldSnapshot, snapshot *database.EstateSnapshot, summary string) {
 	now := time.Now().UTC()
 	overview := &Overview{
 		Summary:     summary,
@@ -429,6 +504,7 @@ func (g *Generator) refresh(force bool) {
 
 	g.mu.Lock()
 	g.current = overview
+	g.estateFailed = false
 	g.lastSnapshot = snapshot
 	if restartDetected {
 		g.scopedCache = make(map[string]*scopedEntry)

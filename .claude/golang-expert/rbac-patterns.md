@@ -453,7 +453,12 @@ swapping in a checker without the lookup.
 The overview stream in `internal/overview/handler.go` uses the empty
 scope key for the estate-wide feed, so a restricted caller must always
 get a `connections:` key, even when their visible set is empty; an
-empty set left as `""` would subscribe them to every connection.
+empty set left as `""` would subscribe them to every connection. The
+empty `connections:` key gets a `status: empty` notice and never falls
+back to any summary. `handleSSE` sends the stream's opening event
+itself (the cached or generated scoped summary, or a `generating`,
+`empty` or `error` notice) rather than waiting on the hub, because a
+cache hit or a failed generation broadcasts nothing (issue #808).
 
 ### Tools: check access before existence, and answer both alike
 

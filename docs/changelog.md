@@ -1362,6 +1362,19 @@ project adheres to
 
 ### Fixed
 
+- Stop the AI Overview panel waiting on its loading placeholder until
+  the page is reloaded (#808). The overview stream now delivers a
+  cached or newly generated summary for the selected server or cluster
+  straight to the browser that asked for it, and opens with a status
+  notice when no summary is ready: generating, error when generation
+  failed, or empty when the user can see no connections. The panel
+  shows a generic message when generation fails, with the details in
+  the server log, and fetches the overview once over the REST API if
+  nothing has arrived five seconds after the selection changes. The
+  `GET /api/v1/overview` endpoint now returns `status: error` with an
+  `error` message, rather than `status: generating`, when the first
+  estate overview could not be generated.
+
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled
   toggle, or a failed delete, replaced the whole page with the error

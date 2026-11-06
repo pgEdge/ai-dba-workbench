@@ -21,6 +21,8 @@ export interface OverviewResponse {
     stale_at: string;
     snapshot?: Record<string, unknown>;
     restart_detected?: boolean;
+    /** Generic failure message, present when status is 'error'. */
+    error?: string;
 }
 
 export interface UseOverviewSSEReturn {
@@ -56,14 +58,20 @@ function toStreamUrl(overviewUrl: string): string {
  * listens for named `overview` events.  The browser-native
  * EventSource handles automatic reconnection on transient errors.
  *
+ * State is keyed by the URL it arrived for, so a change of URL never
+ * reports the previous scope's overview or connection state.
+ *
  * @param overviewUrl  The REST polling URL (e.g. `/api/v1/overview`).
  * @returns The latest overview payload and connection status.
  */
 export function useOverviewSSE(
     overviewUrl: string,
 ): UseOverviewSSEReturn {
-    const [overview, setOverview] = useState<OverviewResponse | null>(null);
-    const [connected, setConnected] = useState(false);
+    const [overviewState, setOverviewState] = useState<{
+        url: string;
+        overview: OverviewResponse;
+    } | null>(null);
+    const [connectedUrl, setConnectedUrl] = useState<string | null>(null);
     const esRef = useRef<EventSource | null>(null);
 
     useEffect(() => {
@@ -72,17 +80,19 @@ export function useOverviewSSE(
         esRef.current = es;
 
         es.onopen = () => {
-            setConnected(true);
+            setConnectedUrl(overviewUrl);
         };
 
         es.onerror = () => {
-            setConnected(false);
+            setConnectedUrl((current) =>
+                current === overviewUrl ? null : current,
+            );
         };
 
         es.addEventListener('overview', (event: MessageEvent) => {
             try {
                 const data = JSON.parse(event.data) as OverviewResponse;
-                setOverview(data);
+                setOverviewState({ url: overviewUrl, overview: data });
             } catch {
                 // Ignore malformed payloads; the next event will
                 // deliver a valid update.
@@ -92,8 +102,20 @@ export function useOverviewSSE(
         return () => {
             es.close();
             esRef.current = null;
+            // Forget this subscription's state so that returning to
+            // the same URL later starts afresh.
+            setOverviewState((current) =>
+                current?.url === overviewUrl ? null : current,
+            );
+            setConnectedUrl((current) =>
+                current === overviewUrl ? null : current,
+            );
         };
     }, [overviewUrl]);
 
-    return { overview, connected };
+    return {
+        overview:
+            overviewState?.url === overviewUrl ? overviewState.overview : null,
+        connected: connectedUrl === overviewUrl,
+    };
 }

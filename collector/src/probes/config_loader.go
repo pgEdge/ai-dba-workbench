@@ -85,6 +85,9 @@ var syncInheritedProbeConfigsQuery = sqlmarker.Tag(`
               AND NOT s.user_modified
         ) AS r
         WHERE t.id = r.id
+          -- Re-checked against the latest row version when a concurrent
+          -- PUT marks it an override; s keeps the statement snapshot.
+          AND NOT t.user_modified
           AND r.is_enabled IS NOT NULL
           AND (t.is_enabled, t.collection_interval_seconds, t.retention_days)
               IS DISTINCT FROM (r.is_enabled, r.collection_interval_seconds, r.retention_days)

@@ -1342,7 +1342,9 @@ project adheres to
   the probes behind them run hourly or every ten minutes and the server
   and extension probes store a sample only when a value changes, so the
   fields were usually missing; the card now shows the newest stored
-  value, as the server information dialog does. The same fix restores
+  value, as the server information dialog does, and shows the Spock
+  version for members of manual clusters and for cluster members that
+  the latest detection pass did not find. The same fix restores
   the match between a binary standby and its primary by system
   identifier. The collector also now keeps the newest `pg_extension`
   snapshot for each server past its 30-day retention, so the Spock

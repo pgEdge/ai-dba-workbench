@@ -1513,6 +1513,15 @@ project adheres to
   a false staleness alert there, and a probe enabled on one server
   against a disabled default is checked for stalls.
 
+- Report a statement that runs in several databases once for each
+  database in the Top Queries list (#802). A statement such as
+  `BEGIN` has the same query identifier in every database, and the
+  unfiltered list showed it on a single row that added up the calls
+  of every database and named only one of them, usually the
+  Workbench's own datastore. Each database now has a row of its own
+  with only its own figures, and the query detail overlay opened
+  from a row shows the figures for that row's database.
+
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled
   toggle, or a failed delete, replaced the whole page with the error

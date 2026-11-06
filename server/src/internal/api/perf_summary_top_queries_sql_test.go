@@ -103,9 +103,9 @@ const topQueriesCTEBody = "ORDER BY query_id, datid, usesysid, " +
 // topQueriesCTETail runs from the ORDER BY that the DISTINCT ON in
 // readings keys on, through the identity window that deltas takes the LAG
 // over, to samples' read of deltas; topQueriesCTEWindow is the rest: the
-// per-queryid delta aggregation, the latest sample each statement was seen
-// in, and the joins that resolve the role OID to a name and attach the last
-// observed client. Splitting the golden copy lets the optional sample
+// per-statement, per-database delta aggregation, the latest sample each
+// statement was seen in for each database, and the joins that resolve the
+// role OID to a name and attach the last observed client. Splitting the golden copy lets the optional sample
 // filters sit between the sample predicate and that ORDER BY, and the
 // optional database predicate after samples' FROM, which is where the
 // builder puts them.
@@ -130,7 +130,7 @@ const topQueriesCTETail = "ORDER BY pss.queryid, pss.userid, pss.dbid, " +
 	"PARTITION BY r.queryid, r.userid, r.dbid, r.toplevel " +
 	"ORDER BY r.collected_at " +
 	") " +
-	"), samples AS ( " +
+	"), samples AS MATERIALIZED ( " +
 	"SELECT d.* " +
 	"FROM deltas d"
 
@@ -139,31 +139,38 @@ const topQueriesCTETail = "ORDER BY pss.queryid, pss.userid, pss.dbid, " +
 const topQueriesCTEWindow = "ORDER BY d.queryid " +
 	"), totals AS MATERIALIZED ( " +
 	"SELECT " +
-	"queryid, " +
-	"SUM(delta_calls)::bigint AS calls, " +
-	"SUM(delta_time) AS total_exec_time, " +
-	"SUM(GREATEST(delta_rows, 0))::bigint AS rows, " +
-	"SUM(GREATEST(delta_hit, 0))::bigint AS shared_blks_hit, " +
-	"SUM(GREATEST(delta_read, 0))::bigint AS shared_blks_read " +
-	"FROM samples " +
-	"WHERE delta_calls >= 0 " +
-	"AND delta_time >= 0 " +
-	"GROUP BY queryid " +
-	"HAVING SUM(delta_calls) > 0 " +
+	"s.queryid, " +
+	"COALESCE(dn.datname, s.sample_database_name) AS database_name, " +
+	"SUM(s.delta_calls)::bigint AS calls, " +
+	"SUM(s.delta_time) AS total_exec_time, " +
+	"SUM(GREATEST(s.delta_rows, 0))::bigint AS rows, " +
+	"SUM(GREATEST(s.delta_hit, 0))::bigint AS shared_blks_hit, " +
+	"SUM(GREATEST(s.delta_read, 0))::bigint AS shared_blks_read " +
+	"FROM samples s " +
+	"LEFT JOIN db_names dn ON s.dbid = dn.datid " +
+	"WHERE s.delta_calls >= 0 " +
+	"AND s.delta_time >= 0 " +
+	"GROUP BY s.queryid, COALESCE(dn.datname, s.sample_database_name) " +
+	"HAVING SUM(s.delta_calls) > 0 " +
 	"), latest_sample AS MATERIALIZED ( " +
-	"SELECT DISTINCT ON (queryid) " +
-	"queryid, sample_database_name, dbid, userid, " +
-	"min_exec_time, max_exec_time " +
-	"FROM samples " +
-	"ORDER BY queryid, " +
-	"COALESCE(delta_calls > 0 AND delta_time >= 0, false) DESC, " +
-	"collected_at DESC, dbid, userid " +
+	"SELECT DISTINCT ON (s.queryid, " +
+	"COALESCE(dn.datname, s.sample_database_name)) " +
+	"s.queryid, " +
+	"COALESCE(dn.datname, s.sample_database_name) AS database_name, " +
+	"s.sample_database_name, s.dbid, s.userid, " +
+	"s.min_exec_time, s.max_exec_time " +
+	"FROM samples s " +
+	"LEFT JOIN db_names dn ON s.dbid = dn.datid " +
+	"ORDER BY s.queryid, " +
+	"COALESCE(dn.datname, s.sample_database_name), " +
+	"COALESCE(s.delta_calls > 0 AND s.delta_time >= 0, false) DESC, " +
+	"s.collected_at DESC, s.dbid, s.userid " +
 	"), deduped AS ( " +
 	"SELECT " +
 	"t.queryid::text, " +
 	"t.queryid AS sample_queryid, " +
 	"ls.sample_database_name, " +
-	"COALESCE(dn.datname, ls.sample_database_name) AS database_name, " +
+	"t.database_name, " +
 	"COALESCE(un.usename, '') AS username, " +
 	"t.calls, t.total_exec_time, " +
 	"CASE WHEN t.calls > 0 " +
@@ -176,7 +183,7 @@ const topQueriesCTEWindow = "ORDER BY d.queryid " +
 	"lc.collected_at AS client_observed_at " +
 	"FROM totals t " +
 	"JOIN latest_sample ls ON ls.queryid = t.queryid " +
-	"LEFT JOIN db_names dn ON ls.dbid = dn.datid " +
+	"AND ls.database_name = t.database_name " +
 	"LEFT JOIN user_names un ON ls.userid = un.usesysid " +
 	"LEFT JOIN last_client lc ON ls.queryid = lc.query_id " +
 	"AND ls.dbid = lc.datid AND ls.userid = lc.usesysid"
@@ -485,7 +492,7 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 				")")
 			wantCount := joinSQL(wantCTE, "SELECT COUNT(*) FROM deduped")
 			wantPage := joinSQL(wantCTE, topQueriesPageSelect,
-				"ORDER BY total_exec_time DESC, queryid",
+				"ORDER BY total_exec_time DESC, queryid, database_name",
 				tc.wantTail, topQueriesPageLateral)
 
 			if got := normaliseSQL(countSQL); got != wantCount {
@@ -518,7 +525,7 @@ func TestBuildTopQueriesSQL_OrderClause(t *testing.T) {
 					1, testTopQueriesWindow(), nil, "", "", false, column,
 					direction, 10, 0)
 				want := "ORDER BY " + column + " " + direction +
-					", queryid LIMIT $4 OFFSET $5 " + topQueriesPageLateral
+					", queryid, database_name LIMIT $4 OFFSET $5 " + topQueriesPageLateral
 				if got := normaliseSQL(pageSQL); !strings.HasSuffix(got,
 					want) {
 					t.Errorf("page SQL does not end with %q:\n%s", want, got)

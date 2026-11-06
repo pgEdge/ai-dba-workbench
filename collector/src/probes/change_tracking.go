@@ -12,6 +12,7 @@ package probes
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/collector/src/utils"
@@ -63,6 +64,10 @@ func HasDataChanged(
 		metricsToHash = normalizeMetrics(metricsToHash)
 	}
 
+	// Rows ColdFront refused when this snapshot was last stored are not
+	// in the stored snapshot, so they are left out of the comparison.
+	metricsToHash = refusedSnapshotRows.exclude(probeName, connectionID, metricsToHash)
+
 	currentHash, err := ComputeMetricsHash(metricsToHash)
 	if err != nil {
 		return false, fmt.Errorf(
@@ -100,6 +105,117 @@ func HasDataChanged(
 	}
 
 	return changed, nil
+}
+
+// snapshotRows holds the snapshot a change-tracked probe stores: the
+// table columns, the rows to insert, and the metrics each row was built
+// from, so that values[i] is the row built from metrics[i].
+type snapshotRows struct {
+	columns []string
+	values  [][]any
+	metrics []map[string]any
+}
+
+// storeSnapshot stores the snapshot of a change-tracked probe and
+// records the rows that were dropped because ColdFront refused them, so
+// that HasDataChanged leaves them out of the next comparison. Without
+// that, the stored
+// snapshot lacks the refused row, every later comparison sees a change,
+// and the probe stores its whole snapshot again on every run.
+//
+// normalizeMetrics is the function the probe passes to HasDataChanged.
+// After a store that drops nothing, as always in the default mode,
+// nothing is left out.
+func storeSnapshot(
+	ctx context.Context,
+	datastoreConn *pgxpool.Conn,
+	probeName string,
+	connectionID int,
+	tableName string,
+	snapshot snapshotRows,
+	normalizeMetrics func([]map[string]any) []map[string]any,
+) error {
+	dropped, err := storeMetrics(ctx, datastoreConn, tableName, snapshot.columns, snapshot.values)
+	if err != nil {
+		return err
+	}
+	refused := make([]map[string]any, 0, len(dropped))
+	for _, i := range dropped {
+		refused = append(refused, snapshot.metrics[i])
+	}
+	refused = stripProbeMarker(refused)
+	if normalizeMetrics != nil {
+		refused = normalizeMetrics(refused)
+	}
+	refusedSnapshotRows.set(probeName, connectionID, refused)
+	return nil
+}
+
+// refusedSnapshotRows holds, for each change-tracked probe and
+// connection, the rows ColdFront refused when the probe last stored its
+// snapshot. It lives in memory only: after a restart a probe with a
+// refused row stores its snapshot once more and then settles again.
+var refusedSnapshotRows = &refusedRowSet{rows: map[refusedRowKey]map[string]struct{}{}}
+
+// refusedRowKey identifies a change-tracked probe on one connection.
+type refusedRowKey struct {
+	probe        string
+	connectionID int
+}
+
+// refusedRowSet records refused rows by their hash, as
+// ComputeMetricsHash gives it for the row on its own. It is safe for
+// concurrent use. A probe drops at most maxColdFrontDroppedRows rows per
+// store, so each entry stays small.
+type refusedRowSet struct {
+	mu   sync.Mutex
+	rows map[refusedRowKey]map[string]struct{}
+}
+
+// rowHash returns the hash of one row, or "" if it cannot be hashed, in
+// which case it never matches a recorded row.
+func rowHash(row map[string]any) string {
+	h, err := ComputeMetricsHash([]map[string]any{row})
+	if err != nil {
+		return ""
+	}
+	return h
+}
+
+// set replaces the refused rows recorded for probe on connectionID.
+func (s *refusedRowSet) set(probe string, connectionID int, rows []map[string]any) {
+	key := refusedRowKey{probe, connectionID}
+	hashes := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if h := rowHash(row); h != "" {
+			hashes[h] = struct{}{}
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(hashes) == 0 {
+		delete(s.rows, key)
+		return
+	}
+	s.rows[key] = hashes
+}
+
+// exclude returns metrics without the rows recorded as refused for probe
+// on connectionID, or metrics itself when none are recorded.
+func (s *refusedRowSet) exclude(probe string, connectionID int, metrics []map[string]any) []map[string]any {
+	s.mu.Lock()
+	hashes := s.rows[refusedRowKey{probe, connectionID}]
+	s.mu.Unlock()
+	if len(hashes) == 0 {
+		return metrics
+	}
+	kept := make([]map[string]any, 0, len(metrics))
+	for _, row := range metrics {
+		if _, refused := hashes[rowHash(row)]; !refused {
+			kept = append(kept, row)
+		}
+	}
+	return kept
 }
 
 // stripProbeMarker returns a copy of metrics with the probe marker

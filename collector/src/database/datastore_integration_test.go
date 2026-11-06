@@ -40,6 +40,7 @@ type integrationConfig struct {
 	maxConnections int
 	maxIdleSeconds int
 	validateErr    error
+	useColdFront   bool
 }
 
 func (c *integrationConfig) Validate() error                     { return c.validateErr }
@@ -55,6 +56,7 @@ func (c *integrationConfig) GetPgSSLKey() string                 { return c.sslK
 func (c *integrationConfig) GetPgSSLRootCert() string            { return c.sslRootCert }
 func (c *integrationConfig) GetDatastorePoolMaxConnections() int { return c.maxConnections }
 func (c *integrationConfig) GetDatastorePoolMaxIdleSeconds() int { return c.maxIdleSeconds }
+func (c *integrationConfig) GetUseColdFrontForMetrics() bool     { return c.useColdFront }
 
 // parseTestServerURL extracts host/port/user/password from the
 // TEST_AI_WORKBENCH_SERVER URL or the connstring fallbacks. The returned

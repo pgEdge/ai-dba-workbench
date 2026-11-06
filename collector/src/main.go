@@ -11,6 +11,7 @@ package main
 
 import (
 	"github.com/pgedge/ai-workbench/collector/src/database"
+	"github.com/pgedge/ai-workbench/collector/src/probes"
 	"github.com/pgedge/ai-workbench/collector/src/scheduler"
 	"github.com/pgedge/ai-workbench/pkg/flagutil"
 	"github.com/pgedge/ai-workbench/pkg/logger"
@@ -53,6 +54,10 @@ var (
 	pgSSLCert      = flag.String(flagPGSSLCert, "", "Path to PostgreSQL client SSL certificate")
 	pgSSLKey       = flag.String(flagPGSSLKey, "", "Path to PostgreSQL client SSL key")
 	pgSSLRootCert  = flag.String(flagPGSSLRootCert, "", "Path to PostgreSQL root SSL certificate")
+
+	// Metrics storage flag
+	useColdFrontForMetrics = flag.Bool(flagUseColdFrontForMetrics, false,
+		"Store metrics in pgEdge ColdFront instead of partitioned PostgreSQL tables; disables metrics retention")
 )
 
 // Names of the datastore connection flags. They are named constants
@@ -70,6 +75,8 @@ const (
 	flagPGSSLCert      = "pg-sslcert"
 	flagPGSSLKey       = "pg-sslkey"
 	flagPGSSLRootCert  = "pg-sslrootcert"
+
+	flagUseColdFrontForMetrics = "use-coldfront-for-metrics"
 )
 
 func main() {
@@ -101,6 +108,9 @@ func main() {
 		logger.Fatalf("Failed to load configuration: %v", err)
 	}
 
+	// Fix the metrics storage mode before anything writes metrics.
+	applyMetricsStorageMode(config.UseColdFrontForMetrics)
+
 	// Initialize datastore connection
 	ds, err := database.NewDatastore(config)
 	if err != nil {
@@ -123,9 +133,10 @@ func main() {
 		logger.Fatalf("Failed to start probe scheduler: %v", err)
 	}
 
-	// Initialize garbage collector
-	gc := NewGarbageCollector(ds)
-	if err := gc.Start(ctx); err != nil {
+	// Initialize garbage collector (not under ColdFront, where the
+	// Workbench performs no metrics retention)
+	gc, err := startGarbageCollector(ctx, ds, config.UseColdFrontForMetrics)
+	if err != nil {
 		logger.Fatalf("Failed to start garbage collector: %v", err)
 	}
 
@@ -141,7 +152,7 @@ func main() {
 	probeScheduler.Stop()
 
 	// 2. Stop garbage collector (no new cleanup queries)
-	gc.Stop()
+	stopGarbageCollector(gc)
 
 	// 3. Close monitored connection pools (all probe connections)
 	logger.Info("Closing monitored connection pools...")
@@ -177,6 +188,40 @@ func maybePrintSchemaVersion(w io.Writer, enabled bool) (bool, error) {
 	}
 	_, err := fmt.Fprintln(w, database.NewSchemaManager().LatestVersion())
 	return true, err
+}
+
+// applyMetricsStorageMode fixes the process-wide metrics storage mode
+// and, under ColdFront, logs once that the collector performs no metrics
+// retention, so an operator who still has retention settings configured
+// can see why they have no effect.
+func applyMetricsStorageMode(useColdFront bool) {
+	probes.SetColdFrontMetrics(useColdFront)
+	if useColdFront {
+		logger.Startup("Metrics are stored in pgEdge ColdFront " +
+			"(use_coldfront_for_metrics): the collector creates and drops " +
+			"no metrics partitions, deletes no metrics rows and does not " +
+			"start the garbage collector; probe retention settings are " +
+			"ignored, and ColdFront and the operator own the metrics data " +
+			"lifecycle")
+	}
+}
+
+// startGarbageCollector starts the partition garbage collector, or
+// returns nil without starting one under ColdFront, where the Workbench
+// performs no metrics retention.
+func startGarbageCollector(ctx context.Context, ds *database.Datastore, useColdFront bool) (*GarbageCollector, error) {
+	if useColdFront {
+		return nil, nil
+	}
+	gc := NewGarbageCollector(ds)
+	return gc, gc.Start(ctx)
+}
+
+// stopGarbageCollector stops gc, which is nil when none was started.
+func stopGarbageCollector(gc *GarbageCollector) {
+	if gc != nil {
+		gc.Stop()
+	}
 }
 
 // discoverDefaultConfigPath locates a default configuration file when

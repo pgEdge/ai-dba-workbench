@@ -70,7 +70,18 @@ engines:
       - 'alerter/src/internal/engine/anomalies_test.go'
       - 'alerter/src/internal/engine/baselines_test.go'
       - 'collector/src/database/migration_v6_test.go'
+      # Test-only SQL joining literals with the constant
+      # coldfront.InsertRowsFunction or with pgx.Identifier-quoted names
+      # from the column specification or a generated role; no input.
+      - 'collector/src/database/coldfront_insert_test.go'
+      # Test-only SQL joining the constant role-schema name the test
+      # declares with the constant coldfront stub SQL; schema names are
+      # identifiers and cannot be bound, and no input is involved.
+      - 'collector/src/database/coldfront_integration_test.go'
       - 'collector/src/database/schema.go'
+      # Test-only SQL joining the constant coldfront.HelperSchema with
+      # the constant refusing-helper SQL; the connection ID is bound.
+      - 'collector/src/probes/change_tracking_refused_test.go'
       - 'server/src/internal/api/perf_summary_handlers.go'
       - 'server/src/internal/tools/get_metric_baselines.go'
 

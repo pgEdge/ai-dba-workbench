@@ -37,6 +37,15 @@ type Config struct {
 	// /etc/pgedge/ai-dba-collector.secret second.
 	SecretFile string `yaml:"secret_file"`
 
+	// UseColdFrontForMetrics stores the metrics.* tables in pgEdge
+	// ColdFront (Apache Iceberg on object storage) instead of in
+	// partitioned PostgreSQL tables. It must be chosen when the datastore
+	// is created; switching an existing datastore is refused at startup.
+	// When enabled the collector performs no metrics retention: it
+	// creates and drops no partitions and does not start the garbage
+	// collector, and probe retention settings are ignored.
+	UseColdFrontForMetrics bool `yaml:"use_coldfront_for_metrics"`
+
 	// Loaded server secret (not from YAML, loaded from SecretFile)
 	serverSecret string
 }
@@ -160,6 +169,9 @@ func (c *Config) ApplyFlags(passed flagutil.Set) {
 	}
 	if passed.Has(flagPGSSLRootCert) {
 		c.Datastore.SSLRootCert = *pgSSLRootCert
+	}
+	if passed.Has(flagUseColdFrontForMetrics) {
+		c.UseColdFrontForMetrics = *useColdFrontForMetrics
 	}
 }
 
@@ -289,6 +301,7 @@ func (c *Config) GetDatastorePoolMaxWaitSeconds() int { return c.Pool.DatastoreM
 func (c *Config) GetMonitoredPoolMaxWaitSeconds() int { return c.Pool.MonitoredMaxWaitSeconds }
 func (c *Config) GetMaxConcurrentProbes() int         { return c.Scheduler.MaxConcurrentProbes }
 func (c *Config) GetStartupJitterSeconds() int        { return c.Scheduler.StartupJitterSeconds }
+func (c *Config) GetUseColdFrontForMetrics() bool     { return c.UseColdFrontForMetrics }
 func (c *Config) GetMaxConcurrentProbesPerConnection() int {
 	return c.Scheduler.MaxConcurrentProbesPerConnection
 }

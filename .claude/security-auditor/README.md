@@ -20,6 +20,7 @@ moved.
 | `server/src/internal/llmproxy/` | Outbound proxy to LLM providers with its own `authorize` step and provider API keys |
 | `pkg/crypto/` | Encryption of stored monitored-database passwords (AES-GCM) |
 | `collector/src/database/` | Decrypts credentials through `pkg/crypto` to open monitored connections |
+| `collector/src/database/coldfront_insert.go`, `collector/src/probes/coldfront_insert.go` | ColdFront write path (`use_coldfront_for_metrics`): server-side functions that render monitored-server values into a literal INSERT, and the collector code that batches rows into them |
 | `alerter/src/` | Alert evaluation and outbound notifications (email, webhook, messaging) |
 | `client/src/` | Bearer token handling, admin panels and any rendering of server-supplied text |
 
@@ -604,6 +605,29 @@ moved.
   `scope = 'user'` rows only, and system rows are changed only through
   `DeleteByID` and `UpdateSystemPinned` after the permission check
   (issue #704).
+- Under `use_coldfront_for_metrics` the collector writes metrics
+  through `workbench_coldfront.insert_rows(table, jsonb)`, because
+  ColdFront caps a cold-tier INSERT at 99 bound parameters (issue
+  #755). The function renders monitored-server values into a literal
+  multi-row INSERT and EXECUTEs it, so its quoting is the injection
+  boundary: identifiers with `%I`, values through
+  `workbench_coldfront.literal` (quotes doubled) and cast to the
+  column's catalog type, arrays as `ARRAY[...]` built from the typed
+  elements, and only views registered in `coldfront.tiered_views`
+  under `metrics` accepted. The functions live in a schema the
+  collector's role must own (startup refuses a schema or function
+  owned by another role) with PUBLIC revoked, are `SECURITY INVOKER`
+  with a pinned `search_path`, and have no `EXCEPTION` handler, because
+  pg_duckdb refuses the subtransaction one opens. Residual risk: when
+  the INSERT fails, the error CONTEXT, and with the default
+  `log_min_error_statement` the statement, can carry batch values,
+  including credentials from `pg_settings` and `pg_hba_file_rules`,
+  into the datastore log; avoiding it needs a subtransaction or a
+  superuser-only setting, so datastore log access must be restricted.
+  The collector logs only the error message and SQLSTATE. Batches are
+  bounded by 16 MiB of JSON as well as 5,000 rows, and a row ColdFront
+  refuses is dropped with only its table, connection and SQLSTATE
+  logged. See `../golang-expert/coldfront-metrics.md`.
 
 ## The RBAC Audit Log
 

@@ -39,6 +39,10 @@ type Config interface {
 	GetPgSSLRootCert() string
 	GetDatastorePoolMaxConnections() int
 	GetDatastorePoolMaxIdleSeconds() int
+
+	// GetUseColdFrontForMetrics reports whether the metrics.* tables are
+	// stored in pgEdge ColdFront rather than as partitioned tables.
+	GetUseColdFrontForMetrics() bool
 }
 
 // Datastore represents a connection to the PostgreSQL datastore
@@ -126,6 +130,28 @@ func (ds *Datastore) buildConnectionString() string {
 	return connstring.BuildFromConfig(dsCfg, "pgEdge AI DBA Workbench - Metric Storage")
 }
 
+const (
+	// defaultPrepareStorageTimeout bounds PrepareMetricsStorage in the
+	// default mode, where it only reads the local datastore's catalog.
+	defaultPrepareStorageTimeout = 10 * time.Second
+
+	// coldFrontPrepareStorageTimeout bounds PrepareMetricsStorage under
+	// ColdFront, where it also attaches the Iceberg catalog
+	// (coldfront.ensure_attached()) and creates the namespace in it, both
+	// round trips over the network to the Lakekeeper catalog and object
+	// storage, which a cold start can take well over 10 seconds to make.
+	coldFrontPrepareStorageTimeout = 60 * time.Second
+)
+
+// prepareMetricsStorageTimeout returns the bound on PrepareMetricsStorage
+// for the configured storage mode.
+func prepareMetricsStorageTimeout(useColdFront bool) time.Duration {
+	if useColdFront {
+		return coldFrontPrepareStorageTimeout
+	}
+	return defaultPrepareStorageTimeout
+}
+
 // initializeSchema creates the necessary database schema if it doesn't exist
 func (ds *Datastore) initializeSchema() error {
 	logger.Info("Initializing database schema...")
@@ -136,11 +162,22 @@ func (ds *Datastore) initializeSchema() error {
 	}
 	defer ds.ReturnConnection(conn)
 
+	// Refuse a datastore that cannot hold metrics in the configured
+	// storage mode before any migration touches it.
+	useColdFront := ds.config.GetUseColdFrontForMetrics()
+	ctx, cancel := context.WithTimeout(context.Background(), prepareMetricsStorageTimeout(useColdFront))
+	defer cancel()
+	if err := PrepareMetricsStorage(ctx, conn, useColdFront); err != nil {
+		return err
+	}
+
 	// Use the schema manager to apply migrations
-	schemaManager := NewSchemaManager()
+	schemaManager := NewSchemaManager(WithColdFrontMetrics(useColdFront))
 	if err := schemaManager.Migrate(conn); err != nil {
 		return fmt.Errorf("failed to migrate schema: %w", err)
 	}
+
+	ensureEmbeddingsAfterMigrate(conn, useColdFront)
 
 	logger.Info("Database schema initialized")
 	return nil

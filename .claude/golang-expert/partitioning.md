@@ -14,6 +14,11 @@ The collector stores probe output in weekly range-partitioned tables
 under the `metrics` schema. Partition naming and range boundaries must
 satisfy one invariant: both are computed in UTC from the same instant.
 
+Everything in this file applies to the default storage mode only. With
+`use_coldfront_for_metrics` enabled the metrics tables are ColdFront
+views, `EnsurePartition` and `DropExpiredPartitions` return at once and
+the garbage collector is not started; see `coldfront-metrics.md`.
+
 ## The Invariant
 
 For any `time.Time t`, the week partition is defined as:
@@ -121,6 +126,15 @@ migration runs in order on both.
 The exception is `notification_channels`, whose later columns are
 also written into its base `CREATE TABLE`: see
 `notification-channels.md`.
+
+Every new metrics column, and every new metrics table, must also be
+added to the ColdFront column specification in
+`collector/src/coldfront/spec.go`, with `AddedIn` set to the migration
+for a later column; `TestColdFrontSpecMatchesMigratedSchema` fails
+until it is. A later column's type must be one ColdFront stores
+natively, because its `ALTER TABLE` runs unchanged on the ColdFront
+view (`TestSpecificationIsStorable` enforces this); see
+`coldfront-metrics.md`.
 
 ## Dropping Partitions and pgx "conn busy"
 

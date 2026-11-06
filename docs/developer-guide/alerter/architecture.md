@@ -1,55 +1,49 @@
 # Alerter Architecture
 
-The pgEdge AI DBA Workbench Alerter is a standalone background
-service that monitors collected metrics and generates alerts. The
-alerter evaluates threshold-based rules and uses AI-powered anomaly
-detection to identify potential issues in PostgreSQL databases.
+The pgEdge AI DBA Workbench Alerter is a standalone background service that
+monitors collected metrics and generates alerts. The alerter evaluates
+threshold-based rules and uses AI-powered anomaly detection to identify
+potential issues in PostgreSQL databases.
 
 ## Purpose
 
-The alerter serves as the monitoring brain of the AI DBA Workbench.
-The collector gathers metrics from monitored PostgreSQL instances
-and stores the metrics in the datastore. The alerter periodically
-evaluates these metrics against configured rules and baselines to
-detect problems.
+The alerter serves as the monitoring brain of the AI DBA Workbench. The
+collector gathers metrics from monitored PostgreSQL instances and stores the
+metrics in the datastore. The alerter periodically evaluates these metrics
+against configured rules and baselines to detect problems.
 
 The alerter provides the following capabilities:
 
 - The threshold engine evaluates metrics against configurable limits.
 - The anomaly detection system identifies unusual metric patterns.
-- The baseline calculator maintains statistical profiles for normal
-  behavior.
-- The blackout scheduler suppresses alerts during maintenance
-  windows.
-- The alert lifecycle manager tracks alert states and automatic
-  resolution.
+- The baseline calculator maintains statistical profiles for normal behavior.
+- The blackout scheduler suppresses alerts during maintenance windows.
+- The alert lifecycle manager tracks alert states and automatic resolution.
 - The notification system sends alerts through multiple channels.
 
 ## Key Concepts
 
 ### Threshold Alerts
 
-Threshold alerts trigger when a metric value crosses a configured
-boundary. Each alert rule specifies a metric name, comparison
-operator, and threshold value. The alerter includes 24 built-in
-rules covering common PostgreSQL monitoring scenarios such as
-connection utilization, replication lag, and disk usage.
+Threshold alerts trigger when a metric value crosses a configured boundary.
+Each alert rule specifies a metric name, comparison operator, and threshold
+value. The alerter includes 24 built-in rules covering common PostgreSQL
+monitoring scenarios such as connection utilization, replication lag, and disk
+usage.
 
 ### Anomaly Detection
 
-The anomaly detection system uses a tiered approach to identify
-unusual metric values. Tier 1 performs statistical analysis using
-z-score calculations. Tier 2 searches for similar past anomalies
-using vector embeddings. Tier 3 uses LLM classification to
-determine if an anomaly is a real issue or a false positive. See
-[Anomaly Detection](anomaly-detection.md) for full details.
+The anomaly detection system uses a tiered approach to identify unusual metric
+values. Tier 1 performs statistical analysis using z-score calculations. Tier 2
+searches for similar past anomalies using vector embeddings. Tier 3 uses LLM
+classification to determine if an anomaly is a real issue or a false positive.
+See [Anomaly Detection](anomaly-detection.md) for full details.
 
 ### Baselines
 
-The alerter calculates metric baselines from historical data.
-Baselines include statistical measures such as mean, standard
-deviation, minimum, and maximum values. The alerter generates
-three types of baselines:
+The alerter calculates metric baselines from historical data. Baselines include
+statistical measures such as mean, standard deviation, minimum, and maximum
+values. The alerter generates three types of baselines:
 
 - Global baselines aggregate all historical data for a metric.
 - Hourly baselines capture patterns by hour of day.
@@ -57,43 +51,39 @@ three types of baselines:
 
 ### Blackout Periods
 
-Blackout periods suppress alert generation during scheduled
-maintenance windows. The blackout system supports both manual and
-scheduled blackouts across four hierarchical scope levels.
+Blackout periods suppress alert generation during scheduled maintenance
+windows. The blackout system supports both manual and scheduled blackouts
+across four hierarchical scope levels.
 
 #### Scope Levels
 
 Blackouts apply at four levels; each level cascades downward:
 
 - An estate blackout suppresses alerts for all infrastructure.
-- A group blackout suppresses alerts for every cluster in the
-  group.
-- A cluster blackout suppresses alerts for all servers in the
-  cluster.
+- A group blackout suppresses alerts for every cluster in the group.
+- A cluster blackout suppresses alerts for all servers in the cluster.
 - A server blackout suppresses alerts for a single server only.
 
-A blackout at a higher scope automatically applies to all
-children. For example, a group-level blackout silences alerts
-for every cluster and server within the group.
+A blackout at a higher scope automatically applies to all children. For
+example, a group-level blackout silences alerts for every cluster and server
+within the group.
 
 #### Manual Blackouts
 
-A manual blackout defines a fixed time range with explicit start
-and end timestamps. Administrators create manual blackouts for
-one-time maintenance events such as upgrades or migrations.
+A manual blackout defines a fixed time range with explicit start and end
+timestamps. Administrators create manual blackouts for one-time maintenance
+events such as upgrades or migrations.
 
 #### Scheduled Blackouts
 
-A scheduled blackout uses a cron expression to define recurring
-maintenance windows. The blackout scheduler activates these
-windows automatically at the specified times. See the
-[Cron Expressions](cron-expressions.md) documentation for
-expression syntax details.
+A scheduled blackout uses a cron expression to define recurring maintenance
+windows. The blackout scheduler activates these windows automatically at the
+specified times. See the [Cron Expressions](cron-expressions.md) documentation
+for expression syntax details.
 
 #### REST API Endpoints
 
-The server exposes the following endpoints for blackout
-management:
+The server exposes the following endpoints for blackout management:
 
 - `GET /api/v1/blackouts` retrieves all active blackouts.
 - `POST /api/v1/blackouts` creates a new manual blackout.
@@ -104,9 +94,9 @@ management:
 
 #### RBAC Requirements
 
-The `manage_blackouts` permission controls access to blackout
-operations. Users without this permission can view blackout
-status but cannot create or delete blackouts.
+The `manage_blackouts` permission controls access to blackout operations. Users
+without this permission can view blackout status but cannot create or delete
+blackouts.
 
 ### Alert Lifecycle
 
@@ -116,17 +106,17 @@ Alerts progress through several states during their lifecycle:
 - Acknowledged alerts have been reviewed by an operator.
 - Cleared alerts indicate the condition has resolved.
 
-The alerter automatically clears threshold alerts when the
-triggering condition returns to normal. The anomaly detector clears
-an active anomaly alert once Tier 1 scores
-`anomaly.tier1.clear_count` consecutive samples of its metric back
-inside the sensitivity band; the Anomaly Detection document
-describes the recovery check.
+The alerter automatically clears threshold alerts when the triggering condition
+returns to normal. The anomaly detector clears an active anomaly alert when
+Tier 1 scores `anomaly.tier1.clear_count` consecutive samples of its metric
+back inside the sensitivity band;
+[Anomaly Alert Recovery](anomaly-detection.md#anomaly-alert-recovery) describes
+the recovery check.
 
 ## High-Level Architecture
 
-The alerter consists of a main engine that coordinates multiple
-background workers. Each worker handles a specific responsibility:
+The alerter consists of a main engine that coordinates multiple background
+workers. Each worker handles a specific responsibility:
 
 ```
                 Alert Engine (Coordinator)
@@ -147,132 +137,116 @@ Evaluator  Calculator Detector Scheduler   Cleaner
 
 ### Alert Engine
 
-The alert engine serves as the central coordinator. The engine
-initializes all workers, manages configuration reloading, and
-handles graceful shutdown. The engine creates a cancellable
-context that workers use to detect shutdown requests.
+The alert engine serves as the central coordinator. The engine initializes all
+workers, manages configuration reloading, and handles graceful shutdown. The
+engine creates a cancellable context that workers use to detect shutdown
+requests.
 
 ### Threshold Evaluator
 
-The threshold evaluator runs at a configurable interval,
-defaulting to 60 seconds. During each evaluation cycle, the
-evaluator performs these steps:
+The threshold evaluator runs at a configurable interval, defaulting to 60
+seconds. During each evaluation cycle, the evaluator performs these steps:
 
 1. Retrieve all enabled alert rules from the datastore.
 2. For each rule, fetch the latest metric values.
 3. Check for active blackouts that would suppress alerts.
-4. Retrieve effective thresholds including per-connection
-   overrides.
+4. Retrieve effective thresholds including per-connection overrides.
 5. Compare metric values against thresholds.
 6. Create or update alerts for threshold violations.
 
-The evaluator creates a new alert only once the threshold has
-been violated on `threshold.trigger_count` consecutive metric
-samples, where a sample is a distinct `collected_at` value for
-one rule, connection and database. The object name is not part
-of the key, because an alert is keyed on the rule, connection and
-database, and metrics such as `dead_tuple_percent` report the
-worst table in each database, which may change from one sample
-to the next. The counts live in
-memory in `internal/engine/hysteresis.go`; a key that a cycle
-does not judge, because of a blackout, a disabled override or a
-missing row, starts again from zero. An existing alert is
-updated on every cycle regardless of the count. Each metric
-registry query must therefore report the sample's own
-`collected_at` rather than `NOW()`, or every cycle would look
-like a new sample.
+The evaluator creates a new alert only when the threshold has been violated on
+`threshold.trigger_count` consecutive metric samples, where a sample is a
+distinct `collected_at` value for one rule, connection and database. The object
+name is not part of the key, because an alert is keyed on the rule, connection
+and database, and metrics such as `dead_tuple_percent` report the worst table
+in each database, which may change from one sample to the next. The counts live
+in memory in `internal/engine/hysteresis.go`; a key that a cycle does not
+judge, because of a blackout, a disabled override or a missing row, starts
+again from zero. An existing alert is updated on every cycle regardless of the
+count. Each metric registry query must therefore report the sample's own
+`collected_at` rather than `NOW()`, or every cycle would look like a new
+sample.
 
 ### Baseline Calculator
 
-The baseline calculator refreshes metric baselines at a
-configurable interval, defaulting to one hour. The calculator
-generates three types of baselines:
+The baseline calculator refreshes metric baselines at a configurable interval,
+defaulting to one hour. The calculator generates three types of baselines:
 
 - Global baselines aggregate all historical data.
 - Hourly baselines capture patterns for each UTC hour of the day.
 - Daily baselines capture patterns for each UTC day of the week.
 
-The calculator uses a configurable lookback period, defaulting
-to 15 days, to gather historical data for baseline calculations.
-Baselines are written per connection and, for per-database
-metrics, per database. Metrics whose registry entry has no
-historical query are skipped, and any leftover baseline rows for
+The calculator uses a configurable lookback period, defaulting to 15 days, to
+gather historical data for baseline calculations. Baselines are written per
+connection and, for per-database metrics, per database. Metrics whose registry
+entry has no historical query are skipped, and any leftover baseline rows for
 them are deleted at the start of each cycle.
 
 ### Anomaly Detector
 
 The anomaly detector implements a tiered detection system:
 
-- Tier 1 uses z-score calculations to identify statistical
-  anomalies.
+- Tier 1 uses z-score calculations to identify statistical anomalies.
 - Tier 2 uses vector embeddings to find similar past anomalies.
-- Tier 3 uses LLM classification to determine alert or suppress
-  decisions.
+- Tier 3 uses LLM classification to determine alert or suppress decisions.
 
-Tier 1 scores each value against the baseline for the same
-connection and database, preferring the hourly baseline for the
-current UTC hour, then the daily baseline for the current UTC
-weekday, then the global baseline, and taking the first of those
-that has passed its warmup gate. The detector creates anomaly
-candidates that progress through each tier. Before Tier 2, the
-detector skips both paid tiers for a candidate when a blackout,
-an open anomaly alert or a recent suppression would prevent an
-alert from being raised. The final decision
-determines whether to create an alert or suppress the anomaly as
-a false positive.
+Tier 1 scores each value against the baseline for the same connection and
+database, preferring the hourly baseline for the current UTC hour, then the
+daily baseline for the current UTC weekday, then the global baseline, and
+taking the first of those that has passed its warmup gate. The detector creates
+anomaly candidates that progress through each tier. Before Tier 2, the detector
+skips both paid tiers for a candidate when a blackout, an open anomaly alert or
+a recent suppression would prevent an alert from being raised. The final
+decision determines whether to create an alert or suppress the anomaly as a
+false positive.
 
 ### Blackout Scheduler
 
-The blackout scheduler runs every minute to check for scheduled
-blackouts. The scheduler evaluates cron expressions against the
-current time in the configured timezone. When a schedule matches,
-the scheduler creates a manual blackout entry with the configured
-duration.
+The blackout scheduler runs every minute to check for scheduled blackouts. The
+scheduler evaluates cron expressions against the current time in the configured
+timezone. When a schedule matches, the scheduler creates a manual blackout
+entry with the configured duration.
 
 ### Alert Cleaner
 
-The alert cleaner runs every 30 seconds to check for resolved
-conditions. The cleaner retrieves active threshold alerts and
-re-evaluates the triggering conditions. When a condition no longer
-violates the threshold on `threshold.clear_count` consecutive
-samples, the cleaner marks the alert as cleared. A violating sample
-resets the count, and the count is dropped once the alert is no
-longer active. Missing data for a metric that reports a value for
-every connection neither advances nor resets the count. For a
-metric that reports only whilst its condition holds, each probe
-collection that returns no row counts as one resolved sample, so
-an inactive replication slot alert clears on the third
-`pg_replication_slots` collection after recovery at the default
+The alert cleaner runs every 30 seconds to check for resolved conditions. The
+cleaner retrieves active threshold alerts and re-evaluates the triggering
+conditions. When a condition no longer violates the threshold on
+`threshold.clear_count` consecutive samples, the cleaner marks the alert as
+cleared. A violating sample resets the count, and the count is dropped when the
+alert is no longer active. Missing data for a metric that reports a value for
+every connection neither advances nor resets the count. For a metric that
+reports only whilst its condition holds, each probe collection that returns no
+row counts as one resolved sample, so an inactive replication slot alert clears
+on the third `pg_replication_slots` collection after recovery at the default
 `clear_count`.
 
-A metric that returns no value for an alert is a separate case from
-a metric that returns a value below the threshold. The metric
-registry records, for each metric, whether a missing row means the
-condition has ended or that the data has stopped arriving; the
-cleaner clears the alert only in the first case, and then only when the
-collector probe behind the metric last collected inside the window that
-metric's query reads, so a stopped collector cannot look like a
+A metric that returns no value for an alert is a separate case from a metric
+that returns a value below the threshold. The metric registry records, for each
+metric, whether a missing row means the condition has ended or that the data
+has stopped arriving; the cleaner clears the alert only in the first case, and
+then only when the collector probe behind the metric last collected inside the
+window that metric's query reads, so a stopped collector cannot look like a
 recovery. The window, rather than a multiple of the probe's configured
-collection interval, is the yardstick, because outside it the query
-returns nothing whatever the monitored server is doing, and because an
-operator may change the interval at any time. The Adding Alert Rules
-document describes the `clearWhenAbsent` field that carries this
-classification, the `probeName` field that names the probe and the
-`absenceWindow` field that records the window.
+collection interval, is the yardstick, because outside it the query returns
+nothing whatever the monitored server is doing, and because an operator may
+change the interval at any time.
+[Clearing on Missing Data](adding-rules.md#clearing-on-missing-data) describes
+the `clearWhenAbsent` field that carries this classification, the `probeName`
+field that names the probe and the `absenceWindow` field that records the
+window.
 
 ### Retention Manager
 
-The retention manager runs daily to clean up old data. The manager
-deletes cleared and acknowledged alerts older than the configured
-retention period. The manager also removes processed anomaly
-candidates past retention.
+The retention manager runs daily to clean up old data. The manager deletes
+cleared and acknowledged alerts older than the configured retention period. The
+manager also removes processed anomaly candidates past retention.
 
 ### Notification Workers
 
 The notification system includes two workers:
 
-- The notification worker processes pending and retry
-  notifications.
+- The notification worker processes pending and retry notifications.
 - The reminder worker sends periodic reminders for active alerts.
 
 ## Data Flow
@@ -283,9 +257,9 @@ The notification system includes two workers:
 Collector --writes--> Datastore <--reads-- Alerter --writes--> Alerts
 ```
 
-The collector writes metrics to the datastore. The alerter reads
-metrics and evaluates the metrics against rules. When thresholds
-are violated, the alerter writes alerts to the alerts table.
+The collector writes metrics to the datastore. The alerter reads metrics and
+evaluates the metrics against rules. When thresholds are violated, the alerter
+writes alerts to the alerts table.
 
 ### Anomaly Detection Flow
 
@@ -294,18 +268,16 @@ Tier 1 --> Candidate --> Checks --> Tier 2 --> Tier 3 --> Alert or Suppress
 (z-score)   (store)     (skip?)   (embedding)  (LLM)
 ```
 
-Tier 1 creates anomaly candidates for values exceeding the
-z-score threshold, unless one of the checks below already applies,
-in which case it stores none. The alerter then checks each stored
-candidate for an active blackout, an open anomaly alert on the same
-metric, connection and database, an anomaly alert on the same
-series that cleared within the five-minute cooldown, and
-re-evaluation or false-positive suppression; a candidate that
-matches any check is marked as processed without running Tier 2 or
-Tier 3. The second pass covers a candidate stored before the
-condition began. Other candidates are processed by Tier 2, which
-generates embeddings and searches for similar past anomalies. Tier 3
-uses LLM classification to make the final decision.
+Tier 1 creates anomaly candidates for values exceeding the z-score threshold,
+unless one of the checks below already applies, in which case it stores none.
+The alerter then checks each stored candidate for an active blackout, an open
+anomaly alert on the same metric, connection and database, an anomaly alert on
+the same series that cleared within the five-minute cooldown, and re-evaluation
+or false-positive suppression; a candidate that matches any check is marked as
+processed without running Tier 2 or Tier 3. The second pass covers a candidate
+stored before the condition began. Other candidates are processed by Tier 2,
+which generates embeddings and searches for similar past anomalies. Tier 3 uses
+LLM classification to make the final decision.
 
 ## Database Schema
 
@@ -320,10 +292,8 @@ The alerter uses several tables in the datastore.
 
 ### Anomaly Tables
 
-- `anomaly_candidates` stores candidates progressing through
-  tiers.
-- `anomaly_embeddings` stores vector embeddings for similarity
-  search.
+- `anomaly_candidates` stores candidates progressing through tiers.
+- `anomaly_embeddings` stores vector embeddings for similarity search.
 - `metric_baselines` stores calculated baseline statistics.
 
 ### Blackout Tables
@@ -334,34 +304,32 @@ The alerter uses several tables in the datastore.
 ### Notification Tables
 
 - `notification_channels` defines notification destinations.
-- `notification_channel_connections` links channels to
-  connections.
+- `notification_channel_connections` links channels to connections.
 - `notification_history` tracks notification delivery status.
 - `notification_reminder_state` tracks reminder progress.
 
 ## LLM Integration
 
-The alerter integrates with LLM providers for Tier 2 and Tier 3
-processing.
+The alerter integrates with LLM providers for Tier 2 and Tier 3 processing.
 
 ### Embedding Providers
 
-Embedding providers generate vector representations of anomaly
-context. The alerter supports the following providers, shown with
-the model each one uses by default:
+Embedding providers generate vector representations of anomaly context. The
+alerter supports the following providers, shown with the model each one uses by
+default:
 
 - Ollama with `nomic-embed-text`.
 - OpenAI with `text-embedding-3-small`.
 - Voyage with `voyage-3-lite`.
 
-Any model name the chosen provider recognises can be configured in
-place of the default, including a model served by an
-OpenAI-protocol-compatible local model server.
+Any model name the chosen provider recognises can be configured in place of the
+default, including a model served by an OpenAI-protocol-compatible local model
+server.
 
 ### Reasoning Providers
 
-Reasoning providers classify anomalies as real issues or false
-positives. The alerter supports the following providers:
+Reasoning providers classify anomalies as real issues or false positives. The
+alerter supports the following providers:
 
 - Ollama with models like `qwen2.5:7b-instruct`.
 - OpenAI with `gpt-6-luna`.
@@ -369,41 +337,36 @@ positives. The alerter supports the following providers:
 
 ### Decision Providers
 
-A decision provider optionally classifies Tier 3 candidates ahead of
-the reasoning provider, returning the probability that an anomaly is
-a real issue rather than generated text. The reasoning provider then
-serves as the fallback for any candidate the decision model fails to
-classify. The alerter supports the following decision providers:
+A decision provider optionally classifies Tier 3 candidates ahead of the
+reasoning provider, returning the probability that an anomaly is a real issue
+rather than generated text. The reasoning provider then serves as the fallback
+for any candidate the decision model fails to classify. The alerter supports
+the following decision providers:
 
 - TypeSafe with `jev-latest`.
 - OpenAI with `gpt-6-luna` through the Decisions API.
 
-Re-evaluation of acknowledged alerts never uses the decision
-provider. See
-[Anomaly Detection](anomaly-detection.md#decision-model) for the
-classification path and its fallback.
+Re-evaluation of acknowledged alerts never uses the decision provider. See
+[Anomaly Detection](anomaly-detection.md#decision-model) for the classification
+path and its fallback.
 
 ## Configuration Reloading
 
-The alerter supports configuration reloading without restart.
-Sending a `SIGHUP` signal triggers the engine to reload the
-configuration file and apply reloadable settings to all workers.
+The alerter supports configuration reloading without restart. Sending a
+`SIGHUP` signal triggers the engine to reload the configuration file and apply
+reloadable settings to all workers.
 
 ## Graceful Shutdown
 
-The alerter handles `SIGINT` and `SIGTERM` signals for graceful
-shutdown. When the alerter receives a shutdown signal, the engine
-cancels the shared context and waits for all workers to complete
-their current operations before exiting.
+The alerter handles `SIGINT` and `SIGTERM` signals for graceful shutdown. When
+the alerter receives a shutdown signal, the engine cancels the shared context
+and waits for all workers to complete their current operations before exiting.
 
 ## Integration Points
 
 The alerter integrates with other AI DBA Workbench components:
 
-- The collector provides the metric data that the alerter
-  evaluates.
-- The server exposes APIs for managing alert rules and viewing
-  alerts.
-- The client displays alerts and provides acknowledgment
-  interfaces.
+- The collector provides the metric data that the alerter evaluates.
+- The server exposes APIs for managing alert rules and viewing alerts.
+- The client displays alerts and provides acknowledgment interfaces.
 - LLM providers power the Tier 3 anomaly classification.

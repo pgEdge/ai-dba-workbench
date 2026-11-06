@@ -1,4 +1,4 @@
-# Token Management
+# Managing Tokens
 
 The Workbench uses two kinds of tokens:
 
@@ -76,7 +76,7 @@ schedule on a cluster or a group also requires the token's owner to see every
 connection in that cluster or group, and a change to an estate-wide blackout
 or schedule, an alert rule, a global probe configuration or a notification
 channel requires the owner to see every connection, as described in
-[Administrative Permissions](permission_model.md#administrative-permissions).
+[Administrative Permissions](permission_mgmt.md#administrative-permissions).
 
 A `read` entry in the connection scope means read-only access to the monitored
 server itself, so it still lets a token make changes that only record Workbench
@@ -225,7 +225,7 @@ invoking the `-add-token` command:
 # Create token for a user
 ./bin/ai-dba-server -add-token \
   -user alice \
-  -token-note "CI/CD Pipeline" \
+  -token-note "CI-CD Pipeline" \
   -token-expiry "90d"
 
 # Create token for a service account
@@ -255,8 +255,8 @@ Token: <generated-token-value>
 Hash:  <token-hash>
 ID:    1
 Owner: alice
-Note:  CI/CD Pipeline
-Expires: 2025-01-28T10:15:30-05:00
+Note:  CI-CD Pipeline
+Expires: 2027-02-02T10:15:30-05:00
 ===========================================================
 
 IMPORTANT: Save this token securely - it will not be
@@ -303,7 +303,7 @@ command line. To delete a token in the console, select the `Delete` icon
 (the garbage can) at the far-right of a token entry. A popup opens, asking
 you to confirm that you wish to delete the token:
 
-![The list of tokens](../../images/delete_token.png)
+![Confirming a token deletion](../../images/delete_token.png)
 
 Select `Delete` to permanently delete the specified token.
 
@@ -321,7 +321,7 @@ command and the token ID or hash prefix; in the following examples,
 
 The server records every token creation, deletion and scope change in
 the audit log, naming the user, token or command-line operator that made
-it; for details, see [Audit Log](audit-log.md).
+it; for details, see [Managing the Audit Log](../audit-log.md).
 
 ## Bounding What a Token Can Grant
 
@@ -490,8 +490,8 @@ superuser does. The check reads `group_map` as it stands after the most
 recent configuration reload, so a newly mapped group is protected at once.
 A group that a reload removes from `group_map` loses this protection at once,
 so a bounded token can then rename or delete it within the rest of the
-ceiling, even though its
-federated members keep their membership as [Single Sign-On](sso.md)
+ceiling, even though its federated members keep their membership as
+[Configuring Single Sign-On](../../configuration/server/single_sign_on.md#mapping-provider-groups-to-workbench-groups)
 describes; remap the group rather than removing it to keep the protection.
 
 ### Changing Users and Tokens

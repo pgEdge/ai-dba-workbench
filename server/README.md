@@ -84,7 +84,7 @@ make lint
 > **Note:** The `./bin/` paths above apply to source builds only.
 > Production deployments place binaries in different locations depending
 > on the installation method. See the
-> [Installation Guide](../docs/getting-started/installation.md) for
+> [Installation Guide](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/getting-started/installation_overview.md) for
 > production paths.
 
 ## Configuration
@@ -306,7 +306,7 @@ database:
 
 ## Documentation
 
-See the [Administrator's Guide](../docs/admin-guide/index.md) for detailed information.
+See the [Administrator's Guide](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/admin-guide/index.md) for detailed information.
 
 ---
 
@@ -314,7 +314,7 @@ To report an issue with the software, visit:
 [GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
 
 We welcome your project contributions; for more information, see
-[docs/developer-guide/contributing.md](../docs/developer-guide/contributing.md).
+[docs/developer-guide/contributing.md](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/developer-guide/contributing.md).
 
 For more information, visit [docs.pgedge.com](https://docs.pgedge.com).
 

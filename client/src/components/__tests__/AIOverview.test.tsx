@@ -9,6 +9,8 @@
  */
 
 import type React from 'react';
+import { useLayoutEffect } from 'react';
+import { createRoot } from 'react-dom/client';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
@@ -1451,6 +1453,99 @@ describe('AIOverview Component', () => {
                 await Promise.resolve();
             });
             expect(screen.getByText('Server three.')).toBeInTheDocument();
+        });
+
+        it('keeps a streamed summary on screen when a REST poll fails', async () => {
+            vi.useFakeTimers();
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse({ summary: 'Streamed.' }),
+                connected: false,
+            });
+            mockApiGet.mockRejectedValue(new Error('boom'));
+            const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+            await act(async () => {
+                renderWithTheme(<AIOverview />);
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(15_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+
+            expect(mockApiGet).toHaveBeenCalled();
+            expect(errorSpy).toHaveBeenCalled();
+            expect(screen.getByText('Streamed.')).toBeInTheDocument();
+            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+            errorSpy.mockRestore();
+        });
+
+        // Outside act(), React commits a default-priority update in one
+        // task and runs its passive effects in a later one, so a reply
+        // whose promise settles during the commit is handled in between.
+        // The guard must already name the new selection by then.
+        it('discards a reply for the previous selection that settles during the commit', async () => {
+            vi.useFakeTimers({
+                toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+            });
+            mockUseOverviewSSE.mockReturnValue({ overview: null, connected: true });
+            let resolveFirst: (value: unknown) => void = () => {};
+            mockApiGet
+                .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+                .mockImplementation(() => new Promise(() => {}));
+
+            // Settles the first reply from inside the commit that
+            // switches to server 2, then holds the commit past the
+            // scheduler's 5ms slice so that it yields before running
+            // the passive effects.
+            const SettleOnSwitch = ({ id }: { id: number }) => {
+                useLayoutEffect(() => {
+                    if (id === 2) {
+                        resolveFirst(makeOverviewResponse({ summary: 'Server one.' }));
+                        const until = performance.now() + 20;
+                        while (performance.now() < until) {
+                            // busy-wait
+                        }
+                    }
+                }, [id]);
+                return null;
+            };
+            const tree = (id: number) => (
+                <ThemeProvider theme={theme}>
+                    <AIOverview selection={makeServerSelection(id)} />
+                    <SettleOnSwitch id={id} />
+                </ThemeProvider>
+            );
+            const nextTask = () => new Promise<void>((resolve) => { setImmediate(resolve); });
+            const settle = async () => {
+                for (let i = 0; i < 10; i++) {
+                    await nextTask();
+                }
+            };
+
+            const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+            const actEnvironment = env.IS_REACT_ACT_ENVIRONMENT;
+            env.IS_REACT_ACT_ENVIRONMENT = false;
+            const container = document.createElement('div');
+            document.body.appendChild(container);
+            const root = createRoot(container);
+            try {
+                root.render(tree(1));
+                await settle();
+                vi.advanceTimersByTime(5_000);
+                await settle();
+                expect(mockApiGet).toHaveBeenCalledTimes(1);
+
+                root.render(tree(2));
+                await settle();
+
+                expect(container.textContent).not.toContain('Server one.');
+            } finally {
+                root.unmount();
+                container.remove();
+                env.IS_REACT_ACT_ENVIRONMENT = actEnvironment;
+            }
         });
     });
 });

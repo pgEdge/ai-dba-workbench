@@ -9,7 +9,7 @@
  */
 
 import type React from 'react';
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {
     Box,
     Typography,
@@ -192,10 +192,11 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
 
     // The URL the component is currently showing, so that a REST
     // response for a previous selection is discarded on arrival.
-    // Declared before the effects that call fetchOverview, so it runs
-    // first after each commit.
+    // A layout effect, so the ref names the new URL before the commit
+    // ends: passive effects can run in a later task, after a pending
+    // reply for the previous URL has already been handled.
     const currentUrlRef = useRef(overviewUrl);
-    useEffect(() => {
+    useLayoutEffect(() => {
         currentUrlRef.current = overviewUrl;
     }, [overviewUrl]);
 
@@ -434,8 +435,10 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
     }
 
     // Generation or fetch failure: say so rather than leave the card
-    // blank or loading forever.
-    const errorText = error ?? (
+    // blank or loading forever. A failed REST fetch never hides a
+    // summary that the stream has already delivered.
+    const fetchError = overview?.summary != null ? null : error;
+    const errorText = fetchError ?? (
         overview?.status === 'error'
             ? overview.error ?? 'The AI overview could not be generated.'
             : null

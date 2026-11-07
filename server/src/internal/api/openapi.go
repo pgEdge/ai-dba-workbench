@@ -124,6 +124,7 @@ const (
 	overviewConnectionIDsParam = "Comma-separated connection IDs; cannot be combined with scope_type or scope_id"
 	overviewScopeNameParam     = "Display name for a connection_ids summary; trimmed, stripped of quotes and control characters and capped at 128 characters. Ignored with scope_type or scope_id, whose name is looked up on the server"
 	overviewBadRequest         = "connection_ids combined with scope_type or scope_id, or an invalid parameter"
+	overviewNotFound           = "The scope does not exist or is not visible to the caller"
 )
 
 // BuildOpenAPISpec generates the OpenAPI specification at runtime.
@@ -4191,7 +4192,9 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("OverviewResponse", "Estate overview"),
 					"400": jsonResponse("ErrorResponse", overviewBadRequest),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", overviewNotFound),
 					"429": overviewRateLimitedResponse(),
+					"500": jsonResponse("ErrorResponse", "Connection visibility could not be resolved, or a scoped or connections summary could not be generated"),
 				},
 			},
 		},
@@ -4218,7 +4221,9 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", overviewBadRequest),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", overviewNotFound),
 					"429": overviewRateLimitedResponse(),
+					"500": jsonResponse("ErrorResponse", "Connection visibility could not be resolved, or the server does not support streaming"),
 				},
 			},
 		},

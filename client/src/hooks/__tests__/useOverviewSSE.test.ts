@@ -238,4 +238,39 @@ describe('useOverviewSSE', () => {
             expect(result.current.overview).toEqual(samplePayload);
         });
     });
+
+    it('resets overview and connection state when the URL changes (#808)', () => {
+        const { result, rerender } = renderHook(
+            ({ url }) => useOverviewSSE(url),
+            { initialProps: { url: '/api/v1/overview' } },
+        );
+
+        const first = latestInstance();
+        act(() => {
+            first.simulateOpen();
+            first.simulateEvent('overview', JSON.stringify(samplePayload));
+        });
+        expect(result.current.connected).toBe(true);
+        expect(result.current.overview).toEqual(samplePayload);
+
+        rerender({ url: '/api/v1/overview?scope_type=server&scope_id=2' });
+
+        // The new scope starts empty and disconnected, so the caller's
+        // loading and fallback logic run afresh.
+        expect(result.current.overview).toBeNull();
+        expect(result.current.connected).toBe(false);
+
+        // An error on the closed stream does not disturb the new one.
+        const second = latestInstance();
+        act(() => {
+            second.simulateOpen();
+            first.simulateError();
+        });
+        expect(result.current.connected).toBe(true);
+
+        // Returning to the first URL does not resurrect its old state.
+        rerender({ url: '/api/v1/overview' });
+        expect(result.current.overview).toBeNull();
+        expect(result.current.connected).toBe(false);
+    });
 });

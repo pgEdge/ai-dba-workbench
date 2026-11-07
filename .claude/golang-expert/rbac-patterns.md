@@ -453,7 +453,26 @@ swapping in a checker without the lookup.
 The overview stream in `internal/overview/handler.go` uses the empty
 scope key for the estate-wide feed, so a restricted caller must always
 get a `connections:` key, even when their visible set is empty; an
-empty set left as `""` would subscribe them to every connection.
+empty set left as `""` would subscribe them to every connection. The
+empty `connections:` key gets a `status: empty` notice and never falls
+back to any summary. `handleSSE` sends the stream's opening event
+itself (the cached or generated scoped summary, or a `generating`,
+`empty` or `error` notice) rather than waiting on the hub, because a
+cache hit or a failed generation broadcasts nothing (issue #808).
+
+Scope names never leak a hidden resource. Both overview endpoints
+reject `connection_ids` combined with `scope_type` or `scope_id` with a
+400 (`errScopeWithConnectionIDs`). On a scope path the name comes from
+`resolveScopeName`, called only after `scopeVisible` passes and the
+visible intersection is non-empty; the caller's `scope_name` is ignored
+there. On a `connection_ids` request the caller's name is passed through
+`sanitizeScopeName` (quotes, control and format characters stripped,
+128 runes) and is part of the cache and hub key (`connectionsKey`, e.g.
+`connections:7,8|prod`), so callers naming the same IDs differently
+never share a summary. The scoped snapshot's blackouts are filtered by
+`BlackoutFilter.ConnectionIDs`, which keeps estate blackouts plus those
+whose server, cluster or group reaches a passed connection
+(`buildBlackoutScopeFilter`, the timeline's rule).
 
 ### Tools: check access before existence, and answer both alike
 

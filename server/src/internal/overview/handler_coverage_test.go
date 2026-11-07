@@ -15,6 +15,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -299,30 +300,35 @@ func TestHandleSSE_GenerationPaths(t *testing.T) {
 		cached     []string
 		failingGen bool
 		wantKey    string
+		wantData   string
 	}{
 		{
-			name:    "restricted connection_ids",
-			target:  "/api/v1/overview/stream?connection_ids=7,8,7&scope_name=mine",
-			cached:  []string{"connections:7"},
-			wantKey: "connections:7",
+			name:     "restricted connection_ids",
+			target:   "/api/v1/overview/stream?connection_ids=7,8,7&scope_name=mine",
+			cached:   []string{"connections:7|mine"},
+			wantKey:  "connections:7|mine",
+			wantData: `"summary":"Cached connections:7|mine"`,
 		},
 		{
 			name:       "restricted connection_ids generation failure",
 			target:     "/api/v1/overview/stream?connection_ids=7",
 			failingGen: true,
 			wantKey:    "connections:7",
+			wantData:   `"status":"error"`,
 		},
 		{
-			name:    "restricted server scope",
-			target:  "/api/v1/overview/stream?scope_type=server&scope_id=7",
-			cached:  []string{"connections:7"},
-			wantKey: "connections:7",
+			name:     "restricted server scope",
+			target:   "/api/v1/overview/stream?scope_type=server&scope_id=7",
+			cached:   []string{"connections:7"},
+			wantKey:  "connections:7",
+			wantData: `"summary":"Cached connections:7"`,
 		},
 		{
-			name:    "restricted estate-wide",
-			target:  "/api/v1/overview/stream",
-			cached:  []string{"connections:7"},
-			wantKey: "connections:7",
+			name:     "restricted estate-wide",
+			target:   "/api/v1/overview/stream",
+			cached:   []string{"connections:7"},
+			wantKey:  "connections:7",
+			wantData: `"summary":"Cached connections:7"`,
 		},
 		{
 			name:      "unrestricted server scope",
@@ -330,6 +336,7 @@ func TestHandleSSE_GenerationPaths(t *testing.T) {
 			superuser: true,
 			cached:    []string{"server:1"},
 			wantKey:   "server:1",
+			wantData:  `"summary":"Cached server:1"`,
 		},
 		{
 			name:       "unrestricted server scope generation failure",
@@ -337,6 +344,7 @@ func TestHandleSSE_GenerationPaths(t *testing.T) {
 			superuser:  true,
 			failingGen: true,
 			wantKey:    "server:1",
+			wantData:   `"status":"error"`,
 		},
 	}
 	for _, tt := range tests {
@@ -373,6 +381,11 @@ func TestHandleSSE_GenerationPaths(t *testing.T) {
 			}
 			if key := <-keyCh; key != tt.wantKey {
 				t.Errorf("expected scope key %q, got %q", tt.wantKey, key)
+			}
+			// A cache hit or a failure never broadcasts, so the stream
+			// must deliver the result itself (issue #808).
+			if body := rr.Body.String(); !strings.Contains(body, tt.wantData) {
+				t.Errorf("expected stream to deliver %s, got:\n%s", tt.wantData, body)
 			}
 		})
 	}

@@ -119,6 +119,14 @@ type OpenAPISecurityScheme struct {
 	Description  string `json:"description,omitempty"`
 }
 
+// Parameter and response descriptions shared by the overview endpoints.
+const (
+	overviewConnectionIDsParam = "Comma-separated connection IDs; cannot be combined with scope_type or scope_id"
+	overviewScopeNameParam     = "Display name for a connection_ids summary; trimmed, stripped of quotes and control characters and capped at 128 characters. Ignored with scope_type or scope_id, whose name is looked up on the server"
+	overviewBadRequest         = "connection_ids combined with scope_type or scope_id, or an invalid parameter"
+	overviewNotFound           = "The scope does not exist or is not visible to the caller"
+)
+
 // BuildOpenAPISpec generates the OpenAPI specification at runtime.
 func BuildOpenAPISpec() *OpenAPISpec {
 	return &OpenAPISpec{
@@ -1741,8 +1749,9 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"OverviewResponse": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"status":       {Type: "string", Description: "Overview status (ready, generating)"},
-				"summary":      {Type: "object", Description: "AI-generated summary", Nullable: true},
+				"status":       {Type: "string", Description: "Present only when no summary is available: generating (no summary yet), empty (the caller can see no connections in the scope) or error (generation failed)"},
+				"error":        {Type: "string", Description: "Generic failure message, present when status is error"},
+				"summary":      {Type: "string", Description: "AI-generated summary; null while a status is reported", Nullable: true},
 				"generated_at": {Type: "string", Format: "date-time", Description: "When the overview was generated"},
 			},
 		},
@@ -4173,14 +4182,17 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
 					queryParamBool("refresh", "Force regeneration of the overview"),
-					queryParamString("connection_ids", "Comma-separated connection IDs"),
-					queryParamString("scope_type", "Scope type (estate, group, cluster, server)"),
+					queryParamString("connection_ids", overviewConnectionIDsParam),
+					queryParamString("scope_type", "Scope type (server, cluster, group)"),
 					queryParamString("scope_id", "Scope entity ID"),
-					queryParamString("scope_name", "Scope display name"),
+					queryParamString("scope_name", overviewScopeNameParam),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("OverviewResponse", "Estate overview"),
+					"400": jsonResponse("ErrorResponse", overviewBadRequest),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", overviewNotFound),
+					"500": jsonResponse("ErrorResponse", "Connection visibility could not be resolved, or a scoped or connections summary could not be generated"),
 				},
 			},
 		},
@@ -4188,14 +4200,15 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/overview/stream": {
 			Get: &OpenAPIOperation{
 				Summary:     "Stream overview generation",
-				Description: "Streams overview generation progress via Server-Sent Events (SSE)",
+				Description: "Streams overviews via Server-Sent Events (SSE). Each overview event carries an OverviewResponse payload; the stream opens with the cached summary or a status notice (generating, empty or error), and status notices carry no event id",
 				OperationID: "streamOverview",
 				Tags:        []string{"Overview"},
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
-					queryParamString("connection_ids", "Comma-separated connection IDs"),
-					queryParamString("scope_type", "Scope type (estate, group, cluster, server)"),
+					queryParamString("connection_ids", overviewConnectionIDsParam),
+					queryParamString("scope_type", "Scope type (server, cluster, group)"),
 					queryParamString("scope_id", "Scope entity ID"),
+					queryParamString("scope_name", overviewScopeNameParam),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": {
@@ -4204,7 +4217,10 @@ func buildPaths() map[string]OpenAPIPathItem {
 							"text/event-stream": {Schema: &OpenAPISchema{Type: "string", Description: "Server-Sent Events stream"}},
 						},
 					},
+					"400": jsonResponse("ErrorResponse", overviewBadRequest),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", overviewNotFound),
+					"500": jsonResponse("ErrorResponse", "Connection visibility could not be resolved, or the server does not support streaming"),
 				},
 			},
 		},

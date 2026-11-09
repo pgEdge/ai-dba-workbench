@@ -1322,6 +1322,91 @@ describe('AIOverview Component', () => {
             // The original summary is still visible
             expect(screen.getByText('initial')).toBeInTheDocument();
         });
+
+        describe('when the selection changes mid-refresh', () => {
+            const serverOne = makeOverviewResponse({ summary: 'Server one.' });
+
+            beforeEach(() => {
+                vi.useFakeTimers();
+                // Server 1 has a streamed summary; server 2's stream
+                // stays silent, so its card relies on the REST fallback.
+                mockUseOverviewSSE.mockImplementation((url: string) => ({
+                    overview: url.includes('scope_id=1') ? serverOne : null,
+                    connected: true,
+                }));
+            });
+
+            afterEach(() => {
+                vi.useRealTimers();
+            });
+
+            /** Render server 1, click refresh, then switch to server 2. */
+            async function refreshThenSwitch() {
+                let rerender: ReturnType<typeof render>['rerender'] = () => {};
+                await act(async () => {
+                    ({ rerender } = renderWithTheme(
+                        <AIOverview selection={makeServerSelection(1)} />,
+                    ));
+                });
+                expect(screen.getByText('Server one.')).toBeInTheDocument();
+                await act(async () => {
+                    fireEvent.click(screen.getByLabelText('Refresh overview'));
+                });
+                await act(async () => {
+                    rerender(
+                        <ThemeProvider theme={theme}>
+                            <AIOverview selection={makeServerSelection(2)} />
+                        </ThemeProvider>,
+                    );
+                });
+            }
+
+            it('discards a refresh reply for the previous selection', async () => {
+                let resolveRefresh: (value: unknown) => void = () => {};
+                mockApiGet.mockImplementation((url: string) =>
+                    url.includes('refresh=true')
+                        ? new Promise((resolve) => { resolveRefresh = resolve; })
+                        : Promise.resolve({ status: 'generating', summary: null }),
+                );
+
+                await refreshThenSwitch();
+                await act(async () => {
+                    resolveRefresh(makeOverviewResponse({ summary: 'Server one refreshed.' }));
+                    await Promise.resolve();
+                });
+                // Server 2's safety-net fetch reports generating, which
+                // would keep a stale summary had the reply been applied.
+                await act(async () => {
+                    vi.advanceTimersByTime(5_000);
+                });
+                await act(async () => {
+                    await Promise.resolve();
+                });
+
+                expect(screen.queryByText('Server one refreshed.')).not.toBeInTheDocument();
+                expect(screen.getByText('Generating overview...')).toBeInTheDocument();
+            });
+
+            it('re-enables the refresh button for the new selection', async () => {
+                mockApiGet.mockImplementation((url: string) =>
+                    url.includes('refresh=true')
+                        ? new Promise(() => {})
+                        : Promise.resolve(makeOverviewResponse({ summary: 'Server two.' })),
+                );
+
+                await refreshThenSwitch();
+                await act(async () => {
+                    vi.advanceTimersByTime(5_000);
+                });
+                await act(async () => {
+                    await Promise.resolve();
+                });
+
+                expect(screen.getByText('Server two.')).toBeInTheDocument();
+                const button = screen.getByLabelText('Refresh overview') as HTMLButtonElement;
+                expect(button.disabled).toBe(false);
+            });
+        });
     });
 
     describe('Analyze button visibility', () => {

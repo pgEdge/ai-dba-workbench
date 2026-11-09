@@ -4202,7 +4202,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/overview/stream": {
 			Get: &OpenAPIOperation{
 				Summary:     "Stream overview generation",
-				Description: "Streams overviews via Server-Sent Events (SSE). Each overview event carries an OverviewResponse payload; the stream opens with the cached summary or a status notice (generating, empty or error), and status notices carry no event id",
+				Description: "Streams overviews via Server-Sent Events (SSE). Each overview event carries an OverviewResponse payload; the estate-wide stream opens with the cached summary or a generating or error notice, a stream over no visible connections opens with an empty notice, and a scoped stream sends its summary, or an error notice, once it is ready. Status notices carry no event id",
 				OperationID: "streamOverview",
 				Tags:        []string{"Overview"},
 				Security:    bearerAuth,

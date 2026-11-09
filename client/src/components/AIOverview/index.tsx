@@ -186,7 +186,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
         setOverview(null);
         setError(null);
         setLoading(true);
-        setRateLimitMessage(null);
+        setRefreshing(false);
         setLastFetchedUrl(overviewUrl);
     }
 
@@ -233,13 +233,18 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
     // Dedicated refresh handler for the manual refresh button.
     // Only replaces the overview when the server returns a real
     // summary so that a "generating" response never hides existing
-    // content.  Errors are silently ignored.
+    // content.  Errors are silently ignored.  A reply that lands after
+    // the selection has changed is discarded, as in fetchOverview; the
+    // URL change has already cleared the refreshing flag.
     const handleRefresh = useCallback(async () => {
         setRefreshing(true);
         try {
             const sep = overviewUrl.includes('?') ? '&' : '?';
             const refreshUrl = `${overviewUrl}${sep}refresh=true`;
             const data = await apiGet<OverviewResponse>(refreshUrl);
+            if (currentUrlRef.current !== overviewUrl) {
+                return;
+            }
             if (data.summary != null) {
                 setOverview(data);
                 if (data.restart_detected) {
@@ -248,7 +253,8 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
             }
         } catch {
             // Silently ignore refresh errors
-        } finally {
+        }
+        if (currentUrlRef.current === overviewUrl) {
             setRefreshing(false);
         }
     }, [overviewUrl]);

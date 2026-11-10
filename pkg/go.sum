@@ -1,5 +1,5 @@
-github.com/pgEdge/pgedge-go-llm-lib v0.6.0 h1:RQOfIK0if3+CRv5I/imzxMP0rh4Hki9u+wf+grawmNU=
-github.com/pgEdge/pgedge-go-llm-lib v0.6.0/go.mod h1:j0ezF1uuqgLLh19UsFROwOWyk8+toJefhc8lq3uyYBA=
+github.com/pgEdge/pgedge-go-llm-lib v1.0.0 h1:ouDvKFy2U+gjDMIvl0I5bsffD0OmTb2k1fJHAK9FUpE=
+github.com/pgEdge/pgedge-go-llm-lib v1.0.0/go.mod h1:j0ezF1uuqgLLh19UsFROwOWyk8+toJefhc8lq3uyYBA=
 golang.org/x/crypto v0.58.0 h1:COkYLr4k7nDI4r6QtMML2AfzeIswWHAJthLS6K/M/54=
 golang.org/x/crypto v0.58.0/go.mod h1:Xh+kl5A+M0gMiWDytH2Hhr5Z7WbNCpv/eB/EFgfSk+w=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=

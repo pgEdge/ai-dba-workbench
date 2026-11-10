@@ -5,7 +5,7 @@ go 1.26.10
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/jackc/pgx/v5 v5.9.2
-	github.com/pgEdge/pgedge-go-llm-lib v0.6.0
+	github.com/pgEdge/pgedge-go-llm-lib v1.0.0
 	github.com/pgedge/ai-workbench/collector v0.0.0
 	github.com/pgedge/ai-workbench/pkg v0.0.0
 	golang.org/x/crypto v0.58.0

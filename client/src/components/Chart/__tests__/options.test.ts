@@ -257,7 +257,8 @@ describe('buildBarOptions', () => {
         expect(result.xAxis.data).toEqual(servers.categories);
         expect(result.xAxis.axisLabel.interval).toBe(0);
         expect(result.xAxis.axisLabel.rotate).toBe(30);
-        expect(result.xAxis.axisLabel.formatter).toBeUndefined();
+        // Names pass through unchanged rather than being read as times.
+        expect(result.xAxis.axisLabel.formatter('pg-1')).toBe('pg-1');
     });
 
     it('labels every named category on a horizontal bar chart', () => {

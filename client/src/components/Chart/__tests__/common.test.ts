@@ -28,6 +28,7 @@ import {
     buildSeriesData,
     buildFilledMarkArea,
     buildLabelAxis,
+    middleEllipsis,
     isTimeCategories,
 } from '../options/common';
 
@@ -185,7 +186,7 @@ describe('buildLabelAxis', () => {
             rotate: number;
             width: number;
             overflow: string;
-            formatter?: unknown;
+            formatter: (value: string) => string;
         };
     }
 
@@ -197,7 +198,28 @@ describe('buildLabelAxis', () => {
         expect(axis.axisLabel.hideOverlap).toBe(false);
         expect(axis.axisLabel.overflow).toBe('truncate');
         expect(axis.axisLabel.width).toBeGreaterThan(0);
-        expect(axis.axisLabel.formatter).toBeUndefined();
+        expect(axis.axisLabel.formatter('pg-1')).toBe('pg-1');
+        expect(axis.axisLabel.formatter('replica-12')).toBe('replica-12');
+    });
+
+    it('keeps names that share a long prefix distinct', () => {
+        const names = [
+            'production-db-node-1',
+            'production-db-node-2',
+            'production-db-node-3',
+            'production-db-node-4',
+        ];
+        const axis = buildLabelAxis(names) as unknown as LabelAxisOpts;
+        const labels = names.map((n) => axis.axisLabel.formatter(n));
+        expect(labels).toEqual([
+            'produc\u2026node-1',
+            'produc\u2026node-2',
+            'produc\u2026node-3',
+            'produc\u2026node-4',
+        ]);
+        expect(new Set(labels).size).toBe(names.length);
+        // The axis data, which the tooltip shows, keeps the full names.
+        expect(axis.data).toEqual(names);
     });
 
     it('keeps a few labels level', () => {
@@ -223,6 +245,42 @@ describe('buildLabelAxis', () => {
         const axis = buildLabelAxis() as unknown as LabelAxisOpts;
         expect(axis.data).toEqual([]);
         expect(axis.axisLabel.rotate).toBe(0);
+    });
+});
+
+describe('middleEllipsis', () => {
+    it('leaves a name that fits untouched', () => {
+        expect(middleEllipsis('pg-1')).toBe('pg-1');
+        expect(middleEllipsis('')).toBe('');
+        expect(middleEllipsis('abcdefghijklm')).toBe('abcdefghijklm');
+    });
+
+    it('keeps the start and the end of a long name', () => {
+        expect(middleEllipsis('abcdefghijklmn')).toBe('abcdef\u2026ijklmn');
+        expect(middleEllipsis('production-db-node-12')).toBe(
+            'produc\u2026ode-12',
+        );
+    });
+
+    it('never exceeds the character budget', () => {
+        for (let max = 1; max <= 15; max++) {
+            const out = middleEllipsis('production-db-node-12', max);
+            expect(Array.from(out).length).toBeLessThanOrEqual(max);
+        }
+    });
+
+    it('gives the end the extra character for an even budget', () => {
+        expect(middleEllipsis('abcdefghij', 6)).toBe('ab\u2026hij');
+    });
+
+    it('returns only an ellipsis for a budget below two', () => {
+        expect(middleEllipsis('abcdef', 1)).toBe('\u2026');
+    });
+
+    it('does not split a surrogate pair', () => {
+        const name = '\u{1F600}'.repeat(20);
+        const out = middleEllipsis(name, 5);
+        expect(out).toBe('\u{1F600}\u{1F600}\u2026\u{1F600}\u{1F600}');
     });
 });
 

@@ -308,8 +308,46 @@ export function buildXAxis(categories?: string[]): object {
     };
 }
 
-/** Widest a named category label may grow before it is truncated. */
+/**
+ * Widest a named category label may grow. Labels are shortened to
+ * `LABEL_MAX_CHARS` first; ECharts' own end truncation at this width is
+ * only a safety net for names made of unusually wide characters.
+ */
 const LABEL_MAX_WIDTH = 96;
+
+/**
+ * Most characters, ellipsis included, that a named category label
+ * keeps. At the 14px axis font (`CHART_AXIS_LABEL_FONTSIZE`) a
+ * lowercase letter, digit or hyphen in Inter averages a little over
+ * 7px, so 13 characters fill about `LABEL_MAX_WIDTH`.
+ */
+const LABEL_MAX_CHARS = 13;
+
+/**
+ * Shortens a name to at most `maxChars` characters by replacing its
+ * middle with an ellipsis, keeping the start and the end, so that names
+ * sharing a long prefix (`production-db-node-1`, `production-db-node-2`)
+ * stay distinct (`produc…node-1`, `produc…node-2`). A name that already
+ * fits is returned unchanged. Characters are counted by code point, so
+ * a surrogate pair is never split.
+ */
+export function middleEllipsis(
+    name: string,
+    maxChars: number = LABEL_MAX_CHARS,
+): string {
+    const chars = Array.from(name);
+    if (chars.length <= maxChars) {
+        return name;
+    }
+    if (maxChars < 2) {
+        return '\u2026';
+    }
+    const keep = maxChars - 1;
+    const head = Math.floor(keep / 2);
+    const tail = keep - head;
+    return chars.slice(0, head).join('') + '\u2026'
+        + chars.slice(chars.length - tail).join('');
+}
 
 /**
  * Number of named categories above which a horizontal axis rotates its
@@ -324,8 +362,9 @@ const LABEL_ROTATION = 30;
  * Builds a category axis for named items, such as the servers of a
  * comparative bar chart. Unlike the time-series axis from `buildXAxis`,
  * which thins its labels to the ones that fit, every item is labelled
- * (`interval: 0`): a long name is truncated with an ellipsis whilst the
- * tooltip keeps the full name, and when there are more than a few
+ * (`interval: 0`): a long name is shortened in the middle
+ * (`middleEllipsis`), so that names sharing a prefix stay distinct,
+ * whilst the tooltip keeps the full name, and when there are more than a few
  * items on a horizontal axis the labels are rotated so that they do
  * not collide. A vertical axis (a horizontal bar chart) stacks its
  * labels, so it truncates them but never rotates them.
@@ -348,6 +387,7 @@ export function buildLabelAxis(
             interval: 0,
             hideOverlap: false,
             rotate,
+            formatter: (value: string) => middleEllipsis(value),
             width: LABEL_MAX_WIDTH,
             overflow: 'truncate',
         },

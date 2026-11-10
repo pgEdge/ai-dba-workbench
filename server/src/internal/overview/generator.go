@@ -208,6 +208,17 @@ func (g *Generator) EstateStatus() *Overview {
 	return statusOverview(statusGenerating, "")
 }
 
+// hasFreshScoped reports whether the scoped cache holds a summary for
+// key that is still within its stale duration, so that a request for
+// it will be answered without an LLM call. It does not count as an
+// access for eviction purposes.
+func (g *Generator) hasFreshScoped(key string) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	entry, ok := g.scopedCache[key]
+	return ok && time.Now().UTC().Before(entry.overview.StaleAt)
+}
+
 // recordEstateFailure notes a failed refresh. While no estate summary
 // exists it broadcasts an error notice to estate subscribers, which
 // would otherwise wait for a summary that is not coming; once one

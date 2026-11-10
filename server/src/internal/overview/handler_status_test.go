@@ -308,3 +308,66 @@ func TestPublishEstateOverview_Restart(t *testing.T) {
 		t.Errorf("expected the summary broadcast, got %+v", ov)
 	}
 }
+
+// TestHandleSSE_ScopedOpensWithGenerating checks that a scoped stream
+// whose summary is not freshly cached opens with a generating notice
+// before its result, and that a fresh cache hit is sent on its own.
+func TestHandleSSE_ScopedOpensWithGenerating(t *testing.T) {
+	stale := func(t *testing.T) *Generator {
+		g := cachedGenerator(t, nil, true, "server:1")
+		g.scopedCache["server:1"].overview.StaleAt = time.Now().UTC().Add(-time.Minute)
+		return g
+	}
+	tests := []struct {
+		name   string
+		g      func(t *testing.T) *Generator
+		target string
+		want   []string
+	}{
+		{
+			name:   "fresh server scope",
+			g:      func(t *testing.T) *Generator { return cachedGenerator(t, nil, false, "server:1") },
+			target: "/api/v1/overview/stream?scope_type=server&scope_id=1",
+			want:   []string{`"summary":"Cached server:1"`},
+		},
+		{
+			name:   "uncached server scope",
+			g:      func(t *testing.T) *Generator { return cachedGenerator(t, nil, true) },
+			target: "/api/v1/overview/stream?scope_type=server&scope_id=1",
+			want:   []string{`"status":"generating"`, `"status":"error"`},
+		},
+		{
+			name:   "stale server scope",
+			g:      stale,
+			target: "/api/v1/overview/stream?scope_type=server&scope_id=1",
+			want:   []string{`"status":"generating"`, `"status":"error"`},
+		},
+		{
+			name:   "fresh connection list",
+			g:      func(t *testing.T) *Generator { return cachedGenerator(t, nil, false, "connections:7") },
+			target: "/api/v1/overview/stream?connection_ids=7",
+			want:   []string{`"summary":"Cached connections:7"`},
+		},
+		{
+			name:   "uncached connection list",
+			g:      func(t *testing.T) *Generator { return cachedGenerator(t, nil, true) },
+			target: "/api/v1/overview/stream?connection_ids=7",
+			want:   []string{`"status":"generating"`, `"status":"error"`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newTestHandlerFor(t, tt.g(t), NewHub())
+			body := serveSSE(t, h, superuserContext(), tt.target, 300*time.Millisecond).Body.String()
+			data := sseDataLines(body)
+			if len(data) != len(tt.want) {
+				t.Fatalf("expected %d events, got %d:\n%s", len(tt.want), len(data), body)
+			}
+			for i, want := range tt.want {
+				if !strings.Contains(data[i], want) {
+					t.Errorf("event %d: expected %s, got %s", i, want, data[i])
+				}
+			}
+		})
+	}
+}

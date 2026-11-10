@@ -417,17 +417,28 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		}
 		direct <- overview
 	}
+	// A scoped stream whose summary is not freshly cached opens with a
+	// generating notice, as the estate stream does, so the card says
+	// so rather than showing its skeleton for as long as the LLM call
+	// takes. The scope key is also the generator's cache key.
+	noticeIfUncached := func() {
+		if !h.generator.hasFreshScoped(scopeKey) {
+			send(statusOverview(statusGenerating, ""))
+		}
+	}
 	switch {
 	case scopeKey == "":
 		send(h.generator.EstateStatus())
 	case connections && len(connectionIDs) == 0:
 		send(statusOverview(statusEmpty, ""))
 	case connections:
+		noticeIfUncached()
 		go func() {
 			deliver(h.generator.GetConnectionsSummary(connectionIDs, effectiveName, false))
 		}()
 	default:
 		// The key is "<scope_type>:<scope_id>", validated above.
+		noticeIfUncached()
 		go func() {
 			deliver(h.generator.GetScopedSummary(scopeType, scopeID, false))
 		}()

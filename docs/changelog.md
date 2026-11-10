@@ -1460,8 +1460,9 @@ project adheres to
   the page is reloaded (#808). The overview stream now delivers a
   cached or newly generated summary for the selected server or cluster
   straight to the browser that asked for it, or an error notice when
-  generation fails. The estate-wide stream opens with the cached
-  summary or, when none is ready, a generating or error notice, and a
+  generation fails. Every stream opens with the cached summary or,
+  when none is ready, a generating notice (or, on the estate-wide
+  stream, an error notice once its first refresh has failed), and a
   stream for a user who can see no connections opens with an empty
   notice. The panel shows a generic message when generation fails,
   with the details in the server log, and fetches the overview once

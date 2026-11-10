@@ -458,7 +458,10 @@ empty `connections:` key gets a `status: empty` notice and never falls
 back to any summary. `handleSSE` sends the stream's opening event
 itself (the cached or generated scoped summary, or a `generating`,
 `empty` or `error` notice) rather than waiting on the hub, because a
-cache hit or a failed generation broadcasts nothing (issue #808).
+cache hit or a failed generation broadcasts nothing (issue #808). A
+scoped stream with no fresh cache entry (`Generator.hasFreshScoped`)
+sends `generating` first, before the background fetch starts, so the
+notice can never overtake the summary.
 
 Scope names never leak a hidden resource. Both overview endpoints
 reject `connection_ids` combined with `scope_type` or `scope_id` with a

@@ -536,10 +536,10 @@ and the block counters as sums of non-negative deltas, and derives
 `max_exec_time` cannot be delta-aggregated and remain lifetime
 `pg_stat_statements` values. The two `QueryDetail` tiles that show
 them are therefore labelled `Min Time (All Time)` and `Max Time
-(All Time)`, whilst `Total Calls` and `Total Time` carry the
-selected window in their labels, `(Last 1h)` and so on, or `(Custom
-Range)`, so that they cannot be read as lifetime figures beside the
-min and max. The mean tile is plain `Mean Time` because it is the
+(All Time)`, whilst `Total Calls`, `Total Time` and `Mean Time`
+carry the selected window in their labels, `(Last 1h)` and so on,
+or `(Custom Range)`, so that they cannot be read as lifetime figures
+beside the min and max; the mean is windowed too, because it is the
 ratio of the two windowed totals. Any new tile reading a windowed
 endpoint must say in its label which of the two it is.
 
@@ -559,7 +559,7 @@ is a plain `float64`, so that distinction could not survive as such,
 but it does not need to: the top-queries SQL ends its `totals` CTE
 with `HAVING SUM(delta_calls) > 0`, so a statement that was not
 executed in the window falls out of the result entirely, the
-response is empty, `queryData` is `null`, and `Mean Time` renders
+response is empty, `queryData` is `null`, and the mean tile renders
 `--` exactly as `Total Calls` and `Total Time` do. A failed or
 pending fetch is handled once for the whole component, as the error
 message or the spinner. Keep any future windowed tile on that same

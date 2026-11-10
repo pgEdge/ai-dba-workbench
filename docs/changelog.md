@@ -1314,7 +1314,7 @@ project adheres to
   Total Calls, Total Time and Mean Time tiles now cover the selected
   window and name it in their labels, such as "Mean Time (Last 24h)"
   or "Mean Time (Custom Range)", whilst "Min Time (All Time)" and
-  "Max Time (All Time)" keep their lifetime figures. (#387)
+  "Max Time (All Time)" report their lifetime figures. (#387)
 
 - Add `idx_pg_stat_statements_identity_time` to
   `metrics.pg_stat_statements` through collector schema migration

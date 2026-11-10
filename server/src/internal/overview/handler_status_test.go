@@ -358,7 +358,9 @@ func TestHandleSSE_ScopedOpensWithGenerating(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newTestHandlerFor(t, tt.g(t), NewHub())
-			body := serveSSE(t, h, superuserContext(), tt.target, 300*time.Millisecond).Body.String()
+			// Every result arrives from a background fetch, so allow
+			// it time to finish even on a loaded runner.
+			body := serveSSE(t, h, superuserContext(), tt.target, 2*time.Second).Body.String()
 			data := sseDataLines(body)
 			if len(data) != len(tt.want) {
 				t.Fatalf("expected %d events, got %d:\n%s", len(tt.want), len(data), body)

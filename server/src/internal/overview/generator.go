@@ -13,9 +13,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	_ "github.com/pgEdge/pgedge-go-llm-lib/llm/all"
@@ -40,6 +42,25 @@ const (
 	scopedCacheMaxEntries = 100
 )
 
+// Status values sent to clients in place of an overview. They match
+// the status field of the REST generatingResponse.
+const (
+	// statusGenerating reports that no summary exists yet.
+	statusGenerating = "generating"
+
+	// statusEmpty reports that the caller can see no connections in
+	// the requested scope, so no summary will be generated.
+	statusEmpty = "empty"
+
+	// statusError reports that the summary could not be generated.
+	statusError = "error"
+)
+
+// generationFailedMessage is the client-facing text for a failed
+// summary generation. Provider errors stay in the server log, since
+// they can name the provider, endpoint or account.
+const generationFailedMessage = "The AI overview could not be generated; see the server log for details."
+
 // Overview holds the current AI-generated estate summary and metadata.
 type Overview struct {
 	Summary         string                   `json:"summary"`
@@ -47,6 +68,18 @@ type Overview struct {
 	StaleAt         time.Time                `json:"stale_at"`
 	Snapshot        *database.EstateSnapshot `json:"snapshot"`
 	RestartDetected bool                     `json:"restart_detected,omitempty"`
+
+	// Status, when set, marks a status notice rather than a summary;
+	// the handler sends it to clients as a generatingResponse. Error
+	// carries the client-facing message for statusError.
+	Status string `json:"-"`
+	Error  string `json:"-"`
+}
+
+// statusOverview returns a status notice to send in place of an
+// overview.
+func statusOverview(status, message string) *Overview {
+	return &Overview{Status: status, Error: message}
 }
 
 // scopedEntry is a cached scoped overview together with the time it
@@ -66,6 +99,7 @@ type Generator struct {
 	llmConfig    *llmproxy.Config
 	mu           sync.RWMutex
 	current      *Overview
+	estateFailed bool // The last refresh failed before any summary existed
 	lastSnapshot *database.EstateSnapshot
 	scopedCache  map[string]*scopedEntry
 	inflight     singleflight.Group
@@ -159,6 +193,39 @@ func (g *Generator) GetOverview() *Overview {
 	return g.current
 }
 
+// EstateStatus returns the current estate-wide overview or, when none
+// has been generated yet, a status notice: statusError when the last
+// refresh failed and statusGenerating otherwise. It never returns nil.
+func (g *Generator) EstateStatus() *Overview {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	if g.current != nil {
+		return g.current
+	}
+	if g.estateFailed {
+		return statusOverview(statusError, generationFailedMessage)
+	}
+	return statusOverview(statusGenerating, "")
+}
+
+// recordEstateFailure notes a failed refresh. While no estate summary
+// exists it broadcasts an error notice to estate subscribers, which
+// would otherwise wait for a summary that is not coming; once one
+// exists, clients keep it and the failure is only logged.
+func (g *Generator) recordEstateFailure() {
+	g.mu.Lock()
+	noSummary := g.current == nil
+	if noSummary {
+		g.estateFailed = true
+	}
+	hub := g.hub
+	g.mu.Unlock()
+
+	if noSummary && hub != nil {
+		hub.Broadcast(statusOverview(statusError, generationFailedMessage), "")
+	}
+}
+
 // GetScopedSummary returns a cached or freshly generated overview for
 // the given scope. The scopeType must be "server", "cluster", or
 // "group" and scopeID is the corresponding database identifier. Cached
@@ -249,23 +316,17 @@ func (g *Generator) GetScopedSummary(scopeType string, scopeID int, force bool) 
 
 // GetConnectionsSummary returns a cached or freshly generated overview
 // for an explicit list of connection IDs. The scopeName is used in the
-// LLM prompt to give context (e.g. "Spock Cluster: my-cluster"). The
-// cache key is derived from the sorted connection IDs so that the same
-// set of connections always hits the same cache entry regardless of the
-// order in which the IDs were supplied. Concurrent requests for the
-// same set of connections are deduplicated so that only one LLM call
-// is made.
+// LLM prompt to give context (e.g. "Spock Cluster: my-cluster"); it is
+// passed through sanitizeScopeName first. The cache key is derived from
+// the sorted connection IDs and the sanitized name, so that the same set
+// of connections always hits the same cache entry regardless of the
+// order in which the IDs were supplied, and a summary written around
+// one name is never served to a caller who asked under another.
+// Concurrent requests for the same key are deduplicated so that only
+// one LLM call is made.
 func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string, force bool) (*Overview, error) {
-	// Build a deterministic cache key from sorted connection IDs.
-	sorted := make([]int, len(connectionIDs))
-	copy(sorted, connectionIDs)
-	sortInts(sorted)
-
-	parts := make([]string, len(sorted))
-	for i, id := range sorted {
-		parts[i] = fmt.Sprintf("%d", id)
-	}
-	key := "connections:" + strings.Join(parts, ",")
+	scopeName = sanitizeScopeName(scopeName)
+	key := connectionsKey(connectionIDs, scopeName)
 
 	// Fast path: return cached entry if still fresh.
 	if !force {
@@ -342,6 +403,51 @@ func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string,
 	return overview, nil
 }
 
+// maxScopeNameLen caps, in runes, the scope name placed in a prompt and
+// a cache key.
+const maxScopeNameLen = 128
+
+// sanitizeScopeName prepares a scope name for the LLM prompt and the
+// cache key. The name may come from the caller, so it is trimmed, loses
+// quotes and control and formatting characters, which could otherwise
+// break out of the quoted name in the prompt, and is capped at
+// maxScopeNameLen runes. Applying it twice gives the same result.
+func sanitizeScopeName(name string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range strings.TrimSpace(name) {
+		if r == '"' || r == '\'' || r == '`' || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		if n == maxScopeNameLen {
+			break
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// connectionsKey returns the cache and hub key for a summary of the
+// given connections under the given, already sanitized, scope name:
+// "connections:" and the sorted IDs, then "|" and the name when there
+// is one. The IDs hold only digits and commas, so the name cannot be
+// confused with them.
+func connectionsKey(connectionIDs []int, scopeName string) string {
+	sorted := make([]int, len(connectionIDs))
+	copy(sorted, connectionIDs)
+	sortInts(sorted)
+	parts := make([]string, len(sorted))
+	for i, id := range sorted {
+		parts[i] = strconv.Itoa(id)
+	}
+	key := "connections:" + strings.Join(parts, ",")
+	if scopeName != "" {
+		key += "|" + scopeName
+	}
+	return key
+}
+
 // sortInts sorts a slice of ints in ascending order using insertion sort.
 // The slices are small (typically under 20 elements) so a simple
 // algorithm avoids importing sort.
@@ -392,11 +498,7 @@ func (g *Generator) evictScopedCacheLocked() {
 // is true the significant-change check is skipped and a new summary is
 // always generated.
 func (g *Generator) refresh(force bool) {
-	snapshot, err := g.datastore.GetEstateSnapshot(g.ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to get estate snapshot: %v\n", err)
-		return
-	}
+	snapshot := g.datastore.GetEstateSnapshot(g.ctx)
 
 	g.mu.RLock()
 	oldSnapshot := g.lastSnapshot
@@ -409,9 +511,18 @@ func (g *Generator) refresh(force bool) {
 	summary, err := g.generateSummary(g.ctx, snapshot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to generate summary: %v\n", err)
+		g.recordEstateFailure()
 		return
 	}
 
+	g.publishEstateOverview(oldSnapshot, snapshot, summary)
+}
+
+// publishEstateOverview stores a newly generated estate summary as the
+// current overview and broadcasts it to estate subscribers. When the
+// snapshot holds a restart newer than oldSnapshot, it flushes the
+// scoped cache and runs the restart callback.
+func (g *Generator) publishEstateOverview(oldSnapshot, snapshot *database.EstateSnapshot, summary string) {
 	now := time.Now().UTC()
 	overview := &Overview{
 		Summary:     summary,
@@ -429,6 +540,7 @@ func (g *Generator) refresh(force bool) {
 
 	g.mu.Lock()
 	g.current = overview
+	g.estateFailed = false
 	g.lastSnapshot = snapshot
 	if restartDetected {
 		g.scopedCache = make(map[string]*scopedEntry)

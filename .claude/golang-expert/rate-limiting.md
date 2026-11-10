@@ -17,9 +17,12 @@ capping LLM spend per user (issue #822).
   `overviewRateLimits` in `cmd/mcp-server/handlers.go`, not on SIGHUP.
 - Overview admission prefers a cached summary to a 429: a fresh cache
   hit is free, and a user out of tokens gets the stale entry if any.
-  Its cache keys (`connectionsCacheKey`, `scopedCacheKey`) must match
-  the keys `generator.go` builds inline; `TestCacheKeysMatchGenerator`
-  fails if they drift.
+  Connection lists are looked up with `connectionsKey(ids,
+  sanitizeScopeName(name))`, the key `GetConnectionsSummary` builds, so
+  a named or restricted-scope summary is found; `scopedCacheKey` must
+  match the key `GetScopedSummary` builds inline.
+  `TestCacheKeysMatchGenerator` and `TestRateLimit_PartialScopeCacheHit`
+  fail if they drift.
 - To limit another LLM feature (chat, server analysis), add a sibling
   under `llm.rate_limit.<feature>` and build a separate limiter, keyed
   by username, rather than sharing the overview buckets.

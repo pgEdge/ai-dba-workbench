@@ -9,6 +9,8 @@
  */
 
 import type React from 'react';
+import { useLayoutEffect } from 'react';
+import { createRoot } from 'react-dom/client';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
@@ -531,13 +533,16 @@ describe('AIOverview Component', () => {
             // No initial REST fetch should have been made
             expect(mockApiGet).not.toHaveBeenCalled();
 
-            // Advance past the 5-second grace period
+            // Advance past the 5-second grace period; the safety-net
+            // fetch runs because nothing has arrived yet
             await act(async () => {
                 vi.advanceTimersByTime(5_000);
             });
             await act(async () => {
                 await Promise.resolve();
             });
+
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
 
             // Advance by 10 seconds for first fallback poll
             await act(async () => {
@@ -547,7 +552,7 @@ describe('AIOverview Component', () => {
                 await Promise.resolve();
             });
 
-            expect(mockApiGet).toHaveBeenCalledTimes(1);
+            expect(mockApiGet).toHaveBeenCalledTimes(2);
 
             // Advance by another 10 seconds for second fallback poll
             await act(async () => {
@@ -557,7 +562,7 @@ describe('AIOverview Component', () => {
                 await Promise.resolve();
             });
 
-            expect(mockApiGet).toHaveBeenCalledTimes(2);
+            expect(mockApiGet).toHaveBeenCalledTimes(3);
         });
 
         it('clears fallback polling on unmount', async () => {
@@ -1072,7 +1077,17 @@ describe('AIOverview Component', () => {
                 .mockRejectedValueOnce(rateLimitedError(30))
                 .mockResolvedValue(makeOverviewResponse({ summary: 'Back again' }));
 
-            await pollOnce();
+            // The safety fetch 5 seconds after mounting is refused; the
+            // first fallback poll, 10 seconds later, succeeds.
+            await act(async () => {
+                renderWithTheme(<AIOverview />);
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(5_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
             expect(screen.getByRole('status')).toBeInTheDocument();
 
             await act(async () => {
@@ -1317,6 +1332,91 @@ describe('AIOverview Component', () => {
             // The original summary is still visible
             expect(screen.getByText('initial')).toBeInTheDocument();
         });
+
+        describe('when the selection changes mid-refresh', () => {
+            const serverOne = makeOverviewResponse({ summary: 'Server one.' });
+
+            beforeEach(() => {
+                vi.useFakeTimers();
+                // Server 1 has a streamed summary; server 2's stream
+                // stays silent, so its card relies on the REST fallback.
+                mockUseOverviewSSE.mockImplementation((url: string) => ({
+                    overview: url.includes('scope_id=1') ? serverOne : null,
+                    connected: true,
+                }));
+            });
+
+            afterEach(() => {
+                vi.useRealTimers();
+            });
+
+            /** Render server 1, click refresh, then switch to server 2. */
+            async function refreshThenSwitch() {
+                let rerender: ReturnType<typeof render>['rerender'] = () => {};
+                await act(async () => {
+                    ({ rerender } = renderWithTheme(
+                        <AIOverview selection={makeServerSelection(1)} />,
+                    ));
+                });
+                expect(screen.getByText('Server one.')).toBeInTheDocument();
+                await act(async () => {
+                    fireEvent.click(screen.getByLabelText('Refresh overview'));
+                });
+                await act(async () => {
+                    rerender(
+                        <ThemeProvider theme={theme}>
+                            <AIOverview selection={makeServerSelection(2)} />
+                        </ThemeProvider>,
+                    );
+                });
+            }
+
+            it('discards a refresh reply for the previous selection', async () => {
+                let resolveRefresh: (value: unknown) => void = () => {};
+                mockApiGet.mockImplementation((url: string) =>
+                    url.includes('refresh=true')
+                        ? new Promise((resolve) => { resolveRefresh = resolve; })
+                        : Promise.resolve({ status: 'generating', summary: null }),
+                );
+
+                await refreshThenSwitch();
+                await act(async () => {
+                    resolveRefresh(makeOverviewResponse({ summary: 'Server one refreshed.' }));
+                    await Promise.resolve();
+                });
+                // Server 2's safety-net fetch reports generating, which
+                // would keep a stale summary had the reply been applied.
+                await act(async () => {
+                    vi.advanceTimersByTime(5_000);
+                });
+                await act(async () => {
+                    await Promise.resolve();
+                });
+
+                expect(screen.queryByText('Server one refreshed.')).not.toBeInTheDocument();
+                expect(screen.getByText('Generating overview...')).toBeInTheDocument();
+            });
+
+            it('re-enables the refresh button for the new selection', async () => {
+                mockApiGet.mockImplementation((url: string) =>
+                    url.includes('refresh=true')
+                        ? new Promise(() => {})
+                        : Promise.resolve(makeOverviewResponse({ summary: 'Server two.' })),
+                );
+
+                await refreshThenSwitch();
+                await act(async () => {
+                    vi.advanceTimersByTime(5_000);
+                });
+                await act(async () => {
+                    await Promise.resolve();
+                });
+
+                expect(screen.getByText('Server two.')).toBeInTheDocument();
+                const button = screen.getByLabelText('Refresh overview') as HTMLButtonElement;
+                expect(button.disabled).toBe(false);
+            });
+        });
     });
 
     describe('Analyze button visibility', () => {
@@ -1399,7 +1499,7 @@ describe('AIOverview Component', () => {
     });
 
     describe('Error / no-data render branch', () => {
-        it('renders nothing when fetchOverview reports a non-401 error', async () => {
+        it('shows an error message when fetchOverview reports a non-401 error', async () => {
             vi.useFakeTimers();
             mockUseOverviewSSE.mockReturnValue({ overview: null, connected: false });
             mockApiGet.mockRejectedValue(new Error('boom'));
@@ -1417,15 +1517,269 @@ describe('AIOverview Component', () => {
                 await Promise.resolve();
             });
 
-            // After error, error || !overview is true: component returns null
+            // The card reports the failure rather than vanishing.
             // Cast through `unknown` so the TS narrowing inside the
             // async-callback closure does not flag the variable as
             // possibly null while keeping the assertion type-safe.
             const rendered = result as unknown as ReturnType<typeof render>;
-            expect(rendered.container.firstChild).toBeNull();
+            expect(rendered.container.textContent).toContain(
+                'Unable to load AI overview',
+            );
 
             errorSpy.mockRestore();
             vi.useRealTimers();
+        });
+
+        it('renders nothing when the stream reports no visible connections', () => {
+            mockUseOverviewSSE.mockReturnValue({
+                overview: { status: 'empty', summary: null, generated_at: '', stale_at: '' },
+                connected: true,
+            });
+
+            const { container } = renderWithTheme(<AIOverview />);
+
+            expect(container.firstChild).toBeNull();
+        });
+    });
+
+    describe('Generation failures and the loading safety net (#808)', () => {
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('shows the server message when generation failed', () => {
+            mockUseOverviewSSE.mockReturnValue({
+                overview: {
+                    status: 'error',
+                    error: 'Generation failed upstream.',
+                    summary: null,
+                    generated_at: '',
+                    stale_at: '',
+                },
+                connected: true,
+            });
+
+            renderWithTheme(<AIOverview />);
+
+            expect(screen.getByRole('alert')).toHaveTextContent(
+                'Generation failed upstream.',
+            );
+            expect(screen.queryByText('Generating overview...')).not.toBeInTheDocument();
+        });
+
+        it('falls back to a generic message when the error has no text', () => {
+            mockUseOverviewSSE.mockReturnValue({
+                overview: { status: 'error', summary: null, generated_at: '', stale_at: '' },
+                connected: true,
+            });
+
+            renderWithTheme(<AIOverview />);
+
+            expect(screen.getByRole('alert')).toHaveTextContent(
+                'The AI overview could not be generated.',
+            );
+        });
+
+        it('fetches once over REST when the stream delivers nothing in 5s', async () => {
+            vi.useFakeTimers();
+            mockUseOverviewSSE.mockReturnValue({ overview: null, connected: true });
+            mockApiGet.mockResolvedValue(makeOverviewResponse({ summary: 'From REST.' }));
+
+            await act(async () => {
+                renderWithTheme(<AIOverview />);
+            });
+            expect(mockApiGet).not.toHaveBeenCalled();
+
+            await act(async () => {
+                vi.advanceTimersByTime(5_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
+            expect(screen.getByText('From REST.')).toBeInTheDocument();
+
+            // Connected and no longer loading: no further REST calls
+            await act(async () => {
+                vi.advanceTimersByTime(30_000);
+            });
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
+        });
+
+        it('keeps a streamed summary when a poll returns generating', async () => {
+            vi.useFakeTimers();
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse({ summary: 'Streamed.' }),
+                connected: false,
+            });
+            mockApiGet.mockResolvedValue({ status: 'generating', summary: null });
+
+            await act(async () => {
+                renderWithTheme(<AIOverview />);
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(15_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+
+            expect(mockApiGet).toHaveBeenCalled();
+            expect(screen.getByText('Streamed.')).toBeInTheDocument();
+        });
+
+        it('discards a REST response that arrives after the selection changed', async () => {
+            vi.useFakeTimers();
+            mockUseOverviewSSE.mockReturnValue({ overview: null, connected: true });
+            let resolveFirst: (value: unknown) => void = () => {};
+            let rejectSecond: (reason: unknown) => void = () => {};
+            mockApiGet
+                .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+                .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectSecond = reject; }))
+                .mockResolvedValue(makeOverviewResponse({ summary: 'Server three.' }));
+
+            let rerender: ReturnType<typeof render>['rerender'] = () => {};
+            await act(async () => {
+                ({ rerender } = renderWithTheme(
+                    <AIOverview selection={makeServerSelection(1)} />,
+                ));
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(5_000);
+            });
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
+
+            // Switch to server 2 and let its safety-net fetch start
+            await act(async () => {
+                rerender(
+                    <ThemeProvider theme={theme}>
+                        <AIOverview selection={makeServerSelection(2)} />
+                    </ThemeProvider>,
+                );
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(5_000);
+            });
+            expect(mockApiGet).toHaveBeenCalledTimes(2);
+
+            // Switch to server 3, then both stale responses land
+            await act(async () => {
+                rerender(
+                    <ThemeProvider theme={theme}>
+                        <AIOverview selection={makeServerSelection(3)} />
+                    </ThemeProvider>,
+                );
+            });
+            await act(async () => {
+                resolveFirst(makeOverviewResponse({ summary: 'Server one.' }));
+                rejectSecond(new Error('late failure'));
+                await Promise.resolve();
+            });
+
+            expect(screen.queryByText('Server one.')).not.toBeInTheDocument();
+            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+            await act(async () => {
+                vi.advanceTimersByTime(5_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+            expect(screen.getByText('Server three.')).toBeInTheDocument();
+        });
+
+        it('keeps a streamed summary on screen when a REST poll fails', async () => {
+            vi.useFakeTimers();
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse({ summary: 'Streamed.' }),
+                connected: false,
+            });
+            mockApiGet.mockRejectedValue(new Error('boom'));
+            const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+            await act(async () => {
+                renderWithTheme(<AIOverview />);
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(15_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+
+            expect(mockApiGet).toHaveBeenCalled();
+            expect(errorSpy).toHaveBeenCalled();
+            expect(screen.getByText('Streamed.')).toBeInTheDocument();
+            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+            errorSpy.mockRestore();
+        });
+
+        // Outside act(), React commits a default-priority update in one
+        // task and runs its passive effects in a later one, so a reply
+        // whose promise settles during the commit is handled in between.
+        // The guard must already name the new selection by then.
+        it('discards a reply for the previous selection that settles during the commit', async () => {
+            vi.useFakeTimers({
+                toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+            });
+            mockUseOverviewSSE.mockReturnValue({ overview: null, connected: true });
+            let resolveFirst: (value: unknown) => void = () => {};
+            mockApiGet
+                .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+                .mockImplementation(() => new Promise(() => {}));
+
+            // Settles the first reply from inside the commit that
+            // switches to server 2, then holds the commit past the
+            // scheduler's 5ms slice so that it yields before running
+            // the passive effects.
+            const SettleOnSwitch = ({ id }: { id: number }) => {
+                useLayoutEffect(() => {
+                    if (id === 2) {
+                        resolveFirst(makeOverviewResponse({ summary: 'Server one.' }));
+                        const until = performance.now() + 20;
+                        while (performance.now() < until) {
+                            // busy-wait
+                        }
+                    }
+                }, [id]);
+                return null;
+            };
+            const tree = (id: number) => (
+                <ThemeProvider theme={theme}>
+                    <AIOverview selection={makeServerSelection(id)} />
+                    <SettleOnSwitch id={id} />
+                </ThemeProvider>
+            );
+            const nextTask = () => new Promise<void>((resolve) => { setImmediate(resolve); });
+            const settle = async () => {
+                for (let i = 0; i < 10; i++) {
+                    await nextTask();
+                }
+            };
+
+            const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+            const actEnvironment = env.IS_REACT_ACT_ENVIRONMENT;
+            env.IS_REACT_ACT_ENVIRONMENT = false;
+            const container = document.createElement('div');
+            document.body.appendChild(container);
+            const root = createRoot(container);
+            try {
+                root.render(tree(1));
+                await settle();
+                vi.advanceTimersByTime(5_000);
+                await settle();
+                expect(mockApiGet).toHaveBeenCalledTimes(1);
+
+                root.render(tree(2));
+                await settle();
+
+                expect(container.textContent).not.toContain('Server one.');
+            } finally {
+                root.unmount();
+                container.remove();
+                env.IS_REACT_ACT_ENVIRONMENT = actEnvironment;
+            }
         });
     });
 });

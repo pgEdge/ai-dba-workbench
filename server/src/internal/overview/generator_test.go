@@ -675,10 +675,10 @@ func TestGetConnectionsSummary_ForceBypassesCache(t *testing.T) {
 		ctx:         context.Background(),
 	}
 
-	// Pre-populate a fresh cached entry for connections:1,2.
+	// Pre-populate a fresh cached entry for connections 1,2 named "test".
 	now := time.Now().UTC()
 	g.mu.Lock()
-	g.scopedCache["connections:1,2"] = &scopedEntry{
+	g.scopedCache[connectionsKey([]int{1, 2}, "test")] = &scopedEntry{
 		overview: &Overview{
 			Summary:     "Cached connections overview.",
 			GeneratedAt: now,

@@ -7942,7 +7942,7 @@
           {
             "name": "connection_ids",
             "in": "query",
-            "description": "Comma-separated connection IDs",
+            "description": "Comma-separated connection IDs; cannot be combined with scope_type or scope_id",
             "schema": {
               "type": "string"
             }
@@ -7950,7 +7950,7 @@
           {
             "name": "scope_type",
             "in": "query",
-            "description": "Scope type (estate, group, cluster, server)",
+            "description": "Scope type (server, cluster, group)",
             "schema": {
               "type": "string"
             }
@@ -7966,7 +7966,7 @@
           {
             "name": "scope_name",
             "in": "query",
-            "description": "Scope display name",
+            "description": "Display name for a connection_ids summary; trimmed, stripped of quotes and control characters and capped at 128 characters. Ignored with scope_type or scope_id, whose name is looked up on the server",
             "schema": {
               "type": "string"
             }
@@ -7983,8 +7983,28 @@
               }
             }
           },
+          "400": {
+            "description": "connection_ids combined with scope_type or scope_id, or an invalid parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The scope does not exist or is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -8010,6 +8030,16 @@
                 }
               }
             }
+          },
+          "500": {
+            "description": "Connection visibility could not be resolved, or a scoped or connections summary could not be generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -8022,7 +8052,7 @@
     "/overview/stream": {
       "get": {
         "summary": "Stream overview generation",
-        "description": "Streams overview generation progress via Server-Sent Events (SSE)",
+        "description": "Streams overviews via Server-Sent Events (SSE). Each overview event carries an OverviewResponse payload; every stream opens with the cached summary or, when none is fresh, a generating notice (the estate-wide stream sends an error notice instead once its first refresh has failed), a scoped stream then sends its summary, or an error notice, once it is ready, and a stream over no visible connections opens with an empty notice. Status notices carry no event id",
         "operationId": "streamOverview",
         "tags": [
           "Overview"
@@ -8031,7 +8061,7 @@
           {
             "name": "connection_ids",
             "in": "query",
-            "description": "Comma-separated connection IDs",
+            "description": "Comma-separated connection IDs; cannot be combined with scope_type or scope_id",
             "schema": {
               "type": "string"
             }
@@ -8039,7 +8069,7 @@
           {
             "name": "scope_type",
             "in": "query",
-            "description": "Scope type (estate, group, cluster, server)",
+            "description": "Scope type (server, cluster, group)",
             "schema": {
               "type": "string"
             }
@@ -8048,6 +8078,14 @@
             "name": "scope_id",
             "in": "query",
             "description": "Scope entity ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope_name",
+            "in": "query",
+            "description": "Display name for a connection_ids summary; trimmed, stripped of quotes and control characters and capped at 128 characters. Ignored with scope_type or scope_id, whose name is looked up on the server",
             "schema": {
               "type": "string"
             }
@@ -8065,8 +8103,28 @@
               }
             }
           },
+          "400": {
+            "description": "connection_ids combined with scope_type or scope_id, or an invalid parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The scope does not exist or is not visible to the caller",
             "content": {
               "application/json": {
                 "schema": {
@@ -8089,6 +8147,16 @@
               "text/plain": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Connection visibility could not be resolved, or the server does not support streaming",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -14192,6 +14260,10 @@
       "OverviewResponse": {
         "type": "object",
         "properties": {
+          "error": {
+            "type": "string",
+            "description": "Generic failure message, present when status is error"
+          },
           "generated_at": {
             "type": "string",
             "format": "date-time",
@@ -14199,11 +14271,11 @@
           },
           "status": {
             "type": "string",
-            "description": "Overview status (ready, generating)"
+            "description": "Present only when no summary is available: generating (no summary yet), empty (the caller can see no connections in the scope) or error (generation failed)"
           },
           "summary": {
-            "type": "object",
-            "description": "AI-generated summary",
+            "type": "string",
+            "description": "AI-generated summary; null while a status is reported",
             "nullable": true
           }
         }

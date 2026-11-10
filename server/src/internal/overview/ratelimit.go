@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -115,7 +114,7 @@ func (h *Handler) allowEstateRefresh(r *http.Request) bool {
 // list, subject to the caller's generation limits. When ok is false a
 // 429 response has been written and the caller must return.
 func (h *Handler) connectionsSummary(w http.ResponseWriter, r *http.Request, ids []int, scopeName string, refresh bool) (*Overview, bool, error) {
-	adm, ok := h.admitGeneration(w, r, connectionsCacheKey(ids), refresh)
+	adm, ok := h.admitGeneration(w, r, connectionsKey(ids, sanitizeScopeName(scopeName)), refresh)
 	if !ok {
 		return nil, false, nil
 	}
@@ -148,7 +147,7 @@ func (h *Handler) scopedSummary(w http.ResponseWriter, r *http.Request, scopeTyp
 // stale cached summary to send in place of generating one. When ok is
 // false a 429 response has been written and the caller must return.
 func (h *Handler) admitStream(w http.ResponseWriter, r *http.Request, scopeKey string) (*Overview, bool) {
-	if scopeKey == "" || scopeKey == connectionsCacheKey(nil) {
+	if scopeKey == "" || scopeKey == connectionsKey(nil, "") {
 		return nil, true
 	}
 	adm, ok := h.admitGeneration(w, r, scopeKey, false)
@@ -166,25 +165,11 @@ func writeRateLimited(w http.ResponseWriter, wait time.Duration) {
 	http.Error(w, "Too many AI overview requests; try again later", http.StatusTooManyRequests)
 }
 
-// connectionsCacheKey returns the summary cache key, which is also the
-// SSE scope key, for a list of connection IDs. The IDs are sorted so
-// that the same set always maps to the same key. It must match the key
-// GetConnectionsSummary builds; TestCacheKeysMatchGenerator checks it.
-func connectionsCacheKey(ids []int) string {
-	sorted := make([]int, len(ids))
-	copy(sorted, ids)
-	sortInts(sorted)
-
-	parts := make([]string, len(sorted))
-	for i, id := range sorted {
-		parts[i] = strconv.Itoa(id)
-	}
-	return "connections:" + strings.Join(parts, ",")
-}
-
 // scopedCacheKey returns the summary cache key, which is also the SSE
 // scope key, for a server, cluster or group scope. It must match the
 // key GetScopedSummary builds; TestCacheKeysMatchGenerator checks it.
+// Connection lists use connectionsKey, which GetConnectionsSummary
+// itself builds, so the two cannot drift.
 func scopedCacheKey(scopeType string, scopeID int) string {
 	return fmt.Sprintf("%s:%d", scopeType, scopeID)
 }

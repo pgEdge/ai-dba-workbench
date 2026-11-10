@@ -599,10 +599,7 @@ func TestCollectorSchema_TopologyEstateAndRelationships(t *testing.T) {
 	})
 
 	t.Run("estate snapshot", func(t *testing.T) {
-		snap, err := ds.GetEstateSnapshot(ctx)
-		if err != nil {
-			t.Fatalf("GetEstateSnapshot: %v", err)
-		}
+		snap := ds.GetEstateSnapshot(ctx)
 		for _, s := range snap.Servers {
 			if s.ID == f.gone {
 				t.Errorf("estate snapshot lists the marked connection")
@@ -944,8 +941,8 @@ func TestCollectorSchema_ClosedPoolErrors(t *testing.T) {
 	if err := ds.RefreshClusterAssignments(ctx); err == nil {
 		t.Error("RefreshClusterAssignments succeeded")
 	}
-	if snap, err := ds.GetEstateSnapshot(ctx); err != nil || snap.ServerTotal != 0 {
-		t.Errorf("GetEstateSnapshot = %+v, %v", snap, err)
+	if snap := ds.GetEstateSnapshot(ctx); snap.ServerTotal != 0 {
+		t.Errorf("GetEstateSnapshot = %+v", snap)
 	}
 	if snap := ds.GetConnectionsSnapshot(ctx, []int{1}); snap.ServerTotal != 0 {
 		t.Errorf("GetConnectionsSnapshot = %+v", snap)
@@ -1051,11 +1048,7 @@ func TestCollectorSchema_RecentEventsIncludeAlertActivity(t *testing.T) {
 	}
 
 	t.Run("estate", func(t *testing.T) {
-		snap, err := e.ds.GetEstateSnapshot(e.ctx)
-		if err != nil {
-			t.Fatalf("GetEstateSnapshot: %v", err)
-		}
-		check(t, snap)
+		check(t, e.ds.GetEstateSnapshot(e.ctx))
 	})
 
 	t.Run("server", func(t *testing.T) {
@@ -1120,10 +1113,7 @@ func TestCollectorSchema_RecentEventsChangeChurnKeepsRestart(t *testing.T) {
 				time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)}[i]})
 	}
 
-	snap, err := e.ds.GetEstateSnapshot(e.ctx)
-	if err != nil {
-		t.Fatalf("GetEstateSnapshot: %v", err)
-	}
+	snap := e.ds.GetEstateSnapshot(e.ctx)
 	counts := map[string]int{}
 	for _, ev := range snap.RecentEvents {
 		counts[ev.EventType]++

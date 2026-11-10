@@ -1464,6 +1464,34 @@ project adheres to
   `order_by=dead_tuple_ratio` for this on probes with `n_live_tup`
   and `n_dead_tup` columns.
 
+- Stop the AI Overview panel waiting on its loading placeholder until
+  the page is reloaded (#808). The overview stream now delivers a
+  cached or newly generated summary for the selected server or cluster
+  straight to the browser that asked for it, or an error notice when
+  generation fails. Every stream opens with the cached summary or,
+  when none is ready, a generating notice (or, on the estate-wide
+  stream, an error notice once its first refresh has failed), and a
+  stream for a user who can see no connections opens with an empty
+  notice. The panel shows a generic message when generation fails,
+  with the details in the server log, and fetches the overview once
+  over the REST API if nothing has arrived five seconds after the
+  selection changes. The `GET /api/v1/overview` endpoint now returns
+  `status: error` with an `error` message, rather than
+  `status: generating`, when the first estate overview could not be
+  generated.
+
+- Stop a scoped AI Overview revealing resources the user cannot see.
+  Both overview endpoints now return `400 Bad Request` when
+  `connection_ids` is combined with `scope_type` or `scope_id`. A
+  scope's display name is looked up only after the user's access to the
+  scope has been confirmed, and the `scope_name` parameter is used only
+  with `connection_ids`; it is trimmed, stripped of quotes and control
+  characters, capped at 128 characters and kept apart in the cache, so
+  two users naming the same connections differently never share a
+  summary. The blackouts summarised for a server or cluster overview
+  now include only those that apply to its connections, rather than
+  every active blackout in the estate.
+
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled
   toggle, or a failed delete, replaced the whole page with the error

@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -73,6 +74,12 @@ type EstateSnapshot struct {
 	ActiveBlackouts   []EstateBlackoutSummary `json:"active_blackouts"`
 	UpcomingBlackouts []EstateBlackoutSummary `json:"upcoming_blackouts"`
 	RecentEvents      []EstateEventSummary    `json:"recent_events"`
+	// RecentEventTotal counts every timeline event in the last 24
+	// hours, including those beyond the RecentEvents sample.
+	RecentEventTotal int `json:"recent_event_total"`
+	// RecentAlertEventTotal counts the alert fired, cleared and
+	// acknowledged events included in RecentEventTotal.
+	RecentAlertEventTotal int `json:"recent_alert_event_total"`
 }
 
 // ConnectionContext holds comprehensive system context for a monitored connection
@@ -153,7 +160,7 @@ func (d *Datastore) GetEstateSnapshot(ctx context.Context) (*EstateSnapshot, err
 	d.gatherEstateBlackoutData(snapshotCtx, snapshot)
 
 	// Gather recent events from the last 24 hours
-	d.gatherEstateRecentEvents(snapshotCtx, snapshot)
+	d.gatherRecentEvents(snapshotCtx, snapshot, nil, "GetEstateSnapshot")
 
 	return snapshot, nil
 }
@@ -293,32 +300,85 @@ func (d *Datastore) gatherEstateBlackoutData(ctx context.Context, snapshot *Esta
 	}
 }
 
-// gatherEstateRecentEvents populates recent events from the last 24
-// hours, focusing on restarts, configuration changes, and blackout
-// transitions. Events are returned in reverse chronological order
-// with a maximum of 20 entries.
-func (d *Datastore) gatherEstateRecentEvents(ctx context.Context, snapshot *EstateSnapshot) {
+// recentEventSampleLimit bounds how many events of each category the
+// snapshot carries as a sample for the AI overview prompt.
+const recentEventSampleLimit = 20
+
+// recentRestartEventTypes holds the restart event type, which is
+// sampled on its own so that no burst of other events can push a
+// restart out of the sample; restart detection in the overview
+// generator depends on seeing it.
+var recentRestartEventTypes = []string{
+	EventTypeRestart,
+}
+
+// recentChangeEventTypes are the timeline event types, other than
+// restarts and alert activity, that the AI overview reports as
+// recent events.
+var recentChangeEventTypes = []string{
+	EventTypeConfigChange,
+	EventTypeHBAChange,
+	EventTypeIdentChange,
+	EventTypeExtensionChange,
+	EventTypeBlackoutStarted,
+	EventTypeBlackoutEnded,
+}
+
+// recentAlertEventTypes are the alert activity event types that the
+// AI overview reports as recent events.
+var recentAlertEventTypes = []string{
+	EventTypeAlertFired,
+	EventTypeAlertCleared,
+	EventTypeAlertAcknowledged,
+}
+
+// gatherRecentEvents populates recent events from the last 24 hours,
+// covering every event type the Event Timeline shows. Restarts, other
+// change events (configuration, HBA, ident, extension and blackout
+// transitions) and alert events are each sampled up to
+// recentEventSampleLimit entries, merged in reverse chronological
+// order, and counted in full in RecentEventTotal and
+// RecentAlertEventTotal. A nil or empty connectionIDs covers the
+// whole estate. The caller names the public entry point for logging.
+func (d *Datastore) gatherRecentEvents(ctx context.Context, snapshot *EstateSnapshot, connectionIDs []int, caller string) {
 	now := time.Now().UTC()
 	dayAgo := now.Add(-24 * time.Hour)
 
-	result, err := d.GetTimelineEvents(ctx, TimelineFilter{
-		StartTime: dayAgo,
-		EndTime:   now,
-		EventTypes: []string{
-			EventTypeRestart,
-			EventTypeConfigChange,
-			EventTypeBlackoutStarted,
-			EventTypeBlackoutEnded,
-		},
-		Limit: 20,
-	})
-	if err != nil {
-		logger.Errorf("GetEstateSnapshot: failed to get timeline events: %v", err)
-		return
+	categories := []struct {
+		types []string
+		alert bool
+	}{
+		{types: recentRestartEventTypes},
+		{types: recentChangeEventTypes},
+		{types: recentAlertEventTypes, alert: true},
 	}
 
-	for i := range result.Events {
-		event := &result.Events[i]
+	var events []TimelineEvent
+	for _, category := range categories {
+		result, err := d.GetTimelineEvents(ctx, TimelineFilter{
+			StartTime:     dayAgo,
+			EndTime:       now,
+			ConnectionIDs: connectionIDs,
+			EventTypes:    category.types,
+			Limit:         recentEventSampleLimit,
+		})
+		if err != nil {
+			logger.Errorf("%s: failed to get timeline events: %v", caller, err)
+			continue
+		}
+		events = append(events, result.Events...)
+		snapshot.RecentEventTotal += result.TotalCount
+		if category.alert {
+			snapshot.RecentAlertEventTotal += result.TotalCount
+		}
+	}
+
+	sort.SliceStable(events, func(i, j int) bool {
+		return events[i].OccurredAt.After(events[j].OccurredAt)
+	})
+
+	for i := range events {
+		event := &events[i]
 		snapshot.RecentEvents = append(snapshot.RecentEvents, EstateEventSummary{
 			EventType:  event.EventType,
 			ServerName: event.ServerName,
@@ -421,7 +481,7 @@ func (d *Datastore) buildScopedSnapshot(ctx context.Context, connectionIDs []int
 	d.gatherEstateBlackoutData(snapshotCtx, snapshot)
 
 	// Gather recent events filtered to the given connections.
-	d.gatherScopedRecentEvents(snapshotCtx, snapshot, connectionIDs)
+	d.gatherRecentEvents(snapshotCtx, snapshot, connectionIDs, "GetScopedSnapshot")
 
 	return snapshot
 }
@@ -650,41 +710,6 @@ func (d *Datastore) gatherScopedAlertData(ctx context.Context, snapshot *EstateS
 				Severity:   result.Alerts[i].Severity,
 			})
 		}
-	}
-}
-
-// gatherScopedRecentEvents populates recent events from the last 24
-// hours for a specific set of connection IDs.
-func (d *Datastore) gatherScopedRecentEvents(ctx context.Context, snapshot *EstateSnapshot, connectionIDs []int) {
-	now := time.Now().UTC()
-	dayAgo := now.Add(-24 * time.Hour)
-
-	result, err := d.GetTimelineEvents(ctx, TimelineFilter{
-		StartTime:     dayAgo,
-		EndTime:       now,
-		ConnectionIDs: connectionIDs,
-		EventTypes: []string{
-			EventTypeRestart,
-			EventTypeConfigChange,
-			EventTypeBlackoutStarted,
-			EventTypeBlackoutEnded,
-		},
-		Limit: 20,
-	})
-	if err != nil {
-		logger.Errorf("GetScopedSnapshot: failed to get timeline events: %v", err)
-		return
-	}
-
-	for i := range result.Events {
-		snapshot.RecentEvents = append(snapshot.RecentEvents, EstateEventSummary{
-			EventType:  result.Events[i].EventType,
-			ServerName: result.Events[i].ServerName,
-			OccurredAt: result.Events[i].OccurredAt,
-			Severity:   result.Events[i].Severity,
-			Title:      result.Events[i].Title,
-			Summary:    result.Events[i].Summary,
-		})
 	}
 }
 

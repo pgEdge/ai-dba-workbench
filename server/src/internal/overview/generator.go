@@ -487,6 +487,36 @@ func (g *Generator) hasSignificantChange(old, current *database.EstateSnapshot) 
 		return true
 	}
 
+	// Timeline activity since the previous summary, such as alerts
+	// firing and clearing, leaves the counts above unchanged, so it
+	// would otherwise never refresh the summary. Regenerate for it once
+	// the previous summary has gone stale, which bounds the extra LLM
+	// calls to one per staleDuration.
+	if !current.Timestamp.Before(old.Timestamp.Add(staleDuration)) &&
+		containsEventAfter(current, old.Timestamp) {
+		return true
+	}
+
+	return false
+}
+
+// pluralise formats a count with its noun, adding "s" to the noun
+// unless the count is exactly one.
+func pluralise(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// containsEventAfter reports whether the snapshot contains any recent
+// event, of any type, that occurred strictly after the given time.
+func containsEventAfter(snapshot *database.EstateSnapshot, after time.Time) bool {
+	for _, ev := range snapshot.RecentEvents {
+		if ev.OccurredAt.After(after) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -672,8 +702,14 @@ func writeSnapshotData(b *strings.Builder, s *database.EstateSnapshot) {
 		fmt.Fprintf(b, "- Upcoming blackout (%s): %s\n", bo.Scope, bo.Reason)
 	}
 
-	// Recent events
-	fmt.Fprintf(b, "- Recent Events (last 24h): %d\n", len(s.RecentEvents))
+	// Recent events. The snapshot carries only a sample of the most
+	// recent events, so report the full count alongside it.
+	total := max(s.RecentEventTotal, len(s.RecentEvents))
+	fmt.Fprintf(b, "- Recent Events (last 24h): %d total (%s)\n",
+		total, pluralise(s.RecentAlertEventTotal, "alert event"))
+	if total > len(s.RecentEvents) {
+		fmt.Fprintf(b, "- Most recent %s:\n", pluralise(len(s.RecentEvents), "event"))
+	}
 	for _, ev := range s.RecentEvents {
 		fmt.Fprintf(b, "- %s on %s: %s\n", ev.EventType, ev.ServerName, ev.Title)
 	}

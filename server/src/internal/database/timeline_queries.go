@@ -641,68 +641,102 @@ func buildHBAChangeCountQuery(whereClause string) string {
 	}(), extraFilter)
 }
 
-// buildIdentChangeQuery creates the subquery for ident mapping changes
-// Excludes initial collection (first snapshot) since that's not really a "change"
-func buildIdentChangeQuery(whereClause string) string {
+// identSnapshotMappings is the SQL expression that collects the
+// mappings of one stored pg_ident.conf snapshot, ordered by map number,
+// so that consecutive snapshots can be compared. It reads from the
+// table alias given as its argument.
+func identSnapshotMappings(alias string) string {
+	return fmt.Sprintf(`jsonb_agg(jsonb_build_object(
+                    'map_name', %[1]s.map_name,
+                    'sys_name', %[1]s.sys_name,
+                    'pg_username', %[1]s.pg_username
+                ) ORDER BY %[1]s.map_number)`, alias)
+}
+
+// identPreviousSnapshotJoin is the LATERAL join that fetches, as
+// prev.mappings, the mappings of the snapshot stored immediately before
+// cur.collected_at for cur.connection_id. It looks back across the
+// whole table rather than only the requested time window, so the first
+// snapshot inside the window is still compared with its predecessor.
+// prev.mappings is NULL when there is no earlier snapshot.
+func identPreviousSnapshotJoin() string {
+	return fmt.Sprintf(`
+        LEFT JOIN LATERAL (
+            SELECT %s AS mappings
+            FROM metrics.pg_ident_file_mappings p
+            WHERE p.connection_id = cur.connection_id
+              AND p.collected_at = (
+                  SELECT MAX(collected_at)
+                  FROM metrics.pg_ident_file_mappings
+                  WHERE connection_id = cur.connection_id
+                    AND collected_at < cur.collected_at
+              )
+        ) prev ON TRUE`, identSnapshotMappings("p"))
+}
+
+// identCurrentSnapshots is the subquery, aliased cur by the caller,
+// that groups the stored ident mappings within whereClause into one row
+// per (connection_id, collected_at) snapshot.
+func identCurrentSnapshots(whereClause string) string {
 	tableWhere := strings.ReplaceAll(whereClause, "event_time", "i.collected_at")
 	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "i.connection_id")
 
 	return fmt.Sprintf(`
-        SELECT
-            'ident-' || i.connection_id || '-' || i.collected_at::TEXT AS id,
-            '%s' AS event_type,
-            i.connection_id,
-            COALESCE(c.name, 'Unknown') AS server_name,
-            i.collected_at AS event_time,
-            'info' AS severity,
-            'Ident Mappings Changed' AS title,
-            'Updated pg_ident.conf with ' || COUNT(*) || ' mappings' AS summary,
-            jsonb_build_object(
-                'mapping_count', COUNT(*),
-                'mappings', jsonb_agg(jsonb_build_object(
-                    'map_number', i.map_number,
-                    'map_name', i.map_name,
-                    'sys_name', i.sys_name,
-                    'pg_username', i.pg_username
-                ) ORDER BY i.map_number) FILTER (WHERE i.map_number IS NOT NULL)
-            )::TEXT AS details
-        FROM metrics.pg_ident_file_mappings i
-        JOIN connections c ON i.connection_id = c.id AND c.deleted_at IS NULL
-        %s
-        AND i.collected_at > (
-            SELECT MIN(collected_at)
-            FROM metrics.pg_ident_file_mappings
-            WHERE connection_id = i.connection_id
-        )
-        GROUP BY i.connection_id, i.collected_at, c.name
-    `, EventTypeIdentChange, func() string {
-		if tableWhere == "" {
-			return "WHERE 1=1"
-		}
-		return tableWhere
-	}())
+            SELECT i.connection_id, i.collected_at,
+                   COUNT(*) AS mapping_count,
+                   %s AS mappings,
+                   jsonb_agg(jsonb_build_object(
+                       'map_number', i.map_number,
+                       'map_name', i.map_name,
+                       'sys_name', i.sys_name,
+                       'pg_username', i.pg_username
+                   ) ORDER BY i.map_number) AS details
+            FROM metrics.pg_ident_file_mappings i
+            %s
+            GROUP BY i.connection_id, i.collected_at`, identSnapshotMappings("i"), tableWhere)
 }
 
-// buildIdentChangeCountQuery creates the count query for ident mapping changes
-// Excludes initial collection to match the main query
-func buildIdentChangeCountQuery(whereClause string) string {
-	tableWhere := strings.ReplaceAll(whereClause, "event_time", "collected_at")
-
+// buildIdentChangeQuery creates the subquery for ident mapping changes.
+// A snapshot is reported only when its mappings differ from those of
+// the connection's previous snapshot, so the initial collection and
+// any repeated identical snapshot (such as those written before the
+// collector's change tracking was fixed) produce no event.
+func buildIdentChangeQuery(whereClause string) string {
 	return fmt.Sprintf(`
-        SELECT COUNT(DISTINCT (i.connection_id, i.collected_at))
-        FROM metrics.pg_ident_file_mappings i
+        SELECT
+            'ident-' || cur.connection_id || '-' || cur.collected_at::TEXT AS id,
+            '%s' AS event_type,
+            cur.connection_id,
+            COALESCE(c.name, 'Unknown') AS server_name,
+            cur.collected_at AS event_time,
+            'info' AS severity,
+            'Ident Mappings Changed' AS title,
+            'Updated pg_ident.conf with ' || cur.mapping_count || ' mappings' AS summary,
+            jsonb_build_object(
+                'mapping_count', cur.mapping_count,
+                'mappings', cur.details
+            )::TEXT AS details
+        FROM (%s
+        ) cur
+        JOIN connections c ON cur.connection_id = c.id AND c.deleted_at IS NULL
         %s
-        AND i.collected_at > (
-            SELECT MIN(collected_at)
-            FROM metrics.pg_ident_file_mappings
-            WHERE connection_id = i.connection_id
-        )
-    `, func() string {
-		if tableWhere == "" {
-			return "WHERE 1=1"
-		}
-		return strings.ReplaceAll(tableWhere, "connection_id", "i.connection_id")
-	}())
+        WHERE prev.mappings IS NOT NULL
+          AND cur.mappings IS DISTINCT FROM prev.mappings
+    `, EventTypeIdentChange, identCurrentSnapshots(whereClause), identPreviousSnapshotJoin())
+}
+
+// buildIdentChangeCountQuery creates the count query for ident mapping
+// changes, applying the same previous-snapshot comparison as the main
+// query.
+func buildIdentChangeCountQuery(whereClause string) string {
+	return fmt.Sprintf(`
+        SELECT COUNT(*)
+        FROM (%s
+        ) cur
+        %s
+        WHERE prev.mappings IS NOT NULL
+          AND cur.mappings IS DISTINCT FROM prev.mappings
+    `, identCurrentSnapshots(whereClause), identPreviousSnapshotJoin())
 }
 
 // buildRestartQuery creates the subquery for server restarts (postmaster_start_time changes)

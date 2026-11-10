@@ -173,7 +173,8 @@ func (e *csEnv) history(id int, primaryRole string) {
 			id, []string{"md5", "scram-sha-256"}[i], ago)
 		e.exec(`INSERT INTO metrics.pg_ident_file_mappings (connection_id, map_number, map_name,
                     sys_name, pg_username, collected_at)
-                VALUES ($1, 1, 'testmap', 'testuser', 'postgres', now() - $2::text::interval)`, id, ago)
+                VALUES ($1, 1, 'testmap', 'testuser', $2, now() - $3::text::interval)`,
+			id, []string{"postgres", "app_owner"}[i], ago)
 		e.role(id, ago, csRole{primary: primaryRole, started: []time.Time{first, second}[i]})
 		e.extension(id, ago, "pg_stat_statements", []string{"1.10", "1.11"}[i])
 	}
@@ -988,5 +989,183 @@ func TestCollectorSchema_ClosedPoolErrors(t *testing.T) {
 	}
 	if _, err := ds.IsConnectionInCluster(ctx, 1, 1); err == nil {
 		t.Error("IsConnectionInCluster succeeded")
+	}
+}
+
+// TestCollectorSchema_RecentEventsIncludeAlertActivity checks that the
+// AI overview snapshot reports alert events and their full count, and
+// that a burst of alert churn cannot push a restart out of the sample
+// the generator's restart detection reads (issue #807).
+func TestCollectorSchema_RecentEventsIncludeAlertActivity(t *testing.T) {
+	e := newCSEnv(t)
+	busy := e.conn("busy", "192.0.2.80", "", nil, nil)
+	e.live(busy, csRole{primary: "standalone"}, "17.2", nil)
+	e.history(busy, "standalone")
+	churn := recentEventSampleLimit + 5
+	for i := 0; i < churn; i++ {
+		e.alert(busy, "warning", "cleared", "Flapping", "10 minutes", "5 minutes")
+	}
+
+	check := func(t *testing.T, snap *EstateSnapshot) {
+		t.Helper()
+		seen := map[string]bool{}
+		for i, ev := range snap.RecentEvents {
+			seen[ev.EventType] = true
+			if i > 0 && ev.OccurredAt.After(snap.RecentEvents[i-1].OccurredAt) {
+				t.Errorf("recent events not in reverse chronological order at %d", i)
+			}
+		}
+		for _, typ := range []string{EventTypeRestart, EventTypeAlertCleared} {
+			if !seen[typ] {
+				t.Errorf("recent events have no %s event", typ)
+			}
+		}
+		if len(snap.RecentEvents) > 2*recentEventSampleLimit {
+			t.Errorf("recent events = %d, want at most %d", len(snap.RecentEvents), 2*recentEventSampleLimit)
+		}
+		// Each churn alert both fires and clears.
+		if snap.RecentAlertEventTotal < 2*churn {
+			t.Errorf("RecentAlertEventTotal = %d, want at least %d", snap.RecentAlertEventTotal, 2*churn)
+		}
+		if snap.RecentEventTotal <= snap.RecentAlertEventTotal || snap.RecentEventTotal < len(snap.RecentEvents) {
+			t.Errorf("RecentEventTotal = %d, alert total %d, sample %d",
+				snap.RecentEventTotal, snap.RecentAlertEventTotal, len(snap.RecentEvents))
+		}
+	}
+
+	t.Run("estate", func(t *testing.T) {
+		snap, err := e.ds.GetEstateSnapshot(e.ctx)
+		if err != nil {
+			t.Fatalf("GetEstateSnapshot: %v", err)
+		}
+		check(t, snap)
+	})
+
+	t.Run("server", func(t *testing.T) {
+		snap, _, err := e.ds.GetServerSnapshot(e.ctx, busy)
+		if err != nil {
+			t.Fatalf("GetServerSnapshot: %v", err)
+		}
+		check(t, snap)
+	})
+}
+
+// TestCollectorSchema_RecentEventsQueryFailure checks that a failed
+// timeline query leaves the snapshot without events rather than
+// failing the snapshot.
+func TestCollectorSchema_RecentEventsQueryFailure(t *testing.T) {
+	e := newCSEnv(t)
+	busy := e.conn("busy", "192.0.2.81", "", nil, nil)
+	e.history(busy, "standalone")
+
+	ctx, cancel := context.WithCancel(e.ctx)
+	cancel()
+	snap := &EstateSnapshot{}
+	e.ds.gatherRecentEvents(ctx, snap, []int{busy}, "TestCollectorSchema")
+	if len(snap.RecentEvents) != 0 || snap.RecentEventTotal != 0 || snap.RecentAlertEventTotal != 0 {
+		t.Errorf("snapshot = %d events, total %d, alert total %d; want none",
+			len(snap.RecentEvents), snap.RecentEventTotal, snap.RecentAlertEventTotal)
+	}
+}
+
+// TestCollectorSchema_RecentEventsChangeChurnKeepsRestart checks that a
+// burst of non-alert change events cannot push a restart out of the
+// sample the generator's restart detection reads, and that repeated
+// identical ident snapshots are not reported as changes (issue #807).
+func TestCollectorSchema_RecentEventsChangeChurnKeepsRestart(t *testing.T) {
+	e := newCSEnv(t)
+	ids := make([]int, 4)
+	for n := range ids {
+		id := e.conn("churn-"+itoa(n), "192.0.2."+itoa(90+n), "", nil, nil)
+		e.live(id, csRole{primary: "standalone"}, "17.2", nil)
+		ids[n] = id
+		// Hourly identical ident snapshots, as written before the
+		// collector's change tracking was fixed.
+		for h := 1; h <= 24; h++ {
+			e.exec(`INSERT INTO metrics.pg_ident_file_mappings (connection_id, map_number, map_name,
+                        sys_name, pg_username, collected_at)
+                    VALUES ($1, 1, 'testmap', 'testuser', 'postgres', now() - make_interval(hours => $2))`,
+				id, h)
+		}
+		// Genuine HBA churn every ten minutes for the last few hours.
+		for m := 0; m <= recentEventSampleLimit; m++ {
+			e.exec(`INSERT INTO metrics.pg_hba_file_rules (connection_id, rule_number, type, database,
+                        user_name, address, auth_method, collected_at)
+                    VALUES ($1, 1, 'host', ARRAY['all'], ARRAY['all'], '192.0.2.0/24', $2,
+                            now() - make_interval(mins => $3))`,
+				id, []string{"md5", "scram-sha-256"}[m%2], 10*m+5)
+		}
+	}
+	// One restart, six hours ago, on the first server.
+	for i, ago := range []string{"7 hours", "6 hours"} {
+		e.role(ids[0], ago, csRole{primary: "standalone",
+			started: []time.Time{time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)}[i]})
+	}
+
+	snap, err := e.ds.GetEstateSnapshot(e.ctx)
+	if err != nil {
+		t.Fatalf("GetEstateSnapshot: %v", err)
+	}
+	counts := map[string]int{}
+	for _, ev := range snap.RecentEvents {
+		counts[ev.EventType]++
+	}
+	if counts[EventTypeRestart] != 1 {
+		t.Errorf("restart events in sample = %d, want 1 (%v)", counts[EventTypeRestart], counts)
+	}
+	if counts[EventTypeIdentChange] != 0 {
+		t.Errorf("identical ident snapshots produced %d events", counts[EventTypeIdentChange])
+	}
+	if counts[EventTypeHBAChange] == 0 {
+		t.Errorf("sample has no HBA change events: %v", counts)
+	}
+}
+
+// TestCollectorSchema_IdentChangeDetection checks that ident events
+// are reported only for snapshots whose mappings differ from the
+// connection's previous snapshot, including a predecessor stored
+// before the requested window, and that the count matches.
+func TestCollectorSchema_IdentChangeDetection(t *testing.T) {
+	e := newCSEnv(t)
+	id := e.conn("ident", "192.0.2.99", "", nil, nil)
+	// Every row of a snapshot shares one collected_at, as the collector
+	// writes them.
+	now := time.Now()
+	snapshot := func(hoursAgo int, users ...string) {
+		at := now.Add(-time.Duration(hoursAgo) * time.Hour)
+		for n, user := range users {
+			e.exec(`INSERT INTO metrics.pg_ident_file_mappings (connection_id, map_number, map_name,
+                        sys_name, pg_username, collected_at)
+                    VALUES ($1, $2, 'testmap', 'testuser', $3, $4)`,
+				id, n+1, user, at)
+		}
+	}
+	snapshot(30, "postgres")             // first ever, before the window
+	snapshot(20, "postgres", "app")      // mapping added
+	snapshot(10, "postgres", "app")      // unchanged
+	snapshot(5, "postgres", "reporting") // mapping modified
+	snapshot(2, "postgres", "reporting") // unchanged
+
+	result, err := e.ds.GetTimelineEvents(e.ctx, TimelineFilter{
+		StartTime:    time.Now().Add(-24 * time.Hour),
+		EndTime:      time.Now(),
+		ConnectionID: &id,
+		EventTypes:   []string{EventTypeIdentChange},
+		Limit:        100,
+	})
+	if err != nil {
+		t.Fatalf("GetTimelineEvents: %v", err)
+	}
+	if len(result.Events) != 2 || result.TotalCount != 2 {
+		t.Fatalf("ident events = %d, total %d; want 2", len(result.Events), result.TotalCount)
+	}
+	for _, ev := range result.Events {
+		if ev.Summary != "Updated pg_ident.conf with 2 mappings" {
+			t.Errorf("summary = %q", ev.Summary)
+		}
+	}
+	if want := now.Add(-5 * time.Hour); !result.Events[0].OccurredAt.Equal(want.Truncate(time.Microsecond)) {
+		t.Errorf("newest ident event at %v, want about %v", result.Events[0].OccurredAt, want)
 	}
 }

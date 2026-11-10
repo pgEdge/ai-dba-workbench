@@ -703,7 +703,7 @@ func (h *Handler) writeSSEEvent(w http.ResponseWriter, overview *Overview) {
 		return
 	}
 	if overview.Status == "" {
-		fmt.Fprintf(w, "id: %s\n", overview.GeneratedAt.Format(time.RFC3339))
+		fmt.Fprintf(w, "id: %s\n", overview.GeneratedAt.Format(time.RFC3339)) //nolint:gosec // G705: an RFC 3339 timestamp in an SSE stream, not HTML
 	}
 	fmt.Fprintf(w, "event: overview\ndata: %s\n\n", string(data)) //nolint:gosec // G705: JSON in an SSE stream, not HTML
 }

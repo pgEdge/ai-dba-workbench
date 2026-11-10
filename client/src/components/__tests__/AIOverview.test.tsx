@@ -1077,7 +1077,17 @@ describe('AIOverview Component', () => {
                 .mockRejectedValueOnce(rateLimitedError(30))
                 .mockResolvedValue(makeOverviewResponse({ summary: 'Back again' }));
 
-            await pollOnce();
+            // The safety fetch 5 seconds after mounting is refused; the
+            // first fallback poll, 10 seconds later, succeeds.
+            await act(async () => {
+                renderWithTheme(<AIOverview />);
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(5_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
             expect(screen.getByRole('status')).toBeInTheDocument();
 
             await act(async () => {

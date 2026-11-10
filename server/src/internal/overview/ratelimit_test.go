@@ -116,6 +116,22 @@ func TestRateLimit_StaleCacheServedWhenLimited(t *testing.T) {
 	}
 }
 
+// TestRateLimit_StaleNamedConnectionsServedWhenLimited checks that a
+// user with no generations left gets the stale summary cached for a
+// named connection list, which is keyed on the name as well as the IDs.
+func TestRateLimit_StaleNamedConnectionsServedWhenLimited(t *testing.T) {
+	g := cachedGenerator(t, nil, true)
+	staleEntry(g, "connections:1,2|Prod", "Stale named connections")
+	h := limitedHandler(t, g, RateLimits{GenerationsPerHour: 1, Burst: 1})
+	h.limits.generate.Allow("alice")
+
+	rr := doRequestWithContext(t, h, superuserNamed("alice"), http.MethodGet,
+		"/api/v1/overview?connection_ids=2,1&scope_name=Prod")
+	if got := decodeSummary(t, rr); got != "Stale named connections" {
+		t.Fatalf("expected the stale named summary, got %q", got)
+	}
+}
+
 func TestRateLimit_RefreshThrottled(t *testing.T) {
 	g := cachedGenerator(t, nil, true, "server:1")
 	h := limitedHandler(t, g, RateLimits{GenerationsPerHour: 100, Burst: 100, RefreshInterval: time.Hour})
@@ -238,6 +254,9 @@ func TestRateLimit_SSE(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "Stale server 1") {
 		t.Fatalf("stale stream: expected the stale summary, got %q", rr.Body.String())
 	}
+	if strings.Contains(rr.Body.String(), statusGenerating) {
+		t.Fatalf("stale stream: expected no generating notice, got %q", rr.Body.String())
+	}
 
 	// A limited stream with nothing cached is refused before it starts.
 	rr = serveSSE(t, h, ctx, "/api/v1/overview/stream?scope_type=server&scope_id=3", 100*time.Millisecond)
@@ -265,20 +284,8 @@ func TestRateLimit_SSEEmptyVisibleSetNotLimited(t *testing.T) {
 }
 
 func TestCacheKeys(t *testing.T) {
-	if got := connectionsCacheKey([]int{3, 1, 2}); got != "connections:1,2,3" {
-		t.Errorf("connectionsCacheKey = %q", got)
-	}
-	if got := connectionsCacheKey(nil); got != "connections:" {
-		t.Errorf("connectionsCacheKey(nil) = %q", got)
-	}
 	if got := scopedCacheKey("cluster", 4); got != "cluster:4" {
 		t.Errorf("scopedCacheKey = %q", got)
-	}
-
-	ids := []int{3, 1, 2}
-	connectionsCacheKey(ids)
-	if ids[0] != 3 {
-		t.Error("connectionsCacheKey modified its input")
 	}
 }
 
@@ -293,6 +300,7 @@ func TestCacheKeysMatchGenerator(t *testing.T) {
 		target string
 	}{
 		{"connections", "connections:1,2", "/api/v1/overview?connection_ids=2,1,2"},
+		{"named connections", "connections:1,2|Prod", "/api/v1/overview?connection_ids=2,1&scope_name=Prod"},
 		{"server", "server:5", "/api/v1/overview?scope_type=server&scope_id=5"},
 		{"cluster", "cluster:6", "/api/v1/overview?scope_type=cluster&scope_id=6"},
 		{"group", "group:7", "/api/v1/overview?scope_type=group&scope_id=7"},

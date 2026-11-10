@@ -459,9 +459,11 @@ back to any summary. `handleSSE` sends the stream's opening event
 itself (the cached or generated scoped summary, or a `generating`,
 `empty` or `error` notice) rather than waiting on the hub, because a
 cache hit or a failed generation broadcasts nothing (issue #808). A
-scoped stream with no fresh cache entry (`Generator.hasFreshScoped`)
+scoped stream with no fresh cache entry (`Generator.cachedSummary`)
 sends `generating` first, before the background fetch starts, so the
-notice can never overtake the summary.
+notice can never overtake the summary. A stream that `admitStream`
+admitted only because a stale summary is cached sends that summary and
+starts no fetch.
 
 Scope names never leak a hidden resource. Both overview endpoints
 reject `connection_ids` combined with `scope_type` or `scope_id` with a

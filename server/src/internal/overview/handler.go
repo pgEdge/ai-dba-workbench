@@ -422,7 +422,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// so rather than showing its skeleton for as long as the LLM call
 	// takes. The scope key is also the generator's cache key.
 	noticeIfUncached := func() {
-		if !h.generator.hasFreshScoped(scopeKey) {
+		if _, fresh := h.generator.cachedSummary(scopeKey); !fresh {
 			send(statusOverview(statusGenerating, ""))
 		}
 	}
@@ -431,6 +431,10 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		send(h.generator.EstateStatus())
 	case connections && len(connectionIDs) == 0:
 		send(statusOverview(statusEmpty, ""))
+	case stale != nil:
+		// The caller has used up their generations, so they get the
+		// stale cached summary rather than a new one.
+		send(stale)
 	case connections:
 		noticeIfUncached()
 		go func() {
@@ -701,7 +705,7 @@ func (h *Handler) writeSSEEvent(w http.ResponseWriter, overview *Overview) {
 	if overview.Status == "" {
 		fmt.Fprintf(w, "id: %s\n", overview.GeneratedAt.Format(time.RFC3339))
 	}
-	fmt.Fprintf(w, "event: overview\ndata: %s\n\n", string(data))
+	fmt.Fprintf(w, "event: overview\ndata: %s\n\n", string(data)) //nolint:gosec // G705: JSON in an SSE stream, not HTML
 }
 
 // parseConnectionIDs parses a comma-separated string of connection IDs

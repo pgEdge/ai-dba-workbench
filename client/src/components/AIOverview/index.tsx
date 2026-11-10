@@ -185,6 +185,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
     if (overviewUrl !== lastFetchedUrl) {
         setOverview(null);
         setError(null);
+        setRateLimitMessage(null);
         setLoading(true);
         setRefreshing(false);
         setLastFetchedUrl(overviewUrl);
@@ -207,6 +208,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
                 return;
             }
             setError(null);
+            setRateLimitMessage(null);
             // A "generating" response never hides a summary that the
             // stream has already delivered.
             setOverview(prev =>
@@ -219,7 +221,13 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
             if (currentUrlRef.current !== overviewUrl) {
                 return;
             }
-            if (err instanceof ApiError && err.statusCode === 401) {
+            const limited = rateLimitMessageFor(err);
+            if (limited) {
+                // The server had nothing cached to serve and the user
+                // has no generations left; say so rather than hiding
+                // the card.
+                setRateLimitMessage(limited);
+            } else if (err instanceof ApiError && err.statusCode === 401) {
                 // User is not authenticated; suppress the error silently
                 setError(null);
             } else {
@@ -264,6 +272,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
         if (sseOverview) {
             setOverview(sseOverview);
             setError(null);
+            setRateLimitMessage(null);
             setLoading(false);
             setRefreshing(false);
             if (sseOverview.restart_detected) {
@@ -435,6 +444,24 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
                     <Skeleton variant="text" width="90%" height={18} />
                     <Skeleton variant="text" width="75%" height={18} />
                     <Skeleton variant="text" width="40%" height={14} sx={{ mt: 0.5 }} />
+                </Collapse>
+            </Paper>
+        );
+    }
+
+    // Rate limited with no summary to show: explain why the card is empty
+    if (rateLimitMessage && !summaryText) {
+        return (
+            <Paper elevation={0} sx={paperSx}>
+                {headerRow()}
+                <Collapse in={!collapsed}>
+                    <Typography
+                        variant="body2"
+                        role="status"
+                        sx={{ color: 'text.secondary', fontStyle: 'italic' }}
+                    >
+                        {rateLimitMessage}
+                    </Typography>
                 </Collapse>
             </Paper>
         );

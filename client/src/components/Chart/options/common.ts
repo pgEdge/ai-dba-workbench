@@ -65,10 +65,19 @@ const ISO_TIMESTAMP_RE =
 
 /**
  * Parses a category as a timestamp, returning null for anything that
- * is not an ISO 8601 date or date-time.
+ * is not an ISO 8601 date or date-time. The calendar date is checked
+ * first, because V8 rolls an impossible day over into the next month
+ * (`2026-02-30` becomes 2 March) rather than rejecting it.
  */
 function parseTimestamp(value: string): Date | null {
     if (!ISO_TIMESTAMP_RE.test(value)) {return null;}
+    const year = Number(value.slice(0, 4));
+    const month = Number(value.slice(5, 7));
+    const day = Number(value.slice(8, 10));
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (month < 1 || month > 12 || day < 1 || day > daysInMonth) {
+        return null;
+    }
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? null : d;
 }

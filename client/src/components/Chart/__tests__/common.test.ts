@@ -189,6 +189,21 @@ describe('isTimeCategories', () => {
     it('rejects a well-formed but impossible date', () => {
         expect(isTimeCategories(['2026-13-45'])).toBe(false);
     });
+
+    it('rejects a day that does not exist in its month', () => {
+        // V8 would roll these over into the following month.
+        expect(isTimeCategories(['2026-02-30'])).toBe(false);
+        expect(isTimeCategories(['2026-02-29'])).toBe(false);
+        expect(isTimeCategories(['2026-04-31T10:00:00Z'])).toBe(false);
+        expect(isTimeCategories(['2026-00-10'])).toBe(false);
+        expect(isTimeCategories(['2026-05-00'])).toBe(false);
+    });
+
+    it('accepts real dates, leap days and offsets', () => {
+        expect(isTimeCategories(['2024-02-29'])).toBe(true);
+        expect(isTimeCategories(['2026-12-31T23:59:59+05:30'])).toBe(true);
+        expect(isTimeCategories(['2026-01-31 08:00-08:00'])).toBe(true);
+    });
 });
 
 describe('buildLabelAxis', () => {

@@ -1507,6 +1507,11 @@ project adheres to
   `user_modified` is not detected, and follows its parent after the
   upgrade; set `user_modified = TRUE` on such a row, or re-create the
   override in the Probe Configuration tab.
+  The Alerter's `metric_staleness` rule now reads whether a probe is
+  enabled, and its interval, from the server's own setting as the
+  Collector does, so a probe disabled on one server no longer raises
+  a false staleness alert there, and a probe enabled on one server
+  against a disabled default is checked for stalls.
 
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled

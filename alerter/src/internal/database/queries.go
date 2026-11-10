@@ -562,20 +562,33 @@ func (d *Datastore) GetUnmonitoredConnections(ctx context.Context) (map[int]stri
 // UpsertProbeAvailability coalesces so that it never returns to NULL once
 // a probe has collected at all. See GitHub issue #465.
 //
-// The ratio divides by the probe's global interval, matched on
-// scope = 'global': cluster and group overrides also carry a NULL
-// connection_id, so matching on that column joined them too and
-// repeated each row once per override. See GitHub issue #647.
+// Whether a probe is enabled, and the interval the ratio divides by, come
+// from the connection's server-scope row where it has one, falling back
+// to the global row. The collector runs each connection from its server
+// row, which it keeps in step with the nearest cluster, group or global
+// parent unless an operator has overridden it, so reading the global row
+// alone raised false alerts for a probe disabled on one server and missed
+// stalls on one enabled there against a disabled default (GitHub issues
+// #810 and #811). The global row is matched on scope = 'global' and the
+// server row on scope = 'server' with its connection: cluster and group
+// rows also carry a NULL connection_id, so matching on that column joined
+// them too and repeated each row once per override. See GitHub issue
+// #647.
 func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeStaleness, error) {
 	rows, err := d.pool.Query(ctx, `
-		SELECT c.id, c.name, pa.probe_name, pc.collection_interval_seconds,
-		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) / pc.collection_interval_seconds AS staleness_ratio,
+		SELECT c.id, c.name, pa.probe_name,
+		       COALESCE(ps.collection_interval_seconds, pc.collection_interval_seconds),
+		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected))
+		           / COALESCE(ps.collection_interval_seconds, pc.collection_interval_seconds) AS staleness_ratio,
 		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) AS seconds_since_collected,
 		       pa.is_available, pa.unavailable_reason, pa.last_collected
 		FROM probe_availability pa
 		JOIN probe_configs pc ON pc.name = pa.probe_name AND pc.scope = 'global'
+		LEFT JOIN probe_configs ps
+		       ON ps.name = pa.probe_name AND ps.scope = 'server'
+		      AND ps.connection_id = pa.connection_id
 		JOIN connections c ON c.id = pa.connection_id
-		WHERE pc.is_enabled = TRUE
+		WHERE COALESCE(ps.is_enabled, pc.is_enabled) = TRUE
 		  AND c.is_monitored = TRUE
 		  AND pa.last_collected IS NOT NULL
 	`)
@@ -605,7 +618,9 @@ func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeS
 }
 
 // GetProbeStalenessContext returns the connection name and the configured
-// collection interval for one probe on one connection. It exists for a
+// collection interval for one probe on one connection, read from the
+// connection's server-scope row with the global row as the fallback, as
+// GetProbeStalenessByConnection does. It exists for a
 // caller that must phrase a staleness alert for a probe the staleness
 // view no longer reports: GetProbeStalenessByConnection drops a probe the
 // operator has disabled, a connection they have stopped monitoring and a
@@ -617,9 +632,11 @@ func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeS
 func (d *Datastore) GetProbeStalenessContext(ctx context.Context, connectionID int,
 	probeName string) (connectionName string, collectionInterval int, found bool, err error) {
 	err = d.pool.QueryRow(ctx, `
-		SELECT c.name, pc.collection_interval_seconds
+		SELECT c.name, COALESCE(ps.collection_interval_seconds, pc.collection_interval_seconds)
 		FROM connections c
 		JOIN probe_configs pc ON pc.name = $2 AND pc.scope = 'global'
+		LEFT JOIN probe_configs ps
+		       ON ps.name = $2 AND ps.scope = 'server' AND ps.connection_id = c.id
 		WHERE c.id = $1 AND c.deleted_at IS NULL
 	`, connectionID, probeName).Scan(&connectionName, &collectionInterval)
 	if err != nil {

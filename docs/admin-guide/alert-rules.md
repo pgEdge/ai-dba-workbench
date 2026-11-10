@@ -140,7 +140,12 @@ and their default conditions:
 
 The `metric_staleness` rule reports a probe that is still
 collecting but whose newest sample is more than three
-collection intervals old.
+collection intervals old. The alerter reads whether the probe
+is enabled, and its collection interval, from the server's
+own probe setting where one exists, and from Probe Defaults
+otherwise; this matches the setting the collector runs the
+probe with, so a probe disabled on one server raises no
+staleness alert there.
 
 The `probe_unavailable` rule reports the transition from
 collecting to unavailable. The collector records a probe as

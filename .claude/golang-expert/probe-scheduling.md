@@ -183,3 +183,12 @@ only place probe configuration changes reach the scheduler.
   instance registered, checked after the initial wait and on every
   tick. Comparing intervals let a probe disabled and re-enabled at the
   same interval between two ticks run in two goroutines at once.
+
+- **Readers of a probe's settings use the server row.** Anything
+  outside the collector that asks whether a probe is enabled or how
+  often it runs must read the connection's `scope = 'server'` row and
+  fall back to the global row, as the alerter's
+  `GetProbeStalenessByConnection` and `GetProbeStalenessContext` and
+  the server's `metrics.ResolveProbeInterval` do. Reading the global
+  row alone raises false staleness alerts for a probe disabled on one
+  server.

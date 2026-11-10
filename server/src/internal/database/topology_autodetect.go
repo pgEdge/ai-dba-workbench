@@ -56,12 +56,6 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
             FROM metrics.pg_server_info
             ORDER BY connection_id, collected_at DESC
         ),
-        latest_os_info AS (
-            SELECT DISTINCT ON (connection_id)
-                connection_id, name as os_name
-            FROM metrics.pg_sys_os_info
-            ORDER BY connection_id, collected_at DESC
-        ),
         latest_spock_version AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, extversion as spock_version
@@ -97,7 +91,17 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
         LEFT JOIN latest_connectivity lc ON c.id = lc.connection_id
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
         LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
-        LEFT JOIN latest_os_info loi ON c.id = loi.connection_id
+        LEFT JOIN LATERAL (
+            -- pg_sys_os_info writes a row every ten minutes, so read
+            -- only each connection's newest row through its
+            -- (connection_id, collected_at) index rather than sorting
+            -- every row in the table.
+            SELECT name AS os_name
+            FROM metrics.pg_sys_os_info
+            WHERE connection_id = c.id
+            ORDER BY collected_at DESC
+            LIMIT 1
+        ) loi ON true
         LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
         LEFT JOIN active_alerts aa ON c.id = aa.connection_id
         WHERE c.deleted_at IS NULL
@@ -576,12 +580,6 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
             FROM metrics.pg_server_info
             ORDER BY connection_id, collected_at DESC
         ),
-        latest_os_info AS (
-            SELECT DISTINCT ON (connection_id)
-                connection_id, name as os_name
-            FROM metrics.pg_sys_os_info
-            ORDER BY connection_id, collected_at DESC
-        ),
         latest_spock_version AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, extversion as spock_version
@@ -613,7 +611,17 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
         LEFT JOIN latest_connectivity lc ON c.id = lc.connection_id
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
         LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
-        LEFT JOIN latest_os_info loi ON c.id = loi.connection_id
+        LEFT JOIN LATERAL (
+            -- pg_sys_os_info writes a row every ten minutes, so read
+            -- only each connection's newest row through its
+            -- (connection_id, collected_at) index rather than sorting
+            -- every row in the table.
+            SELECT name AS os_name
+            FROM metrics.pg_sys_os_info
+            WHERE connection_id = c.id
+            ORDER BY collected_at DESC
+            LIMIT 1
+        ) loi ON true
         LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
         LEFT JOIN active_alerts aa ON c.id = aa.connection_id
         WHERE c.cluster_id IS NOT NULL

@@ -24,7 +24,8 @@ project adheres to
   reconnecting cannot run up the bill on the LLM account (#822). A user
   over the limit is served the cached summary for the scope, even if it
   is stale, or an HTTP 429 response with a `Retry-After` header when
-  none is cached, and forced refreshes are throttled per user. The new
+  none is cached, in which case the AI Overview card says how long to
+  wait; forced refreshes are throttled per user. The new
   `llm.rate_limit.overview` settings default to 60 generations an hour
   with a burst of 20, and one forced refresh every 30 seconds.
 - Add a `-health-check host:port` flag to `ai-dba-server`, which checks

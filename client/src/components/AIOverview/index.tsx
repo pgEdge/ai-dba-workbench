@@ -80,6 +80,35 @@ function formatRelativeTime(dateStr: string): string {
 }
 
 /**
+ * Build the message shown when the server refuses to generate an
+ * overview because the user has used up their AI Overview allowance.
+ * `retryAfterSeconds` comes from the response's Retry-After header.
+ */
+function formatRateLimitMessage(retryAfterSeconds: number | null): string {
+    const prefix = 'AI Overview limit reached; try again';
+    if (retryAfterSeconds === null) {
+        return `${prefix} later.`;
+    }
+    if (retryAfterSeconds < 60) {
+        const secs = Math.max(1, retryAfterSeconds);
+        return `${prefix} in ${secs} second${secs === 1 ? '' : 's'}.`;
+    }
+    const mins = Math.ceil(retryAfterSeconds / 60);
+    return `${prefix} in ${mins} minute${mins === 1 ? '' : 's'}.`;
+}
+
+/**
+ * Return the rate-limit message for a 429 ApiError, or null for any
+ * other error.
+ */
+function rateLimitMessageFor(err: unknown): string | null {
+    if (err instanceof ApiError && err.statusCode === 429) {
+        return formatRateLimitMessage(err.retryAfterSeconds);
+    }
+    return null;
+}
+
+/**
  * AIOverview displays an AI-generated estate summary at the top of the
  * StatusPanel.  It subscribes to real-time updates via SSE and falls
  * back to polling when the SSE connection is unavailable.  Handles
@@ -92,6 +121,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
     const [overview, setOverview] = useState<OverviewResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [rateLimitMessage, setRateLimitMessage] = useState<string | null>(null);
     const [refreshing, setRefreshing] = useState(false);
 
     // Collapsed state with localStorage persistence
@@ -155,6 +185,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
     if (overviewUrl !== lastFetchedUrl) {
         setOverview(null);
         setLoading(true);
+        setRateLimitMessage(null);
         setLastFetchedUrl(overviewUrl);
     }
 
@@ -167,11 +198,18 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
         try {
             const data = await apiGet<OverviewResponse>(overviewUrl);
             setOverview(data);
+            setRateLimitMessage(null);
             if (data.restart_detected) {
                 clearAnalysisCache();
             }
         } catch (err) {
-            if (err instanceof ApiError && err.statusCode === 401) {
+            const limited = rateLimitMessageFor(err);
+            if (limited) {
+                // The server had nothing cached to serve and the user
+                // has no generations left; say so rather than hiding
+                // the card.
+                setRateLimitMessage(limited);
+            } else if (err instanceof ApiError && err.statusCode === 401) {
                 // User is not authenticated; suppress the error silently
                 setError(null);
             } else {
@@ -210,6 +248,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
     useEffect(() => {
         if (sseOverview) {
             setOverview(sseOverview);
+            setRateLimitMessage(null);
             setLoading(false);
             setRefreshing(false);
             if (sseOverview.restart_detected) {
@@ -366,6 +405,24 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
                     <Skeleton variant="text" width="90%" height={18} />
                     <Skeleton variant="text" width="75%" height={18} />
                     <Skeleton variant="text" width="40%" height={14} sx={{ mt: 0.5 }} />
+                </Collapse>
+            </Paper>
+        );
+    }
+
+    // Rate limited with no summary to show: explain why the card is empty
+    if (rateLimitMessage && !summaryText) {
+        return (
+            <Paper elevation={0} sx={paperSx}>
+                {headerRow()}
+                <Collapse in={!collapsed}>
+                    <Typography
+                        variant="body2"
+                        role="status"
+                        sx={{ color: 'text.secondary', fontStyle: 'italic' }}
+                    >
+                        {rateLimitMessage}
+                    </Typography>
                 </Collapse>
             </Paper>
         );

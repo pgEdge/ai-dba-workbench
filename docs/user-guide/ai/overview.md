@@ -127,6 +127,19 @@ to regenerate the summary immediately, bypassing the
 cache. The button displays a spinning animation while
 the system generates a new summary.
 
+## Usage Limits
+
+The server limits how many summaries each user can cause
+it to generate, and how often each user can force a
+refresh. A user who reaches a limit sees the cached
+summary for the scope, even when that summary is stale.
+When no summary is cached, the panel displays a message
+that says how long to wait before trying again. The
+administrator sets the limits with the
+`llm.rate_limit.overview` options described in the
+[server configuration](../../getting-started/configuration/server.md)
+reference.
+
 ## Running Without AI
 
 The AI Overview is automatically disabled when the server

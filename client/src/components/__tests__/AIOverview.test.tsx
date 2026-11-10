@@ -28,11 +28,18 @@ vi.mock('../../utils/apiClient', () => ({
     ApiError: class ApiError extends Error {
         public readonly statusCode: number;
         public readonly errorBody: string;
-        constructor(message: string, statusCode: number, errorBody = '') {
+        public readonly retryAfterSeconds: number | null;
+        constructor(
+            message: string,
+            statusCode: number,
+            errorBody = '',
+            retryAfterSeconds: number | null = null,
+        ) {
             super(message);
             this.name = 'ApiError';
             this.statusCode = statusCode;
             this.errorBody = errorBody;
+            this.retryAfterSeconds = retryAfterSeconds;
         }
     },
 }));
@@ -1009,6 +1016,138 @@ describe('AIOverview Component', () => {
 
             errorSpy.mockRestore();
             vi.useRealTimers();
+        });
+
+        /** Drive fallback polling until the first poll has settled. */
+        const pollOnce = async (ui: React.ReactElement = <AIOverview />) => {
+            await act(async () => {
+                renderWithTheme(ui);
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(15_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+        };
+
+        /** Build a 429 ApiError with the given Retry-After seconds. */
+        const rateLimitedError = (retryAfter: number | null) => {
+            const ApiError = (apiClientModule as unknown as {
+                ApiError: new (
+                    m: string, s: number, b?: string, r?: number | null,
+                ) => Error;
+            }).ApiError;
+            return new ApiError('Too many', 429, '', retryAfter);
+        };
+
+        it.each([
+            [null, 'AI Overview limit reached; try again later.'],
+            [0, 'AI Overview limit reached; try again in 1 second.'],
+            [45, 'AI Overview limit reached; try again in 45 seconds.'],
+            [60, 'AI Overview limit reached; try again in 1 minute.'],
+            [150, 'AI Overview limit reached; try again in 3 minutes.'],
+        ])(
+            'explains a 429 with Retry-After %j instead of hiding the card',
+            async (retryAfter, message) => {
+                vi.useFakeTimers();
+                mockUseOverviewSSE.mockReturnValue({ overview: null, connected: false });
+                mockApiGet.mockRejectedValue(rateLimitedError(retryAfter));
+                const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+                await pollOnce();
+
+                expect(screen.getByRole('status')).toHaveTextContent(message);
+                expect(errorSpy).not.toHaveBeenCalled();
+
+                errorSpy.mockRestore();
+                vi.useRealTimers();
+            },
+        );
+
+        it('replaces the rate-limit message once a later poll succeeds', async () => {
+            vi.useFakeTimers();
+            mockUseOverviewSSE.mockReturnValue({ overview: null, connected: false });
+            mockApiGet
+                .mockRejectedValueOnce(rateLimitedError(30))
+                .mockResolvedValue(makeOverviewResponse({ summary: 'Back again' }));
+
+            await pollOnce();
+            expect(screen.getByRole('status')).toBeInTheDocument();
+
+            await act(async () => {
+                vi.advanceTimersByTime(10_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+            vi.useRealTimers();
+
+            await waitFor(() => {
+                expect(screen.getByText('Back again')).toBeInTheDocument();
+            });
+            expect(screen.queryByRole('status')).not.toBeInTheDocument();
+        });
+
+        it('clears the rate-limit message when SSE delivers a summary', async () => {
+            vi.useFakeTimers();
+            mockUseOverviewSSE.mockReturnValue({ overview: null, connected: false });
+            mockApiGet.mockRejectedValue(rateLimitedError(30));
+
+            let view: ReturnType<typeof renderWithTheme> | undefined;
+            await act(async () => {
+                view = renderWithTheme(<AIOverview />);
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(15_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+            expect(screen.getByRole('status')).toBeInTheDocument();
+
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse({ summary: 'From the stream' }),
+                connected: true,
+            });
+            await act(async () => {
+                view?.rerender(
+                    <ThemeProvider theme={theme}><AIOverview /></ThemeProvider>,
+                );
+            });
+            vi.useRealTimers();
+
+            expect(screen.getByText('From the stream')).toBeInTheDocument();
+            expect(screen.queryByRole('status')).not.toBeInTheDocument();
+        });
+
+        it('drops the rate-limit message when the selection changes', async () => {
+            vi.useFakeTimers();
+            mockUseOverviewSSE.mockReturnValue({ overview: null, connected: false });
+            mockApiGet.mockRejectedValue(rateLimitedError(30));
+
+            let view: ReturnType<typeof renderWithTheme> | undefined;
+            await act(async () => {
+                view = renderWithTheme(<AIOverview />);
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(15_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+            expect(screen.getByRole('status')).toBeInTheDocument();
+
+            await act(async () => {
+                view?.rerender(
+                    <ThemeProvider theme={theme}>
+                        <AIOverview selection={makeServerSelection(4)} />
+                    </ThemeProvider>,
+                );
+            });
+            vi.useRealTimers();
+
+            expect(screen.queryByRole('status')).not.toBeInTheDocument();
         });
     });
 

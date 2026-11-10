@@ -619,6 +619,14 @@ project adheres to
 
 ### Changed
 
+- Move the server, the alerter and the shared embedding package to
+  `pgedge-go-llm-lib` v1.0.0, the library's first stable release. The
+  library now reports an HTTP 404 from a provider, such as a model
+  that does not exist or that Ollama has not pulled, as a distinct
+  not-found error rather than a general provider error; the Workbench
+  does not match on either, so its behaviour and error messages are
+  unchanged.
+
 - List and serve only the collector's probes from the metrics schema
   (#755). The `list_probes`, `describe_probe`, `query_metrics`,
   `describe_datastore` and `query_datastore` tools and the

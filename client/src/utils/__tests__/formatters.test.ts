@@ -59,6 +59,30 @@ describe('formatBytes', () => {
     it('formats values in PB', () => {
         expect(formatBytes(1125899906842624)).toBe('1.0 PB');
     });
+
+    it('rounds fractional values below one kilobyte', () => {
+        expect(formatBytes(162.618128434491)).toBe('163 B');
+        expect(formatBytes(12.4)).toBe('12 B');
+    });
+
+    it('formats fractional values below one byte in bytes', () => {
+        expect(formatBytes(0.6)).toBe('1 B');
+        expect(formatBytes(0.2)).toBe('0 B');
+    });
+
+    it('promotes a value that rounds up to 1024 bytes to KB', () => {
+        expect(formatBytes(1023.4)).toBe('1023 B');
+        expect(formatBytes(1023.5)).toBe('1.0 KB');
+    });
+
+    it('rounds fractional values in larger units', () => {
+        expect(formatBytes(2048.75)).toBe('2.0 KB');
+    });
+
+    it('returns "--" for non-finite values', () => {
+        expect(formatBytes(Number.NaN)).toBe('--');
+        expect(formatBytes(Number.POSITIVE_INFINITY)).toBe('--');
+    });
 });
 
 describe('formatTime', () => {

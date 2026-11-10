@@ -135,6 +135,10 @@ export const KPI_VALUE_SX: SxProps<Theme> = {
     fontSize: '1.75rem',
     lineHeight: 1,
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    // An unexpectedly long value wraps inside the tile rather than
+    // running past its edge.
+    minWidth: 0,
+    overflowWrap: 'anywhere',
 };
 
 /** KPI tile unit */

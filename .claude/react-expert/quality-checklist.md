@@ -251,6 +251,13 @@ The rules for new or modified charts are as follows:
   unavailable so no line renders at all; never a '0 B', 'NaN' or '--'
   placeholder in that slot.
 
+- Format a byte count or byte rate on a tile with `formatBytes` from
+  `client/src/utils/formatters.ts`, which rounds fractional values
+  such as `wal_bytes_per_sec` to whole bytes below 1 KB and returns
+  '--' for null or non-finite input; never interpolate the raw number
+  with a hand-written 'B' suffix. `KPI_VALUE_SX` wraps a value that
+  is still too long rather than letting it overflow the tile.
+
 - Report a failed metrics query rather than letting it read as an
   absence of data. `ChartPanel` takes an optional `errorMessage`,
   rendered in `color="error"` in place of `emptyMessage` whenever it

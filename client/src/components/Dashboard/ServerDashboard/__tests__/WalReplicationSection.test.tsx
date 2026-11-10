@@ -350,6 +350,22 @@ describe('WalReplicationSection', () => {
             expect(screen.getByText('%')).toBeInTheDocument();
         });
 
+        it('rounds a fractional sub-kilobyte WAL rate', async () => {
+            routeMetrics({
+                [WAL_KEY]: ready([
+                    series('wal_bytes_per_sec', [1048576, 162.618128434491]),
+                    series('wal_records_per_sec', [20, 2]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('WAL Bytes')).toBeInTheDocument();
+            });
+            expect(screen.getByText('163 B')).toBeInTheDocument();
+            expect(screen.queryByText(/162\.618/)).not.toBeInTheDocument();
+        });
+
         it('reports a zero WAL rate rather than an earlier reading', async () => {
             routeMetrics({
                 [WAL_KEY]: ready([

@@ -11,11 +11,13 @@
 /**
  * Format byte values into a human-readable string.
  *
- * @param bytes - The number of bytes, or null/undefined.
- * @returns A formatted string such as "1.2 GB" or "--" for null/undefined.
+ * @param bytes - The number of bytes, which may be fractional, or
+ *                null/undefined.
+ * @returns A formatted string such as "163 B" or "1.2 GB", or "--" for
+ *          null, undefined or a non-finite value.
  */
 export function formatBytes(bytes: number | null | undefined): string {
-    if (bytes === null || bytes === undefined) {
+    if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) {
         return '--';
     }
 
@@ -25,11 +27,21 @@ export function formatBytes(bytes: number | null | undefined): string {
 
     const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
     const k = 1024;
-    const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(k));
-    const unitIndex = Math.min(i, units.length - 1);
+    // Rates such as WAL bytes per second are fractional, and a value
+    // below one byte has a negative logarithm, so clamp to bytes.
+    const i = Math.max(
+        0, Math.floor(Math.log(Math.abs(bytes)) / Math.log(k)),
+    );
+    let unitIndex = Math.min(i, units.length - 1);
 
     if (unitIndex === 0) {
-        return `${bytes} B`;
+        // A value just below 1 KB can round up to 1024 bytes, which
+        // belongs in the next unit.
+        const rounded = Math.round(bytes);
+        if (Math.abs(rounded) < k) {
+            return `${rounded} B`;
+        }
+        unitIndex = 1;
     }
 
     const value = bytes / Math.pow(k, unitIndex);

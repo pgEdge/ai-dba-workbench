@@ -70,6 +70,11 @@ describe('formatBytes', () => {
         expect(formatBytes(0.2)).toBe('0 B');
     });
 
+    it('promotes a value that rounds up to 1024 bytes to KB', () => {
+        expect(formatBytes(1023.4)).toBe('1023 B');
+        expect(formatBytes(1023.5)).toBe('1.0 KB');
+    });
+
     it('rounds fractional values in larger units', () => {
         expect(formatBytes(2048.75)).toBe('2.0 KB');
     });

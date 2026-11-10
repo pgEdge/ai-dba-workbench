@@ -32,10 +32,16 @@ export function formatBytes(bytes: number | null | undefined): string {
     const i = Math.max(
         0, Math.floor(Math.log(Math.abs(bytes)) / Math.log(k)),
     );
-    const unitIndex = Math.min(i, units.length - 1);
+    let unitIndex = Math.min(i, units.length - 1);
 
     if (unitIndex === 0) {
-        return `${Math.round(bytes)} B`;
+        // A value just below 1 KB can round up to 1024 bytes, which
+        // belongs in the next unit.
+        const rounded = Math.round(bytes);
+        if (Math.abs(rounded) < k) {
+            return `${rounded} B`;
+        }
+        unitIndex = 1;
     }
 
     const value = bytes / Math.pow(k, unitIndex);

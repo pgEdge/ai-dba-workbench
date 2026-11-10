@@ -3889,6 +3889,17 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("index_name", "Filter by index name"),
 					queryParamString("mount_point", "Filter by filesystem mount point"),
 					queryParamString("queryid", "Filter by pg_stat_statements query ID"),
+					queryParamString("statement_database_name",
+						"pg_stat_statements only, with exactly one "+
+							"connection: keep the rows of statements that "+
+							"ran in this database. database_name on that "+
+							"probe names the database the statistics were "+
+							"collected through, which carries every "+
+							"database's statements, so this is the filter "+
+							"that matches a Top Queries row. A statement "+
+							"whose database ID no longer resolves to a name "+
+							"is attributed to the database it was collected "+
+							"through, as Top Queries does"),
 					queryParamInt("buckets", "Number of time buckets, "+
 						"1 to 500 (default 150). The count is clamped so "+
 						"that no bucket is narrower than the probe's "+

@@ -89,6 +89,42 @@ type MetricFilters struct {
 	// queryid, collected_at) index remains usable. A nil pointer means no
 	// filter; zero is a legitimate identifier and must stay expressible.
 	QueryID *int64
+	// StatementDatabase restricts pg_stat_statements rows to the
+	// statements of one database, as opposed to DatabaseName, which
+	// filters on the database the probe collected them through. A nil
+	// pointer means no filter.
+	StatementDatabase *StatementDatabaseFilter
+}
+
+// StatementDatabaseFilter selects the pg_stat_statements rows whose own
+// database, the dbid, resolves to Name. The handler resolves the dbids
+// before the query runs, from the same name lookup the Top Queries list
+// and query-stats use, so a chart opened from a Top Queries row sums the
+// same counters as that row. A dbid the lookup cannot resolve falls back
+// to the probing database_name there, so such a row also matches when
+// its database_name is Name.
+type StatementDatabaseFilter struct {
+	// Name is the database name the caller asked for.
+	Name string
+	// DBIDs holds every dbid the lookup resolves to Name.
+	DBIDs []int64
+	// ResolvedDBIDs holds every dbid the lookup resolves to any name; a
+	// dbid outside it is unresolved and falls back to database_name.
+	ResolvedDBIDs []int64
+}
+
+// statementDatabaseClause returns the WHERE fragment for f, with its
+// placeholders numbered from argNum, and the three values it binds. The
+// dbid lists are bound as text (BigIntArrayExpr), which a ColdFront
+// datastore can type, and dbid is cast to bigint because it is oid on
+// plain PostgreSQL and bigint on ColdFront.
+func statementDatabaseClause(f *StatementDatabaseFilter, argNum int) (string, []any) {
+	clause := fmt.Sprintf(
+		"(dbid::bigint = ANY(%s) OR (NOT dbid::bigint = ANY(%s) AND database_name = $%d))",
+		BigIntArrayExpr(fmt.Sprintf("$%d", argNum)),
+		BigIntArrayExpr(fmt.Sprintf("$%d", argNum+1)),
+		argNum+2)
+	return clause, []any{Int64ListArg(f.DBIDs), Int64ListArg(f.ResolvedDBIDs), f.Name}
 }
 
 // maxLatestRowLimit bounds the number of rows a latest-row query may
@@ -1005,10 +1041,17 @@ func metricQueryClauses(
 		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("queryid = $%d", argNum))
 		parts.args = append(parts.args, *filters.QueryID)
-		// No argNum++ here: QueryID is the last filter. A new filter
-		// added below must add argNum++ above first. Note that
-		// BuildDerivedMetricsQuery appends one more argument after the
-		// filter values, at position len(parts.args)+1.
+		argNum++
+	}
+
+	// StatementDatabase is the last filter, so argNum is not advanced
+	// past its values. A new filter added below must advance it first.
+	// Note that BuildDerivedMetricsQuery appends more arguments after
+	// the filter values, from position len(parts.args)+1.
+	if filters.StatementDatabase != nil {
+		clause, args := statementDatabaseClause(filters.StatementDatabase, argNum)
+		parts.filterClauses = append(parts.filterClauses, clause)
+		parts.args = append(parts.args, args...)
 	}
 
 	// The registry's exclusion is a fixed fragment with no bound value
@@ -2246,6 +2289,13 @@ func buildLatestRowsQuery(
 		whereClauses = append(whereClauses, fmt.Sprintf("queryid = $%d", argNum))
 		args = append(args, *filters.QueryID)
 		argNum++
+	}
+
+	if filters.StatementDatabase != nil {
+		clause, sdArgs := statementDatabaseClause(filters.StatementDatabase, argNum)
+		whereClauses = append(whereClauses, clause)
+		args = append(args, sdArgs...)
+		argNum += len(sdArgs)
 	}
 
 	whereClause := strings.Join(whereClauses, " AND ")

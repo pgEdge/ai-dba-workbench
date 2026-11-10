@@ -136,6 +136,12 @@ const buildMetricsUrl = (
         searchParams.append('queryid', params.queryId);
     }
 
+    if (params.statementDatabaseName) {
+        searchParams.append(
+            'statement_database_name', params.statementDatabaseName,
+        );
+    }
+
     if (params.buckets !== undefined) {
         searchParams.append('buckets', params.buckets.toString());
     }
@@ -287,6 +293,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         customStart,
         customEnd,
         params?.queryId,
+        params?.statementDatabaseName,
     ]);
 
     // Fetch when dependencies change or refresh is triggered

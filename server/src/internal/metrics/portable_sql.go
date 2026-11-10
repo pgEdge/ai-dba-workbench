@@ -69,6 +69,25 @@ func IntListArg(ids []int) string {
 	return strings.Join(parts, ",")
 }
 
+// BigIntArrayExpr is IntArrayExpr for values that may exceed the integer
+// range, such as OIDs, which are unsigned 32-bit on plain PostgreSQL.
+// Compare a column cast to bigint with it, as
+// "col::bigint = ANY(BigIntArrayExpr(...))", since the column is oid on
+// plain PostgreSQL and bigint on a ColdFront datastore.
+func BigIntArrayExpr(placeholder string) string {
+	return "string_to_array(" + placeholder + ", ',')::bigint[]"
+}
+
+// Int64ListArg renders ids as the comma-separated text BigIntArrayExpr
+// expects, with the same guarantees as IntListArg.
+func Int64ListArg(ids []int64) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = strconv.FormatInt(id, 10)
+	}
+	return strings.Join(parts, ",")
+}
+
 // isIntegerType reports whether dataType, as information_schema names it,
 // is an integer type narrower than bigint, whose sum PostgreSQL types as
 // bigint but DuckDB computes as HUGEINT.

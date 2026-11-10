@@ -109,8 +109,10 @@ on PostgreSQL releases before 14 and on servers where
 `compute_query_id` is off.
 
 The execution time and call count charts cover only the
-selected query, so the values reconcile with the tiles
-above.
+selected query in the database the view was opened for,
+so the values reconcile with the tiles above. A statement
+that also runs in other databases, such as `BEGIN`, does
+not add their calls to the charts.
 
 ## Query Plan
 

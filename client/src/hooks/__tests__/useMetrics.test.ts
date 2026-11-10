@@ -296,6 +296,31 @@ describe('useMetrics', () => {
 
         const url = mockApiGet.mock.calls[0][0];
         expect(url).not.toContain('queryid');
+        expect(url).not.toContain('statement_database_name');
+    });
+
+    it('builds URL with statement_database_name when set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_statements',
+            timeRange: '24h',
+            connectionId: 5,
+            databaseName: 'postgres',
+            queryId: '42',
+            statementDatabaseName: 'my db',
+            metrics: ['calls'],
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).toContain('database_name=postgres');
+        expect(url).toContain('statement_database_name=my+db');
     });
 
     it('sets loading to true during initial fetch', async () => {

@@ -542,6 +542,21 @@ describe('QueryDetail', () => {
                 .toBe('alpha');
         });
 
+        it('limits both charts to the statement\'s own database, as the '
+            + 'summary is', async () => {
+            mockApiFetch.mockResolvedValue(okResponse([
+                makeQueryRow({ sample_database_name: 'alpha' }),
+            ]));
+            renderDetail();
+
+            await waitFor(() => {
+                expect(paramsFor(EXEC_KEY)?.statementDatabaseName)
+                    .toBe('testdb');
+            });
+            expect(paramsFor('calls_per_sec')?.statementDatabaseName)
+                .toBe('testdb');
+        });
+
         it('draws the call rate as a smooth line', async () => {
             renderDetail();
 

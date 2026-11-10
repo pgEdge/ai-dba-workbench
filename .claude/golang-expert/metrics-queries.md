@@ -1026,10 +1026,11 @@ clause from the same `MetricFilters` value and needs the clause adding
 there too, or the filter scopes the chart but not the KPI tile behind it.
 
 Two ordering rules govern `metricQueryClauses`. Every clause increments
-`argNum` except the last one, and the `QueryID` clause is deliberately
-last and deliberately omits the increment, with a comment saying so; a new
-filter therefore goes above it and carries its own `argNum++`, leaving
-that comment attached to whichever clause is genuinely last. And the
+`argNum` except the last one, and the `StatementDatabase` clause (three
+values, below) is deliberately last and deliberately omits the increment,
+with a comment saying so; a new filter therefore goes above it and
+carries its own `argNum++`, leaving that comment attached to whichever
+clause is genuinely last. And the
 dimension filters apply no probe-column-existence check: `SchemaName`,
 `TableName`, `IndexName` and `MountPoint` (issue #428, `mount_point`, so
 the Disk Space chart can scope to one real filesystem rather than
@@ -2326,6 +2327,27 @@ returns a `*int64` and answers `400` to anything that is not a 64-bit
 integer. The value is bound uncast as `queryid = $N`, never through a
 `queryid::text` cast. Responses still carry the identifier as a decimal
 string, because JavaScript cannot represent it exactly.
+
+`/metrics/query` also takes `statement_database_name` (PR #825, the
+follow-up to #802), so the query detail charts count only the statement's
+runs in the row's own database, as the summary tiles do. `database_name`
+cannot do this on pg_stat_statements, since every probing database carries
+every database's counters. `applyStatementDatabaseFilter` in
+`metrics_statement_database.go` validates the name with
+`database.ValidateDatabaseName`, refuses any other probe and more than one
+connection with `400`, and resolves the name through
+`statementDatabaseLookupSQL` (the Top Queries lookup) into
+`MetricFilters.StatementDatabase`: the dbids with that name, plus every
+resolved dbid. `statementDatabaseClause` then matches
+`dbid::bigint = ANY(<named>) OR (NOT dbid::bigint = ANY(<resolved>) AND
+database_name = $n)`, which is the Top Queries row key
+`COALESCE(db_names.datname, database_name)` without a join. The lists are
+bound as comma-separated text through `BigIntArrayExpr` and `Int64ListArg`
+(the bigint siblings of `IntArrayExpr`/`IntListArg`), never as an array
+parameter, for ColdFront; an empty list makes the `ANY` false, so an
+unknown name still matches rows collected through a database of that
+name. The handler test seeds a probe_configs row because the time-series
+path resolves the probe interval, and drops the table it created.
 
 Whether the `(connection_id, database_name, queryid, collected_at)`
 object index actually serves a queryid lookup depends on the predicate

@@ -1520,7 +1520,10 @@ project adheres to
   of every database and named only one of them, usually the
   Workbench's own datastore. Each database now has a row of its own
   with only its own figures, and the query detail overlay opened
-  from a row shows the figures for that row's database.
+  from a row shows the figures for that row's database, in its
+  charts as well as its summary. `GET /api/v1/metrics/query` takes a
+  new `statement_database_name` parameter for pg_stat_statements,
+  which keeps only the statements that ran in the named database.
 
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled

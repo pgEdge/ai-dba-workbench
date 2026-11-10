@@ -75,6 +75,11 @@ type MetricsHandler struct {
 	// loadComparisonFn builds the anomaly comparison. When nil the
 	// handler falls back to metrics.LoadComparison.
 	loadComparisonFn comparisonLoadFunc
+
+	// statementDatabaseLookupFn resolves dbids to database names for the
+	// statement_database_name filter. When nil the handler falls back to
+	// lookupStatementDatabases.
+	statementDatabaseLookupFn statementDatabaseLookupFunc
 }
 
 // accessChecker returns the RBAC checker for one request. It always
@@ -292,6 +297,10 @@ func (h *MetricsHandler) handleMetricsQuery(
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
+	if !h.applyStatementDatabaseFilter(ctx, w, r, probeName, connectionIDs, &filters) {
+		return // error already sent
+	}
+
 	pool := h.datastore.GetPool()
 	queryFn := h.queryTimeSeriesFn
 	if queryFn == nil {
@@ -367,6 +376,10 @@ func (h *MetricsHandler) handleLatestRows(
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+
+	if !h.applyStatementDatabaseFilter(ctx, w, r, probeName, connectionIDs, &filters) {
+		return // error already sent
+	}
 
 	pool := h.datastore.GetPool()
 	result, err := metrics.QueryLatestRows(

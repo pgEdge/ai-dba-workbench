@@ -433,85 +433,7 @@ To avoid rate limits when calling this tool:
 
 			// Handle empty results with contextual guidance
 			if matchedTables == 0 {
-				var emptyMsg strings.Builder
-				emptyMsg.WriteString("\nNo tables found matching your criteria.\n\n")
-
-				emptyMsg.WriteString("<current_connection>\n")
-				fmt.Fprintf(&emptyMsg, "Connected to: %s\n", scope.connStr)
-				if scope.dbName != "" {
-					fmt.Fprintf(&emptyMsg, "Database inspected: %s\n", scope.dbName)
-				}
-				emptyMsg.WriteString(scope.overrideNote())
-				emptyMsg.WriteString("</current_connection>\n\n")
-
-				emptyMsg.WriteString("<diagnosis>\n")
-				if tableName != "" {
-					fmt.Fprintf(&emptyMsg, "Table '%s.%s' not found.\n", schemaName, tableName)
-					emptyMsg.WriteString("Possible reasons:\n")
-					emptyMsg.WriteString("1. Table name is misspelled (PostgreSQL is case-sensitive)\n")
-					emptyMsg.WriteString("2. Table exists in a different schema\n")
-					emptyMsg.WriteString("3. You don't have permission to view this table\n")
-				} else if schemaName != "" && vectorTablesOnly {
-					fmt.Fprintf(&emptyMsg, "No tables with vector columns found in schema '%s'.\n", schemaName)
-					emptyMsg.WriteString("Possible reasons:\n")
-					emptyMsg.WriteString("1. Schema name is misspelled or doesn't exist\n")
-					emptyMsg.WriteString("2. Schema exists but has no tables with vector columns\n")
-					emptyMsg.WriteString("3. pgvector extension not installed or not used in this schema\n")
-				} else if schemaName != "" {
-					fmt.Fprintf(&emptyMsg, "Schema '%s' not found or has no tables.\n", schemaName)
-					emptyMsg.WriteString("Possible reasons:\n")
-					emptyMsg.WriteString("1. Schema name is misspelled (PostgreSQL is case-sensitive)\n")
-					emptyMsg.WriteString("2. Schema exists but is empty (no tables created yet)\n")
-					emptyMsg.WriteString("3. You don't have permission to view this schema\n")
-				} else if vectorTablesOnly {
-					emptyMsg.WriteString("No tables with vector columns found in any schema.\n")
-					emptyMsg.WriteString("Possible reasons:\n")
-					emptyMsg.WriteString("1. pgvector extension not installed: CREATE EXTENSION vector;\n")
-					emptyMsg.WriteString("2. No vector columns exist yet in this database\n")
-					emptyMsg.WriteString("3. Connected to wrong database (vector tables might be elsewhere)\n")
-				} else {
-					emptyMsg.WriteString("Database appears to be completely empty (no tables in any schema).\n")
-					emptyMsg.WriteString("Possible reasons:\n")
-					emptyMsg.WriteString("1. New database with no tables created yet\n")
-					emptyMsg.WriteString("2. Connected to wrong database\n")
-					emptyMsg.WriteString("3. Permissions prevent you from viewing any tables\n")
-				}
-				emptyMsg.WriteString("</diagnosis>\n\n")
-
-				emptyMsg.WriteString("<next_steps>\n")
-				emptyMsg.WriteString("Recommended actions:\n\n")
-				emptyMsg.WriteString("1. Check current database connection:\n")
-				emptyMsg.WriteString("   → read_resource(uri=\"pg://system-info\")\n\n")
-
-				emptyMsg.WriteString("2. List all databases to find the right one:\n")
-				emptyMsg.WriteString("   → query_database(query=\"SELECT datname FROM pg_database WHERE datistemplate = false\", limit=20)\n\n")
-
-				if tableName != "" {
-					emptyMsg.WriteString("3. List all tables in the schema to find the correct name:\n")
-					fmt.Fprintf(&emptyMsg, "   → get_schema_info(schema_name=%q, compact=true)\n\n", schemaName)
-				} else if schemaName != "" {
-					emptyMsg.WriteString("3. List all available schemas:\n")
-					emptyMsg.WriteString("   → query_database(query=\"SELECT schema_name FROM information_schema.schemata ORDER BY schema_name\", limit=50)\n\n")
-					emptyMsg.WriteString("4. Try without schema filter:\n")
-					emptyMsg.WriteString("   → get_schema_info()\n\n")
-				}
-
-				if vectorTablesOnly {
-					emptyMsg.WriteString("3. Check if pgvector extension is installed:\n")
-					emptyMsg.WriteString("   → query_database(query=\"SELECT * FROM pg_extension WHERE extname = 'vector'\")\n\n")
-					emptyMsg.WriteString("4. Try without vector filter to see all tables:\n")
-					if schemaName != "" {
-						fmt.Fprintf(&emptyMsg, "   → get_schema_info(schema_name=%q)\n\n", schemaName)
-					} else {
-						emptyMsg.WriteString("   → get_schema_info()\n\n")
-					}
-				}
-
-				emptyMsg.WriteString("5. Switch to a different database if needed:\n")
-				emptyMsg.WriteString("   → get_schema_info(connection_id=<id from list_connections>, database_name=\"other_db\")\n")
-				emptyMsg.WriteString("</next_steps>\n")
-
-				return mcp.NewToolSuccess(emptyMsg.String())
+				return mcp.NewToolSuccess(emptySchemaResult(scope, schemaName, tableName, vectorTablesOnly))
 			}
 
 			// Prepend database context to the response
@@ -520,6 +442,173 @@ To avoid rate limits when calling this tool:
 			return mcp.NewToolSuccess(result)
 		},
 	}
+}
+
+// schemaStep is one recommended next action in an empty
+// get_schema_info result: what to do, and the call that does it.
+type schemaStep struct {
+	action string
+	call   string
+}
+
+// emptySchemaResult explains a get_schema_info call that matched no
+// tables: which database was inspected, the likely reasons and what to
+// try next. The steps are numbered as they are written, so the
+// numbering has no gaps whichever filters applied.
+func emptySchemaResult(scope schemaScope, schemaName, tableName string, vectorTablesOnly bool) string {
+	var b strings.Builder
+	b.WriteString("\nNo tables found matching your criteria.\n\n")
+
+	b.WriteString("<current_connection>\n")
+	fmt.Fprintf(&b, "Connected to: %s\n", scope.connStr)
+	if scope.dbName != "" {
+		fmt.Fprintf(&b, "Database inspected: %s\n", scope.dbName)
+	}
+	b.WriteString(scope.overrideNote())
+	b.WriteString("</current_connection>\n\n")
+
+	b.WriteString("<diagnosis>\n")
+	b.WriteString(emptySchemaDiagnosis(scope, schemaName, tableName, vectorTablesOnly))
+	b.WriteString("</diagnosis>\n\n")
+
+	b.WriteString("<next_steps>\n")
+	b.WriteString("Recommended actions:\n")
+	for i, step := range emptySchemaNextSteps(scope, schemaName, tableName, vectorTablesOnly) {
+		fmt.Fprintf(&b, "\n%d. %s:\n   → %s\n", i+1, step.action, step.call)
+	}
+	b.WriteString("</next_steps>\n")
+	return b.String()
+}
+
+// emptySchemaDiagnosis lists the likely reasons that no tables matched.
+// When database_name replaced the configured database and no table or
+// schema filter narrowed the search, the override is given as the
+// reason rather than a wrong connection or missing permissions: an
+// analysis that inspected an empty postgres database otherwise reported
+// the connection as misconfigured (issue #801).
+func emptySchemaDiagnosis(scope schemaScope, schemaName, tableName string, vectorTablesOnly bool) string {
+	var b strings.Builder
+	overrideReason := ""
+	if scope.overridden() {
+		overrideReason = fmt.Sprintf("4. It may be in this connection's "+
+			"configured database, %q, which database_name %q replaced\n",
+			scope.configuredDB, scope.dbName)
+	}
+
+	switch {
+	case tableName != "":
+		fmt.Fprintf(&b, "Table '%s.%s' not found.\n", schemaName, tableName)
+		b.WriteString("Possible reasons:\n")
+		b.WriteString("1. Table name is misspelled (PostgreSQL is case-sensitive)\n")
+		b.WriteString("2. Table exists in a different schema\n")
+		b.WriteString("3. You don't have permission to view this table\n")
+		b.WriteString(overrideReason)
+	case schemaName != "" && vectorTablesOnly:
+		fmt.Fprintf(&b, "No tables with vector columns found in schema '%s'.\n", schemaName)
+		b.WriteString("Possible reasons:\n")
+		b.WriteString("1. Schema name is misspelled or doesn't exist\n")
+		b.WriteString("2. Schema exists but has no tables with vector columns\n")
+		b.WriteString("3. pgvector extension not installed or not used in this schema\n")
+		b.WriteString(overrideReason)
+	case schemaName != "":
+		fmt.Fprintf(&b, "Schema '%s' not found or has no tables.\n", schemaName)
+		b.WriteString("Possible reasons:\n")
+		b.WriteString("1. Schema name is misspelled (PostgreSQL is case-sensitive)\n")
+		b.WriteString("2. Schema exists but is empty (no tables created yet)\n")
+		b.WriteString("3. You don't have permission to view this schema\n")
+		b.WriteString(overrideReason)
+	case vectorTablesOnly && scope.overridden():
+		fmt.Fprintf(&b, "No tables with vector columns found in the %q "+
+			"database. database_name %q replaced this connection's "+
+			"configured database, %q, so the override is the likely "+
+			"reason. Inspect the configured database before concluding "+
+			"that pgvector is missing or that the connection is wrong.\n",
+			scope.dbName, scope.dbName, scope.configuredDB)
+	case vectorTablesOnly:
+		b.WriteString("No tables with vector columns found in any schema.\n")
+		b.WriteString("Possible reasons:\n")
+		b.WriteString("1. pgvector extension not installed: CREATE EXTENSION vector;\n")
+		b.WriteString("2. No vector columns exist yet in this database\n")
+		b.WriteString("3. Connected to wrong database (vector tables might be elsewhere)\n")
+	case scope.overridden():
+		fmt.Fprintf(&b, "The %q database has no tables in any schema. "+
+			"database_name %q replaced this connection's configured "+
+			"database, %q, so the override is why the result is empty. "+
+			"This does not show that the connection is misconfigured, "+
+			"points at the wrong database or lacks permissions; inspect "+
+			"the configured database before drawing any conclusion.\n",
+			scope.dbName, scope.dbName, scope.configuredDB)
+	default:
+		b.WriteString("Database appears to be completely empty (no tables in any schema).\n")
+		b.WriteString("Possible reasons:\n")
+		b.WriteString("1. New database with no tables created yet\n")
+		b.WriteString("2. Connected to wrong database\n")
+		b.WriteString("3. Permissions prevent you from viewing any tables\n")
+	}
+	return b.String()
+}
+
+// emptySchemaNextSteps returns the recommended actions for an empty
+// get_schema_info result. After a database_name override the first
+// step returns to the configured database, and the steps that hunt for
+// some other database are left out, since the right one is known.
+func emptySchemaNextSteps(scope schemaScope, schemaName, tableName string, vectorTablesOnly bool) []schemaStep {
+	var steps []schemaStep
+	if scope.overridden() {
+		steps = append(steps, schemaStep{
+			fmt.Sprintf("Inspect this connection's configured database, %q, "+
+				"by repeating the call with the same connection_id and "+
+				"no database_name", scope.configuredDB),
+			"get_schema_info(connection_id=<the same connection_id>)",
+		})
+	}
+	steps = append(steps, schemaStep{
+		"Check current database connection",
+		`read_resource(uri="pg://system_info")`,
+	})
+	if !scope.overridden() {
+		steps = append(steps, schemaStep{
+			"List all databases to find the right one",
+			`query_database(query="SELECT datname FROM pg_database WHERE datistemplate = false", limit=20)`,
+		})
+	}
+
+	if tableName != "" {
+		steps = append(steps, schemaStep{
+			"List all tables in the schema to find the correct name",
+			fmt.Sprintf("get_schema_info(schema_name=%q, compact=true)", schemaName),
+		})
+	} else if schemaName != "" {
+		steps = append(steps,
+			schemaStep{
+				"List all available schemas",
+				`query_database(query="SELECT schema_name FROM information_schema.schemata ORDER BY schema_name", limit=50)`,
+			},
+			schemaStep{"Try without schema filter", "get_schema_info()"},
+		)
+	}
+
+	if vectorTablesOnly {
+		withoutVector := "get_schema_info()"
+		if schemaName != "" {
+			withoutVector = fmt.Sprintf("get_schema_info(schema_name=%q)", schemaName)
+		}
+		steps = append(steps,
+			schemaStep{
+				"Check if pgvector extension is installed",
+				`query_database(query="SELECT * FROM pg_extension WHERE extname = 'vector'")`,
+			},
+			schemaStep{"Try without vector filter to see all tables", withoutVector},
+		)
+	}
+
+	if !scope.overridden() {
+		steps = append(steps, schemaStep{
+			"Switch to a different database if needed",
+			`get_schema_info(connection_id=<id from list_connections>, database_name="other_db")`,
+		})
+	}
+	return steps
 }
 
 // schemaScope records which database a get_schema_info call inspected,

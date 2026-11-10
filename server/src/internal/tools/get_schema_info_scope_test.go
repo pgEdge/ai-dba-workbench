@@ -12,6 +12,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -195,9 +196,113 @@ func TestGetSchemaInfoDatabaseOverride(t *testing.T) {
 	for _, want := range []string{
 		"template1",
 		`Note: database_name "template1" replaced this connection's configured database, "` + env.database + `"`,
+		"so the override is why the result is empty",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("expected %q in:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "Connected to wrong database") {
+		t.Errorf("an override should not be diagnosed as a wrong "+
+			"connection:\n%s", text)
+	}
+}
+
+// TestEmptySchemaResult covers the diagnosis and next steps of an empty
+// get_schema_info result for each filter, with and without a
+// database_name override (issue #801).
+func TestEmptySchemaResult(t *testing.T) {
+	plain := schemaScope{dbName: "app", configuredDB: "app",
+		connStr: "postgres://u@localhost/app"}
+	override := schemaScope{dbName: "postgres", configuredDB: "app",
+		connStr: "postgres://u@localhost/postgres"}
+
+	tests := []struct {
+		name    string
+		scope   schemaScope
+		schema  string
+		table   string
+		vector  bool
+		want    []string
+		notWant []string
+	}{
+		{"whole database", plain, "", "", false,
+			[]string{"completely empty", "2. Connected to wrong database",
+				"List all databases", "Switch to a different database"},
+			[]string{"Note: database_name"}},
+		{"whole database overridden", override, "", "", false,
+			[]string{`The "postgres" database has no tables`,
+				"so the override is why the result is empty",
+				`configured database, "app"`,
+				"get_schema_info(connection_id=<the same connection_id>)"},
+			[]string{"Connected to wrong database", "Permissions prevent",
+				"List all databases", "Switch to a different database"}},
+		{"vector tables", plain, "", "", true,
+			[]string{"No tables with vector columns found in any schema",
+				"3. Connected to wrong database"},
+			nil},
+		{"vector tables overridden", override, "", "", true,
+			[]string{`No tables with vector columns found in the "postgres" database`,
+				"the override is the likely reason"},
+			[]string{"Connected to wrong database"}},
+		{"table overridden", override, "public", "orders", false,
+			[]string{"Table 'public.orders' not found",
+				`4. It may be in this connection's configured database, "app"`,
+				`get_schema_info(schema_name="public", compact=true)`},
+			nil},
+		{"schema", plain, "sales", "", false,
+			[]string{"Schema 'sales' not found", "List all available schemas",
+				"Try without schema filter"},
+			[]string{"4. It may be"}},
+		{"schema overridden", override, "sales", "", false,
+			[]string{`4. It may be in this connection's configured database`},
+			nil},
+		{"schema vector overridden", override, "sales", "", true,
+			[]string{"No tables with vector columns found in schema 'sales'",
+				"4. It may be",
+				`get_schema_info(schema_name="sales")`},
+			nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text := emptySchemaResult(tt.scope, tt.schema, tt.table, tt.vector)
+			for _, want := range append(tt.want,
+				`read_resource(uri="pg://system_info")`) {
+				if !strings.Contains(text, want) {
+					t.Errorf("expected %q in:\n%s", want, text)
+				}
+			}
+			for _, notWant := range append(tt.notWant, "pg://system-info") {
+				if strings.Contains(text, notWant) {
+					t.Errorf("did not expect %q in:\n%s", notWant, text)
+				}
+			}
+			assertStepsNumbered(t, text)
+		})
+	}
+}
+
+// assertStepsNumbered checks that the next steps of an empty result are
+// numbered 1, 2, 3 and so on with no gaps or repeats.
+func assertStepsNumbered(t *testing.T, text string) {
+	t.Helper()
+	_, steps, found := strings.Cut(text, "<next_steps>")
+	if !found {
+		t.Fatalf("no next steps in:\n%s", text)
+	}
+	want := 1
+	for _, line := range strings.Split(steps, "\n") {
+		if line == "" || line[0] < '0' || line[0] > '9' {
+			continue
+		}
+		prefix := fmt.Sprintf("%d. ", want)
+		if !strings.HasPrefix(line, prefix) {
+			t.Errorf("expected step %q, got %q in:\n%s", prefix, line, steps)
+			return
+		}
+		want++
+	}
+	if want < 3 {
+		t.Errorf("expected at least two steps in:\n%s", steps)
 	}
 }

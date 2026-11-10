@@ -1379,7 +1379,11 @@ project adheres to
   misconfigured. The `get_schema_info` tool now names the database it
   inspected at the top of its result, states that the objects listed
   are inside that database, and flags a `database_name` override that
-  replaced the configured database. The tool descriptions and Ellie's
+  replaced the configured database; when an overridden database is
+  empty, the result gives the override as the reason rather than a
+  wrong connection or missing permissions. The recovery hints in
+  `get_schema_info` and `similarity_search` now name the
+  `pg://system_info` resource correctly. The tool descriptions and Ellie's
   instructions now say how to list the databases on a server, and the
   server and cluster analyses now tell the model each server's
   configured database and that an empty `postgres` database is normal.

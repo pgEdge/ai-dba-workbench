@@ -91,10 +91,12 @@ index metrics.
 ## Vacuum Status
 
 The vacuum status section displays the 20 user tables
-with the most dead tuples, sorted by dead tuple ratio
-in descending order. System catalogs and TOAST tables
-are not listed. The table includes the following
-columns:
+with the highest dead tuple ratio, highest first; the
+ratio is the share of a table's tuples that are dead.
+A table with no tuples counts as a ratio of 0, and
+tables with the same ratio are listed by dead tuple
+count. System catalogs and TOAST tables are not
+listed. The table includes the following columns:
 
 - The table name identifies each entry.
 - The last vacuum column shows the most recent manual

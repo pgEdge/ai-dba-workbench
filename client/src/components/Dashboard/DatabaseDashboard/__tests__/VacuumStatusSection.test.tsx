@@ -178,7 +178,7 @@ describe('VacuumStatusSection', () => {
         );
     });
 
-    it('asks the server to leave out system schemas (issue #806)', async () => {
+    it('asks the server for user tables ranked by dead ratio (issue #806)', async () => {
         renderSection();
 
         await waitFor(() => { expect(mockApiFetch).toHaveBeenCalled(); });
@@ -187,7 +187,7 @@ describe('VacuumStatusSection', () => {
         expect(params.get('connection_id')).toBe('7');
         expect(params.get('database_name')).toBe('appdb');
         expect(params.get('limit')).toBe('20');
-        expect(params.get('order_by')).toBe('n_dead_tup');
+        expect(params.get('order_by')).toBe('dead_tuple_ratio');
         expect(params.get('order')).toBe('desc');
         expect(params.get('exclude_system_schemas')).toBe('true');
     });

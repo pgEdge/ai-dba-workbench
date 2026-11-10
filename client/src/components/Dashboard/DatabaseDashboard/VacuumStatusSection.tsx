@@ -137,8 +137,8 @@ const getDeadTupleRatio = (row: TableLeaderboardRow): number => {
 
 /**
  * Vacuum Status section displays the vacuum and autovacuum status
- * of the 20 user tables with the most dead tuples, sorted by dead
- * tuple ratio in descending order. The vacuum timestamps are colored
+ * of the 20 user tables with the highest dead tuple ratio, highest
+ * first. The vacuum timestamps are colored
  * by how long ago each operation ran, and the dead ratio is colored
  * by the ratio itself. System catalogs and TOAST tables are left out.
  */
@@ -166,7 +166,10 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
             connection_id: connectionId.toString(),
             database_name: databaseName,
             limit: '20',
-            order_by: 'n_dead_tup',
+            // Rank by dead tuple ratio on the server, so that a small
+            // table with a high ratio is not left out in favour of a
+            // large table with more dead tuples but a lower ratio.
+            order_by: 'dead_tuple_ratio',
             order: 'desc',
             // Leave out pg_catalog, information_schema and TOAST
             // tables, as pg_stat_user_tables does, so catalog objects
@@ -207,7 +210,8 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
                     rows = result.rows ?? [];
                 }
 
-                // Sort by dead tuple ratio descending
+                // The server ranks by the same ratio; sorting again
+                // keeps the rows in the order the colours describe.
                 rows.sort((a, b) => {
                     return getDeadTupleRatio(b)
                         - getDeadTupleRatio(a);

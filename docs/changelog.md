@@ -1440,7 +1440,12 @@ project adheres to
   ratio above 90% showed green when autovacuum had run recently. The
   ratio is now green up to 5%, amber up to 20% and red above that, as
   on the Server Dashboard's database cards, and the list shows only
-  the tables that `pg_stat_user_tables` would.
+  the tables that `pg_stat_user_tables` would. The section now lists
+  the 20 tables with the highest dead ratio rather than the 20 with
+  the most dead tuples, so a small table with a high ratio is no
+  longer left out; `GET /api/v1/metrics/latest` accepts
+  `order_by=dead_tuple_ratio` for this on probes with `n_live_tup`
+  and `n_dead_tup` columns.
 
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled

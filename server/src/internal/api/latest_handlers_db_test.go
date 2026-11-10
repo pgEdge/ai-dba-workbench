@@ -310,8 +310,7 @@ func TestLatestSnapshot_ExcludeSystemSchemas(t *testing.T) {
 }
 
 // TestLatestSnapshot_SystemSchemasIncludedByDefault proves the flag is
-// opt-in: without it the endpoint keeps returning every schema, which the
-// Vacuum Status section relies on because catalog bloat matters there.
+// opt-in: without it the endpoint keeps returning every schema.
 // It also shows the #499 failure mode, where zero-valued catalog rows
 // outrank a user table whose statistics are zero too.
 func TestLatestSnapshot_SystemSchemasIncludedByDefault(t *testing.T) {
@@ -535,6 +534,9 @@ func TestLatestSnapshot_RequestErrors(t *testing.T) {
 		{"unknown order_by column", base + "&order_by=no_such_column",
 			`Invalid order_by: column "no_such_column" does not exist in probe "` +
 				latestTablesProbe + `" output`},
+		{"dead_tuple_ratio without n_dead_tup", base + "&order_by=dead_tuple_ratio",
+			`Invalid order_by: "dead_tuple_ratio" requires probe "` +
+				latestTablesProbe + `" to have n_live_tup and n_dead_tup columns`},
 		{"internal order_by column", base + "&order_by=inserted_at",
 			`Invalid order_by: column "inserted_at" does not exist in probe "` +
 				latestTablesProbe + `" output`},
@@ -803,4 +805,135 @@ func TestLatestSnapshot_RefusesMarkedConnection(t *testing.T) {
 	if rec := getLatest(t, h, query); rec.Code != http.StatusForbidden {
 		t.Fatalf("marked connection: expected 403, got %d (%s)", rec.Code, rec.Body.String())
 	}
+}
+
+// latestDeadRatioProbe is a pg_stat_all_tables fixture with the
+// n_live_tup and n_dead_tup columns that the dead_tuple_ratio sort key
+// is computed from. It takes the real probe name, like latestTablesProbe,
+// and its own DDL replaces that fixture's table for the test's duration.
+const latestDeadRatioProbe = "pg_stat_all_tables"
+
+const (
+	latestDeadRatioCreateSQL = `CREATE TABLE metrics."` + latestDeadRatioProbe + `" (
+        connection_id integer NOT NULL,
+        collected_at  timestamp with time zone NOT NULL,
+        database_name text NOT NULL,
+        schemaname    text NOT NULL,
+        relname       text NOT NULL,
+        n_live_tup    bigint,
+        n_dead_tup    bigint
+    )`
+	latestDeadRatioDropSQL = `DROP TABLE IF EXISTS metrics."` + latestDeadRatioProbe + `"`
+)
+
+// latestDeadRatioRow is one table sample in the dead ratio fixture; a nil
+// counter is stored as NULL.
+type latestDeadRatioRow struct {
+	schema  string
+	relname string
+	live    *int64
+	dead    *int64
+}
+
+// tupleCount returns a pointer to n, for the nullable fixture counters.
+func tupleCount(n int64) *int64 { return &n }
+
+// setupLatestDeadRatioFixture creates the dead ratio fixture probe and
+// fills it with one current sample per table for connection 1.
+func setupLatestDeadRatioFixture(t *testing.T) *LatestSnapshotHandler {
+	t.Helper()
+
+	pool := openLatestTestPool(t)
+	t.Cleanup(pool.Close)
+
+	createLatestFixtureTable(t, pool, latestDeadRatioProbe,
+		latestDeadRatioCreateSQL, latestDeadRatioDropSQL)
+
+	rows := []latestDeadRatioRow{
+		// The most dead tuples, but under 5% of the table.
+		{"public", "big", tupleCount(1_000_000), tupleCount(50_000)},
+		// Few dead tuples, but 90% of a small table.
+		{"public", "small", tupleCount(10), tupleCount(90)},
+		{"public", "medium", tupleCount(900), tupleCount(100)},
+		// Two tables at 50%: the larger backlog ranks first.
+		{"public", "half_large", tupleCount(1000), tupleCount(1000)},
+		{"public", "half_small", tupleCount(10), tupleCount(10)},
+		// No tuples at all, and an unknown dead count: both rank as 0.
+		{"public", "empty", tupleCount(0), tupleCount(0)},
+		{"public", "unknown", tupleCount(5), nil},
+		// An unknown live count leaves the dead tuples as the whole.
+		{"sales", "no_live", nil, tupleCount(3)},
+		// A catalog table at 99%, left out by exclude_system_schemas.
+		{"pg_catalog", "pg_class", tupleCount(1), tupleCount(99)},
+	}
+	ctx := context.Background()
+	for _, r := range rows {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO metrics."`+latestDeadRatioProbe+`"
+             (connection_id, collected_at, database_name, schemaname,
+              relname, n_live_tup, n_dead_tup)
+             VALUES (1, now() - interval '1 minute', 'appdb', $1, $2, $3, $4)`,
+			r.schema, r.relname, r.live, r.dead); err != nil {
+			t.Fatalf("failed to insert a fixture row: %v", err)
+		}
+	}
+
+	return &LatestSnapshotHandler{
+		datastore: database.NewTestDatastore(pool),
+		authStore: newTestAuthStore(t),
+	}
+}
+
+// TestLatestSnapshot_OrderByDeadTupleRatio is the regression test for the
+// review of issue #806: the Vacuum Status section took the 20 tables with
+// the most dead tuples and only then sorted them by ratio, so a small table
+// with a high ratio could be left out. Ranking by dead_tuple_ratio on the
+// server puts it first.
+func TestLatestSnapshot_OrderByDeadTupleRatio(t *testing.T) {
+	h := setupLatestDeadRatioFixture(t)
+	base := "connection_id=1&probe_name=" + latestDeadRatioProbe +
+		"&database_name=appdb&order_by=dead_tuple_ratio&exclude_system_schemas=true"
+
+	t.Run("descending", func(t *testing.T) {
+		resp := decodeLatest(t, getLatest(t, h, base+"&order=desc"))
+		got := strings.Join(qualifiedNames(resp.Rows), ",")
+		want := "sales.no_live,public.small,public.half_large," +
+			"public.half_small,public.medium,public.big," +
+			"public.empty,public.unknown"
+		if got != want {
+			t.Errorf("rows = %s, want %s", got, want)
+		}
+		if resp.TotalCount != 8 {
+			t.Errorf("total_count = %d, want 8", resp.TotalCount)
+		}
+	})
+
+	t.Run("limit keeps the high ratio small table", func(t *testing.T) {
+		resp := decodeLatest(t, getLatest(t, h, base+"&limit=2"))
+		got := strings.Join(qualifiedNames(resp.Rows), ",")
+		if want := "sales.no_live,public.small"; got != want {
+			t.Errorf("rows = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("ascending", func(t *testing.T) {
+		resp := decodeLatest(t, getLatest(t, h, base+"&order=asc&limit=3"))
+		got := strings.Join(qualifiedNames(resp.Rows), ",")
+		if want := "public.empty,public.unknown,public.big"; got != want {
+			t.Errorf("rows = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("system schemas included without the flag", func(t *testing.T) {
+		resp := decodeLatest(t, getLatest(t, h,
+			"connection_id=1&probe_name="+latestDeadRatioProbe+
+				"&order_by=dead_tuple_ratio&limit=2"))
+		got := strings.Join(qualifiedNames(resp.Rows), ",")
+		if want := "sales.no_live,pg_catalog.pg_class"; got != want {
+			t.Errorf("rows = %s, want %s", got, want)
+		}
+		if resp.TotalCount != 9 {
+			t.Errorf("total_count = %d, want 9", resp.TotalCount)
+		}
+	})
 }

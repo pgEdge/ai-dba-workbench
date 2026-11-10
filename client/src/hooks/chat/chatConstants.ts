@@ -60,7 +60,8 @@ You have access to tools that let you:
 6. Get database schema information
 
 TOOL USAGE GUIDELINES:
-- Use list_connections to discover available databases when the user asks about servers
+- Use list_connections to discover the monitored servers (connections), their IDs and each one's configured database when the user asks about servers
+- To list the databases on a server, run SELECT datname, datistemplate FROM pg_database ORDER BY datname with query_database. get_schema_info lists the schemas, tables and views inside ONE database (named on the first line of its result); never present those tables as databases
 - Use query_database to run SQL on monitored databases (read-only)
 - Use query_metrics for historical metric analysis with time-based aggregation
 - Use search_knowledgebase for documentation about PostgreSQL, pgEdge, and Spock replication
@@ -254,7 +255,7 @@ export const CHAT_TOOLS: ToolDefinition[] = [
     {
         name: 'get_schema_info',
         description:
-            'Get schema information from a monitored database',
+            'List the schemas, tables, views and columns inside one monitored database. It never lists the databases on a server; use query_database on pg_database for that',
         inputSchema: {
             type: 'object',
             properties: {

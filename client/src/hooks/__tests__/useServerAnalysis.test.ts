@@ -398,6 +398,54 @@ describe('useServerAnalysis', () => {
         expect(userMessage).toContain('Replica (connection_id: 2)');
     });
 
+    it('names the configured database for a server (issue #801)', async () => {
+        const { result } = renderHook(() => useServerAnalysis());
+
+        await act(async () => {
+            await result.current.analyze(makeServerInput({ database: 'ragdb' }));
+        });
+
+        const callArgs = mockRunAgenticLoop.mock.calls[0][0];
+        expect(callArgs.messages[0].content).toContain('Configured Database: ragdb');
+        expect(callArgs.systemPrompt).toContain('DATABASE SCOPE');
+        expect(callArgs.systemPrompt).toContain(
+            'an empty postgres database is not a sign of misconfiguration',
+        );
+    });
+
+    it('omits the configured database line when none is known', async () => {
+        const { result } = renderHook(() => useServerAnalysis());
+
+        await act(async () => {
+            await result.current.analyze(makeServerInput({ database: '' }));
+        });
+
+        const callArgs = mockRunAgenticLoop.mock.calls[0][0];
+        expect(callArgs.messages[0].content).not.toContain('Configured Database');
+    });
+
+    it('names each cluster member\'s configured database when known', async () => {
+        const { result } = renderHook(() => useServerAnalysis());
+
+        const input = makeClusterInput({
+            servers: [
+                { id: 1, name: 'Primary', database_name: 'ragdb' },
+                { id: 2, name: 'Replica', database: 'appdb' },
+                { id: 3, name: 'Witness' },
+            ],
+            serverIds: [1, 2, 3],
+        });
+
+        await act(async () => {
+            await result.current.analyze(input);
+        });
+
+        const userMessage = mockRunAgenticLoop.mock.calls[0][0].messages[0].content;
+        expect(userMessage).toContain('Primary (connection_id: 1, Configured Database: ragdb)');
+        expect(userMessage).toContain('Replica (connection_id: 2, Configured Database: appdb)');
+        expect(userMessage).toContain('Witness (connection_id: 3)');
+    });
+
     it('handles empty servers array for cluster', async () => {
         const { result } = renderHook(() => useServerAnalysis());
 

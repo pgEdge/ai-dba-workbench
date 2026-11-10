@@ -113,3 +113,33 @@ describe('ALERT_ANALYSIS_TOOLS schema discovery', () => {
         expect(ALERT_ANALYSIS_TOOLS).toContain(TOOL_TEST_QUERY);
     });
 });
+
+// ---------------------------------------------------------------------------
+// Database scope (issue #801)
+// ---------------------------------------------------------------------------
+
+describe('database_name parameters', () => {
+    const tools = [TOOL_QUERY_DATABASE, TOOL_GET_SCHEMA_INFO, TOOL_TEST_QUERY];
+
+    it.each(tools.map(tool => [tool.name, tool] as const))(
+        '%s tells the model to omit database_name for the configured database',
+        (_name, tool) => {
+            const properties = tool.inputSchema.properties as Record<
+                string, { description: string }
+            >;
+            const description = properties.database_name.description;
+            expect(description).toContain("connection's configured database");
+            expect(description).toContain('Never pass "postgres" as a default');
+        },
+    );
+
+    it('get_schema_info says it never lists the databases on a server', () => {
+        expect(TOOL_GET_SCHEMA_INFO.description).toContain(
+            'never lists the databases on a server',
+        );
+        const properties = TOOL_GET_SCHEMA_INFO.inputSchema.properties as Record<
+            string, { description: string }
+        >;
+        expect(properties.schema_name.description).toContain('all schemas');
+    });
+});

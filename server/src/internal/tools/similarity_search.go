@@ -262,7 +262,7 @@ To avoid rate limits (30,000 input tokens/minute):
 				errMsg.WriteString("2. List only tables with vector columns:\n")
 				errMsg.WriteString("   → get_schema_info(vector_tables_only=true)\n\n")
 				errMsg.WriteString("3. Check current database connection:\n")
-				errMsg.WriteString("   → read_resource(uri=\"pg://system-info\")\n\n")
+				errMsg.WriteString("   → read_resource(uri=\"pg://system_info\")\n\n")
 				errMsg.WriteString("4. If table is in a different schema, use qualified name:\n")
 				fmt.Fprintf(&errMsg, "   → similarity_search(table_name=%q, query_text=\"...\")\n", qualifiedTableNameHint(tableName))
 				errMsg.WriteString("</next_steps>\n")

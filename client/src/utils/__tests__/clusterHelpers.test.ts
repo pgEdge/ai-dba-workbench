@@ -16,8 +16,11 @@ import {
     extractClusterServerIds,
     computeEstateServerCounts,
     countEstateServers,
+    getDbClusterId,
+    findRefreshedCluster,
 } from '../clusterHelpers';
 import type { EstateSelection, ClusterSelection } from '../../types/selection';
+import type { ClusterEntry, ClusterGroup } from '../../contexts/ClusterDataContext';
 
 describe('collectServers', () => {
     describe('flat server lists', () => {
@@ -903,5 +906,97 @@ describe('countEstateServers', () => {
             }],
         };
         expect(countEstateServers(selection)).toBe(4);
+    });
+});
+
+describe('getDbClusterId', () => {
+    it('returns undefined for a missing cluster', () => {
+        expect(getDbClusterId(null)).toBeUndefined();
+        expect(getDbClusterId(undefined)).toBeUndefined();
+    });
+
+    it('prefers db_cluster_id for an auto-detected cluster (issue #809)', () => {
+        expect(getDbClusterId({ id: 'server-3', db_cluster_id: 12 })).toBe(12);
+        expect(getDbClusterId({ id: 'cluster-spock-pg', db_cluster_id: 13 })).toBe(13);
+    });
+
+    it('parses the ID of a database-backed cluster', () => {
+        expect(getDbClusterId({ id: 'cluster-5' })).toBe(5);
+    });
+
+    it('returns undefined for transient IDs without db_cluster_id', () => {
+        expect(getDbClusterId({ id: 'server-3' })).toBeUndefined();
+        expect(getDbClusterId({ id: 'cluster-spock-pg' })).toBeUndefined();
+    });
+
+    it('ignores db_cluster_id values that are not positive integers', () => {
+        expect(getDbClusterId({ id: 'server-3', db_cluster_id: 0 })).toBeUndefined();
+        expect(getDbClusterId({ id: 'server-3', db_cluster_id: -1 })).toBeUndefined();
+        expect(getDbClusterId({ id: 'server-3', db_cluster_id: 1.5 })).toBeUndefined();
+        expect(getDbClusterId({ id: 'server-3', db_cluster_id: '12' })).toBeUndefined();
+        expect(getDbClusterId({ id: 'cluster-5', db_cluster_id: 0 })).toBe(5);
+    });
+});
+
+describe('findRefreshedCluster', () => {
+    const server = (id: number) => ({ id, name: `pg-${id}` });
+    const entry = (
+        id: string,
+        serverIds: number[],
+        dbId?: number,
+    ): ClusterEntry => ({
+        id,
+        name: id,
+        servers: serverIds.map(server),
+        ...(dbId === undefined ? {} : { db_cluster_id: dbId }),
+    });
+    const groups = (...clusters: ClusterEntry[]): ClusterGroup[] => [
+        { id: 'group-1', name: 'g1', clusters: null },
+        { id: 'group-2', name: 'g2', clusters },
+    ];
+
+    it('prefers a match on the topology ID', () => {
+        const byId = entry('server-1', [9], 5);
+        const byDb = entry('server-2', [1], 4);
+        const found = findRefreshedCluster(
+            entry('server-1', [1], 4),
+            groups(byDb, byId),
+        );
+        expect(found).toBe(byId);
+    });
+
+    it('falls back to the database row', () => {
+        const byDb = entry('server-2', [7], 4);
+        const byServer = entry('server-3', [1], 6);
+        const found = findRefreshedCluster(
+            entry('server-1', [1], 4),
+            groups(byServer, byDb),
+        );
+        expect(found).toBe(byDb);
+    });
+
+    it('falls back to a cluster that holds one of its servers', () => {
+        const nested: ClusterEntry = {
+            id: 'server-2',
+            name: 'moved',
+            servers: [{ ...server(2), children: [server(1)] }],
+            db_cluster_id: 8,
+        };
+        const found = findRefreshedCluster(
+            entry('server-1', [1], 4),
+            groups(entry('server-5', [5], 9), nested),
+        );
+        expect(found).toBe(nested);
+    });
+
+    it('returns undefined when nothing matches', () => {
+        expect(findRefreshedCluster(
+            entry('server-1', [1], 4),
+            groups(entry('server-5', [5], 9)),
+        )).toBeUndefined();
+        expect(findRefreshedCluster(
+            { id: 'server-1', name: 'empty', servers: [] },
+            groups(entry('server-5', [5])),
+        )).toBeUndefined();
     });
 });

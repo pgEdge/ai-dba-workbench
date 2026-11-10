@@ -1416,6 +1416,23 @@ project adheres to
   and rotating the labels when there are more than three; the tooltip
   shows the full server name.
 
+- Offer the Cluster scope in the Create Blackout and Schedule Blackout
+  dialogs for auto-detected clusters and for the servers in them
+  (#809). The option was disabled unless the cluster had been created
+  by hand, although the alerter already suppresses alerts for a
+  cluster blackout on an auto-detected cluster. The cluster list
+  returned by `GET /api/v1/clusters` now includes a `db_cluster_id`
+  field holding the numeric ID to send as `cluster_id`. The
+  navigator's blackout indicator now shows cluster blackouts on
+  auto-detected clusters, and the blackout banner for a selected
+  cluster, or for a server in it, now lists its cluster blackouts,
+  which it never matched before. This holds for a cluster selected
+  from its card on the Estate Dashboard as well as from the
+  navigator, and a selected cluster follows its servers to a new
+  cluster record after a switchover; a selection that no longer
+  matches any cluster offers no Cluster scope. Standalone servers
+  still offer no Cluster scope.
+
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled
   toggle, or a failed delete, replaced the whole page with the error

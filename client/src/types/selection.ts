@@ -31,6 +31,8 @@ export interface ServerSelection extends SelectionBase {
     spockVersion?: string;
     clusterId?: string;
     clusterName?: string;
+    /** Numeric clusters.id of the server's cluster, if it has one. */
+    dbClusterId?: number;
     isStandalone?: boolean;
     groupId?: string;
     groupName?: string;
@@ -42,6 +44,8 @@ export interface ClusterSelection extends SelectionBase {
     description: string;
     servers: ClusterServer[];
     serverIds: number[];
+    /** Numeric clusters.id of the cluster, if it has one. */
+    dbClusterId?: number;
     groupId?: string;
     groupName?: string;
 }

@@ -33,6 +33,7 @@ export interface Cluster {
     servers: Server[];
     isStandalone?: boolean;
     auto_cluster_key?: string;
+    db_cluster_id?: number;
     replication_type?: string | null;
     [key: string]: unknown;
 }

@@ -103,10 +103,16 @@ vi.mock('../../contexts/useAlerts', () => ({
     }),
 }));
 
-// Mock the BlackoutContext
+// Mock the BlackoutContext. Tests may push blackouts into
+// mockBlackouts.list; beforeEach empties it.
+const { mockBlackouts } = vi.hoisted(() => ({
+    mockBlackouts: {
+        list: [] as Array<{ scope: string; cluster_id?: number; is_active: boolean }>,
+    },
+}));
 vi.mock('../../contexts/useBlackouts', () => ({
     useBlackouts: () => ({
-        blackouts: [],
+        blackouts: mockBlackouts.list,
         loading: false,
         error: null,
         isServerBlackedOut: () => false,
@@ -193,6 +199,7 @@ describe('ClusterNavigator', () => {
     beforeEach(() => {
         onSelectServer = vi.fn();
         onRefresh = vi.fn();
+        mockBlackouts.list = [];
         mockUpdateGroupName.mockReset().mockResolvedValue(undefined);
         mockUpdateGroup.mockReset().mockResolvedValue(undefined);
         mockUpdateClusterName.mockReset().mockResolvedValue(undefined);
@@ -223,6 +230,52 @@ describe('ClusterNavigator', () => {
         );
 
         expect(screen.getByText('Database Servers')).toBeInTheDocument();
+    });
+
+    describe('cluster blackout indicator (issue #809)', () => {
+        const autoClusterData = [
+            {
+                id: 'group-auto',
+                name: 'Servers',
+                clusters: [
+                    {
+                        id: 'server-10',
+                        name: 'Auto Cluster',
+                        auto_cluster_key: 'binary:10',
+                        db_cluster_id: 42,
+                        servers: [
+                            { id: 10, name: 'pg-auto-1', host: 'pg-auto-1.example.com', port: 5432, status: 'online', primary_role: 'binary_primary' },
+                        ],
+                    },
+                ],
+            },
+        ];
+
+        it('marks an auto-detected cluster blacked out via db_cluster_id', () => {
+            mockBlackouts.list = [{ scope: 'cluster', cluster_id: 42, is_active: true }];
+            renderWithTheme(
+                <ClusterNavigator
+                    data={autoClusterData}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            expect(screen.getAllByTestId('PauseCircleIcon').length).toBeGreaterThan(0);
+        });
+
+        it('does not mark the cluster for a blackout on another cluster', () => {
+            mockBlackouts.list = [{ scope: 'cluster', cluster_id: 99, is_active: true }];
+            renderWithTheme(
+                <ClusterNavigator
+                    data={autoClusterData}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            expect(screen.queryByTestId('PauseCircleIcon')).toBeNull();
+        });
     });
 
     it('displays server count summary', () => {

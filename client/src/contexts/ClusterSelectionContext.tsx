@@ -14,6 +14,7 @@ import { useClusterData } from './useClusterData';
 import type { ClusterServer, ClusterEntry } from './ClusterDataContext';
 import { apiPost, apiGet, apiDelete } from '../utils/apiClient';
 import { logger } from '../utils/logger';
+import { findRefreshedCluster } from '../utils/clusterHelpers';
 
 export type SelectionType = 'server' | 'cluster' | 'estate' | null;
 
@@ -167,14 +168,13 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
         const curType = selectionTypeRef.current;
 
         if (curCluster && curType === 'cluster') {
-            for (const group of clusterData) {
-                const fresh: ClusterEntry | undefined = group.clusters?.find(
-                    c => c.id === curCluster.id,
-                );
-                if (fresh && fresh !== curCluster) {
-                    setSelectedCluster(fresh);
-                    return;
-                }
+            // An auto-detected cluster's topology ID, and after a
+            // switchover its database row, can change between refreshes.
+            // Issue #809.
+            const fresh = findRefreshedCluster(curCluster, clusterData);
+            if (fresh && fresh !== curCluster) {
+                setSelectedCluster(fresh);
+                return;
             }
         }
 

@@ -62,7 +62,7 @@ export const generateDataFingerprint = (data: ClusterGroup[]): string => {
     const fingerprint = data.map(group => {
         const clusterFingerprints = (group.clusters || []).map(cluster => {
             const serverFingerprints = collectServerFingerprints(cluster.servers || []);
-            return `${cluster.id}:${cluster.name}:${cluster.description ?? ''}:${cluster.replication_type || ''}:${serverFingerprints}`;
+            return `${cluster.id}:${cluster.name}:${cluster.description ?? ''}:${cluster.replication_type || ''}:${cluster.db_cluster_id ?? ''}:${serverFingerprints}`;
         }).join('|');
         return `${group.id}:${group.name}:${clusterFingerprints}`;
     }).join('||');

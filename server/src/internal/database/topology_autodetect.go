@@ -295,9 +295,10 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 	}
 
 	spockClusters := d.groupSpockNodesByClusters(spockNodes, childrenMap, connByID, assignedConnections, clusterOverrides)
-	for _, cluster := range spockClusters {
+	for i := range spockClusters {
+		cluster := &spockClusters[i]
 		if cluster.AutoClusterKey != "" && !dismissedKeys[cluster.AutoClusterKey] {
-			result[cluster.AutoClusterKey] = cluster
+			result[cluster.AutoClusterKey] = *cluster
 		}
 	}
 
@@ -339,9 +340,10 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 
 	// Process logical replication clusters
 	logicalClusters := d.groupLogicalReplicationByPublisher(connections, connByID, connByHostPort, connByNamePort, assignedConnections, clusterOverrides)
-	for _, cluster := range logicalClusters {
+	for i := range logicalClusters {
+		cluster := &logicalClusters[i]
 		if cluster.AutoClusterKey != "" && !dismissedKeys[cluster.AutoClusterKey] {
-			result[cluster.AutoClusterKey] = cluster
+			result[cluster.AutoClusterKey] = *cluster
 		}
 	}
 
@@ -409,7 +411,8 @@ func collectServerIDsAndRoles(servers []TopologyServerInfo) []serverIDAndRole {
 func (d *Datastore) syncAutoDetectedClusterAssignments(ctx context.Context, autoDetectedClusters map[string]TopologyCluster, defaultGroupID int) map[string]int {
 	clusterIDMap := make(map[string]int)
 
-	for autoKey, cluster := range autoDetectedClusters {
+	for autoKey := range autoDetectedClusters {
+		cluster := autoDetectedClusters[autoKey]
 		if cluster.ClusterType == "server" {
 			// Standalone servers: never clear cluster_id. If a
 			// connection already belongs to a cluster, the assignment
@@ -976,7 +979,8 @@ func (d *Datastore) getPersistedMemberParents(ctx context.Context, persisted map
 // step, causing it to vanish from its manually-assigned cluster.
 func collectAutoDetectedIDs(autoDetectedClusters map[string]TopologyCluster) map[int]bool {
 	ids := make(map[int]bool)
-	for _, cluster := range autoDetectedClusters {
+	for key := range autoDetectedClusters {
+		cluster := autoDetectedClusters[key]
 		if cluster.ClusterType == "server" {
 			continue
 		}
@@ -988,7 +992,8 @@ func collectAutoDetectedIDs(autoDetectedClusters map[string]TopologyCluster) map
 // syncRelationshipsFromTopology extracts relationship edges from the
 // auto-detected cluster topology and syncs them to the database.
 func (d *Datastore) syncRelationshipsFromTopology(ctx context.Context, autoDetectedClusters map[string]TopologyCluster, clusterIDMap map[string]int) {
-	for autoKey, cluster := range autoDetectedClusters {
+	for autoKey := range autoDetectedClusters {
+		cluster := autoDetectedClusters[autoKey]
 		dbClusterID, ok := clusterIDMap[autoKey]
 		if !ok {
 			// Standalone or failed upsert; skip

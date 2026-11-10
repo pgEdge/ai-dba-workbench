@@ -234,9 +234,13 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
             }
 
             if (selection.type === 'cluster') {
-                // Show cluster-scoped blackouts matching this cluster
+                // Show cluster-scoped blackouts matching this cluster.
+                // selection.id is a topology ID (cluster-{id}, server-{id}
+                // or cluster-spock-{prefix}), so compare against the
+                // cluster's database row instead. Issue #809.
                 if (b.scope === 'cluster' && b.cluster_id !== undefined) {
-                    return String(b.cluster_id) === String(selection.id);
+                    return selection.dbClusterId !== undefined
+                        && b.cluster_id === selection.dbClusterId;
                 }
                 // Show server-scoped blackouts for servers in this cluster
                 if (b.scope === 'server' && b.connection_id !== undefined && selection.serverIds) {
@@ -246,8 +250,13 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
             }
 
             if (selection.type === 'server') {
-                // Show cluster-scoped blackouts if this server is in that cluster
-                if (b.scope === 'cluster') {return false;}
+                // Show cluster-scoped blackouts if this server is in that
+                // cluster, matched on the cluster's database row. #809.
+                if (b.scope === 'cluster') {
+                    return b.cluster_id !== undefined
+                        && selection.dbClusterId !== undefined
+                        && b.cluster_id === selection.dbClusterId;
+                }
                 // Show server-scoped blackouts matching this server
                 if (b.scope === 'server' && b.connection_id !== undefined) {
                     return b.connection_id === selection.id;

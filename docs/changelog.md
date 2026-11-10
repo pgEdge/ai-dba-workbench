@@ -1471,6 +1471,7 @@ project adheres to
   `status: error` with an `error` message, rather than
   `status: generating`, when the first estate overview could not be
   generated.
+
 - Stop a scoped AI Overview revealing resources the user cannot see.
   Both overview endpoints now return `400 Bad Request` when
   `connection_ids` is combined with `scope_type` or `scope_id`. A

@@ -1048,11 +1048,7 @@ func TestCollectorSchema_RecentEventsIncludeAlertActivity(t *testing.T) {
 	}
 
 	t.Run("estate", func(t *testing.T) {
-		snap, err := e.ds.GetEstateSnapshot(e.ctx)
-		if err != nil {
-			t.Fatalf("GetEstateSnapshot: %v", err)
-		}
-		check(t, snap)
+		check(t, e.ds.GetEstateSnapshot(e.ctx))
 	})
 
 	t.Run("server", func(t *testing.T) {
@@ -1117,10 +1113,7 @@ func TestCollectorSchema_RecentEventsChangeChurnKeepsRestart(t *testing.T) {
 				time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)}[i]})
 	}
 
-	snap, err := e.ds.GetEstateSnapshot(e.ctx)
-	if err != nil {
-		t.Fatalf("GetEstateSnapshot: %v", err)
-	}
+	snap := e.ds.GetEstateSnapshot(e.ctx)
 	counts := map[string]int{}
 	for _, ev := range snap.RecentEvents {
 		counts[ev.EventType]++

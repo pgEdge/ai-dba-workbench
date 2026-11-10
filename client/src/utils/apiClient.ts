@@ -29,19 +29,40 @@
 
 /**
  * Error class for API responses that indicates a non-OK HTTP status.
- * Carries the HTTP status code and, when available, the parsed error
- * body from the server.
+ * Carries the HTTP status code, the parsed error body from the server
+ * when available, and the number of seconds a `Retry-After` header
+ * asked the client to wait (null when the header was absent).
  */
 export class ApiError extends Error {
     public readonly statusCode: number;
     public readonly errorBody: string;
+    public readonly retryAfterSeconds: number | null;
 
-    constructor(message: string, statusCode: number, errorBody = '') {
+    constructor(
+        message: string,
+        statusCode: number,
+        errorBody = '',
+        retryAfterSeconds: number | null = null,
+    ) {
         super(message);
         this.name = 'ApiError';
         this.statusCode = statusCode;
         this.errorBody = errorBody;
+        this.retryAfterSeconds = retryAfterSeconds;
     }
+}
+
+/**
+ * Read a `Retry-After` header given in delta-seconds.  The HTTP-date
+ * form is not used by this server, so it is treated as absent, as is
+ * anything that is not a non-negative whole number.
+ */
+function parseRetryAfter(response: Response): number | null {
+    const raw = response.headers?.get('Retry-After')?.trim();
+    if (!raw || !/^\d+$/.test(raw)) {
+        return null;
+    }
+    return Number(raw);
 }
 
 /**
@@ -230,7 +251,12 @@ async function request<T>(
             response,
             `Request failed: ${method} ${url}`,
         );
-        throw new ApiError(message, response.status, errorBody);
+        throw new ApiError(
+            message,
+            response.status,
+            errorBody,
+            parseRetryAfter(response),
+        );
     }
 
     if (trackHealth) {

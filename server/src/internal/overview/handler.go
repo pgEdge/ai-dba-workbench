@@ -42,6 +42,7 @@ type Handler struct {
 	hub         *Hub
 	rbacChecker *auth.RBACChecker
 	datastore   *database.Datastore
+	limits      generationLimits
 }
 
 // NewHandlerWithRBAC creates a new overview handler that enforces scope
@@ -113,7 +114,10 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		overview, err := h.generator.GetConnectionsSummary(filtered, scopeName, refresh)
+		overview, ok, err := h.connectionsSummary(w, r, filtered, scopeName, refresh)
+		if !ok {
+			return
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: overview: connections summary failed: %v\n", err)
 			http.Error(w, "Failed to generate connections summary", http.StatusInternalServerError)
@@ -149,7 +153,10 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			overview, err := h.generator.GetConnectionsSummary(ids, "", refresh)
+			overview, ok, err := h.connectionsSummary(w, r, ids, "", refresh)
+			if !ok {
+				return
+			}
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: overview: connections summary failed: %v\n", err)
 				http.Error(w, "Failed to generate connections summary", http.StatusInternalServerError)
@@ -160,7 +167,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if refresh {
+		if refresh && h.allowEstateRefresh(r) {
 			h.generator.ForceRefresh()
 		}
 		h.serveEstateOverview(w)
@@ -190,14 +197,18 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var overview *Overview
+	admitted := false
 	if unrestricted {
-		overview, err = h.generator.GetScopedSummary(scopeType, scopeID, refresh)
+		overview, admitted, err = h.scopedSummary(w, r, scopeType, scopeID, refresh)
 	} else {
 		// Restricted visibility: generate a summary over only the scope
 		// members the caller may see. The scope name is still useful for
 		// the LLM prompt; fetch it so the summary reads correctly.
 		scopeName := h.resolveScopeName(r.Context(), scopeType, scopeID)
-		overview, err = h.generator.GetConnectionsSummary(intersect, scopeName, refresh)
+		overview, admitted, err = h.connectionsSummary(w, r, intersect, scopeName, refresh)
+	}
+	if !admitted {
+		return
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: scoped summary failed: %v\n", err)
@@ -347,6 +358,13 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Check the caller's generation limits while an error response can
+	// still be sent; a stale summary is served instead where one exists.
+	stale, admitted := h.admitStream(w, r, scopeKey)
+	if !admitted {
+		return
+	}
+
 	// Set SSE headers and flush immediately so the client receives the
 	// response headers without waiting for the first event.
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -360,8 +378,12 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	defer h.hub.Unsubscribe(sub)
 
 	// Send the current cached overview immediately so the client
-	// does not have to wait for the next generation cycle.
-	if scopeKey == "" {
+	// does not have to wait for the next generation cycle. A caller
+	// over their generation limit gets the stale summary instead.
+	if stale != nil {
+		h.writeSSEEvent(w, stale)
+		flusher.Flush()
+	} else if scopeKey == "" {
 		if current := h.generator.GetOverview(); current != nil {
 			h.writeSSEEvent(w, current)
 			flusher.Flush()
@@ -650,7 +672,9 @@ func (h *Handler) writeSSEEvent(w http.ResponseWriter, overview *Overview) {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to marshal SSE event: %v\n", err)
 		return
 	}
-	fmt.Fprintf(w, "id: %s\nevent: overview\ndata: %s\n\n",
+	// The payload is json.Marshal output on a text/event-stream response,
+	// which browsers never render as HTML.
+	fmt.Fprintf(w, "id: %s\nevent: overview\ndata: %s\n\n", //nolint:gosec // G705: JSON in an SSE stream, not HTML
 		overview.GeneratedAt.Format(time.RFC3339), string(data))
 }
 

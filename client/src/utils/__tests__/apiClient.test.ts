@@ -14,6 +14,8 @@ import {
     apiPost,
     apiPut,
     apiDelete,
+    apiPatch,
+    apiFetch,
     ApiError,
     onDisconnect,
     resetConnectionHealth,
@@ -266,6 +268,47 @@ describe('apiClient', () => {
                 );
             }
         });
+
+        /** Build a failed response carrying the given Retry-After value. */
+        const retryAfterResponse = (retryAfter: string | null): Response => {
+            const headers = new Headers();
+            if (retryAfter !== null) {
+                headers.set('Retry-After', retryAfter);
+            }
+            return {
+                ok: false,
+                status: 429,
+                json: () => Promise.reject(new Error('no body')),
+                text: () => Promise.resolve('Too many requests'),
+                headers,
+            } as unknown as Response;
+        };
+
+        it.each([
+            ['42', 42],
+            [' 7 ', 7],
+            ['0', 0],
+            [null, null],
+            ['Wed, 21 Oct 2026 07:28:00 GMT', null],
+            ['-5', null],
+            ['1.5', null],
+        ])(
+            'reads Retry-After %j as retryAfterSeconds %j',
+            async (header, expected) => {
+                fetchSpy.mockResolvedValueOnce(retryAfterResponse(header));
+
+                const err = await apiGet('/api/v1/limited').catch(
+                    (e: unknown) => e,
+                );
+                expect(err).toBeInstanceOf(ApiError);
+                expect((err as ApiError).statusCode).toBe(429);
+                expect((err as ApiError).retryAfterSeconds).toBe(expected);
+            },
+        );
+
+        it('defaults retryAfterSeconds to null when constructed directly', () => {
+            expect(new ApiError('x', 500).retryAfterSeconds).toBeNull();
+        });
     });
 
     // ----- 204 No Content --------------------------------------------------
@@ -354,6 +397,132 @@ describe('apiClient', () => {
             await expect(apiGet('/api/v1/alerts')).rejects.toThrow();
 
             expect(listener).toHaveBeenCalledTimes(1);
+            unsubscribe();
+            resetConnectionHealth();
+        });
+    });
+
+    // ----- PATCH, abort signals and auth failures ---------------------------
+
+    describe('apiPatch', () => {
+        it('sends a PATCH with a JSON body', async () => {
+            fetchSpy.mockResolvedValueOnce(mockResponse({ patched: true }));
+
+            const result = await apiPatch('/api/v1/items/1', { title: 'New' });
+
+            const { url, opts } = fetchCall(0);
+            expect(url).toBe('/api/v1/items/1');
+            expect(opts.method).toBe('PATCH');
+            expect(opts.body).toBe(JSON.stringify({ title: 'New' }));
+            expect(result).toEqual({ patched: true });
+        });
+    });
+
+    describe('signal option', () => {
+        it('passes the abort signal through to fetch', async () => {
+            const controller = new AbortController();
+            fetchSpy.mockResolvedValueOnce(mockResponse({}));
+
+            await apiGet('/api/v1/items', { signal: controller.signal });
+
+            expect(fetchCall(0).opts.signal).toBe(controller.signal);
+        });
+    });
+
+    describe('auth failure tracking', () => {
+        beforeEach(() => {
+            resetConnectionHealth();
+        });
+
+        it('reports an auth disconnect once, on the first 401', async () => {
+            const listener = vi.fn();
+            const unsubscribe = onDisconnect(listener);
+            fetchSpy.mockResolvedValue(
+                mockResponse({ error: 'unauthorised' }, { status: 401, ok: false }),
+            );
+
+            await expect(apiGet('/api/v1/alerts')).rejects.toThrow(ApiError);
+            await expect(apiGet('/api/v1/alerts')).rejects.toThrow(ApiError);
+
+            // Further failures after the latch are ignored.
+            expect(listener).toHaveBeenCalledTimes(1);
+            expect(listener).toHaveBeenCalledWith('auth');
+            unsubscribe();
+            resetConnectionHealth();
+        });
+    });
+
+    // ----- apiFetch ----------------------------------------------------------
+
+    describe('apiFetch', () => {
+        beforeEach(() => {
+            resetConnectionHealth();
+        });
+
+        it('returns the raw response with credentials included', async () => {
+            const response = mockResponse({ ok: true });
+            fetchSpy.mockResolvedValueOnce(response);
+
+            const result = await apiFetch('/api/v1/llm/chat', { method: 'POST' });
+
+            expect(result).toBe(response);
+            const [, init] = fetchSpy.mock.calls[0];
+            expect(init?.credentials).toBe('include');
+            expect(init?.method).toBe('POST');
+        });
+
+        it('returns a failed response without throwing', async () => {
+            fetchSpy.mockResolvedValueOnce(
+                mockResponse('nope', { status: 404, ok: false }),
+            );
+
+            const result = await apiFetch('/api/v1/missing');
+
+            expect(result.status).toBe(404);
+        });
+
+        it('reports an auth disconnect on a 401', async () => {
+            const listener = vi.fn();
+            const unsubscribe = onDisconnect(listener);
+            fetchSpy.mockResolvedValueOnce(
+                mockResponse('unauthorised', { status: 401, ok: false }),
+            );
+
+            await apiFetch('/api/v1/llm/chat');
+
+            expect(listener).toHaveBeenCalledWith('auth');
+            unsubscribe();
+            resetConnectionHealth();
+        });
+
+        it('counts server errors towards a disconnect', async () => {
+            const listener = vi.fn();
+            const unsubscribe = onDisconnect(listener);
+            fetchSpy.mockResolvedValue(
+                mockResponse('broken', { status: 503, ok: false }),
+            );
+
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch('/api/v1/llm/chat');
+            }
+
+            expect(listener).toHaveBeenCalledWith('server');
+            unsubscribe();
+            resetConnectionHealth();
+        });
+
+        it('records network errors and rethrows them', async () => {
+            const listener = vi.fn();
+            const unsubscribe = onDisconnect(listener);
+            fetchSpy.mockRejectedValue(new TypeError('Failed to fetch'));
+
+            for (let i = 0; i < 3; i += 1) {
+                await expect(apiFetch('/api/v1/llm/chat')).rejects.toThrow(
+                    'Failed to fetch',
+                );
+            }
+
+            expect(listener).toHaveBeenCalledWith('network');
             unsubscribe();
             resetConnectionHealth();
         });

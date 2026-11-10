@@ -540,6 +540,26 @@ llm:
   # gemini_custom_headers: {}
   # ollama_custom_headers: {}
 
+  # Per-user limits on the summaries the AI Overview endpoints
+  # generate, to stop a script in a loop or a reconnecting browser tab
+  # running up the LLM bill. A request that a fresh cached summary
+  # answers costs nothing. A user over the limit is served the cached
+  # summary, even if stale, or an HTTP 429 response with a Retry-After
+  # header when there is none. The server reads these settings at
+  # start-up, so a change needs a restart.
+  # rate_limit:
+  #   overview:
+  #     # Sustained generations per user per hour; 0 disables the limit.
+  #     # Default: 60
+  #     generations_per_hour: 60
+  #     # Generations a user may trigger in quick succession.
+  #     # Default: 20
+  #     burst: 20
+  #     # Minimum seconds between one user's forced refreshes
+  #     # (refresh=true); 0 disables the throttle.
+  #     # Default: 30
+  #     refresh_interval_seconds: 30
+
 #=========================================================================
 # KNOWLEDGEBASE CONFIGURATION
 #=========================================================================

@@ -1040,6 +1040,41 @@ describe('TopQueriesSection', () => {
         ).toBeInTheDocument();
     });
 
+    it('shows "All databases" as the selected value by default', async () => {
+        setupFetch({
+            rows: makeRows(3),
+            databases: ['appdb', 'analytics'],
+        });
+
+        renderSection();
+
+        const select = await screen.findByRole(
+            'combobox', { name: 'Database' },
+        );
+        expect(select).toHaveTextContent('All databases');
+        expect(paramOf(lastTopQueryUrl(), 'database_name')).toBeNull();
+    });
+
+    it('shows the chosen database as the selected value', async () => {
+        setupFetch({
+            rows: makeRows(3),
+            databases: ['appdb', 'analytics'],
+        });
+
+        renderSection();
+
+        fireEvent.mouseDown(await screen.findByLabelText('Database'));
+        fireEvent.click(
+            await screen.findByRole('option', { name: 'analytics' }),
+        );
+
+        await waitFor(() => {
+            expect(
+                screen.getByRole('combobox', { name: 'Database' }),
+            ).toHaveTextContent('analytics');
+        });
+    });
+
     it('filters the request by the selected database', async () => {
         setupFetch({
             rows: makeRows(20),
@@ -1120,6 +1155,9 @@ describe('TopQueriesSection', () => {
         await waitFor(() => {
             expect(paramOf(lastTopQueryUrl(), 'database_name')).toBeNull();
         });
+        expect(
+            screen.getByRole('combobox', { name: 'Database' }),
+        ).toHaveTextContent('All databases');
     });
 
     it('shows a filter-aware empty message', async () => {

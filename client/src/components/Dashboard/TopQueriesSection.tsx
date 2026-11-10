@@ -68,6 +68,13 @@ const DEFAULT_PAGE_SIZE = 20;
 /** Sentinel value used by the database filter for "no filter" */
 const ALL_DATABASES = '';
 
+/** Label shown for the database filter's "no filter" option */
+const ALL_DATABASES_LABEL = 'All databases';
+
+/** Text the database filter shows for its selected value */
+const renderDatabaseValue = (value: string): string =>
+    value === ALL_DATABASES ? ALL_DATABASES_LABEL : value;
+
 /** Numeric columns the server can order the result set by */
 type SortColumn = 'calls' | 'total_exec_time' | 'mean_exec_time' | 'rows';
 
@@ -722,18 +729,26 @@ const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
                     />
                     {showDatabaseFilter && (
                         <FormControl size="small" sx={DB_FILTER_SX}>
-                            <InputLabel id={databaseFilterLabelId}>
+                            {/* The "All databases" sentinel is the empty
+                                string, which MUI treats as no selection:
+                                displayEmpty and renderValue show it as a
+                                real value, and the shrunk label and notched
+                                outline keep the label clear of it. */}
+                            <InputLabel id={databaseFilterLabelId} shrink>
                                 Database
                             </InputLabel>
                             <Select
                                 labelId={databaseFilterLabelId}
                                 id={databaseFilterId}
                                 label="Database"
+                                notched
+                                displayEmpty
                                 value={databaseFilter}
                                 onChange={handleDatabaseChange}
+                                renderValue={renderDatabaseValue}
                             >
                                 <MenuItem value={ALL_DATABASES}>
-                                    All databases
+                                    {ALL_DATABASES_LABEL}
                                 </MenuItem>
                                 {databaseNames.map(name => (
                                     <MenuItem key={name} value={name}>

@@ -115,7 +115,10 @@ export const buildSelection = (
             description: selectedCluster.description ?? '',
             servers: servers,
             serverIds: serverIds,
-            dbClusterId: getDbClusterId(selectedCluster),
+            // A selection that is no longer in the topology may name a
+            // database row that has lost its servers, for example after a
+            // switchover, so it offers no Cluster blackout scope (#809).
+            dbClusterId: groupId !== undefined ? getDbClusterId(selectedCluster) : undefined,
             status: servers.every(s => s.status === 'offline') && servers.length > 0
                 ? 'offline'
                 : servers.some(s => s.status === 'offline' || s.status === 'warning')

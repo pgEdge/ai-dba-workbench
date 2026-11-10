@@ -262,6 +262,18 @@ describe('buildSelection', () => {
             expect(serverSel.type === 'server' && serverSel.dbClusterId).toBe(8);
         });
 
+        it('leaves dbClusterId unset for a cluster no longer in the topology', () => {
+            const cluster: ClusterEntry = {
+                ...makeCluster('server-5', [makeServer(5)]),
+                db_cluster_id: 21,
+            };
+            const groups = [makeGroup('g1', [makeCluster('server-6', [makeServer(6)])])];
+
+            const sel = buildSelection('cluster', null, cluster, groups);
+            assertSelection(sel);
+            expect(sel.type === 'cluster' && sel.dbClusterId).toBeUndefined();
+        });
+
         it('leaves dbClusterId unset when the cluster has no database row', () => {
             const server = makeServer(9);
             const cluster = makeCluster('server-9', [server]);

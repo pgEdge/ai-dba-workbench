@@ -1426,8 +1426,12 @@ project adheres to
   navigator's blackout indicator now shows cluster blackouts on
   auto-detected clusters, and the blackout banner for a selected
   cluster, or for a server in it, now lists its cluster blackouts,
-  which it never matched before. Standalone servers still offer no
-  Cluster scope.
+  which it never matched before. This holds for a cluster selected
+  from its card on the Estate Dashboard as well as from the
+  navigator, and a selected cluster follows its servers to a new
+  cluster record after a switchover; a selection that no longer
+  matches any cluster offers no Cluster scope. Standalone servers
+  still offer no Cluster scope.
 
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled

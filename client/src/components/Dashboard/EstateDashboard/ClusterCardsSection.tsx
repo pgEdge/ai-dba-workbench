@@ -153,12 +153,10 @@ const extractClusterCards = (selection: EstateSelection): ClusterCardData[] => {
                 roles[role] = (roles[role] || 0) + 1;
             });
 
-            const cluster: ClusterEntry = {
-                id: clusterObj.id,
-                name: clusterObj.name,
-                servers: clusterObj.servers,
-                isStandalone: clusterObj.isStandalone,
-            };
+            // Select the topology's own entry rather than a copy, so the
+            // selection keeps every field the blackout dialogs and banner
+            // need, such as db_cluster_id (issue #809).
+            const cluster: ClusterEntry = clusterObj;
 
             cards.push({
                 cluster,

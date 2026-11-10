@@ -337,6 +337,53 @@ describe('ClusterSelectionContext', () => {
             });
         });
 
+        it('follows a cluster whose topology ID and row both change', async () => {
+            const autoCluster: ClusterEntry = {
+                ...cluster1,
+                id: 'server-1',
+                db_cluster_id: 42,
+            };
+            mockClusterData = [
+                { id: 'group-1', name: 'prod', clusters: [autoCluster] },
+            ];
+
+            const { result, rerender } = renderHook(() => useClusterSelection(), {
+                wrapper,
+            });
+
+            act(() => {
+                result.current.selectCluster(autoCluster);
+            });
+
+            // A switchover keys the cluster by its new primary, so both
+            // the topology ID and the database row move, whilst the
+            // servers stay the same (issue #809).
+            const switched: ClusterEntry = {
+                id: 'server-2',
+                name: 'us-east',
+                servers: [server2, server1],
+                db_cluster_id: 43,
+            };
+            const unrelated: ClusterEntry = {
+                id: 'server-300',
+                name: 'other',
+                servers: [{ id: 300, name: 'pg-300', status: 'online' }],
+                db_cluster_id: 50,
+            };
+            mockClusterData = [
+                {
+                    id: 'group-1',
+                    name: 'prod',
+                    clusters: [unrelated, switched],
+                },
+            ];
+            rerender();
+
+            await waitFor(() => {
+                expect(result.current.selectedCluster).toBe(switched);
+            });
+        });
+
         it('keeps a cluster selection that has no match in fresh data', async () => {
             mockClusterData = baseData;
 

@@ -30,6 +30,17 @@ identifier. Server blackouts require a connection
 identifier, and the datastore refuses a server blackout
 without one.
 
+The Workbench identifies an auto-detected streaming
+replication cluster by its primary server. After a
+switchover or failover, once the new primary has a
+standby, the servers move to a different cluster record.
+A cluster blackout created before the switchover stays
+on the old record, so it no longer silences alerts on
+those servers, although the blackout list still shows it
+as active. To keep alerts silenced through a planned
+switchover, use a group or server blackout, or create a
+new cluster blackout once the switchover completes.
+
 ## One-Time Blackouts
 
 Administrators create one-time blackouts through the

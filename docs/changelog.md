@@ -447,23 +447,20 @@ project adheres to
   it is recent enough not to inflate the first bucket. (#400)
 
 - Add per-query detail to the query drill-down on the object
-  dashboard. The drill-down now shows minimum and maximum
-  execution time as KPI tiles, and adds an average execution
-  time tile scoped to the selected time range and labelled with
-  that range, such as "Avg Time (Last 24h)". The cumulative
-  lifetime average is now labelled "Mean Time (All Time)" so
-  that users can tell the two figures apart. The drill-down also
-  shows the database role that ran the query beside the query
-  text, and displays "Unknown" when the role cannot be resolved.
-  The API gained a `GET /api/v1/metrics/query-stats` endpoint
-  that returns the period-scoped average execution time for a
-  single query, for a preset or a custom time window and
-  optionally restricted to one database, and the `username`,
-  `min_exec_time`, and
-  `max_exec_time` fields on `GET /api/v1/metrics/top-queries`
-  rows. The `queryid` parameter of that endpoint and of the new
-  one must now be a 64-bit integer; any other value is rejected
-  with a `400` instead of matching nothing. (#350)
+  dashboard. The drill-down now shows minimum and maximum execution
+  time as the "Min Time (All Time)" and "Max Time (All Time)" KPI
+  tiles, which report lifetime figures because `pg_stat_statements`
+  cannot recover an extreme for a narrower window. The drill-down also
+  shows the database role that ran the query beside the query text,
+  and displays "Unknown" when the role cannot be resolved. The API
+  gained a `GET /api/v1/metrics/query-stats` endpoint that returns the
+  period-scoped average execution time for a single query, for a
+  preset or a custom time window and optionally restricted to one
+  database, and the `username`, `min_exec_time`, and `max_exec_time`
+  fields on `GET /api/v1/metrics/top-queries` rows. The `queryid`
+  parameter of that endpoint and of the new one must now be a 64-bit
+  integer; any other value is rejected with a `400` instead of
+  matching nothing. (#350)
 
 - Add `_pct` and `_sessions` derived metrics to the metrics query
   API (`GET /api/v1/metrics/query`). A metric named `<column>_pct`
@@ -1341,9 +1338,10 @@ project adheres to
   follow the dashboard selector, including a custom window, and
   changing the range returns the leaderboard to its first page,
   since a shorter window usually matches fewer rows. The overlay's
-  "Mean Time (All Time)" tile is now labelled "Mean Time", whilst
-  "Min Time (All Time)" and "Max Time (All Time)" keep their labels
-  and their lifetime figures. (#387)
+  Total Calls, Total Time and Mean Time tiles now cover the selected
+  window and name it in their labels, such as "Mean Time (Last 24h)"
+  or "Mean Time (Custom Range)", whilst "Min Time (All Time)" and
+  "Max Time (All Time)" report their lifetime figures. (#387)
 
 - Add `idx_pg_stat_statements_identity_time` to
   `metrics.pg_stat_statements` through collector schema migration
@@ -2891,16 +2889,6 @@ project adheres to
   sites still used them. Those call sites now use the `WithSecurity`
   constructors directly, passing the same host-validation settings the
   removed helper supplied, so test behaviour is unchanged.
-
-- Remove the period-scoped average execution time tile from the query
-  detail overlay, which was labelled "Avg Time (Last 24h)" or "Avg
-  Time (Custom Range)" according to the selected range. Now that
-  `GET /api/v1/metrics/top-queries` derives `mean_exec_time` over the
-  selected window, the Mean Time tile reports the same figure from
-  the same delta pairs, so the overlay showed one number twice and
-  paid for a second request on every open. The
-  `GET /api/v1/metrics/query-stats` endpoint that fed the tile
-  remains available to API consumers. (#387)
 
 ### Security
 

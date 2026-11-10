@@ -15,6 +15,7 @@ import {
     buildTooltip,
     buildLegend,
     buildGrid,
+    buildLabelGrid,
     buildXAxis,
     buildLabelAxis,
     isTimeCategories,
@@ -44,7 +45,8 @@ export function buildBarOptions(
     // Time buckets use the time-series axis, which formats timestamps
     // and thins labels to fit; named items such as servers label every
     // bar instead.
-    const categoryAxis = isTimeCategories(data.categories)
+    const timeCategories = isTimeCategories(data.categories);
+    const categoryAxis = timeCategories
         ? buildXAxis(data.categories)
         : buildLabelAxis(data.categories, options.horizontal);
     // Bars always grow from the zero baseline, so the value axis is
@@ -58,7 +60,7 @@ export function buildBarOptions(
     return {
         tooltip: buildTooltip(options.showTooltip ?? true),
         legend: buildLegend(options.showLegend ?? true),
-        grid: buildGrid(),
+        grid: timeCategories ? buildGrid() : buildLabelGrid(),
         xAxis: options.horizontal ? valueAxis : categoryAxis,
         yAxis: options.horizontal ? categoryAxis : valueAxis,
         dataZoom: buildDataZoom(options.enableZoom ?? false),

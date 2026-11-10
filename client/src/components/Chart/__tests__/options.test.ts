@@ -269,6 +269,8 @@ describe('buildBarOptions', () => {
         const result = buildBarOptions(servers, { horizontal: true }) as any;
         expect(result.yAxis.axisLabel.interval).toBe(0);
         expect(result.yAxis.axisLabel.rotate).toBe(0);
+        expect(result.grid.outerBoundsContain).toBe('axisLabel');
+        expect(result.grid.containLabel).toBeUndefined();
     });
 
     it('keeps the time-series axis for timestamp categories', () => {
@@ -280,6 +282,7 @@ describe('buildBarOptions', () => {
         expect(result.xAxis.axisLabel.hideOverlap).toBe(true);
         expect(result.xAxis.axisLabel.interval).toBeUndefined();
         expect(typeof result.xAxis.axisLabel.formatter).toBe('function');
+        expect(result.grid.containLabel).toBe(true);
     });
 
     it('sets stack to total when stacked is true', () => {

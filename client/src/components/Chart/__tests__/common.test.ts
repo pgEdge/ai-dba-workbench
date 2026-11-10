@@ -22,6 +22,7 @@ import {
     buildTooltip,
     buildLegend,
     buildGrid,
+    buildLabelGrid,
     buildXAxis,
     buildYAxis,
     buildDataZoom,
@@ -29,6 +30,7 @@ import {
     buildFilledMarkArea,
     buildLabelAxis,
     middleEllipsis,
+    shortenLabels,
     isTimeCategories,
 } from '../options/common';
 
@@ -41,6 +43,19 @@ describe('buildLegend', () => {
     it('passes show through and pins the legend to the bottom', () => {
         expect(buildLegend(true)).toEqual({ show: true, bottom: 0 });
         expect(buildLegend(false)).toEqual({ show: false, bottom: 0 });
+    });
+});
+
+describe('buildLabelGrid', () => {
+    it('contains the axis labels exactly rather than by estimate', () => {
+        expect(buildLabelGrid()).toEqual({
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            top: '10%',
+            outerBoundsMode: 'same',
+            outerBoundsContain: 'axisLabel',
+        });
     });
 });
 
@@ -184,8 +199,8 @@ describe('buildLabelAxis', () => {
             interval: number;
             hideOverlap: boolean;
             rotate: number;
-            width: number;
-            overflow: string;
+            width?: number;
+            overflow?: string;
             formatter: (value: string) => string;
         };
     }
@@ -196,8 +211,6 @@ describe('buildLabelAxis', () => {
         expect(axis.data).toEqual(['pg-1', 'pg-2']);
         expect(axis.axisLabel.interval).toBe(0);
         expect(axis.axisLabel.hideOverlap).toBe(false);
-        expect(axis.axisLabel.overflow).toBe('truncate');
-        expect(axis.axisLabel.width).toBeGreaterThan(0);
         expect(axis.axisLabel.formatter('pg-1')).toBe('pg-1');
         expect(axis.axisLabel.formatter('replica-12')).toBe('replica-12');
     });
@@ -220,6 +233,41 @@ describe('buildLabelAxis', () => {
         expect(new Set(labels).size).toBe(names.length);
         // The axis data, which the tooltip shows, keeps the full names.
         expect(axis.data).toEqual(names);
+    });
+
+    it('leaves no ECharts truncation to cut a shortened label again', () => {
+        // ECharts truncates a label at the end only when the axis sets
+        // both a width and an overflow mode. At 14px Inter the label
+        // produc…node-1 is about 102px (PRODUC…NODE-1 about 121px), so
+        // any pixel limit near the old 96px cut off the distinguishing
+        // tail, and every bar read produc…nod... in the browser.
+        const names = [
+            'PRODUCTION-DB-NODE-1',
+            'PRODUCTION-DB-NODE-2',
+        ];
+        const axis = buildLabelAxis(names) as unknown as LabelAxisOpts;
+        expect(axis.axisLabel.overflow).toBeUndefined();
+        expect(axis.axisLabel.width).toBeUndefined();
+        expect(names.map((n) => axis.axisLabel.formatter(n))).toEqual([
+            'PRODUC\u2026NODE-1',
+            'PRODUC\u2026NODE-2',
+        ]);
+    });
+
+    it('keeps names that differ only in the middle distinct', () => {
+        const names = ['cluster-a-node-01', 'cluster-b-node-01'];
+        const axis = buildLabelAxis(names) as unknown as LabelAxisOpts;
+        expect(names.map((n) => axis.axisLabel.formatter(n))).toEqual([
+            'cluster-a\u2026-01',
+            'cluster-b\u2026-01',
+        ]);
+    });
+
+    it('shortens a value outside the categories on its own', () => {
+        const axis = buildLabelAxis(['pg-1']) as unknown as LabelAxisOpts;
+        expect(axis.axisLabel.formatter('production-db-node-12')).toBe(
+            'produc\u2026ode-12',
+        );
     });
 
     it('keeps a few labels level', () => {
@@ -273,6 +321,14 @@ describe('middleEllipsis', () => {
         expect(middleEllipsis('abcdefghij', 6)).toBe('ab\u2026hij');
     });
 
+    it('keeps the requested number of leading characters', () => {
+        expect(middleEllipsis('cluster-a-node-01', 13, 9)).toBe(
+            'cluster-a\u2026-01',
+        );
+        expect(middleEllipsis('abcdefghij', 6, 0)).toBe('\u2026fghij');
+        expect(middleEllipsis('abcdefghij', 6, 99)).toBe('abcde\u2026');
+    });
+
     it('returns only an ellipsis for a budget below two', () => {
         expect(middleEllipsis('abcdef', 1)).toBe('\u2026');
     });
@@ -281,6 +337,60 @@ describe('middleEllipsis', () => {
         const name = '\u{1F600}'.repeat(20);
         const out = middleEllipsis(name, 5);
         expect(out).toBe('\u{1F600}\u{1F600}\u2026\u{1F600}\u{1F600}');
+    });
+});
+
+describe('shortenLabels', () => {
+    it('uses the even split when it keeps every label distinct', () => {
+        const labels = shortenLabels([
+            'production-db-node-1',
+            'production-db-node-2',
+            'pg-1',
+        ]);
+        expect(labels.get('production-db-node-1')).toBe('produc\u2026node-1');
+        expect(labels.get('production-db-node-2')).toBe('produc\u2026node-2');
+        expect(labels.get('pg-1')).toBe('pg-1');
+    });
+
+    it('moves the split to the nearest one that separates the names', () => {
+        const labels = shortenLabels([
+            'cluster-a-node-01',
+            'cluster-b-node-01',
+            'cluster-a-node-02',
+        ]);
+        expect(new Set(labels.values()).size).toBe(3);
+        for (const label of labels.values()) {
+            expect(Array.from(label).length).toBeLessThanOrEqual(13);
+        }
+    });
+
+    it('keeps more of the end when the names differ near it', () => {
+        // The even split (xxx…zzz) and one more leading character
+        // (xxxx…zz) both collide; one fewer keeps the differing letter.
+        const labels = shortenLabels(['xxxxxxxxxAzzz', 'xxxxxxxxxBzzz'], 7);
+        expect(labels.get('xxxxxxxxxAzzz')).toBe('xx\u2026Azzz');
+        expect(labels.get('xxxxxxxxxBzzz')).toBe('xx\u2026Bzzz');
+    });
+
+    it('keeps the even split when no split separates the names', () => {
+        const a = 'aaaaaaaa' + 'X' + 'aaaaaaaa';
+        const b = 'aaaaaaaa' + 'Y' + 'aaaaaaaa';
+        const labels = shortenLabels([a, b], 7);
+        expect(labels.get(a)).toBe('aaa\u2026aaa');
+        expect(labels.get(b)).toBe('aaa\u2026aaa');
+    });
+
+    it('treats repeated names as one', () => {
+        const labels = shortenLabels([
+            'production-db-node-1',
+            'production-db-node-1',
+        ]);
+        expect(labels.size).toBe(1);
+        expect(labels.get('production-db-node-1')).toBe('produc\u2026node-1');
+    });
+
+    it('returns an empty map for no names', () => {
+        expect(shortenLabels([]).size).toBe(0);
     });
 });
 

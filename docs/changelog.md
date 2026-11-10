@@ -1410,10 +1410,11 @@ project adheres to
   labelled, and a server name that the browser could read as a date,
   such as `replica-12`, was shown as a time. Bar charts of named items
   now label every bar, shortening a long name in the middle so that
-  servers sharing a prefix, such as `production-db-node-1` and
-  `production-db-node-2`, keep distinct labels, and rotating the labels
-  when there are more than three; the tooltip shows the full server
-  name.
+  different servers keep different labels, even when they share a long
+  prefix (`production-db-node-1` and `production-db-node-2`) or differ
+  only in the middle (`cluster-a-node-01` and `cluster-b-node-01`),
+  and rotating the labels when there are more than three; the tooltip
+  shows the full server name.
 
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled

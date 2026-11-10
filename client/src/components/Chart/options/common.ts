@@ -293,6 +293,24 @@ export function buildGrid(): object {
     };
 }
 
+/**
+ * Builds the grid for a chart whose category axis labels named items
+ * (`buildLabelAxis`). `containLabel` only estimates the label size from
+ * sample labels and lets the first of a set of long rotated labels run
+ * off the left edge of the chart, so this grid uses ECharts' exact
+ * label bounds (`outerBoundsContain: 'axisLabel'`) instead.
+ */
+export function buildLabelGrid(): object {
+    return {
+        left: '3%',
+        right: '4%',
+        bottom: '15%',
+        top: '10%',
+        outerBoundsMode: 'same',
+        outerBoundsContain: 'axisLabel',
+    };
+}
+
 export function buildXAxis(categories?: string[]): object {
     const cats = categories ?? [];
     const formatter = buildTimeLabelFormatter(cats);
@@ -309,31 +327,29 @@ export function buildXAxis(categories?: string[]): object {
 }
 
 /**
- * Widest a named category label may grow. Labels are shortened to
- * `LABEL_MAX_CHARS` first; ECharts' own end truncation at this width is
- * only a safety net for names made of unusually wide characters.
- */
-const LABEL_MAX_WIDTH = 96;
-
-/**
  * Most characters, ellipsis included, that a named category label
- * keeps. At the 14px axis font (`CHART_AXIS_LABEL_FONTSIZE`) a
- * lowercase letter, digit or hyphen in Inter averages a little over
- * 7px, so 13 characters fill about `LABEL_MAX_WIDTH`.
+ * keeps. At the 14px axis font (`CHART_AXIS_LABEL_FONTSIZE`) 13
+ * lowercase characters in Inter take about 100px, and 13 upper-case
+ * ones about 120px. This budget is the only limit on a label: the axis
+ * sets no ECharts `width` or `overflow`, because ECharts truncates at
+ * the end, which would cut the distinguishing tail off again.
  */
 const LABEL_MAX_CHARS = 13;
 
 /**
  * Shortens a name to at most `maxChars` characters by replacing its
- * middle with an ellipsis, keeping the start and the end, so that names
- * sharing a long prefix (`production-db-node-1`, `production-db-node-2`)
- * stay distinct (`produc…node-1`, `produc…node-2`). A name that already
- * fits is returned unchanged. Characters are counted by code point, so
- * a surrogate pair is never split.
+ * middle with an ellipsis, keeping the first `head` characters and as
+ * many of the last as the budget allows. `head` defaults to half of
+ * what is kept, so names sharing a long prefix (`production-db-node-1`,
+ * `production-db-node-2`) stay distinct (`produc…node-1`,
+ * `produc…node-2`). A name that already fits is returned unchanged.
+ * Characters are counted by code point, so a surrogate pair is never
+ * split.
  */
 export function middleEllipsis(
     name: string,
     maxChars: number = LABEL_MAX_CHARS,
+    head?: number,
 ): string {
     const chars = Array.from(name);
     if (chars.length <= maxChars) {
@@ -343,10 +359,43 @@ export function middleEllipsis(
         return '\u2026';
     }
     const keep = maxChars - 1;
-    const head = Math.floor(keep / 2);
-    const tail = keep - head;
-    return chars.slice(0, head).join('') + '\u2026'
+    const start = Math.min(Math.max(head ?? Math.floor(keep / 2), 0), keep);
+    const tail = keep - start;
+    return chars.slice(0, start).join('') + '\u2026'
         + chars.slice(chars.length - tail).join('');
+}
+
+/**
+ * Shortens every name of an axis with `middleEllipsis`, using one split
+ * point for all of them. The even split is tried first; if it gives two
+ * different names the same label (`cluster-a-node-01` and
+ * `cluster-b-node-01` both become `cluste…ode-01`), the split nearest
+ * to it that keeps every label distinct is used instead
+ * (`cluster-a…-01`, `cluster-b…-01`). When no split separates them all,
+ * the even split is kept and the tooltip tells the names apart.
+ */
+export function shortenLabels(
+    names: string[],
+    maxChars: number = LABEL_MAX_CHARS,
+): Map<string, string> {
+    const unique = Array.from(new Set(names));
+    const keep = Math.max(maxChars - 1, 0);
+    const even = Math.floor(keep / 2);
+    const label = (head: number) => new Map(
+        unique.map((n) => [n, middleEllipsis(n, maxChars, head)]),
+    );
+    for (let offset = 0; offset <= keep; offset++) {
+        for (const head of offset === 0 ? [even] : [even + offset, even - offset]) {
+            if (head < 0 || head > keep) {
+                continue;
+            }
+            const labels = label(head);
+            if (new Set(labels.values()).size === unique.length) {
+                return labels;
+            }
+        }
+    }
+    return label(even);
 }
 
 /**
@@ -362,12 +411,12 @@ const LABEL_ROTATION = 30;
  * Builds a category axis for named items, such as the servers of a
  * comparative bar chart. Unlike the time-series axis from `buildXAxis`,
  * which thins its labels to the ones that fit, every item is labelled
- * (`interval: 0`): a long name is shortened in the middle
- * (`middleEllipsis`), so that names sharing a prefix stay distinct,
- * whilst the tooltip keeps the full name, and when there are more than a few
+ * (`interval: 0`): long names are shortened in the middle
+ * (`shortenLabels`) so that distinct names keep distinct labels, whilst
+ * the tooltip shows the full name, and when there are more than a few
  * items on a horizontal axis the labels are rotated so that they do
  * not collide. A vertical axis (a horizontal bar chart) stacks its
- * labels, so it truncates them but never rotates them.
+ * labels, so it shortens them but never rotates them.
  */
 export function buildLabelAxis(
     categories?: string[],
@@ -377,6 +426,7 @@ export function buildLabelAxis(
     const rotate = !vertical && cats.length > LABEL_ROTATE_THRESHOLD
         ? LABEL_ROTATION
         : 0;
+    const labels = shortenLabels(cats);
 
     return {
         type: 'category',
@@ -387,9 +437,8 @@ export function buildLabelAxis(
             interval: 0,
             hideOverlap: false,
             rotate,
-            formatter: (value: string) => middleEllipsis(value),
-            width: LABEL_MAX_WIDTH,
-            overflow: 'truncate',
+            formatter: (value: string) =>
+                labels.get(value) ?? middleEllipsis(value),
         },
     };
 }

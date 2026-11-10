@@ -1369,7 +1369,7 @@ func TestWriteSnapshotData_RecentEventTotals(t *testing.T) {
 		out := b.String()
 		for _, want := range []string{
 			"- Recent Events (last 24h): 192 total (180 alert events)\n",
-			"- Most recent 1 events:\n",
+			"- Most recent 1 event:\n",
 			"- alert_fired on db-1: High CPU\n",
 		} {
 			if !strings.Contains(out, want) {
@@ -1386,7 +1386,7 @@ func TestWriteSnapshotData_RecentEventTotals(t *testing.T) {
 			RecentAlertEventTotal: 1,
 		})
 		out := b.String()
-		if !strings.Contains(out, "- Recent Events (last 24h): 1 total (1 alert events)\n") {
+		if !strings.Contains(out, "- Recent Events (last 24h): 1 total (1 alert event)\n") {
 			t.Errorf("unexpected total line:\n%s", out)
 		}
 		if strings.Contains(out, "Most recent") {

@@ -500,6 +500,15 @@ func (g *Generator) hasSignificantChange(old, current *database.EstateSnapshot) 
 	return false
 }
 
+// pluralise formats a count with its noun, adding "s" to the noun
+// unless the count is exactly one.
+func pluralise(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
 // containsEventAfter reports whether the snapshot contains any recent
 // event, of any type, that occurred strictly after the given time.
 func containsEventAfter(snapshot *database.EstateSnapshot, after time.Time) bool {
@@ -696,10 +705,10 @@ func writeSnapshotData(b *strings.Builder, s *database.EstateSnapshot) {
 	// Recent events. The snapshot carries only a sample of the most
 	// recent events, so report the full count alongside it.
 	total := max(s.RecentEventTotal, len(s.RecentEvents))
-	fmt.Fprintf(b, "- Recent Events (last 24h): %d total (%d alert events)\n",
-		total, s.RecentAlertEventTotal)
+	fmt.Fprintf(b, "- Recent Events (last 24h): %d total (%s)\n",
+		total, pluralise(s.RecentAlertEventTotal, "alert event"))
 	if total > len(s.RecentEvents) {
-		fmt.Fprintf(b, "- Most recent %d events:\n", len(s.RecentEvents))
+		fmt.Fprintf(b, "- Most recent %s:\n", pluralise(len(s.RecentEvents), "event"))
 	}
 	for _, ev := range s.RecentEvents {
 		fmt.Fprintf(b, "- %s on %s: %s\n", ev.EventType, ev.ServerName, ev.Title)

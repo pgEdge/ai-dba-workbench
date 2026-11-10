@@ -304,13 +304,18 @@ func (d *Datastore) gatherEstateBlackoutData(ctx context.Context, snapshot *Esta
 // snapshot carries as a sample for the AI overview prompt.
 const recentEventSampleLimit = 20
 
-// recentChangeEventTypes are the timeline event types, other than
-// alert activity, that the AI overview reports as recent events.
-// They are fetched separately from alert events so that a burst of
-// alert churn cannot push a restart out of the sample; restart
-// detection in the overview generator depends on seeing them.
-var recentChangeEventTypes = []string{
+// recentRestartEventTypes holds the restart event type, which is
+// sampled on its own so that no burst of other events can push a
+// restart out of the sample; restart detection in the overview
+// generator depends on seeing it.
+var recentRestartEventTypes = []string{
 	EventTypeRestart,
+}
+
+// recentChangeEventTypes are the timeline event types, other than
+// restarts and alert activity, that the AI overview reports as
+// recent events.
+var recentChangeEventTypes = []string{
 	EventTypeConfigChange,
 	EventTypeHBAChange,
 	EventTypeIdentChange,
@@ -328,8 +333,8 @@ var recentAlertEventTypes = []string{
 }
 
 // gatherRecentEvents populates recent events from the last 24 hours,
-// covering every event type the Event Timeline shows. Change events
-// (restarts, configuration, HBA, ident, extension and blackout
+// covering every event type the Event Timeline shows. Restarts, other
+// change events (configuration, HBA, ident, extension and blackout
 // transitions) and alert events are each sampled up to
 // recentEventSampleLimit entries, merged in reverse chronological
 // order, and counted in full in RecentEventTotal and
@@ -343,6 +348,7 @@ func (d *Datastore) gatherRecentEvents(ctx context.Context, snapshot *EstateSnap
 		types []string
 		alert bool
 	}{
+		{types: recentRestartEventTypes},
 		{types: recentChangeEventTypes},
 		{types: recentAlertEventTypes, alert: true},
 	}

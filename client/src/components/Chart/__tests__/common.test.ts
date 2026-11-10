@@ -22,11 +22,16 @@ import {
     buildTooltip,
     buildLegend,
     buildGrid,
+    buildLabelGrid,
     buildXAxis,
     buildYAxis,
     buildDataZoom,
     buildSeriesData,
     buildFilledMarkArea,
+    buildLabelAxis,
+    middleEllipsis,
+    shortenLabels,
+    isTimeCategories,
 } from '../options/common';
 
 const isoMinusHours = (h: number) =>
@@ -38,6 +43,19 @@ describe('buildLegend', () => {
     it('passes show through and pins the legend to the bottom', () => {
         expect(buildLegend(true)).toEqual({ show: true, bottom: 0 });
         expect(buildLegend(false)).toEqual({ show: false, bottom: 0 });
+    });
+});
+
+describe('buildLabelGrid', () => {
+    it('contains the axis labels exactly rather than by estimate', () => {
+        expect(buildLabelGrid()).toEqual({
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            top: '10%',
+            outerBoundsMode: 'same',
+            outerBoundsContain: 'axisLabel',
+        });
     });
 });
 
@@ -123,6 +141,271 @@ describe('buildXAxis formatter', () => {
         expect(
             xAxis.axisLabel.formatter('2026-04-20T03:07:00Z'),
         ).toMatch(/^\d{2}:\d{2}$/);
+    });
+
+    it('leaves names that Date would misread as dates untouched', () => {
+        // V8 parses "pg-1" and "replica-12" as dates in 2001, which
+        // once turned every server name into "00:00".
+        const cats = ['pg-1', 'replica-12'];
+        const xAxis = buildXAxis(cats) as unknown as AxisOpts;
+        expect(xAxis.axisLabel.formatter('pg-1')).toBe('pg-1');
+        expect(xAxis.axisLabel.formatter('replica-12')).toBe('replica-12');
+    });
+
+    it('formats RFC 3339 timestamps with an offset or fraction', () => {
+        const xAxis = buildXAxis([
+            '2026-04-20T14:05:00.123456+00:00',
+            '2026-04-20T15:05:00+01:00',
+        ]) as unknown as AxisOpts;
+        expect(
+            xAxis.axisLabel.formatter('2026-04-20T14:05:00.123456+00:00'),
+        ).toMatch(/^\d{2}:\d{2}$/);
+    });
+});
+
+describe('isTimeCategories', () => {
+    it('accepts ISO 8601 dates and date-times', () => {
+        expect(isTimeCategories([
+            '2026-04-20T14:05:00Z',
+            '2026-04-20T14:05:00.000Z',
+            '2026-04-20T14:05:00+01:00',
+            '2026-04-20 14:05',
+            '2026-04-20',
+        ])).toBe(true);
+    });
+
+    it('treats a missing or empty list as a time series', () => {
+        expect(isTimeCategories()).toBe(true);
+        expect(isTimeCategories([])).toBe(true);
+    });
+
+    it('rejects names, including ones Date would misread', () => {
+        expect(isTimeCategories(['pg-1', 'pg-2'])).toBe(false);
+        expect(isTimeCategories(['server 1'])).toBe(false);
+        expect(isTimeCategories(['2026-04-20T14:05:00Z', 'primary']))
+            .toBe(false);
+    });
+
+    it('rejects a well-formed but impossible date', () => {
+        expect(isTimeCategories(['2026-13-45'])).toBe(false);
+    });
+
+    it('rejects a day that does not exist in its month', () => {
+        // V8 would roll these over into the following month.
+        expect(isTimeCategories(['2026-02-30'])).toBe(false);
+        expect(isTimeCategories(['2026-02-29'])).toBe(false);
+        expect(isTimeCategories(['2026-04-31T10:00:00Z'])).toBe(false);
+        expect(isTimeCategories(['2026-00-10'])).toBe(false);
+        expect(isTimeCategories(['2026-05-00'])).toBe(false);
+    });
+
+    it('accepts real dates, leap days and offsets', () => {
+        expect(isTimeCategories(['2024-02-29'])).toBe(true);
+        expect(isTimeCategories(['2026-12-31T23:59:59+05:30'])).toBe(true);
+        expect(isTimeCategories(['2026-01-31 08:00-08:00'])).toBe(true);
+    });
+});
+
+describe('buildLabelAxis', () => {
+    interface LabelAxisOpts {
+        type: string;
+        data: string[];
+        axisLabel: {
+            interval: number;
+            hideOverlap: boolean;
+            rotate: number;
+            width?: number;
+            overflow?: string;
+            formatter: (value: string) => string;
+        };
+    }
+
+    it('labels every category without a time formatter', () => {
+        const axis = buildLabelAxis(['pg-1', 'pg-2']) as unknown as LabelAxisOpts;
+        expect(axis.type).toBe('category');
+        expect(axis.data).toEqual(['pg-1', 'pg-2']);
+        expect(axis.axisLabel.interval).toBe(0);
+        expect(axis.axisLabel.hideOverlap).toBe(false);
+        expect(axis.axisLabel.formatter('pg-1')).toBe('pg-1');
+        expect(axis.axisLabel.formatter('replica-12')).toBe('replica-12');
+    });
+
+    it('keeps names that share a long prefix distinct', () => {
+        const names = [
+            'production-db-node-1',
+            'production-db-node-2',
+            'production-db-node-3',
+            'production-db-node-4',
+        ];
+        const axis = buildLabelAxis(names) as unknown as LabelAxisOpts;
+        const labels = names.map((n) => axis.axisLabel.formatter(n));
+        expect(labels).toEqual([
+            'produc\u2026node-1',
+            'produc\u2026node-2',
+            'produc\u2026node-3',
+            'produc\u2026node-4',
+        ]);
+        expect(new Set(labels).size).toBe(names.length);
+        // The axis data, which the tooltip shows, keeps the full names.
+        expect(axis.data).toEqual(names);
+    });
+
+    it('leaves no ECharts truncation to cut a shortened label again', () => {
+        // ECharts truncates a label at the end only when the axis sets
+        // both a width and an overflow mode. At 14px Inter the label
+        // produc…node-1 is about 102px (PRODUC…NODE-1 about 121px), so
+        // any pixel limit near the old 96px cut off the distinguishing
+        // tail, and every bar read produc…nod... in the browser.
+        const names = [
+            'PRODUCTION-DB-NODE-1',
+            'PRODUCTION-DB-NODE-2',
+        ];
+        const axis = buildLabelAxis(names) as unknown as LabelAxisOpts;
+        expect(axis.axisLabel.overflow).toBeUndefined();
+        expect(axis.axisLabel.width).toBeUndefined();
+        expect(names.map((n) => axis.axisLabel.formatter(n))).toEqual([
+            'PRODUC\u2026NODE-1',
+            'PRODUC\u2026NODE-2',
+        ]);
+    });
+
+    it('keeps names that differ only in the middle distinct', () => {
+        const names = ['cluster-a-node-01', 'cluster-b-node-01'];
+        const axis = buildLabelAxis(names) as unknown as LabelAxisOpts;
+        expect(names.map((n) => axis.axisLabel.formatter(n))).toEqual([
+            'cluster-a\u2026-01',
+            'cluster-b\u2026-01',
+        ]);
+    });
+
+    it('shortens a value outside the categories on its own', () => {
+        const axis = buildLabelAxis(['pg-1']) as unknown as LabelAxisOpts;
+        expect(axis.axisLabel.formatter('production-db-node-12')).toBe(
+            'produc\u2026ode-12',
+        );
+    });
+
+    it('keeps a few labels level', () => {
+        const axis = buildLabelAxis(['a', 'b', 'c']) as unknown as LabelAxisOpts;
+        expect(axis.axisLabel.rotate).toBe(0);
+    });
+
+    it('rotates labels when there are more than a few', () => {
+        const axis = buildLabelAxis(['a', 'b', 'c', 'd']) as unknown as LabelAxisOpts;
+        expect(axis.axisLabel.rotate).toBe(30);
+    });
+
+    it('never rotates labels on a vertical axis', () => {
+        const axis = buildLabelAxis(
+            ['a', 'b', 'c', 'd', 'e'],
+            true,
+        ) as unknown as LabelAxisOpts;
+        expect(axis.axisLabel.rotate).toBe(0);
+        expect(axis.axisLabel.interval).toBe(0);
+    });
+
+    it('falls back to an empty category list when categories is omitted', () => {
+        const axis = buildLabelAxis() as unknown as LabelAxisOpts;
+        expect(axis.data).toEqual([]);
+        expect(axis.axisLabel.rotate).toBe(0);
+    });
+});
+
+describe('middleEllipsis', () => {
+    it('leaves a name that fits untouched', () => {
+        expect(middleEllipsis('pg-1')).toBe('pg-1');
+        expect(middleEllipsis('')).toBe('');
+        expect(middleEllipsis('abcdefghijklm')).toBe('abcdefghijklm');
+    });
+
+    it('keeps the start and the end of a long name', () => {
+        expect(middleEllipsis('abcdefghijklmn')).toBe('abcdef\u2026ijklmn');
+        expect(middleEllipsis('production-db-node-12')).toBe(
+            'produc\u2026ode-12',
+        );
+    });
+
+    it('never exceeds the character budget', () => {
+        for (let max = 1; max <= 15; max++) {
+            const out = middleEllipsis('production-db-node-12', max);
+            expect(Array.from(out).length).toBeLessThanOrEqual(max);
+        }
+    });
+
+    it('gives the end the extra character for an even budget', () => {
+        expect(middleEllipsis('abcdefghij', 6)).toBe('ab\u2026hij');
+    });
+
+    it('keeps the requested number of leading characters', () => {
+        expect(middleEllipsis('cluster-a-node-01', 13, 9)).toBe(
+            'cluster-a\u2026-01',
+        );
+        expect(middleEllipsis('abcdefghij', 6, 0)).toBe('\u2026fghij');
+        expect(middleEllipsis('abcdefghij', 6, 99)).toBe('abcde\u2026');
+    });
+
+    it('returns only an ellipsis for a budget below two', () => {
+        expect(middleEllipsis('abcdef', 1)).toBe('\u2026');
+    });
+
+    it('does not split a surrogate pair', () => {
+        const name = '\u{1F600}'.repeat(20);
+        const out = middleEllipsis(name, 5);
+        expect(out).toBe('\u{1F600}\u{1F600}\u2026\u{1F600}\u{1F600}');
+    });
+});
+
+describe('shortenLabels', () => {
+    it('uses the even split when it keeps every label distinct', () => {
+        const labels = shortenLabels([
+            'production-db-node-1',
+            'production-db-node-2',
+            'pg-1',
+        ]);
+        expect(labels.get('production-db-node-1')).toBe('produc\u2026node-1');
+        expect(labels.get('production-db-node-2')).toBe('produc\u2026node-2');
+        expect(labels.get('pg-1')).toBe('pg-1');
+    });
+
+    it('moves the split to the nearest one that separates the names', () => {
+        const labels = shortenLabels([
+            'cluster-a-node-01',
+            'cluster-b-node-01',
+            'cluster-a-node-02',
+        ]);
+        expect(new Set(labels.values()).size).toBe(3);
+        for (const label of labels.values()) {
+            expect(Array.from(label).length).toBeLessThanOrEqual(13);
+        }
+    });
+
+    it('keeps more of the end when the names differ near it', () => {
+        // The even split (xxx…zzz) and one more leading character
+        // (xxxx…zz) both collide; one fewer keeps the differing letter.
+        const labels = shortenLabels(['xxxxxxxxxAzzz', 'xxxxxxxxxBzzz'], 7);
+        expect(labels.get('xxxxxxxxxAzzz')).toBe('xx\u2026Azzz');
+        expect(labels.get('xxxxxxxxxBzzz')).toBe('xx\u2026Bzzz');
+    });
+
+    it('keeps the even split when no split separates the names', () => {
+        const a = 'aaaaaaaa' + 'X' + 'aaaaaaaa';
+        const b = 'aaaaaaaa' + 'Y' + 'aaaaaaaa';
+        const labels = shortenLabels([a, b], 7);
+        expect(labels.get(a)).toBe('aaa\u2026aaa');
+        expect(labels.get(b)).toBe('aaa\u2026aaa');
+    });
+
+    it('treats repeated names as one', () => {
+        const labels = shortenLabels([
+            'production-db-node-1',
+            'production-db-node-1',
+        ]);
+        expect(labels.size).toBe(1);
+        expect(labels.get('production-db-node-1')).toBe('produc\u2026node-1');
+    });
+
+    it('returns an empty map for no names', () => {
+        expect(shortenLabels([]).size).toBe(0);
     });
 });
 
@@ -568,6 +851,17 @@ describe('buildTooltip formatter', () => {
         expect(line(1_250)).toContain('Rate: 1.25K');
         expect(line(-0)).toContain('Rate: 0');
         expect(line(-0)).not.toContain('Rate: -0');
+    });
+
+    it('shows a server name in the header rather than a misread date', () => {
+        const tooltip = buildTooltip(true) as TooltipOpts;
+        const html = tooltip.formatter([{
+            axisValue: 'replica-12',
+            marker: '*',
+            seriesName: 'Commits/sec',
+            value: 5,
+        }]);
+        expect(html).toContain('<strong>replica-12</strong>');
     });
 
     it('falls back to the raw axisValue when the date is unparseable', () => {

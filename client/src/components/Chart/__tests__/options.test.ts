@@ -248,6 +248,43 @@ describe('buildBarOptions', () => {
         expect(result.yAxis.type).toBe('value');
     });
 
+    it('labels every named category without a time formatter', () => {
+        const servers: ChartData = {
+            categories: ['pg-1', 'pg-2', 'pg-3', 'pg-4'],
+            series: [{ name: 'Commits/sec', data: [1, 2, 3, 4] }],
+        };
+        const result = buildBarOptions(servers, {}) as any;
+        expect(result.xAxis.data).toEqual(servers.categories);
+        expect(result.xAxis.axisLabel.interval).toBe(0);
+        expect(result.xAxis.axisLabel.rotate).toBe(30);
+        // Names pass through unchanged rather than being read as times.
+        expect(result.xAxis.axisLabel.formatter('pg-1')).toBe('pg-1');
+    });
+
+    it('labels every named category on a horizontal bar chart', () => {
+        const servers: ChartData = {
+            categories: ['pg-1', 'pg-2', 'pg-3', 'pg-4'],
+            series: [{ name: 'Commits/sec', data: [1, 2, 3, 4] }],
+        };
+        const result = buildBarOptions(servers, { horizontal: true }) as any;
+        expect(result.yAxis.axisLabel.interval).toBe(0);
+        expect(result.yAxis.axisLabel.rotate).toBe(0);
+        expect(result.grid.outerBoundsContain).toBe('axisLabel');
+        expect(result.grid.containLabel).toBeUndefined();
+    });
+
+    it('keeps the time-series axis for timestamp categories', () => {
+        const buckets: ChartData = {
+            categories: ['2026-04-20T14:00:00Z', '2026-04-20T14:05:00Z'],
+            series: [{ name: 'Checkpoints', data: [1, 2] }],
+        };
+        const result = buildBarOptions(buckets, {}) as any;
+        expect(result.xAxis.axisLabel.hideOverlap).toBe(true);
+        expect(result.xAxis.axisLabel.interval).toBeUndefined();
+        expect(typeof result.xAxis.axisLabel.formatter).toBe('function');
+        expect(result.grid.containLabel).toBe(true);
+    });
+
     it('sets stack to total when stacked is true', () => {
         const result = buildBarOptions(sampleData, { stacked: true }) as any;
         result.series.forEach((s: any) => {

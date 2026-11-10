@@ -54,6 +54,45 @@ function formatDateTimeFull(d: Date): string {
 }
 
 /**
+ * Matches an ISO 8601 date or date-time: the format of every timestamp
+ * category the client builds (`toISOString`) or receives from the
+ * server (RFC 3339). Anything else is a plain label. `Date` parsing on
+ * its own is far too lenient for that test, since V8 reads server
+ * names such as "pg-1" or "replica-12" as dates in 2001.
+ */
+const ISO_TIMESTAMP_RE =
+    /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?)?$/i;
+
+/**
+ * Parses a category as a timestamp, returning null for anything that
+ * is not an ISO 8601 date or date-time. The calendar date is checked
+ * first, because V8 rolls an impossible day over into the next month
+ * (`2026-02-30` becomes 2 March) rather than rejecting it.
+ */
+function parseTimestamp(value: string): Date | null {
+    if (!ISO_TIMESTAMP_RE.test(value)) {return null;}
+    const year = Number(value.slice(0, 4));
+    const month = Number(value.slice(5, 7));
+    const day = Number(value.slice(8, 10));
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (month < 1 || month > 12 || day < 1 || day > daysInMonth) {
+        return null;
+    }
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * True when every category is a timestamp, so the axis is a time
+ * series rather than a set of named items such as servers. An empty
+ * list counts as a time series, which keeps the axis that every chart
+ * without categories has always drawn.
+ */
+export function isTimeCategories(categories?: string[]): boolean {
+    return (categories ?? []).every(c => parseTimestamp(c) !== null);
+}
+
+/**
  * Detects the time span of the categories array and returns an
  * appropriate formatter for axis labels.
  */
@@ -62,16 +101,16 @@ function buildTimeLabelFormatter(
 ): (value: string) => string {
     let spanMs = 0;
     if (categories.length >= 2) {
-        const first = new Date(categories[0]).getTime();
-        const last = new Date(categories[categories.length - 1]).getTime();
-        if (!Number.isNaN(first) && !Number.isNaN(last)) {
-            spanMs = Math.abs(last - first);
+        const first = parseTimestamp(categories[0]);
+        const last = parseTimestamp(categories[categories.length - 1]);
+        if (first && last) {
+            spanMs = Math.abs(last.getTime() - first.getTime());
         }
     }
 
     return (value: string) => {
-        const d = new Date(value);
-        if (Number.isNaN(d.getTime())) {return value;}
+        const d = parseTimestamp(value);
+        if (!d) {return value;}
 
         if (spanMs < MS_PER_DAY) {
             return formatTime(d);
@@ -219,10 +258,8 @@ export function buildTooltip(show: boolean): object {
             const list = Array.isArray(params) ? params : [params];
             if (list.length === 0) {return '';}
 
-            const d = new Date(list[0].axisValue);
-            const header = Number.isNaN(d.getTime())
-                ? list[0].axisValue
-                : formatDateTimeFull(d);
+            const d = parseTimestamp(list[0].axisValue);
+            const header = d ? formatDateTimeFull(d) : list[0].axisValue;
 
             const lines = list.map((p) => {
                 let val: string;
@@ -265,6 +302,24 @@ export function buildGrid(): object {
     };
 }
 
+/**
+ * Builds the grid for a chart whose category axis labels named items
+ * (`buildLabelAxis`). `containLabel` only estimates the label size from
+ * sample labels and lets the first of a set of long rotated labels run
+ * off the left edge of the chart, so this grid uses ECharts' exact
+ * label bounds (`outerBoundsContain: 'axisLabel'`) instead.
+ */
+export function buildLabelGrid(): object {
+    return {
+        left: '3%',
+        right: '4%',
+        bottom: '15%',
+        top: '10%',
+        outerBoundsMode: 'same',
+        outerBoundsContain: 'axisLabel',
+    };
+}
+
 export function buildXAxis(categories?: string[]): object {
     const cats = categories ?? [];
     const formatter = buildTimeLabelFormatter(cats);
@@ -276,6 +331,123 @@ export function buildXAxis(categories?: string[]): object {
         axisLabel: {
             formatter,
             hideOverlap: true,
+        },
+    };
+}
+
+/**
+ * Most characters, ellipsis included, that a named category label
+ * keeps. At the 14px axis font (`CHART_AXIS_LABEL_FONTSIZE`) 13
+ * lowercase characters in Inter take about 100px, and 13 upper-case
+ * ones about 120px. This budget is the only limit on a label: the axis
+ * sets no ECharts `width` or `overflow`, because ECharts truncates at
+ * the end, which would cut the distinguishing tail off again.
+ */
+const LABEL_MAX_CHARS = 13;
+
+/**
+ * Shortens a name to at most `maxChars` characters by replacing its
+ * middle with an ellipsis, keeping the first `head` characters and as
+ * many of the last as the budget allows. `head` defaults to half of
+ * what is kept, so names sharing a long prefix (`production-db-node-1`,
+ * `production-db-node-2`) stay distinct (`produc…node-1`,
+ * `produc…node-2`). A name that already fits is returned unchanged.
+ * Characters are counted by code point, so a surrogate pair is never
+ * split.
+ */
+export function middleEllipsis(
+    name: string,
+    maxChars: number = LABEL_MAX_CHARS,
+    head?: number,
+): string {
+    const chars = Array.from(name);
+    if (chars.length <= maxChars) {
+        return name;
+    }
+    if (maxChars < 2) {
+        return '\u2026';
+    }
+    const keep = maxChars - 1;
+    const start = Math.min(Math.max(head ?? Math.floor(keep / 2), 0), keep);
+    const tail = keep - start;
+    return chars.slice(0, start).join('') + '\u2026'
+        + chars.slice(chars.length - tail).join('');
+}
+
+/**
+ * Shortens every name of an axis with `middleEllipsis`, using one split
+ * point for all of them. The even split is tried first; if it gives two
+ * different names the same label (`cluster-a-node-01` and
+ * `cluster-b-node-01` both become `cluste…ode-01`), the split nearest
+ * to it that keeps every label distinct is used instead
+ * (`cluster-a…-01`, `cluster-b…-01`). When no split separates them all,
+ * the even split is kept and the tooltip tells the names apart.
+ */
+export function shortenLabels(
+    names: string[],
+    maxChars: number = LABEL_MAX_CHARS,
+): Map<string, string> {
+    const unique = Array.from(new Set(names));
+    const keep = Math.max(maxChars - 1, 0);
+    const even = Math.floor(keep / 2);
+    const label = (head: number) => new Map(
+        unique.map((n) => [n, middleEllipsis(n, maxChars, head)]),
+    );
+    for (let offset = 0; offset <= keep; offset++) {
+        for (const head of offset === 0 ? [even] : [even + offset, even - offset]) {
+            if (head < 0 || head > keep) {
+                continue;
+            }
+            const labels = label(head);
+            if (new Set(labels.values()).size === unique.length) {
+                return labels;
+            }
+        }
+    }
+    return label(even);
+}
+
+/**
+ * Number of named categories above which a horizontal axis rotates its
+ * labels so that each can still be shown.
+ */
+const LABEL_ROTATE_THRESHOLD = 3;
+
+/** Rotation, in degrees, of crowded named category labels. */
+const LABEL_ROTATION = 30;
+
+/**
+ * Builds a category axis for named items, such as the servers of a
+ * comparative bar chart. Unlike the time-series axis from `buildXAxis`,
+ * which thins its labels to the ones that fit, every item is labelled
+ * (`interval: 0`): long names are shortened in the middle
+ * (`shortenLabels`) so that distinct names keep distinct labels, whilst
+ * the tooltip shows the full name, and when there are more than a few
+ * items on a horizontal axis the labels are rotated so that they do
+ * not collide. A vertical axis (a horizontal bar chart) stacks its
+ * labels, so it shortens them but never rotates them.
+ */
+export function buildLabelAxis(
+    categories?: string[],
+    vertical?: boolean,
+): object {
+    const cats = categories ?? [];
+    const rotate = !vertical && cats.length > LABEL_ROTATE_THRESHOLD
+        ? LABEL_ROTATION
+        : 0;
+    const labels = shortenLabels(cats);
+
+    return {
+        type: 'category',
+        data: cats,
+        boundaryGap: true,
+        axisTick: { alignWithLabel: true },
+        axisLabel: {
+            interval: 0,
+            hideOverlap: false,
+            rotate,
+            formatter: (value: string) =>
+                labels.get(value) ?? middleEllipsis(value),
         },
     };
 }

@@ -90,9 +90,13 @@ index metrics.
 
 ## Vacuum Status
 
-The vacuum status section displays a table of all
-tables sorted by dead tuple ratio in descending order.
-The table includes the following columns:
+The vacuum status section displays the 20 user tables
+with the highest dead tuple ratio, highest first; the
+ratio is the share of a table's tuples that are dead.
+A table with no tuples counts as a ratio of 0, and
+tables with the same ratio are listed by dead tuple
+count. System catalogs and TOAST tables are not
+listed. The table includes the following columns:
 
 - The table name identifies each entry.
 - The last vacuum column shows the most recent manual
@@ -103,7 +107,10 @@ The table includes the following columns:
 - The dead tuple ratio column shows the percentage.
 
 Color-coded timestamps indicate vacuum freshness:
-green for recent, yellow for aging, and red for stale.
+green within a day, yellow within a week, and red for
+older timestamps or tables never vacuumed. The dead
+tuple ratio is colored by the ratio itself: green up
+to 5%, yellow up to 20%, and red above 20%.
 An AI Analysis button provides LLM-powered vacuum
 recommendations.
 

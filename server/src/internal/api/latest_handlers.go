@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -280,14 +281,26 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 		}
 	}
 
-	// Validate order_by column exists in the output columns
-	if !returnColSet[orderBy] {
+	// dead_tuple_ratio is a sort key computed from n_live_tup and
+	// n_dead_tup rather than a stored column, so it is accepted only
+	// when the probe has both, both may be sorted on, and it has no
+	// real column of that name.
+	if orderBy == deadTupleRatioSortKey && !returnColSet[orderBy] {
+		if !returnColSet["n_live_tup"] || !returnColSet["n_dead_tup"] ||
+			!metrics.SortableColumn(probeName, "n_live_tup") ||
+			!metrics.SortableColumn(probeName, "n_dead_tup") {
+			RespondError(w, http.StatusBadRequest,
+				fmt.Sprintf("Invalid order_by: %q requires probe %q to have n_live_tup and n_dead_tup columns",
+					orderBy, probeName))
+			return
+		}
+	} else if !returnColSet[orderBy] {
+		// Validate order_by column exists in the output columns
 		RespondError(w, http.StatusBadRequest,
 			fmt.Sprintf("Invalid order_by: column %q does not exist in probe %q output",
 				orderBy, probeName))
 		return
-	}
-	if !metrics.SortableColumn(probeName, orderBy) {
+	} else if !metrics.SortableColumn(probeName, orderBy) {
 		RespondError(w, http.StatusBadRequest, metrics.UnsortableColumnError(probeName, orderBy))
 		return
 	}
@@ -456,6 +469,34 @@ type latestSchemaFilter struct {
 // no caller input reaches the SQL text through it.
 const systemSchemaPredicate = `"schemaname" NOT IN ('pg_catalog', 'information_schema') AND "schemaname" !~ '^pg_toast'`
 
+// deadTupleRatioSortKey is the order_by value that ranks tables by the
+// share of their tuples that are dead, n_dead_tup / (n_live_tup +
+// n_dead_tup), the ratio the Database Dashboard's Vacuum Status section
+// shows and grades each row by. It is the name the history endpoint
+// uses for the same ratio (metrics.DerivedDeadTupleRatio).
+const deadTupleRatioSortKey = "dead_tuple_ratio"
+
+// deadTupleRatioOrderExpr is the ORDER BY expression for
+// deadTupleRatioSortKey. A table with no tuples at all, or a NULL count,
+// ranks as a ratio of 0 rather than failing on a division by zero. It is
+// a constant, so no caller input reaches the SQL text through it.
+const deadTupleRatioOrderExpr = `COALESCE("n_dead_tup"::float8 / NULLIF(COALESCE("n_live_tup", 0) + "n_dead_tup", 0), 0)`
+
+// latestOrderClause returns the outer ORDER BY of a latest-snapshot
+// query, without the keyword, for an order_by and a direction the
+// handler has already validated. order must be "asc" or "desc".
+// returnCols are the columns the query returns: dead_tuple_ratio means
+// the computed ratio only when no real column has that name. Tables with
+// the same ratio, such as every table with no dead tuples, then rank by
+// n_dead_tup in the same direction, so the larger backlog comes first.
+func latestOrderClause(orderBy, order string, returnCols []string) string {
+	if orderBy == deadTupleRatioSortKey && !slices.Contains(returnCols, orderBy) {
+		return fmt.Sprintf(`%s %s, "n_dead_tup" %s NULLS LAST`,
+			deadTupleRatioOrderExpr, order, order)
+	}
+	return metrics.QuoteIdentifier(orderBy) + " " + order
+}
+
 // queryLatestSnapshot builds and executes the DISTINCT ON query that
 // returns the latest row for each unique entity, then applies sorting
 // and pagination. Columns that can carry a credential are masked in the
@@ -590,7 +631,7 @@ func queryLatestSnapshot(
             ORDER BY %s
         ) latest
         %s
-        ORDER BY %s %s
+        ORDER BY %s
         LIMIT $%d
     `,
 		distinctOnClause,
@@ -599,8 +640,7 @@ func queryLatestSnapshot(
 		innerWhereClause,
 		distinctOrderClause,
 		outerWhereClause,
-		metrics.QuoteIdentifier(orderBy),
-		order,
+		latestOrderClause(orderBy, order, returnCols),
 		argNum,
 	)
 	args = append(args, limit)

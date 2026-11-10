@@ -1442,6 +1442,20 @@ project adheres to
   matches any cluster offers no Cluster scope. Standalone servers
   still offer no Cluster scope.
 
+- Colour the Dead Ratio column of the Database Dashboard's Vacuum
+  Status section by the ratio itself, and leave system catalogs and
+  TOAST tables out of the list (#806). The column took its colour from
+  how long ago the table was last vacuumed, so a table with a dead
+  ratio above 90% showed green when autovacuum had run recently. The
+  ratio is now green up to 5%, amber up to 20% and red above that, as
+  on the Server Dashboard's database cards, and the list shows only
+  the tables that `pg_stat_user_tables` would. The section now lists
+  the 20 tables with the highest dead ratio rather than the 20 with
+  the most dead tuples, so a small table with a high ratio is no
+  longer left out; `GET /api/v1/metrics/latest` accepts
+  `order_by=dead_tuple_ratio` for this on probes with `n_live_tup`
+  and `n_dead_tup` columns.
+
 - Keep the user list on the Administration > Users page when an
   action on a row is refused (#788). A failed Superuser or Enabled
   toggle, or a failed delete, replaced the whole page with the error

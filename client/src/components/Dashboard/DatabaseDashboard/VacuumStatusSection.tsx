@@ -33,6 +33,7 @@ import {
     formatNumber,
     formatTimestamp,
     getVacuumStatus,
+    getDeadRatioStatus,
 } from './types';
 
 /** Table container styles */
@@ -135,29 +136,11 @@ const getDeadTupleRatio = (row: TableLeaderboardRow): number => {
 };
 
 /**
- * Get the more recent vacuum timestamp between manual and auto.
- */
-const getMostRecentVacuum = (
-    row: TableLeaderboardRow
-): string | undefined => {
-    if (!row.last_vacuum && !row.last_autovacuum) {
-        return undefined;
-    }
-    if (!row.last_vacuum) { return row.last_autovacuum; }
-    if (!row.last_autovacuum) { return row.last_vacuum; }
-
-    const vacuumDate = new Date(row.last_vacuum);
-    const autoDate = new Date(row.last_autovacuum);
-    return vacuumDate > autoDate
-        ? row.last_vacuum
-        : row.last_autovacuum;
-};
-
-/**
  * Vacuum Status section displays the vacuum and autovacuum status
- * for all tables in the database, sorted by dead tuple ratio in
- * descending order. Color-coded timestamps indicate freshness of
- * the last vacuum operation.
+ * of the 20 user tables with the highest dead tuple ratio, highest
+ * first. The vacuum timestamps are colored
+ * by how long ago each operation ran, and the dead ratio is colored
+ * by the ratio itself. System catalogs and TOAST tables are left out.
  */
 const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
     connectionId,
@@ -183,8 +166,15 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
             connection_id: connectionId.toString(),
             database_name: databaseName,
             limit: '20',
-            order_by: 'n_dead_tup',
+            // Rank by dead tuple ratio on the server, so that a small
+            // table with a high ratio is not left out in favour of a
+            // large table with more dead tuples but a lower ratio.
+            order_by: 'dead_tuple_ratio',
             order: 'desc',
+            // Leave out pg_catalog, information_schema and TOAST
+            // tables, as pg_stat_user_tables does, so catalog objects
+            // do not crowd user tables out of the list (issue #806).
+            exclude_system_schemas: 'true',
         });
         const url = `/api/v1/metrics/latest?${params.toString()}`;
 
@@ -220,7 +210,8 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
                     rows = result.rows ?? [];
                 }
 
-                // Sort by dead tuple ratio descending
+                // The server ranks by the same ratio; sorting again
+                // keeps the rows in the order the colours describe.
                 rows.sort((a, b) => {
                     return getDeadTupleRatio(b)
                         - getDeadTupleRatio(a);
@@ -396,12 +387,8 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
 
                     {tables.map((row) => {
                         const deadRatio = getDeadTupleRatio(row);
-                        const mostRecent = getMostRecentVacuum(row);
-                        const vacuumStatus = getVacuumStatus(
-                            mostRecent
-                        );
-                        const statusColor = getStatusColor(
-                            vacuumStatus, theme
+                        const ratioColor = getStatusColor(
+                            getDeadRatioStatus(deadRatio), theme
                         );
 
                         return (
@@ -457,7 +444,7 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
                                 <Typography
                                     sx={{
                                         ...NUMERIC_CELL_SX as object,
-                                        color: statusColor,
+                                        color: ratioColor,
                                         fontWeight: 600,
                                     }}
                                 >

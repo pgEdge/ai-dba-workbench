@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import {
     formatTimestamp,
     getVacuumStatus,
+    getDeadRatioStatus,
     extractSparklineData,
     extractLatestValue,
     extractLatestRate,
@@ -112,6 +113,17 @@ describe('DatabaseDashboard types helpers', () => {
             expect(getVacuumStatus(longAgo)).toBe('critical');
             expect(getVacuumStatus(undefined)).toBe('critical');
             expect(getVacuumStatus('not a date')).toBe('critical');
+        });
+    });
+
+    describe('getDeadRatioStatus', () => {
+        it('is good up to 5%, warning up to 20%, critical above', () => {
+            expect(getDeadRatioStatus(0)).toBe('good');
+            expect(getDeadRatioStatus(5)).toBe('good');
+            expect(getDeadRatioStatus(5.1)).toBe('warning');
+            expect(getDeadRatioStatus(20)).toBe('warning');
+            expect(getDeadRatioStatus(20.1)).toBe('critical');
+            expect(getDeadRatioStatus(93.6)).toBe('critical');
         });
     });
 

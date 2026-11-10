@@ -6578,7 +6578,7 @@
           {
             "name": "order_by",
             "in": "query",
-            "description": "Column to sort by (default: the first entity key column that can be sorted on); the setting, reset_val and boot_val columns of pg_settings are refused",
+            "description": "Column to sort by (default: the first entity key column that can be sorted on); the setting, reset_val and boot_val columns of pg_settings are refused. On a probe with n_live_tup and n_dead_tup columns, dead_tuple_ratio sorts by n_dead_tup / (n_live_tup + n_dead_tup), counting a table with no tuples as 0, then by n_dead_tup",
             "schema": {
               "type": "string"
             }

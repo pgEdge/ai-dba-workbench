@@ -4151,7 +4151,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("database_name", "Filter by database name"),
 					queryParamString("exclude_schemas", "Comma-separated schema names to exclude (probes with a schemaname column only; 'none' excludes nothing)"),
 					queryParamBool("exclude_system_schemas", "Exclude pg_catalog, information_schema and pg_toast* schemas, as pg_stat_user_tables does (probes with a schemaname column only)"),
-					queryParamString("order_by", "Column to sort by (default: the first entity key column that can be sorted on); the setting, reset_val and boot_val columns of pg_settings are refused"),
+					queryParamString("order_by", "Column to sort by (default: the first entity key column that can be sorted on); the setting, reset_val and boot_val columns of pg_settings are refused. On a probe with n_live_tup and n_dead_tup columns, dead_tuple_ratio sorts by n_dead_tup / (n_live_tup + n_dead_tup), counting a table with no tuples as 0, then by n_dead_tup"),
 					queryParamString("order", "Sort order: asc or desc (default: desc)"),
 					queryParamInt("limit", "Maximum rows to return (default 20, max 100)"),
 				},

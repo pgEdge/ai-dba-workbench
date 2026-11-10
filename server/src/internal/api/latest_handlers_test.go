@@ -401,3 +401,32 @@ func TestLatestSnapshotHandler_LimitCapping(t *testing.T) {
 		})
 	}
 }
+
+// TestLatestOrderClause covers the outer ORDER BY of a latest-snapshot
+// query: a real column is quoted, and dead_tuple_ratio becomes the
+// computed ratio with n_dead_tup as the tiebreaker, unless the probe has a
+// real column of that name.
+func TestLatestOrderClause(t *testing.T) {
+	tests := []struct {
+		name       string
+		orderBy    string
+		order      string
+		returnCols []string
+		want       string
+	}{
+		{"real column", "n_dead_tup", "desc",
+			[]string{"relname", "n_dead_tup"}, `"n_dead_tup" desc`},
+		{"dead tuple ratio", "dead_tuple_ratio", "asc",
+			[]string{"relname", "n_live_tup", "n_dead_tup"},
+			`COALESCE("n_dead_tup"::float8 / NULLIF(COALESCE("n_live_tup", 0) + "n_dead_tup", 0), 0) asc, "n_dead_tup" asc NULLS LAST`},
+		{"real dead_tuple_ratio column", "dead_tuple_ratio", "desc",
+			[]string{"relname", "dead_tuple_ratio"}, `"dead_tuple_ratio" desc`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := latestOrderClause(tt.orderBy, tt.order, tt.returnCols); got != tt.want {
+				t.Errorf("latestOrderClause() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}

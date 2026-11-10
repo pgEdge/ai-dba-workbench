@@ -136,7 +136,7 @@ describe('buildYAxis formatter', () => {
     it('formats billions with B suffix', () => {
         const yAxis = buildYAxis() as unknown as YAxisOpts;
         expect(yAxis.axisLabel.formatter(2_500_000_000)).toBe('2.5B');
-        expect(yAxis.axisLabel.formatter(-3_000_000_000)).toBe('-3.0B');
+        expect(yAxis.axisLabel.formatter(-3_000_000_000)).toBe('-3B');
     });
 
     it('formats millions with M suffix', () => {
@@ -155,9 +155,39 @@ describe('buildYAxis formatter', () => {
         expect(yAxis.axisLabel.formatter(0)).toBe('0');
     });
 
-    it('rounds non-integer small numbers to 1 decimal', () => {
+    it('keeps every digit of a fractional tick', () => {
         const yAxis = buildYAxis() as unknown as YAxisOpts;
-        expect(yAxis.axisLabel.formatter(3.14159)).toBe('3.1');
+        expect(yAxis.axisLabel.formatter(3.14159)).toBe('3.14159');
+    });
+
+    it('labels ticks at a fine step distinctly', () => {
+        const yAxis = buildYAxis() as unknown as YAxisOpts;
+        const ticks = [0.15, 0.2, 0.25, 0.3, 0.35, 0.4];
+        const labels = ticks.map(t => yAxis.axisLabel.formatter(t));
+        expect(labels).toEqual(['0.15', '0.2', '0.25', '0.3', '0.35', '0.4']);
+    });
+
+    it('labels SI-scaled ticks at a fine step distinctly', () => {
+        const yAxis = buildYAxis() as unknown as YAxisOpts;
+        expect(yAxis.axisLabel.formatter(1_250)).toBe('1.25K');
+        expect(yAxis.axisLabel.formatter(1_300)).toBe('1.3K');
+        expect(yAxis.axisLabel.formatter(2_000)).toBe('2K');
+        expect(yAxis.axisLabel.formatter(1_050_000)).toBe('1.05M');
+    });
+
+    it('strips floating-point noise from tick values', () => {
+        const yAxis = buildYAxis() as unknown as YAxisOpts;
+        expect(yAxis.axisLabel.formatter(0.1 + 0.2)).toBe('0.3');
+    });
+
+    it('never uses exponent notation for tiny ticks', () => {
+        const yAxis = buildYAxis() as unknown as YAxisOpts;
+        expect(yAxis.axisLabel.formatter(0.0000001)).toBe('0.0000001');
+    });
+
+    it('shows negative zero as zero', () => {
+        const yAxis = buildYAxis() as unknown as YAxisOpts;
+        expect(yAxis.axisLabel.formatter(-0)).toBe('0');
     });
 });
 
@@ -520,6 +550,24 @@ describe('buildTooltip formatter', () => {
         expect(html).toContain('<strong>');
         expect(html).toContain('CPU: 42');
         expect(html).toContain('IO: 1.5K');
+    });
+
+    it('keeps useful precision for small and fractional values', () => {
+        const tooltip = buildTooltip(true) as TooltipOpts;
+        const line = (value: number) => tooltip.formatter([{
+            axisValue: '2026-04-20T14:05:06Z',
+            marker: '*',
+            seriesName: 'Rate',
+            value,
+        }]);
+        expect(line(0.04)).toContain('Rate: 0.04');
+        expect(line(0.0412345)).toContain('Rate: 0.0412');
+        expect(line(-0.0412345)).toContain('Rate: -0.0412');
+        expect(line(12.3456)).toContain('Rate: 12.35');
+        expect(line(1_234.5678)).toContain('Rate: 1.23K');
+        expect(line(1_250)).toContain('Rate: 1.25K');
+        expect(line(-0)).toContain('Rate: 0');
+        expect(line(-0)).not.toContain('Rate: -0');
     });
 
     it('falls back to the raw axisValue when the date is unparseable', () => {

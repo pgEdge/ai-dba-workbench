@@ -9,8 +9,8 @@ testing practices.
 Before starting development, ensure you have the
 following tools installed:
 
-- [Go 1.26.10](https://go.dev/doc/install) or a later 1.26
-  release, or Go 1.27.3 or later, is required for building
+- [Go 1.26.11](https://go.dev/doc/install) or a later 1.26
+  release, or Go 1.27.4 or later, is required for building
   the Collector.
 - [PostgreSQL 15](https://www.postgresql.org/download/)
   or later is required for testing.

@@ -9,8 +9,8 @@ testing approach for different components.
 Before developing the alerter, ensure you have the following
 tools installed:
 
-- [Go 1.26.10](https://go.dev/doc/install) or a later 1.26
-  release, or Go 1.27.3 or later.
+- [Go 1.26.11](https://go.dev/doc/install) or a later 1.26
+  release, or Go 1.27.4 or later.
 - A PostgreSQL 15+ instance for the datastore.
 - Git for version control.
 - Optionally, [Ollama](https://ollama.ai) for local LLM testing.

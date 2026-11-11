@@ -2569,15 +2569,15 @@ project adheres to
 
 - Update `golang.org/x/crypto` to v0.58.0 in every Go module, fixing
   the advisories against its `ssh`, `ssh/agent` and `ssh/knownhosts`
-  packages, along with `golang.org/x/text` v0.43.0 and, in the server,
-  `github.com/go-jose/go-jose/v4` v4.1.8.
+  packages, along with `golang.org/x/text` v0.44.0 and, in the server,
+  `github.com/go-jose/go-jose/v4` v4.1.9.
 
 - Drop trust in eight compromised eMudhra intermediate CAs
-  (CVE-2026-111943). Go 1.26.10, which the collector, server and
-  alerter now build with, adds them to the `crypto/x509` denylist, as
-  does Go 1.27.3 on the 1.27 line; Go 1.27.0 to 1.27.2 remain
-  vulnerable. The documentation build's `certifi` pin moves to
-  2026.10.23, which removes them.
+  (CVE-2026-111943). Go 1.26.10 and later, and Go 1.27.3 and later on
+  the 1.27 line, add them to the `crypto/x509` denylist, and the
+  collector, server and alerter now build with Go 1.26.11; Go 1.27.0
+  to 1.27.2 remain vulnerable. The documentation build's `certifi`
+  pin moves to 2026.10.23, which removes them.
 
 - Refuse a probe, alert or notification channel override written
   at cluster or group scope unless the caller can see every

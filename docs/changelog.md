@@ -1534,9 +1534,13 @@ project adheres to
   fields were usually missing; the card now shows the newest stored
   value, as the server information dialog does, and shows the Spock
   version for members of manual clusters and for cluster members that
-  the latest detection pass did not find. The same fix restores
-  the match between a binary standby and its primary by system
-  identifier. The collector also now keeps the newest `pg_extension`
+  the latest detection pass did not find. The Spock version comes from
+  the newest set of extensions stored for the server, so a server that
+  no longer has Spock shows no version; where Spock is installed in
+  more than one database, the card shows the version in the
+  connection's own database, or otherwise the highest. The same fix
+  restores the match between a binary standby and its primary by
+  system identifier. The collector also now keeps the newest `pg_extension`
   snapshot for each server past its 30-day retention, so the Spock
   version is not lost on a server whose extensions do not change.
 

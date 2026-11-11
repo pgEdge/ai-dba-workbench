@@ -860,6 +860,42 @@ func (d *Datastore) buildManualGroupsTopology(ctx context.Context, autoDetectedC
 	return result, nil
 }
 
+// spockVersionJoinSQL joins lsv.spock_version, the Spock version in each
+// connection's newest pg_extension snapshot, onto a query whose
+// connections alias is c. All three topology readers share it.
+//
+// pg_extension is change-tracked: the collector writes every database's
+// rows as one snapshot sharing a collected_at, and only when something
+// changed. The version therefore comes from the newest snapshot only, so
+// a server whose newest snapshot has no Spock row, because Spock was
+// removed or its database could not be read on that run, reports no
+// version rather than an older one; the next full run writes a new
+// snapshot that restores it. Within the snapshot, the connection's
+// configured database wins, then the highest version compared by
+// numeric major, minor and patch, then the text and the database name so
+// the choice is deterministic.
+//
+// The lateral reads the newest snapshot through the
+// (connection_id, collected_at) index and sorts its Spock rows ahead of
+// the rest, so a snapshot with no Spock row yields a non-Spock row and a
+// NULL version. On a ColdFront datastore pg_extension is a view that
+// DuckDB plans, so this uses only constructs present in both engines.
+const spockVersionJoinSQL = `LEFT JOIN LATERAL (
+            SELECT CASE WHEN e.extname = 'spock' THEN e.extversion END
+                       AS spock_version
+            FROM metrics.pg_extension e
+            WHERE e.connection_id = c.id
+            ORDER BY e.collected_at DESC,
+                     e.extname = 'spock' DESC,
+                     e.database_name IS NOT DISTINCT FROM c.database_name DESC,
+                     NULLIF(regexp_replace(split_part(e.extversion, '.', 1), '[^0-9].*$', ''), '')::bigint DESC NULLS LAST,
+                     NULLIF(regexp_replace(split_part(e.extversion, '.', 2), '[^0-9].*$', ''), '')::bigint DESC NULLS LAST,
+                     NULLIF(regexp_replace(split_part(e.extversion, '.', 3), '[^0-9].*$', ''), '')::bigint DESC NULLS LAST,
+                     e.extversion DESC NULLS LAST,
+                     e.database_name
+            LIMIT 1
+        ) lsv ON true`
+
 // getServersInClusterWithRolesInternal returns servers with their topology role info
 func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, clusterID int) ([]TopologyServerInfo, error) {
 	query := `
@@ -880,13 +916,6 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
             SELECT DISTINCT ON (connection_id)
                 connection_id, server_version
             FROM metrics.pg_server_info
-            ORDER BY connection_id, collected_at DESC
-        ),
-        latest_spock_version AS (
-            SELECT DISTINCT ON (connection_id)
-                connection_id, extversion as spock_version
-            FROM metrics.pg_extension
-            WHERE extname = 'spock'
             ORDER BY connection_id, collected_at DESC
         ),
         active_alerts AS (
@@ -919,7 +948,7 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
             ORDER BY collected_at DESC
             LIMIT 1
         ) loi ON true
-        LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
+        ` + spockVersionJoinSQL + `
         LEFT JOIN active_alerts aa ON c.id = aa.connection_id
         WHERE c.cluster_id = $1
         ORDER BY

@@ -26,10 +26,12 @@ import (
 // getAllConnectionsWithRoles queries all connections with their role data.
 //
 // Connectivity and node role are read from a five-minute window, because
-// they describe the server's current state. Server info, OS info and the
-// Spock version are read from the latest row with no window: their probes
-// run hourly or every ten minutes, and pg_server_info and pg_extension are
-// change-tracked, so they write a row only when a value changes. A window
+// they describe the server's current state. Server info and OS info are
+// read from the latest row, and the Spock version from the latest
+// pg_extension snapshot (see spockVersionJoinSQL), with no window: their
+// probes run hourly or every ten minutes, and pg_server_info and
+// pg_extension are change-tracked, so they write a row only when a value
+// changes. A window
 // hid those values, and the system identifier that matches binary
 // standbys to their primary, most of the time (issue #805).
 func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectionWithRole, error) {
@@ -54,13 +56,6 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
             SELECT DISTINCT ON (connection_id)
                 connection_id, server_version, system_identifier
             FROM metrics.pg_server_info
-            ORDER BY connection_id, collected_at DESC
-        ),
-        latest_spock_version AS (
-            SELECT DISTINCT ON (connection_id)
-                connection_id, extversion as spock_version
-            FROM metrics.pg_extension
-            WHERE extname = 'spock'
             ORDER BY connection_id, collected_at DESC
         ),
         active_alerts AS (
@@ -102,7 +97,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
             ORDER BY collected_at DESC
             LIMIT 1
         ) loi ON true
-        LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
+        `+spockVersionJoinSQL+`
         LEFT JOIN active_alerts aa ON c.id = aa.connection_id
         WHERE c.deleted_at IS NULL
         ORDER BY c.name
@@ -556,8 +551,8 @@ func (d *Datastore) assignAutoDetectedConnection(ctx context.Context, clusterID,
 // cycle. These persisted-but-undetected members are returned grouped by
 // their cluster's auto_cluster_key so they can be merged into the
 // topology response. As in getAllConnectionsWithRoles, server info, OS
-// info and the Spock version come from the latest row with no window
-// (issue #805).
+// info and the Spock version come from the latest row or snapshot with no
+// window (issue #805).
 func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetectedIDs map[int]bool) (map[string][]TopologyServerInfo, error) {
 	query := fmt.Sprintf(`
         WITH latest_connectivity AS (
@@ -578,13 +573,6 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
             SELECT DISTINCT ON (connection_id)
                 connection_id, server_version
             FROM metrics.pg_server_info
-            ORDER BY connection_id, collected_at DESC
-        ),
-        latest_spock_version AS (
-            SELECT DISTINCT ON (connection_id)
-                connection_id, extversion as spock_version
-            FROM metrics.pg_extension
-            WHERE extname = 'spock'
             ORDER BY connection_id, collected_at DESC
         ),
         active_alerts AS (
@@ -622,7 +610,7 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
             ORDER BY collected_at DESC
             LIMIT 1
         ) loi ON true
-        LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
+        `+spockVersionJoinSQL+`
         LEFT JOIN active_alerts aa ON c.id = aa.connection_id
         WHERE c.cluster_id IS NOT NULL
           AND cl.auto_cluster_key IS NOT NULL

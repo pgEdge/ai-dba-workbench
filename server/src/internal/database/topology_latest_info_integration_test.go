@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // seedStaleServerInfo gives connectionID current connectivity and role
@@ -133,4 +134,169 @@ func assertLatestServerInfo(t *testing.T, reader string, s TopologyServerInfo) {
 		t.Errorf("%s Version = %q, OS = %q, SpockVersion = %q, want 17.2, Linux and 5.0.1",
 			reader, s.Version, s.OS, s.SpockVersion)
 	}
+}
+
+// spockSnapshotRow is one metrics.pg_extension row seeded by
+// TestTopologyReadersSpockVersionSnapshotIntegration. Rows sharing an
+// age form one snapshot, as the collector writes them.
+type spockSnapshotRow struct {
+	age      string
+	database string
+	extname  string
+	version  string
+}
+
+// TestTopologyReadersSpockVersionSnapshotIntegration checks that the
+// three topology readers take the Spock version from the newest
+// pg_extension snapshot only, preferring the connection's configured
+// database and then the highest version (issue #805).
+func TestTopologyReadersSpockVersionSnapshotIntegration(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured string
+		rows       []spockSnapshotRow
+		want       string
+	}{
+		{
+			name:       "spock removed leaves the version blank",
+			configured: "postgres",
+			rows: []spockSnapshotRow{
+				{"2 days", "postgres", "spock", "5.0.1"},
+				{"2 days", "postgres", "plpgsql", "1.0"},
+				{"1 hour", "postgres", "plpgsql", "1.0"},
+			},
+			want: "",
+		},
+		{
+			name:       "partial snapshot without the spock database leaves the version blank",
+			configured: "postgres",
+			rows: []spockSnapshotRow{
+				{"2 days", "postgres", "plpgsql", "1.0"},
+				{"2 days", "appdb", "spock", "5.0.1"},
+				{"1 hour", "postgres", "plpgsql", "1.0"},
+			},
+			want: "",
+		},
+		{
+			name:       "full snapshot after a partial one restores the version",
+			configured: "postgres",
+			rows: []spockSnapshotRow{
+				{"2 days", "appdb", "spock", "5.0.1"},
+				{"1 hour", "postgres", "plpgsql", "1.0"},
+				{"5 minutes", "postgres", "plpgsql", "1.0"},
+				{"5 minutes", "appdb", "spock", "5.0.1"},
+			},
+			want: "5.0.1",
+		},
+		{
+			name:       "configured database wins over a higher version elsewhere",
+			configured: "appdb",
+			rows: []spockSnapshotRow{
+				{"2 days", "appdb", "spock", "6.0.0"},
+				{"1 hour", "postgres", "spock", "5.0.10"},
+				{"1 hour", "appdb", "spock", "4.0.1"},
+			},
+			want: "4.0.1",
+		},
+		{
+			name:       "highest version wins when the configured database has none",
+			configured: "postgres",
+			rows: []spockSnapshotRow{
+				{"1 hour", "postgres", "plpgsql", "1.0"},
+				{"1 hour", "db_a", "spock", "5.0.9"},
+				{"1 hour", "db_b", "spock", "5.0.10"},
+				{"1 hour", "db_c", "spock", "5.0.2-devel"},
+			},
+			want: "5.0.10",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := readSpockVersions(t, tt.configured, tt.rows)
+			for reader, version := range got {
+				if version != tt.want {
+					t.Errorf("%s SpockVersion = %q, want %q", reader, version, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// readSpockVersions seeds a standalone connection, a persisted member
+// of an auto-detected cluster and a member of a manual cluster, each
+// configured for database configured and given rows, and returns the
+// Spock version each topology reader reports, keyed by reader.
+func readSpockVersions(t *testing.T, configured string, rows []spockSnapshotRow) map[string]string {
+	t.Helper()
+	ds, _, fx, cleanup := newConfigQueriesTestDatastore(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+	// One base time, so rows sharing an age share a collected_at exactly.
+	base := time.Now().UTC().Truncate(time.Second)
+
+	var autoClusterID, manualClusterID, standaloneID, memberID, manualID int
+	if err := ds.pool.QueryRow(ctx, `INSERT INTO clusters (group_id, name, auto_cluster_key)
+        VALUES ($1, 'auto-cls', 'spock:snapshot') RETURNING id`, fx.GroupID).Scan(&autoClusterID); err != nil {
+		t.Fatalf("seed auto cluster: %v", err)
+	}
+	if err := ds.pool.QueryRow(ctx, `INSERT INTO clusters (group_id, name)
+        VALUES ($1, 'manual-cls') RETURNING id`, fx.GroupID).Scan(&manualClusterID); err != nil {
+		t.Fatalf("seed manual cluster: %v", err)
+	}
+	for _, c := range []struct {
+		name    string
+		cluster any
+		id      *int
+	}{
+		{"spock-standalone", nil, &standaloneID},
+		{"spock-member", autoClusterID, &memberID},
+		{"spock-manual", manualClusterID, &manualID},
+	} {
+		if err := ds.pool.QueryRow(ctx, `INSERT INTO connections (name, database_name, cluster_id)
+            VALUES ($1, $2, $3) RETURNING id`, c.name, configured, c.cluster).Scan(c.id); err != nil {
+			t.Fatalf("seed connection %s: %v", c.name, err)
+		}
+		for _, r := range rows {
+			if _, err := ds.pool.Exec(ctx, `INSERT INTO metrics.pg_extension
+                (connection_id, database_name, extname, extversion, collected_at)
+                VALUES ($1, $2, $3, $4, $5::timestamptz - $6::text::interval)`,
+				*c.id, r.database, r.extname, r.version, base, r.age); err != nil {
+				t.Fatalf("seed pg_extension: %v", err)
+			}
+		}
+	}
+
+	got := make(map[string]string)
+	conns, err := ds.getAllConnectionsWithRoles(ctx)
+	if err != nil {
+		t.Fatalf("getAllConnectionsWithRoles: %v", err)
+	}
+	for _, c := range conns {
+		if c.ID == standaloneID {
+			got["getAllConnectionsWithRoles"] = c.SpockVersion.String
+		}
+	}
+	members, err := ds.getPersistedClusterMembers(ctx, nil)
+	if err != nil {
+		t.Fatalf("getPersistedClusterMembers: %v", err)
+	}
+	for _, m := range members["spock:snapshot"] {
+		if m.ID == memberID {
+			got["getPersistedClusterMembers"] = m.SpockVersion
+		}
+	}
+	manual, err := ds.getServersInClusterWithRolesInternal(ctx, manualClusterID)
+	if err != nil {
+		t.Fatalf("getServersInClusterWithRolesInternal: %v", err)
+	}
+	for _, m := range manual {
+		if m.ID == manualID {
+			got["getServersInClusterWithRolesInternal"] = m.SpockVersion
+		}
+	}
+	if len(got) != 3 {
+		t.Fatalf("readers returned %v, want an entry from each of the three", got)
+	}
+	return got
 }

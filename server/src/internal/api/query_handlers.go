@@ -185,7 +185,13 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 
 	// Build connection string, using optional database override
 	databaseName := req.DatabaseName
-	connStr := h.datastore.BuildConnectionString(conn, password, databaseName)
+	connStr, err := h.datastore.BuildConnectionString(conn, password, databaseName)
+	if err != nil {
+		log.Printf("[ERROR] Refused connection for query (connection=%d): %v", connectionID, err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to connect to database")
+		return
+	}
 
 	// Create a temporary pool for this query
 	pool, err := openQueryPool(ctx, connStr, "pgEdge AI DBA Workbench - Query")
@@ -1430,7 +1436,14 @@ func (h *ConnectionHandler) validateQuery(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	connStr := h.datastore.BuildConnectionString(conn, password, req.DatabaseName)
+	connStr, err := h.datastore.BuildConnectionString(conn, password, req.DatabaseName)
+	if err != nil {
+		log.Printf("[ERROR] Refused connection for validation (connection=%d): %v",
+			connectionID, err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to connect to database")
+		return
+	}
 	pool, err := openQueryPool(ctx, connStr,
 		"pgEdge AI DBA Workbench - Validate")
 	if err != nil {

@@ -44,10 +44,28 @@ moved.
   run operator-supplied SQL execute it as written, under the
   monitored connection's own privileges.
 - `BuildConnectionString` builds the URL with `net/url`, and a name
-  with a leading `/` goes in the `dbname` query parameter; since
-  `%00` still decodes to NUL, `ValidateDatabaseName` must run on every
-  override path, because its NUL check is the only guard against
-  startup-packet injection.
+  with a leading `/` goes in the `dbname` query parameter.
+  `ValidateDatabaseName` must still run on every override path: it is
+  the first guard against startup-packet injection by an embedded NUL.
+  pgx v5.12.0 refuses a NUL too (a raw NUL in `ParseConfig`, `%00` in
+  its URI decoder, and any NUL in `StartupMessage.Encode`), but earlier
+  releases did not, so the validator must not be dropped on the
+  strength of the driver.
+- Monitored-connection targets are SSRF-sensitive. The REST create and
+  update handlers (`validateConnectionTarget` in
+  `api/connection_handlers.go`) are the only writers of `host` and
+  `hostaddr`; `host` goes through `HostValidator.ValidateHost` and a
+  non-empty `hostaddr` through `ValidateHostAddr`, which requires a
+  literal IP and then applies the same blocklist, allowlist and
+  internal-range checks. The server URL prefers `hostaddr` over
+  `host`, so skipping either check lets an allowed name front an
+  internal address. At connect time `hostvalidation.CheckStoredTarget`
+  (in `pkg/`) refuses a stored host carrying `, [ ] / ? @ # %` or
+  whitespace and a non-IP hostaddr, in both the server's
+  `Datastore.BuildConnectionString` (`ErrUnsafeConnectionTarget`) and
+  the collector's `buildMonitoredConnectionParams`. pgx v5.12.0 has no
+  `hostaddr` keyword (it would be sent as a startup parameter), so the
+  collector, like the server, dials the validated address as `host`.
 - Monitored-database credentials are encrypted at rest with a
   server-side secret and only decrypted in the collector when a pool
   is opened.

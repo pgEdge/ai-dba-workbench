@@ -80,6 +80,33 @@ func NewConnectionHandlerWithSecurity(datastore *database.Datastore, authStore *
 	}
 }
 
+// validateConnectionTarget runs the SSRF checks on a connection's host
+// and hostaddr, either of which may be nil when an update leaves it
+// unchanged. The hostaddr matters as much as the host: the connection
+// string prefers it, so an unchecked hostaddr would let a harmless host
+// name front an internal address, or a crafted one such as
+// "127.0.0.1]:6379,[127.0.0.1" turn into a multi-host list with a port
+// that ValidatePort never saw. An empty hostaddr clears the stored
+// value and needs no check. It responds 400 and returns false when a
+// value is refused.
+func (h *ConnectionHandler) validateConnectionTarget(w http.ResponseWriter, host, hostaddr *string) bool {
+	if host != nil {
+		if err := h.hostValidator.ValidateHost(*host); err != nil {
+			log.Printf("[ERROR] Invalid host validation: %v", err)
+			RespondError(w, http.StatusBadRequest, "Invalid host")
+			return false
+		}
+	}
+	if hostaddr != nil && *hostaddr != "" {
+		if err := h.hostValidator.ValidateHostAddr(*hostaddr); err != nil {
+			log.Printf("[ERROR] Invalid hostaddr validation: %v", err)
+			RespondError(w, http.StatusBadRequest, "Invalid hostaddr")
+			return false
+		}
+	}
+	return true
+}
+
 // ConnectionUpdateRequest is the request body for updating a connection (legacy, name-only)
 type ConnectionUpdateRequest struct {
 	Name *string `json:"name,omitempty"`
@@ -299,10 +326,8 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate host to prevent SSRF attacks
-	if err := h.hostValidator.ValidateHost(req.Host); err != nil {
-		log.Printf("[ERROR] Invalid host validation: %v", err)
-		RespondError(w, http.StatusBadRequest, "Invalid host")
+	// Validate host and hostaddr to prevent SSRF attacks
+	if !h.validateConnectionTarget(w, &req.Host, req.HostAddr) {
 		return
 	}
 
@@ -519,13 +544,9 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate host if being updated (SSRF protection)
-	if req.Host != nil {
-		if err := h.hostValidator.ValidateHost(*req.Host); err != nil {
-			log.Printf("[ERROR] Invalid host validation on update: %v", err)
-			RespondError(w, http.StatusBadRequest, "Invalid host")
-			return
-		}
+	// Validate host and hostaddr if being updated (SSRF protection)
+	if !h.validateConnectionTarget(w, req.Host, req.HostAddr) {
+		return
 	}
 
 	// Validate port if being updated

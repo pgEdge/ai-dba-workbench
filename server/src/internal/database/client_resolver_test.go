@@ -58,6 +58,7 @@ type mockConnInfoProvider struct {
 	builtConnStr             string
 	receivedDatabaseOverride string
 	getCalled                bool
+	buildErr                 error
 }
 
 func (m *mockConnInfoProvider) GetConnectionWithPassword(ctx context.Context, connectionID int) (*MonitoredConnection, string, error) {
@@ -68,9 +69,9 @@ func (m *mockConnInfoProvider) GetConnectionWithPassword(ctx context.Context, co
 	return m.conn, m.password, nil
 }
 
-func (m *mockConnInfoProvider) BuildConnectionString(conn *MonitoredConnection, password string, databaseOverride string) string {
+func (m *mockConnInfoProvider) BuildConnectionString(conn *MonitoredConnection, password string, databaseOverride string) (string, error) {
 	m.receivedDatabaseOverride = databaseOverride
-	return m.builtConnStr
+	return m.builtConnStr, m.buildErr
 }
 
 func TestClientResolver_ResolveClient_NilTokenExtractor(t *testing.T) {

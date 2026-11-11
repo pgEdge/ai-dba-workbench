@@ -224,7 +224,7 @@ func TestBuildMonitoredConnectionStringForDatabase_AllOptions(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 	for _, want := range []string{
-		"hostaddr='10.1.2.3'",
+		"host='10.1.2.3'",
 		"port='5433'",
 		"dbname='override-db'",
 		"user='alice'",
@@ -238,10 +238,10 @@ func TestBuildMonitoredConnectionStringForDatabase_AllOptions(t *testing.T) {
 			t.Errorf("conn string missing %q; got %q", want, s)
 		}
 	}
-	// host param should NOT be present when hostaddr is supplied; the
-	// implementation chooses one or the other.
-	if strings.Contains(s, "host='host.example'") {
-		t.Errorf("did not expect host= when hostaddr is set, got %q", s)
+	// pgx has no hostaddr keyword, so the stored address replaces the
+	// host name and no hostaddr parameter is emitted.
+	if strings.Contains(s, "host='host.example'") || strings.Contains(s, "hostaddr=") {
+		t.Errorf("expected only the hostaddr as host, got %q", s)
 	}
 }
 

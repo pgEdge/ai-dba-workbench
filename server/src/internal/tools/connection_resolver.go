@@ -247,7 +247,18 @@ func (r *ConnectionResolver) resolveExplicit(
 	}
 
 	// Build connection string, optionally overriding the database.
-	connStr := r.datastore.BuildConnectionString(conn, password, ca.DatabaseName)
+	connStr, err := r.datastore.BuildConnectionString(conn, password, ca.DatabaseName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: connection_resolver: refused connection %d: %v\n", ca.ConnectionID, err)
+		resp := mcp.ToolResponse{
+			Content: []mcp.ContentItem{{
+				Type: "text",
+				Text: "Failed to establish database connection",
+			}},
+			IsError: true,
+		}
+		return nil, &resp
+	}
 
 	// Determine the effective database name for the session key.
 	effectiveDB := conn.DatabaseName

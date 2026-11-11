@@ -84,6 +84,14 @@ func (v *HostValidator) ValidateHost(host string) error {
 		return fmt.Errorf("host cannot be empty")
 	}
 
+	// Refuse a host carrying connection-string structure (a ',' list
+	// separator, IPv6 brackets, '/', '?', '@', '#', '%' or whitespace)
+	// before anything else: such a host could become several targets,
+	// or carry a port, that none of the checks below examined.
+	if err := hostvalidation.CheckHostSyntax(host); err != nil {
+		return fmt.Errorf("host %q: %w", host, err)
+	}
+
 	// Normalize the host (remove any trailing dots, lowercase)
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
 
@@ -166,6 +174,21 @@ func (v *HostValidator) ValidateHost(host string) error {
 	}
 
 	return nil
+}
+
+// ValidateHostAddr checks a libpq hostaddr value for a database
+// connection. The value must be a literal IP address (one enclosing
+// bracket pair is allowed), and that address then passes through the
+// same blocklist, allowlist and internal-range checks as ValidateHost,
+// because the connection string prefers hostaddr over host: a hostaddr
+// that skipped these checks would let any host name stand in front of
+// an internal address.
+func (v *HostValidator) ValidateHostAddr(hostaddr string) error {
+	ip, err := hostvalidation.ParseHostAddr(hostaddr)
+	if err != nil {
+		return fmt.Errorf("hostaddr %q: %w", hostaddr, err)
+	}
+	return v.ValidateHost(ip.String())
 }
 
 // ValidatePort checks if a port number is valid for database connections.

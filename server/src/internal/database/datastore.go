@@ -20,6 +20,12 @@ import (
 var (
 	// ErrConnectionNotFound is returned when a connection is not found
 	ErrConnectionNotFound = errors.New("connection not found")
+
+	// ErrUnsafeConnectionTarget is returned by BuildConnectionString when
+	// a stored connection's host or hostaddr could reshape the
+	// connection string (a list separator, stray brackets or a
+	// non-IP hostaddr), so the row is refused rather than connected to.
+	ErrUnsafeConnectionTarget = errors.New("stored connection host or hostaddr is not valid")
 )
 
 // Datastore manages the connection to the collector's datastore database

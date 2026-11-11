@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
 
@@ -710,10 +711,28 @@ func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databas
 func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName string, serverSecret string) (map[string]string, error) {
 	params := make(map[string]string)
 
+	// Refuse a stored host or hostaddr that would turn this connection
+	// into a multi-host list or carry a port, and a hostaddr that is not
+	// a literal IP address. The server validates both on create and
+	// update, but a row written before that check existed, or by any
+	// other route, must not reach libpq. The value itself is left out of
+	// the error, which ends up in connections.connection_error.
+	unsafeTarget := fmt.Errorf("connection %d: stored host or hostaddr is not valid", conn.ID)
+	if err := hostvalidation.CheckStoredTarget(conn.Host, ""); err != nil {
+		return nil, unsafeTarget
+	}
+	params["host"] = conn.Host
+
 	if conn.HostAddr.Valid && conn.HostAddr.String != "" {
-		params["hostaddr"] = conn.HostAddr.String
-	} else {
-		params["host"] = conn.Host
+		// pgx (v5.12.0) has no hostaddr keyword: it passes an unknown
+		// key to the server as a startup parameter and dials its default
+		// host instead. The address therefore replaces host, as in the
+		// server's URL connection string, in its bare parsed form.
+		ip, err := hostvalidation.ParseHostAddr(conn.HostAddr.String)
+		if err != nil {
+			return nil, unsafeTarget
+		}
+		params["host"] = ip.String()
 	}
 
 	params["port"] = fmt.Sprintf("%d", conn.Port)

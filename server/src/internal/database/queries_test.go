@@ -2766,7 +2766,7 @@ func TestBuildConnectionString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ds.BuildConnectionString(tt.conn, tt.password, tt.databaseOverride)
+			result := mustBuildConnString(t, ds, tt.conn, tt.password, tt.databaseOverride)
 
 			for _, expected := range tt.wantContains {
 				if !strings.Contains(result, expected) {
@@ -2818,7 +2818,7 @@ func TestBuildConnectionStringUserinfoRoundTrip(t *testing.T) {
 				Username:     "weird@user:name",
 			}
 
-			dsn := ds.BuildConnectionString(conn, pw, "")
+			dsn := mustBuildConnString(t, ds, conn, pw, "")
 
 			parsed, err := url.Parse(dsn)
 			if err != nil {
@@ -2846,7 +2846,7 @@ func TestBuildConnectionStringUserinfoRoundTrip(t *testing.T) {
 			DatabaseName: "mydb",
 			Username:     "user",
 		}
-		dsn := ds.BuildConnectionString(conn, "pass word", "")
+		dsn := mustBuildConnString(t, ds, conn, "pass word", "")
 		if !strings.Contains(dsn, "pass%20word") {
 			t.Errorf("expected space-containing password to encode as %%20, got %q", dsn)
 		}
@@ -2871,7 +2871,7 @@ func TestBuildConnectionStringPgconnParse(t *testing.T) {
 		Username:     "user",
 	}
 
-	dsn := ds.BuildConnectionString(conn, specialPassword, "")
+	dsn := mustBuildConnString(t, ds, conn, specialPassword, "")
 
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {

@@ -84,7 +84,7 @@ func TestBuildConnectionStringDatabaseNameRoundTrip(t *testing.T) {
 	// here. verify-full gives the baseline no plaintext fallback, so a
 	// smuggled sslmode shows up in the TLS settings and the fallbacks.
 	baseline, err := pgconn.ParseConfig(
-		ds.BuildConnectionString(conn, password, "mydb"))
+		mustBuildConnString(t, ds, conn, password, "mydb"))
 	if err != nil {
 		t.Fatalf("pgconn.ParseConfig(baseline) failed: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestBuildConnectionStringDatabaseNameRoundTrip(t *testing.T) {
 
 	for _, database := range names {
 		t.Run(database, func(t *testing.T) {
-			dsn := ds.BuildConnectionString(conn, password, database)
+			dsn := mustBuildConnString(t, ds, conn, password, database)
 
 			cfg, err := pgconn.ParseConfig(dsn)
 			if err != nil {
@@ -174,7 +174,7 @@ func TestBuildConnectionStringBracketedIPv6Host(t *testing.T) {
 				Username:     "user",
 			}
 
-			dsn := ds.BuildConnectionString(conn, "", "")
+			dsn := mustBuildConnString(t, ds, conn, "", "")
 
 			cfg, err := pgconn.ParseConfig(dsn)
 			if err != nil {
@@ -226,7 +226,7 @@ func TestEncodeConnQueryRoundTrip(t *testing.T) {
 			SSLMode:      sql.NullString{String: "verify-full", Valid: true},
 			SSLRootCert:  sql.NullString{String: rootCert, Valid: true},
 		}
-		dsn := (&Datastore{}).BuildConnectionString(conn, "", "")
+		dsn := mustBuildConnString(t, &Datastore{}, conn, "", "")
 		if want := "sslrootcert=%2Fetc%2Fssl%2Fmy%20certs%2Froot%2Bca.crt"; !strings.Contains(dsn, want) {
 			t.Errorf("DSN %q does not carry %q", dsn, want)
 		}

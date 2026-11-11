@@ -55,6 +55,10 @@ var (
 	pgSSLKey       = flag.String(flagPGSSLKey, "", "Path to PostgreSQL client SSL key")
 	pgSSLRootCert  = flag.String(flagPGSSLRootCert, "", "Path to PostgreSQL root SSL certificate")
 
+	// Connection security flag
+	connectionSSLCertDir = flag.String(flagConnectionSSLCertDir, "",
+		"Absolute path of the directory monitored connections' SSL certificate and key files must be in")
+
 	// Metrics storage flag
 	useColdFrontForMetrics = flag.Bool(flagUseColdFrontForMetrics, false,
 		"Store metrics in pgEdge ColdFront instead of partitioned PostgreSQL tables; disables metrics retention")
@@ -75,6 +79,8 @@ const (
 	flagPGSSLCert      = "pg-sslcert"
 	flagPGSSLKey       = "pg-sslkey"
 	flagPGSSLRootCert  = "pg-sslrootcert"
+
+	flagConnectionSSLCertDir = "connection-ssl-cert-dir"
 
 	flagUseColdFrontForMetrics = "use-coldfront-for-metrics"
 )
@@ -126,6 +132,7 @@ func main() {
 	logger.Infof("Creating monitored pool manager with %d max connections per server, idle timeout %ds",
 		config.Pool.MaxConnectionsPerServer, config.Pool.MonitoredMaxIdleSeconds)
 	poolManager := database.NewMonitoredConnectionPoolManager(config.Pool.MaxConnectionsPerServer, config.Pool.MonitoredMaxIdleSeconds)
+	poolManager.SetSSLCertDir(config.ConnectionSecurity.SSLCertDir)
 
 	// Initialize probe scheduler
 	probeScheduler := scheduler.NewProbeScheduler(ds, poolManager, config, config.GetServerSecret())

@@ -28,6 +28,7 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/sslpaths"
 )
 
 // MonitoredConnectionPoolManager manages connection pools for monitored databases
@@ -41,6 +42,7 @@ type MonitoredConnectionPoolManager struct {
 	connLocks       map[int]*sync.Mutex   // Connection ID -> lock guarding pool creation, acquisition and eviction
 	maxConnections  int                   // Maximum concurrent connections per monitored server
 	maxIdleSeconds  int                   // Maximum idle time (seconds) before closing idle connections
+	sslCertDir      string                // Directory stored SSL file paths must resolve inside; guarded by mu
 	mu              sync.RWMutex
 }
 
@@ -57,6 +59,23 @@ func NewMonitoredConnectionPoolManager(maxConnectionsPerServer int, maxIdleSecon
 		maxConnections:  maxConnectionsPerServer,
 		maxIdleSeconds:  maxIdleSeconds,
 	}
+}
+
+// SetSSLCertDir sets the directory that a monitored connection's
+// sslcert, sslkey and sslrootcert files must live in
+// (connection_security.ssl_cert_dir). With none set, a connection that
+// names any SSL file other than sslrootcert=system is refused.
+func (m *MonitoredConnectionPoolManager) SetSSLCertDir(dir string) {
+	m.mu.Lock()
+	m.sslCertDir = dir
+	m.mu.Unlock()
+}
+
+// SSLCertDir returns the directory set by SetSSLCertDir.
+func (m *MonitoredConnectionPoolManager) SSLCertDir() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.sslCertDir
 }
 
 // DetectAndCacheVersion detects the PostgreSQL major version and caches it
@@ -299,7 +318,7 @@ func (m *MonitoredConnectionPoolManager) acquireWithinCap(ctx context.Context, c
 // the connection's lock, which is what guarantees that no other pool can
 // be created for the same key in the meantime.
 func (m *MonitoredConnectionPoolManager) createPool(ctx context.Context, conn MonitoredConnection, databaseName string, serverSecret string, poolKey int) (*pgxpool.Pool, error) {
-	params, err := buildMonitoredConnectionParams(conn, databaseName, serverSecret)
+	params, err := buildMonitoredConnectionParams(conn, databaseName, serverSecret, m.SSLCertDir())
 	if err != nil {
 		return nil, fmt.Errorf("failed to build connection string: %w", err)
 	}
@@ -531,8 +550,8 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 // hashed in sorted order because connstring.Build emits them in map
 // iteration order, which differs from one call to the next; hashing its
 // output made every pool look changed on every configuration reload.
-func monitoredConnectionHash(conn MonitoredConnection, serverSecret string) (string, error) {
-	params, err := buildMonitoredConnectionParams(conn, "", serverSecret)
+func monitoredConnectionHash(conn MonitoredConnection, serverSecret string, sslCertDir string) (string, error) {
+	params, err := buildMonitoredConnectionParams(conn, "", serverSecret, sslCertDir)
 	if err != nil {
 		return "", err
 	}
@@ -564,8 +583,9 @@ func hashConnectionParams(params map[string]string) string {
 func (m *MonitoredConnectionPoolManager) InvalidateChangedPools(connections []MonitoredConnection, serverSecret string) {
 	// Build a map of connection ID -> current connection string hash
 	currentHashes := make(map[int]string)
+	sslCertDir := m.SSLCertDir()
 	for _, conn := range connections {
-		paramsHash, err := monitoredConnectionHash(conn, serverSecret)
+		paramsHash, err := monitoredConnectionHash(conn, serverSecret, sslCertDir)
 		if err != nil {
 			logger.Errorf("Failed to build connection string for pool invalidation check on connection %d: %v", conn.ID, err)
 			continue
@@ -719,8 +739,8 @@ func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxI
 
 // buildMonitoredConnectionStringForDatabase builds a connection string for a monitored connection
 // with an optional database name override
-func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databaseName string, serverSecret string) (string, error) {
-	params, err := buildMonitoredConnectionParams(conn, databaseName, serverSecret)
+func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databaseName string, serverSecret string, sslCertDir string) (string, error) {
+	params, err := buildMonitoredConnectionParams(conn, databaseName, serverSecret, sslCertDir)
 	if err != nil {
 		return "", err
 	}
@@ -728,8 +748,10 @@ func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databas
 }
 
 // buildMonitoredConnectionParams returns the libpq parameters for a
-// monitored connection, with an optional database name override
-func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName string, serverSecret string) (map[string]string, error) {
+// monitored connection, with an optional database name override.
+// sslCertDir is connection_security.ssl_cert_dir, which every stored SSL
+// file path must resolve inside.
+func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName string, serverSecret string, sslCertDir string) (map[string]string, error) {
 	params := make(map[string]string)
 
 	// Refuse a stored host or hostaddr that would turn this connection
@@ -776,6 +798,9 @@ func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName strin
 		params["password"] = decryptedPassword
 	}
 
+	if err := checkMonitoredSSLPaths(conn, sslCertDir); err != nil {
+		return nil, err
+	}
 	addMonitoredSSLParams(params, conn)
 
 	// Set application name to identify monitoring connections
@@ -785,6 +810,49 @@ func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName strin
 	params["connect_timeout"] = "10"
 
 	return params, nil
+}
+
+// checkMonitoredSSLPaths refuses a monitored connection whose stored
+// sslcert, sslkey or sslrootcert path is not an absolute path that
+// resolves, symbolic links included, inside sslCertDir; with sslCertDir
+// empty, every path other than sslrootcert=system is refused. pgx reads
+// these files as the collector's service account, so without the check
+// anyone able to store a connection could have the collector read any
+// file it can read, and learn from the error whether that file exists.
+// The server applies the same check when a connection is saved; this
+// one covers rows written before that check existed, or by any other
+// route.
+//
+// Only the field name is logged, never the path, and the error returned
+// is ErrInvalidMonitoredConnString, because the scheduler stores it in
+// connections.connection_error, which the API shows to users.
+//
+// The check assumes that ssl_cert_dir and everything in it are writable
+// only by root or the collector's service account: the path is resolved
+// here and opened later by pgx, so anyone who could replace a link or
+// file in the directory between the two could still point pgx elsewhere.
+func checkMonitoredSSLPaths(conn MonitoredConnection, sslCertDir string) error {
+	var paths sslpaths.SSLFilePaths
+	if conn.SSLCert.Valid && conn.SSLCert.String != "" {
+		paths.SSLCert = &conn.SSLCert.String
+	}
+	if conn.SSLKey.Valid && conn.SSLKey.String != "" {
+		paths.SSLKey = &conn.SSLKey.String
+	}
+	if conn.SSLRootCert.Valid && conn.SSLRootCert.String != "" {
+		paths.SSLRootCert = &conn.SSLRootCert.String
+	}
+	err := sslpaths.ValidateSSLFilePaths(sslCertDir, paths)
+	if err == nil {
+		return nil
+	}
+	var pathErr *sslpaths.SSLFilePathError
+	if errors.As(err, &pathErr) {
+		logger.Errorf("Connection %d: refusing stored SSL file path (field %s)", conn.ID, pathErr.Field)
+	} else {
+		logger.Errorf("Connection %d: refusing stored SSL file paths because connection_security.ssl_cert_dir is not set", conn.ID)
+	}
+	return ErrInvalidMonitoredConnString
 }
 
 // addMonitoredSSLParams adds a monitored connection's TLS settings to

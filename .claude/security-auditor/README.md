@@ -85,16 +85,21 @@ moved.
   allow-list the prefix.
 - pgx reads `sslrootcert`, `sslcert` and `sslkey` while it parses a
   connection string (the CA file even under `sslmode=disable`), so
-  stored SSL paths are a file-read primitive. The server confines them
-  to `connection_security.ssl_cert_dir` (`database.ValidateSSLFilePaths`
-  in `database/ssl_paths.go`): absolute, no `..` element, and resolved
-  through `EvalSymlinks` (nearest existing ancestor for a missing file)
-  to a location inside the directory. Unset refuses every path except
-  `sslrootcert=system`. The REST create and update handlers check on
-  write, and `Datastore.BuildConnectionString` checks again at connect
-  time (`ErrUnsafeSSLPath`). The collector has no such option and
-  still opens whatever path is stored; its only guard is the server's
-  write-time check.
+  stored SSL paths are a file-read primitive. The server and the
+  collector each confine them to their own
+  `connection_security.ssl_cert_dir` (`sslpaths.ValidateSSLFilePaths`
+  in `pkg/sslpaths`): absolute, no `..` element, and resolved through
+  `EvalSymlinks` (nearest existing ancestor for a missing file) to a
+  location inside the directory. Unset refuses every path except
+  `sslrootcert=system`. On the server the REST create and update
+  handlers check on write, and `Datastore.BuildConnectionString`
+  checks again at connect time (`ErrUnsafeSSLPath`). The collector
+  (flag `-connection-ssl-cert-dir`; it has no environment layer)
+  checks in `buildMonitoredConnectionParams`, logging only the field
+  name and returning `ErrInvalidMonitoredConnString`. Both assume the
+  directory and its contents are writable only by root or the service
+  account: the path is resolved and then opened separately by pgx, so
+  a writer there could swap a link in between (no `os.OpenRoot`).
 - pgx `ParseConfig` errors must never reach a response: they quote the
   connection string with the password redacted only on a best-effort
   basis, and name SSL file paths. `Client.ConnectTo` returns

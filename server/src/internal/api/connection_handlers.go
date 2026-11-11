@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pgedge/ai-workbench/pkg/sslpaths"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
@@ -115,7 +116,7 @@ func (h *ConnectionHandler) validateConnectionTarget(w http.ResponseWriter, host
 // is refused: with the instruction to configure the directory when none
 // is set, and otherwise with the field and rule, never the path.
 func (h *ConnectionHandler) validateSSLFilePaths(w http.ResponseWriter, sslCert, sslKey, sslRootCert *string) bool {
-	err := database.ValidateSSLFilePaths(h.datastore.SSLCertDir(), database.SSLFilePaths{
+	err := sslpaths.ValidateSSLFilePaths(h.datastore.SSLCertDir(), sslpaths.SSLFilePaths{
 		SSLCert:     sslCert,
 		SSLKey:      sslKey,
 		SSLRootCert: sslRootCert,

@@ -179,7 +179,7 @@ func TestBuildMonitoredConnectionStringForDatabase_Defaults(t *testing.T) {
 		DatabaseName: "default-db",
 		Username:     "alice",
 	}
-	s, err := buildMonitoredConnectionStringForDatabase(conn, "", "")
+	s, err := buildMonitoredConnectionStringForDatabase(conn, "", "", "")
 	if err != nil {
 		t.Fatalf("error = %v", err)
 	}
@@ -201,6 +201,7 @@ func TestBuildMonitoredConnectionStringForDatabase_Defaults(t *testing.T) {
 
 func TestBuildMonitoredConnectionStringForDatabase_AllOptions(t *testing.T) {
 	plain := "secret"
+	certDir := t.TempDir()
 	enc, err := crypto.EncryptPassword(plain, "server-secret")
 	if err != nil {
 		t.Fatalf("EncryptPassword: %v", err)
@@ -215,11 +216,11 @@ func TestBuildMonitoredConnectionStringForDatabase_AllOptions(t *testing.T) {
 		Username:          "alice",
 		PasswordEncrypted: sql.NullString{String: enc, Valid: true},
 		SSLMode:           sql.NullString{String: "verify-full", Valid: true},
-		SSLCert:           sql.NullString{String: "/c", Valid: true},
-		SSLKey:            sql.NullString{String: "/k", Valid: true},
-		SSLRootCert:       sql.NullString{String: "/r", Valid: true},
+		SSLCert:           sql.NullString{String: certDir + "/c", Valid: true},
+		SSLKey:            sql.NullString{String: certDir + "/k", Valid: true},
+		SSLRootCert:       sql.NullString{String: certDir + "/r", Valid: true},
 	}
-	s, err := buildMonitoredConnectionStringForDatabase(conn, "override-db", "server-secret")
+	s, err := buildMonitoredConnectionStringForDatabase(conn, "override-db", "server-secret", certDir)
 	if err != nil {
 		t.Fatalf("error = %v", err)
 	}
@@ -230,9 +231,9 @@ func TestBuildMonitoredConnectionStringForDatabase_AllOptions(t *testing.T) {
 		"user='alice'",
 		"password='secret'",
 		"sslmode='verify-full'",
-		"sslcert='/c'",
-		"sslkey='/k'",
-		"sslrootcert='/r'",
+		"sslcert='" + certDir + "/c'",
+		"sslkey='" + certDir + "/k'",
+		"sslrootcert='" + certDir + "/r'",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("conn string missing %q; got %q", want, s)
@@ -254,7 +255,7 @@ func TestBuildMonitoredConnectionStringForDatabase_BadPassword(t *testing.T) {
 		Username:          "u",
 		PasswordEncrypted: sql.NullString{String: "not-base64-or-encrypted", Valid: true},
 	}
-	if _, err := buildMonitoredConnectionStringForDatabase(conn, "", "secret"); err == nil {
+	if _, err := buildMonitoredConnectionStringForDatabase(conn, "", "secret", ""); err == nil {
 		t.Fatal("expected decryption failure")
 	}
 }
@@ -296,7 +297,7 @@ func TestCreateMonitoredPool_Success(t *testing.T) {
 		}
 		conn.PasswordEncrypted = sql.NullString{String: enc, Valid: true}
 	}
-	connStr, err := buildMonitoredConnectionStringForDatabase(conn, "", testMonitoredServerSecret)
+	connStr, err := buildMonitoredConnectionStringForDatabase(conn, "", testMonitoredServerSecret, "")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -362,7 +363,7 @@ func TestCreateMonitoredPool_ClampsMaxConns(t *testing.T) {
 		}
 		conn.PasswordEncrypted = sql.NullString{String: enc, Valid: true}
 	}
-	connStr, err := buildMonitoredConnectionStringForDatabase(conn, "", testMonitoredServerSecret)
+	connStr, err := buildMonitoredConnectionStringForDatabase(conn, "", testMonitoredServerSecret, "")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

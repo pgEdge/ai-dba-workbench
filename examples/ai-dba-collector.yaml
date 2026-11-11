@@ -201,6 +201,26 @@ scheduler:
   startup_jitter_seconds: 60
 
 #=========================================================================
+# CONNECTION SECURITY SETTINGS
+#=========================================================================
+
+# connection_security:
+  # Directory that the SSL certificate, key and root certificate files
+  # of monitored connections must live in. The collector reads these
+  # files itself when it connects, so a stored path must be absolute,
+  # must not contain "..", and must resolve (following symbolic links)
+  # to a file inside this directory; a connection whose path fails the
+  # check is not monitored. When unset, any connection naming an SSL
+  # file is refused; ssl_root_cert_path "system" (the platform trust
+  # store) is always allowed. Set it to the same directory as the
+  # server's connection_security.ssl_cert_dir, holding the same files,
+  # and make the directory and its contents writable only by root or
+  # the collector's service account.
+  # Command-line: -connection-ssl-cert-dir
+  # Default: "" (unset)
+#   ssl_cert_dir: "/etc/pgedge/ai-dba-workbench/certs"
+
+#=========================================================================
 # METRICS STORAGE SETTINGS
 #=========================================================================
 #

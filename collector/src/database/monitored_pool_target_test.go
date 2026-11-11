@@ -49,7 +49,7 @@ func TestBuildMonitoredConnectionParams_RefusesUnsafeTarget(t *testing.T) {
 			if tc.hostaddr != "" {
 				conn.HostAddr = sql.NullString{String: tc.hostaddr, Valid: true}
 			}
-			params, err := buildMonitoredConnectionParams(conn, "", "")
+			params, err := buildMonitoredConnectionParams(conn, "", "", "")
 			if err == nil {
 				t.Fatalf("expected a refusal, got params %v", params)
 			}
@@ -81,7 +81,7 @@ func TestBuildMonitoredConnectionParams_HostAddrBareIP(t *testing.T) {
 				Username:     "u",
 				SSLMode:      sql.NullString{String: "disable", Valid: true},
 			}
-			dsn, err := buildMonitoredConnectionStringForDatabase(conn, "", "")
+			dsn, err := buildMonitoredConnectionStringForDatabase(conn, "", "", "")
 			if err != nil {
 				t.Fatalf("error = %v", err)
 			}

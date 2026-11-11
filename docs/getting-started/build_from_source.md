@@ -21,7 +21,7 @@ are in place on a supported operating system and platform:
 - [Make](https://www.gnu.org/software/make/) is required to execute the
   Makefile.
 
-- You must have a [PostgreSQL 14](https://www.postgresql.org/download/)
+- You must have a [PostgreSQL 15](https://www.postgresql.org/download/)
   or later database for the Workbench datastore; you must also have the
   credentials for that database.
 

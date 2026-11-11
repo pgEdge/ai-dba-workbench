@@ -9,7 +9,7 @@ available from the
 Before you deploy the Workbench, confirm the following prerequisites are in
 place on a supported operating system and platform:
 
-- [PostgreSQL 14](https://www.postgresql.org/download/) or later is installed
+- [PostgreSQL 15](https://www.postgresql.org/download/) or later is installed
   for the Workbench datastore.
 - The database credentials for the datastore database are available.
 - Network access exists between each monitored PostgreSQL server and the

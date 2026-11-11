@@ -22,7 +22,7 @@ Before building the server, install the following tools:
 
 - [Go 1.26.10](https://go.dev/doc/install) or a later 1.26
   release, or Go 1.27.3 or later.
-- [PostgreSQL 14](https://www.postgresql.org/download/) or
+- [PostgreSQL 15](https://www.postgresql.org/download/) or
   later for the datastore.
 - Network access to the PostgreSQL datastore.
 

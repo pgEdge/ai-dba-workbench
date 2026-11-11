@@ -11,7 +11,7 @@ tools installed:
 
 - [Go 1.26.10](https://go.dev/doc/install) or a later 1.26
   release, or Go 1.27.3 or later.
-- A PostgreSQL 14+ instance for the datastore.
+- A PostgreSQL 15+ instance for the datastore.
 - Git for version control.
 - Optionally, [Ollama](https://ollama.ai) for local LLM testing.
 

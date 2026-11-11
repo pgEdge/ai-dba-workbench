@@ -345,7 +345,7 @@ v2.13.2 bundles. Match the CI version before trusting a clean local
 
 `ci-collector.yml`, `ci-server.yml` and `ci-alerter.yml` run the
 sub-project's `make build`, `make coverage` and `make lint` on a single
-Go version against a matrix of Postgres 14 to 18 service containers
+Go version against a matrix of Postgres 15 to 18 service containers
 built from the `pgvector/pgvector` image, with
 `TEST_AI_WORKBENCH_SERVER` pointed at the service. Coverage is
 converted to lcov and uploaded to Codacy as a partial report per

@@ -22,7 +22,7 @@ import (
 // version: a temporary view shadows the system view, since PostgreSQL
 // searches the session's temporary schema before pg_catalog when it is
 // not named in search_path, and a seeded feature-cache entry stands in
-// for the existence check. CI runs the suite against PostgreSQL 14 to 18,
+// for the existence check. CI runs the suite against PostgreSQL 15 to 18,
 // and without this the coverage measured on the oldest version fell
 // below the floor.
 

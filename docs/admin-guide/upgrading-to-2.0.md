@@ -20,6 +20,13 @@ without warning. Review each one against your installation before you
 upgrade; the [changelog](../changelog.md) describes every change in
 full.
 
+### Supported PostgreSQL Versions
+
+Release 2.0.0 drops support for PostgreSQL 14, which reached end of life
+on 12 November 2026; PostgreSQL 15 is now the oldest supported version.
+Before you upgrade, move the datastore and every monitored server that
+runs PostgreSQL 14 to PostgreSQL 15 or later.
+
 ### Upgrade Order
 
 The collector owns the datastore schema and migrates the schema

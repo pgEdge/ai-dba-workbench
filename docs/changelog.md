@@ -2962,6 +2962,10 @@ project adheres to
 
 ### Removed
 
+- Drop support for PostgreSQL 14, which reached end of life on 12
+  November 2026; PostgreSQL 15 is now the oldest supported version, for
+  both monitored servers and the datastore.
+
 - Remove the hard-coded allow-list of embedding model names, which
   rejected any model the OpenAI, Voyage AI, or Gemini provider had
   not been told about, whether the model was newly published by the

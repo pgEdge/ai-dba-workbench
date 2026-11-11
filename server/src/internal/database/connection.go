@@ -48,6 +48,7 @@ type Client struct {
 	defaultConnStr string                     // current default connection string
 	initialConnStr string                     // original connection string from env
 	dbConfig       *config.DatabaseConfig     // database configuration for pool settings
+	dialGuard      DialGuard                  // applied to every pool this client opens; nil for the datastore
 	mu             sync.RWMutex
 }
 
@@ -133,6 +134,12 @@ func (c *Client) ConnectTo(connStr string) error {
 	if err != nil {
 		log.Printf("[ERROR] Unable to parse connection string: %s", describeParseConfigError(err))
 		return fmt.Errorf("unable to parse connection string: %w", ErrInvalidConnectionString)
+	}
+
+	// A client for a monitored database restricts the addresses pgx
+	// dials; one for the server's own datastore has no guard.
+	if c.dialGuard != nil {
+		c.dialGuard(&poolConfig.ConnConfig.Config)
 	}
 
 	// Log connection details if debug logging is enabled

@@ -194,7 +194,8 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	}
 
 	// Create a temporary pool for this query
-	pool, err := openQueryPool(ctx, connStr, "pgEdge AI DBA Workbench - Query")
+	pool, err := openQueryPool(ctx, connStr, "pgEdge AI DBA Workbench - Query",
+		h.datastore.GuardMonitoredConnConfig)
 	if err != nil {
 		log.Printf("[ERROR] Failed to connect for query (connection=%d): %v", connectionID, err)
 		RespondError(w, http.StatusInternalServerError,
@@ -1445,7 +1446,7 @@ func (h *ConnectionHandler) validateQuery(w http.ResponseWriter, r *http.Request
 		return
 	}
 	pool, err := openQueryPool(ctx, connStr,
-		"pgEdge AI DBA Workbench - Validate")
+		"pgEdge AI DBA Workbench - Validate", h.datastore.GuardMonitoredConnConfig)
 	if err != nil {
 		log.Printf("[ERROR] Failed to connect for validation (connection=%d): %v",
 			connectionID, err)
@@ -1481,12 +1482,19 @@ func (h *ConnectionHandler) validateQuery(w http.ResponseWriter, r *http.Request
 
 // openQueryPool creates a single-connection pool for one request
 // against a monitored database, tagged with the given application
-// name so the monitored server can attribute the session.
-func openQueryPool(ctx context.Context, connStr, appName string) (*pgxpool.Pool, error) {
+// name so the monitored server can attribute the session. guard
+// restricts the addresses the pool may dial; a nil guard applies the
+// always-blocked floor, so no caller can open a monitored pool
+// unguarded.
+func openQueryPool(ctx context.Context, connStr, appName string, guard database.DialGuard) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
 		return nil, fmt.Errorf("parse connection string: %w", err)
 	}
+	if guard == nil {
+		guard = (*database.Datastore)(nil).GuardMonitoredConnConfig
+	}
+	guard(&poolConfig.ConnConfig.Config)
 
 	poolConfig.MaxConns = 1
 	poolConfig.MinConns = 0

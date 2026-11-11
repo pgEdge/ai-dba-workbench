@@ -10,6 +10,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -112,33 +113,20 @@ func (v *HostValidator) ValidateHost(host string) error {
 	// Try to parse as IP address
 	ip := net.ParseIP(host)
 	if ip != nil {
-		// Check IP blocklist
-		for _, blocked := range v.parsedBlocked {
-			if blocked.Contains(ip) {
-				return fmt.Errorf("IP address '%s' is in a blocked range", host)
-			}
+		switch v.classifyIP(ip) {
+		case ipBlocked:
+			return fmt.Errorf("IP address '%s' is in a blocked range", host)
+		case ipInternal:
+			return fmt.Errorf("connections to internal IP address '%s' are not allowed", host)
 		}
-
-		// Check IP allowlist
-		for _, allowed := range v.parsedAllowed {
-			if allowed.Contains(ip) {
-				return nil // Explicitly allowed
-			}
-		}
-
-		// Check internal networks
-		if !v.AllowInternalNetworks {
-			if hostvalidation.IsPrivateIP(ip) {
-				return fmt.Errorf("connections to internal IP address '%s' are not allowed", host)
-			}
-		}
-
-		// IP is allowed
 		return nil
 	}
 
-	// It's a hostname - resolve it and check each resolved IP
-	// This prevents DNS rebinding attacks where a hostname resolves to internal IPs
+	// It's a hostname: resolve it and check each address it resolves to
+	// now. This check alone cannot stop DNS rebinding, since the name can
+	// resolve to a different address when the connection is made; the
+	// connect paths re-apply the same rules to the addresses pgx actually
+	// dials (CheckDialAddr, wired in through Datastore.SetDialPolicy).
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		// Can't resolve - block it for security. Allowing unresolvable hosts could
@@ -148,31 +136,85 @@ func (v *HostValidator) ValidateHost(host string) error {
 	}
 
 	for _, resolvedIP := range ips {
-		// Check IP blocklist
-		for _, blocked := range v.parsedBlocked {
-			if blocked.Contains(resolvedIP) {
-				return fmt.Errorf("hostname '%s' resolves to blocked IP address '%s'",
-					host, resolvedIP.String())
-			}
-		}
-
-		// Check IP allowlist - if any resolved IP is in allowlist, allow it
-		for _, allowed := range v.parsedAllowed {
-			if allowed.Contains(resolvedIP) {
-				return nil
-			}
-		}
-
-		// Check internal networks
-		if !v.AllowInternalNetworks {
-			if hostvalidation.IsPrivateIP(resolvedIP) {
-				return fmt.Errorf("hostname '%s' resolves to internal IP address '%s'; "+
-					"connections to internal networks are not allowed",
-					host, resolvedIP.String())
-			}
+		switch v.classifyIP(resolvedIP) {
+		case ipBlocked:
+			return fmt.Errorf("hostname '%s' resolves to blocked IP address '%s'",
+				host, resolvedIP.String())
+		case ipAllowListed:
+			// If any resolved IP is in the allowlist, allow the host
+			return nil
+		case ipInternal:
+			return fmt.Errorf("hostname '%s' resolves to internal IP address '%s'; "+
+				"connections to internal networks are not allowed",
+				host, resolvedIP.String())
 		}
 	}
 
+	return nil
+}
+
+// ipClass is classifyIP's verdict on one address.
+type ipClass int
+
+const (
+	ipPermitted   ipClass = iota // no rule refuses it
+	ipBlocked                    // in a blocked_hosts range
+	ipAllowListed                // in an allowed_hosts range
+	ipInternal                   // internal, and allow_internal_networks is off
+)
+
+// classifyIP applies the IP rules in the order ValidateHost has always
+// used: the block-list, then the allow-list, then the internal ranges
+// unless AllowInternalNetworks is set.
+func (v *HostValidator) classifyIP(ip net.IP) ipClass {
+	for _, blocked := range v.parsedBlocked {
+		if blocked.Contains(ip) {
+			return ipBlocked
+		}
+	}
+	for _, allowed := range v.parsedAllowed {
+		if allowed.Contains(ip) {
+			return ipAllowListed
+		}
+	}
+	if !v.AllowInternalNetworks && hostvalidation.IsPrivateIP(ip) {
+		return ipInternal
+	}
+	return ipPermitted
+}
+
+// errDialAddrRefused is CheckDialAddr's refusal. It names neither the
+// host nor the address, because connect errors can reach API and MCP
+// responses.
+var errDialAddrRefused = errors.New("address is not permitted by connection_security")
+
+// CheckDialAddr is a hostvalidation.AddrPolicy that applies this
+// validator's rules to ip, an address host resolved to when a monitored
+// connection is dialled, so that a host name which passed ValidateHost
+// when it was saved cannot later be pointed somewhere it would not have
+// passed (DNS rebinding). The rules are ValidateHost's: a host name in
+// BlockedHosts refuses and one in AllowedHosts permits, whatever it
+// resolves to; otherwise the address goes through the block-list, the
+// allow-list and, unless AllowInternalNetworks is set, the internal
+// ranges. Unlike ValidateHost, each address is judged on its own: an
+// allow-listed address among a name's results permits only itself, not
+// the other addresses the name resolved to.
+func (v *HostValidator) CheckDialAddr(host string, ip net.IP) error {
+	name := strings.TrimSuffix(strings.ToLower(host), ".")
+	for _, blocked := range v.BlockedHosts {
+		if strings.EqualFold(blocked, name) {
+			return errDialAddrRefused
+		}
+	}
+	for _, allowed := range v.AllowedHosts {
+		if strings.EqualFold(allowed, name) {
+			return nil
+		}
+	}
+	switch v.classifyIP(ip) {
+	case ipBlocked, ipInternal:
+		return errDialAddrRefused
+	}
 	return nil
 }
 

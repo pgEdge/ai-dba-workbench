@@ -23,6 +23,11 @@ type ClientManager struct {
 	mu       sync.RWMutex
 	clients  map[string]*Client     // tokenHash -> client
 	dbConfig *config.DatabaseConfig // single database configuration
+
+	// monitoredGuard restricts the addresses the clients made for
+	// monitored connections (GetOrCreateClientWithConnString) may dial.
+	// Nil selects the always-blocked floor; see SetMonitoredDialGuard.
+	monitoredGuard DialGuard
 }
 
 // NewClientManager creates a new client manager with database configuration
@@ -31,6 +36,15 @@ func NewClientManager(dbConfig *config.DatabaseConfig) *ClientManager {
 		clients:  make(map[string]*Client),
 		dbConfig: dbConfig,
 	}
+}
+
+// SetMonitoredDialGuard sets the guard applied to every client made for
+// a monitored connection, normally Datastore.GuardMonitoredConnConfig.
+// Clients already open keep the guard they were made with.
+func (cm *ClientManager) SetMonitoredDialGuard(guard DialGuard) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.monitoredGuard = guard
 }
 
 // GetClient returns a database client for the given token hash
@@ -304,7 +318,14 @@ func (cm *ClientManager) GetOrCreateClientWithConnString(key string, connStr str
 	}
 
 	// Create and initialize new client with connection string
+	// Every connection string reaching here was built from a stored
+	// monitored connection (see GetClientForSession), so its dialled
+	// addresses are checked.
 	client := NewClientWithConnectionString(connStr, cm.dbConfig)
+	client.dialGuard = cm.monitoredGuard
+	if client.dialGuard == nil {
+		client.dialGuard = (*Datastore)(nil).GuardMonitoredConnConfig
+	}
 	if err := client.Connect(); err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}

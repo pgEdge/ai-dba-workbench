@@ -1,0 +1,179 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+package hostvalidation
+
+import (
+	"context"
+	"errors"
+	"net"
+)
+
+// AddrPolicy decides whether a connection to host may be made at ip, one
+// of the addresses host resolved to when the connection was dialled. A
+// nil error permits the address.
+type AddrPolicy func(host string, ip net.IP) error
+
+// LookupFunc has the signature of pgconn.LookupFunc, so a GuardedLookup
+// result can be assigned to pgconn.Config.LookupFunc without this
+// package importing pgx.
+type LookupFunc = func(ctx context.Context, host string) ([]string, error)
+
+// ErrNoPermittedAddress is returned by a GuardedLookup function when every
+// address the host resolved to is refused. It names neither the host nor
+// any address, because connect errors reach API responses and the
+// connections.connection_error column.
+var ErrNoPermittedAddress = errors.New(
+	"host resolves only to addresses that connections are not permitted to")
+
+// errAlwaysBlocked is CheckAlwaysBlocked's refusal.
+var errAlwaysBlocked = errors.New("address is in an always-blocked range")
+
+// alwaysBlockedNetworks are ranges no monitored connection has a reason
+// to reach: the unspecified addresses, which a dialler treats as the
+// local host; link-local unicast, which holds the cloud instance
+// metadata services; and the metadata addresses some clouds place
+// elsewhere.
+var alwaysBlockedNetworks = mustParseCIDRs(
+	"0.0.0.0/8",          // "this network"; 0.0.0.0 reaches localhost
+	"::/128",             // IPv6 unspecified; reaches localhost
+	"169.254.0.0/16",     // IPv4 link-local, incl. 169.254.169.254 (AWS, GCP, Azure, OCI, ...)
+	"fe80::/10",          // IPv6 link-local
+	"fd00:ec2::254/128",  // AWS instance metadata over IPv6
+	"100.100.100.200/32", // Alibaba Cloud instance metadata
+)
+
+func mustParseCIDRs(cidrs ...string) []*net.IPNet {
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			panic("hostvalidation: bad CIDR " + c)
+		}
+		nets = append(nets, n)
+	}
+	return nets
+}
+
+// embeddedIPv4 returns the IPv4 address that an IPv4-compatible
+// (::/96), NAT64 (64:ff9b::/96) or 6to4 (2002::/16) IPv6 address
+// carries, or nil when ip is none of these. An IPv4-mapped address needs
+// no special case: net.IP.To4 already unwraps it, and net.IPNet.Contains
+// with it.
+func embeddedIPv4(ip net.IP) net.IP {
+	if ip.To4() != nil {
+		return nil
+	}
+	ip16 := ip.To16()
+	if ip16 == nil {
+		return nil
+	}
+	isZero := func(b []byte) bool {
+		for _, x := range b {
+			if x != 0 {
+				return false
+			}
+		}
+		return true
+	}
+	switch {
+	case isZero(ip16[:12]):
+		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
+	case ip16[0] == 0x00 && ip16[1] == 0x64 && ip16[2] == 0xff && ip16[3] == 0x9b && isZero(ip16[4:12]):
+		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
+	case ip16[0] == 0x20 && ip16[1] == 0x02:
+		return net.IPv4(ip16[2], ip16[3], ip16[4], ip16[5])
+	}
+	return nil
+}
+
+// IsAlwaysBlockedIP reports whether ip is one no monitored connection
+// may be dialled at, whatever the deployment's other settings: an
+// unspecified address, a link-local address (unicast or multicast), a
+// known cloud metadata address, or an IPv6 address embedding any of
+// these IPv4 addresses.
+func IsAlwaysBlockedIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+	if ip.IsLoopback() {
+		// ::1 would otherwise read as the IPv4-compatible 0.0.0.1.
+		return false
+	}
+	for _, n := range alwaysBlockedNetworks {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	if v4 := embeddedIPv4(ip); v4 != nil {
+		return IsAlwaysBlockedIP(v4)
+	}
+	return false
+}
+
+// CheckAlwaysBlocked is an AddrPolicy refusing the addresses
+// IsAlwaysBlockedIP reports, and permitting every other. It is the floor
+// for a process that has no configured connection policy.
+func CheckAlwaysBlocked(_ string, ip net.IP) error {
+	if IsAlwaysBlockedIP(ip) {
+		return errAlwaysBlocked
+	}
+	return nil
+}
+
+// GuardedLookup wraps resolve, the lookup function a connection would
+// otherwise use (net.DefaultResolver.LookupHost when nil), so that only
+// the addresses policy permits are returned for dialling. pgx calls its
+// LookupFunc for every non-socket host, IP literals included, and dials
+// exactly the addresses it returns, so this closes the gap between a
+// host name being checked when a connection is saved and it being
+// resolved again, perhaps to a different address, when it is used.
+//
+// An entry pgx would read as "ip:port" is checked by its IP. An entry
+// that is not an IP address at all is dropped, since it cannot be
+// checked. When nothing is left, ErrNoPermittedAddress is returned; a
+// lookup error from resolve is returned unchanged.
+func GuardedLookup(policy AddrPolicy, resolve LookupFunc) LookupFunc {
+	if policy == nil {
+		policy = CheckAlwaysBlocked
+	}
+	if resolve == nil {
+		resolve = net.DefaultResolver.LookupHost
+	}
+	return func(ctx context.Context, host string) ([]string, error) {
+		addrs, err := resolve(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		permitted := make([]string, 0, len(addrs))
+		for _, addr := range addrs {
+			ipText := addr
+			if h, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
+				ipText = h
+			}
+			// A zone ("fe80::1%eth0") is only valid on a link-local
+			// address, which is refused anyway; ParseIP rejects it.
+			ip := net.ParseIP(ipText)
+			if ip == nil {
+				continue
+			}
+			if policy(host, ip) != nil {
+				continue
+			}
+			permitted = append(permitted, addr)
+		}
+		if len(permitted) == 0 {
+			return nil, ErrNoPermittedAddress
+		}
+		return permitted, nil
+	}
+}

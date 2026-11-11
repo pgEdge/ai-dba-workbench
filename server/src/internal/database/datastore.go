@@ -14,6 +14,8 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // Sentinel errors for datastore operations
@@ -43,4 +45,8 @@ type Datastore struct {
 	// stored SSL file paths must lie in. Empty refuses every such path.
 	// It is guarded by mu; see SetSSLCertDir.
 	sslCertDir string
+
+	// dialPolicy decides which resolved addresses a monitored
+	// connection may dial. It is guarded by mu; see SetDialPolicy.
+	dialPolicy hostvalidation.AddrPolicy
 }

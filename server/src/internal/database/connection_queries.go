@@ -916,8 +916,15 @@ func (d *Datastore) ListDatabases(ctx context.Context, connectionID int) ([]Data
 		return nil, err
 	}
 
-	// Connect temporarily
-	tempPool, err := pgxpool.New(ctx, connStr)
+	// Connect temporarily, dialling only the addresses the policy permits
+	poolConfig, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		log.Printf("[ERROR] Unable to parse connection string for connection %d: %s",
+			connectionID, describeParseConfigError(err))
+		return nil, fmt.Errorf("failed to connect to server: %w", ErrInvalidConnectionString)
+	}
+	d.GuardMonitoredConnConfig(&poolConfig.ConnConfig.Config)
+	tempPool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}

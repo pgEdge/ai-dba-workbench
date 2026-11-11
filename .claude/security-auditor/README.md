@@ -83,6 +83,22 @@ moved.
   and `fec0::/10`. Blocking all of `64:ff9b::/96` means a deployment
   on an IPv6-only NAT64 network must set `allow_internal_networks` or
   allow-list the prefix.
+- Save-time checks cannot stop DNS rebinding, so every monitored
+  connect path re-checks the addresses pgx actually dials, by wrapping
+  `pgconn.Config.LookupFunc` with `hostvalidation.GuardedLookup` (pgx
+  calls it for every non-socket host, IP literals included). On the
+  server the policy is `HostValidator.CheckDialAddr` (the save-time
+  rules, judged per address), installed by `Datastore.SetDialPolicy`
+  in `initDatastore` and applied by `Datastore.GuardMonitoredConnConfig`
+  in `ClientManager.GetOrCreateClientWithConnString` (via
+  `Client.dialGuard`), `api.openQueryPool` and `ListDatabases`. A new
+  monitored pool path must apply it too. The datastore's own
+  connections are deliberately unguarded. The collector has no policy
+  config, so `createMonitoredPool` applies only
+  `hostvalidation.CheckAlwaysBlocked` (unspecified, link-local, cloud
+  metadata, and IPv6 forms embedding them); private and loopback
+  targets pass, and with `allow_internal_networks` on, the server will
+  dial link-local addresses that the collector refuses.
 - pgx reads `sslrootcert`, `sslcert` and `sslkey` while it parses a
   connection string (the CA file even under `sslmode=disable`), so
   stored SSL paths are a file-read primitive. The server and the

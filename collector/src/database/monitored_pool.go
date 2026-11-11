@@ -716,6 +716,18 @@ func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxI
 	config.MaxConns = int32(maxConns) // #nosec G115 - bounds checked above
 	config.MinConns = 0               // Start with no connections
 
+	// Check the addresses pgx actually dials, not only the host name the
+	// server checked when the connection was saved: the name can resolve
+	// to something else by the time the collector connects (DNS
+	// rebinding). The collector has none of the server's
+	// connection_security policy, so it refuses only the ranges no
+	// monitored server can legitimately be in (unspecified, link-local
+	// and cloud metadata addresses), leaving private and loopback
+	// targets, which collectors routinely monitor, to the server's
+	// save-time check.
+	config.ConnConfig.LookupFunc = hostvalidation.GuardedLookup(
+		hostvalidation.CheckAlwaysBlocked, config.ConnConfig.LookupFunc)
+
 	// Set max connection lifetime (use maxIdleSeconds as max conn lifetime)
 	// pgxpool will close connections that have been idle for this duration
 	if maxIdleSeconds > 0 {

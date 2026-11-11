@@ -12,8 +12,8 @@
         "install-browsers": "playwright install --with-deps"
     },
     "devDependencies": {
-        "@playwright/test": "^1.55.0",
-        "@types/node": "^22.0.0",
+        "@playwright/test": "^1.65.0",
+        "@types/node": "^22.20.5",
         "typescript": "^5.9.3"
     },
     "license": "PostgreSQL"

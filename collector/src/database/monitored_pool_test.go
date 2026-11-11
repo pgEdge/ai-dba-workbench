@@ -323,6 +323,15 @@ func TestCreateMonitoredPool_BadConnString(t *testing.T) {
 	}
 }
 
+func TestCreateMonitoredPool_ZeroMaxConns(t *testing.T) {
+	// pgxpool refuses a pool that may hold no connections.
+	connStr := "host=127.0.0.1 port=1 user=postgres dbname=x sslmode=disable"
+	_, err := createMonitoredPool(context.Background(), connStr, 0, 0)
+	if err == nil || !strings.Contains(err.Error(), "failed to create pool") {
+		t.Fatalf("err = %v, want a pool creation failure", err)
+	}
+}
+
 func TestCreateMonitoredPool_PingFails(t *testing.T) {
 	// Reachable parse, unreachable host -> Acquire/Ping fails.
 	connStr := "host=127.0.0.1 port=1 user=postgres dbname=x sslmode=disable connect_timeout=1"

@@ -708,18 +708,11 @@ func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxI
 		return nil, fmt.Errorf("failed to create pool: %w", err)
 	}
 
-	// Test the pool with a ping
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("failed to acquire test connection: %w", err)
-	}
-	if err := conn.Ping(ctx); err != nil {
-		conn.Release()
+	// Test the pool: Ping acquires a connection, pings it and releases it.
+	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("failed to ping: %w", err)
 	}
-	conn.Release()
 
 	return pool, nil
 }

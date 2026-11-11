@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // mockRows implements pgx.Rows for testing ScanRowsToMaps. It supports
@@ -63,6 +64,8 @@ func (m *mockRows) Values() ([]any, error) {
 func (m *mockRows) RawValues() [][]byte { return nil }
 
 func (m *mockRows) Conn() *pgx.Conn { return nil }
+
+func (m *mockRows) TypeMap() *pgtype.Map { return nil }
 
 func TestScanRowsToMaps_MultipleRows(t *testing.T) {
 	rows := &mockRows{

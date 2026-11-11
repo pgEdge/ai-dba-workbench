@@ -2722,7 +2722,8 @@ func TestBuildConnectionString(t *testing.T) {
 			password:         "",
 			databaseOverride: "",
 			wantContains: []string{
-				"sslrootcert=%2Fetc%2Fssl%2Fmy+certs%2Frds+ca.pem",
+				// A space is %20, not '+': pgx reads '+' literally.
+				"sslrootcert=%2Fetc%2Fssl%2Fmy%20certs%2Frds%20ca.pem",
 			},
 			wantNotContains: []string{"my certs", "rds ca.pem"},
 		},

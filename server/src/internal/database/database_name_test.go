@@ -12,6 +12,7 @@ package database
 import (
 	"database/sql"
 	"maps"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -184,4 +185,57 @@ func TestBuildConnectionStringBracketedIPv6Host(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestEncodeConnQueryRoundTrip confirms that query parameters the
+// server adds reach pgx unchanged. pgx parses URIs as libpq does since
+// v5.12 and reads '+' as a literal plus, so the form encoding that
+// url.Values.Encode applies (a space as '+') would corrupt any value
+// containing a space.
+func TestEncodeConnQueryRoundTrip(t *testing.T) {
+	const appName = "pgEdge AI DBA Workbench"
+
+	t.Run("application_name", func(t *testing.T) {
+		dsn, err := addApplicationName("postgres://user@localhost:5432/mydb?sslmode=disable", appName)
+		if err != nil {
+			t.Fatalf("addApplicationName returned error: %v", err)
+		}
+		cfg, err := pgconn.ParseConfig(dsn)
+		if err != nil {
+			t.Fatalf("pgconn.ParseConfig(%q) failed: %v", dsn, err)
+		}
+		if got := cfg.RuntimeParams["application_name"]; got != appName {
+			t.Errorf("application_name = %q, want %q (dsn %q)", got, appName, dsn)
+		}
+	})
+
+	t.Run("literal plus survives", func(t *testing.T) {
+		got := encodeConnQuery(url.Values{"application_name": {"a+b c"}})
+		if want := "application_name=a%2Bb%20c"; got != want {
+			t.Errorf("encodeConnQuery = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("ssl file paths", func(t *testing.T) {
+		const rootCert = "/etc/ssl/my certs/root+ca.crt"
+		conn := &MonitoredConnection{
+			Host:         "localhost",
+			Port:         5432,
+			DatabaseName: "mydb",
+			Username:     "user",
+			SSLMode:      sql.NullString{String: "verify-full", Valid: true},
+			SSLRootCert:  sql.NullString{String: rootCert, Valid: true},
+		}
+		dsn := (&Datastore{}).BuildConnectionString(conn, "", "")
+		if want := "sslrootcert=%2Fetc%2Fssl%2Fmy%20certs%2Froot%2Bca.crt"; !strings.Contains(dsn, want) {
+			t.Errorf("DSN %q does not carry %q", dsn, want)
+		}
+		// pgx reads the CA file whilst parsing, and the file does not
+		// exist, so the parse fails; the error names the path pgx
+		// decoded, which must be the original one.
+		_, err := pgconn.ParseConfig(dsn)
+		if err == nil || !strings.Contains(err.Error(), "open "+rootCert+":") {
+			t.Errorf("pgconn.ParseConfig(%q) error = %v, want it to open %q", dsn, err, rootCert)
+		}
+	})
 }

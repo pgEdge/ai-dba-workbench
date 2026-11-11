@@ -19,6 +19,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -216,10 +217,22 @@ func addApplicationName(connStr, appName string) (string, error) {
 	// Add application_name if not already present
 	if !query.Has("application_name") {
 		query.Set("application_name", appName)
-		u.RawQuery = query.Encode()
+		u.RawQuery = encodeConnQuery(query)
 	}
 
 	return u.String(), nil
+}
+
+// encodeConnQuery encodes connection URI query parameters the way
+// libpq, and so pgx since v5.12, decodes them. url.Values.Encode
+// follows application/x-www-form-urlencoded rules and writes a space as
+// '+', but libpq reads '+' in a URI as a literal plus, so a value such
+// as "pgEdge AI DBA Workbench" would reach the server as
+// "pgEdge+AI+DBA+Workbench". Encode escapes a literal '+' as "%2B", so
+// every '+' left in its output stands for a space and can be rewritten
+// as "%20" without ambiguity.
+func encodeConnQuery(query url.Values) string {
+	return strings.ReplaceAll(query.Encode(), "+", "%20")
 }
 
 // GetDefaultConnection returns the current default connection string

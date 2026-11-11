@@ -867,7 +867,7 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 		User:     userinfo,
 		Host:     net.JoinHostPort(host, strconv.Itoa(conn.Port)),
 		Path:     path,
-		RawQuery: params.Encode(),
+		RawQuery: encodeConnQuery(params),
 	}
 
 	return dsn.String()

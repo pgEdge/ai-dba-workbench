@@ -209,6 +209,33 @@ func TestBuildConnectionStringRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBuildConnectionStringDatabaseNameRoundTrip confirms that a
+// database name with characters that are significant in a URI reaches
+// pgx intact. pgx parses URIs as libpq does since v5.12, so an
+// unescaped interior space is a parse error and '?' starts the query.
+func TestBuildConnectionStringDatabaseNameRoundTrip(t *testing.T) {
+	for _, name := range []string{"production", "my db", "a?b", "a+b", "a/b", "a%b"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := DatabaseConfig{
+				User:     "admin",
+				Host:     "db.example.com",
+				Port:     5432,
+				Database: name,
+				SSLMode:  "require",
+			}
+
+			dsn := cfg.BuildConnectionString()
+			parsed, err := pgconn.ParseConfig(dsn)
+			if err != nil {
+				t.Fatalf("pgconn.ParseConfig(%q) returned error: %v", dsn, err)
+			}
+			if parsed.Database != name {
+				t.Errorf("database = %q, want %q (dsn=%q)", parsed.Database, name, dsn)
+			}
+		})
+	}
+}
+
 // TestBuildConnectionStringNoPassword confirms that an empty effective
 // password yields a DSN carrying the username but no password component,
 // preserving pgx's .pgpass fallback, and that the DSN remains parseable.

@@ -514,7 +514,11 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 
 	connStr := fmt.Sprintf("postgres://%s", userinfo)
 
-	connStr += fmt.Sprintf("@%s:%d/%s", cfg.Host, cfg.Port, cfg.Database)
+	// Percent-encode the database name: pgx (since v5.12) parses URIs as
+	// libpq does, rejecting an interior space and reading '?' as the
+	// start of the query string, whereas it decodes every %XX escape in
+	// the path back to the original character.
+	connStr += fmt.Sprintf("@%s:%d/%s", cfg.Host, cfg.Port, url.PathEscape(cfg.Database))
 
 	// Add SSL mode
 	if cfg.SSLMode != "" {

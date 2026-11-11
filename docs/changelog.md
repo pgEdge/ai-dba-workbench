@@ -2512,6 +2512,61 @@ project adheres to
   exactly as for a missing one; a superuser is unaffected. (#710; PR
   #720)
 
+- Update `github.com/jackc/pgx/v5` from 5.9.2 to 5.12.0 (High),
+  fixing two driver vulnerabilities reachable from the code in
+  release 1.0.0.
+  [GHSA-j38q-h3ph-jjpq](https://github.com/advisories/GHSA-j38q-h3ph-jjpq)
+  allowed SQL injection in simple-protocol batches when a queued
+  query ended in a `--` comment, and
+  [GHSA-95fj-3fxw-g62g](https://github.com/advisories/GHSA-95fj-3fxw-g62g)
+  skipped the `require_auth` and `channel_binding` checks when a
+  server omitted `AuthenticationOk`, so a rogue or
+  man-in-the-middle PostgreSQL server could be accepted.
+
+- Update `golang.org/x/text` from 0.33.0, as used in release 1.0.0,
+  to 0.44.0, fixing an infinite loop on invalid input
+  (CVE-2026-56852) and a panic when parsing crafted input in the
+  `secure/precis` package (CVE-2026-56851).
+
+- Build with, and require, Go 1.26.11 in place of the Go 1.26.2 used
+  for release 1.0.0, fixing the following standard-library
+  vulnerabilities reachable from the code in that release:
+
+    - in `net/http`, covering HTTP/1 and HTTP/2, CVE-2026-97054
+      (HTTP/1 server crash from a `MaxBytesReader` header race),
+      CVE-2026-97032 (HTTP/2 server crash from an HPACK encoder
+      race), CVE-2026-78659 (HTTP/2 server memory exhaustion through
+      `Trailer` headers), CVE-2026-78669 (excessive CPU from repeated
+      window changes), CVE-2026-78663 (double flow-control refund on
+      HTTP/2 server streams), CVE-2026-78660 (HTTP/2 transport
+      accepting malformed framing headers), CVE-2026-33814 (HTTP/2
+      transport infinite loop on a bad `SETTINGS_MAX_FRAME_SIZE`),
+      CVE-2026-94439 (HTTP/1 server desynchronisation after a 2xx
+      `CONNECT` response), CVE-2026-56866 (HTTP/1 client
+      desynchronisation after a `CONNECT` rejection) and
+      CVE-2026-56853 (`ReadHeaderTimeout` not applied to the
+      unencrypted HTTP/2 check).
+    - in `crypto/tls` and `crypto/x509`, CVE-2026-111943 (distrust of
+      compromised intermediate certificates), CVE-2026-56862
+      (unbounded post-handshake messages), CVE-2026-97031 (malformed
+      Encrypted Client Hello outer extension references),
+      CVE-2026-42505 (Encrypted Client Hello privacy leak) and
+      CVE-2026-27145 (inefficient hostname parsing in `crypto/x509`).
+    - in `html/template`, CVE-2026-39826 and CVE-2026-39823 (escaper
+      bypasses leading to cross-site scripting) and CVE-2026-56858,
+      CVE-2026-94448 and CVE-2026-97030 (JavaScript context tracking
+      errors).
+    - in parsing and encoding, CVE-2026-33818 (`encoding/asn1`
+      recursion depth), CVE-2026-56859 (`encoding/xml` recursion
+      depth), CVE-2026-94440 (MIME header memory limit bypass in
+      `net/textproto` and `mime/multipart`), CVE-2026-42507
+      (unescaped input in `net/textproto` errors), CVE-2026-42499 and
+      CVE-2026-39820 (quadratic parsing in `net/mail`),
+      CVE-2026-56860 (quadratic complexity in `net/url`) and
+      CVE-2026-39821 (Punycode label validation in `idna`).
+    - in `net`, CVE-2026-39836 (panic in `Dial` and `LookupPort` on a
+      NUL byte, on Windows only).
+
 - Update `golang.org/x/crypto` to v0.58.0 in every Go module, fixing
   the advisories against its `ssh`, `ssh/agent` and `ssh/knownhosts`
   packages, along with `golang.org/x/text` v0.43.0 and, in the server,

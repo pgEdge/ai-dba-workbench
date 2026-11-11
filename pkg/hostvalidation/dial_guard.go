@@ -177,3 +177,81 @@ func GuardedLookup(policy AddrPolicy, resolve LookupFunc) LookupFunc {
 		return permitted, nil
 	}
 }
+
+// errInternal is CheckNotInternal's refusal.
+var errInternal = errors.New("address is in an internal range")
+
+// CheckNotInternal is an AddrPolicy refusing every address IsPrivateIP
+// or IsAlwaysBlockedIP reports, and permitting every other. It is the
+// policy for outbound connections that should reach public addresses
+// only, where nothing has been configured to say otherwise.
+func CheckNotInternal(_ string, ip net.IP) error {
+	if IsAlwaysBlockedIP(ip) || IsPrivateIP(ip) {
+		return errInternal
+	}
+	return nil
+}
+
+// DialContextFunc has the signature of net.Dialer.DialContext and of
+// http.Transport.DialContext.
+type DialContextFunc = func(ctx context.Context, network, addr string) (net.Conn, error)
+
+// GuardedDialContext returns a dial function that resolves the host in
+// addr itself, through GuardedLookup(policy, resolve), and hands dial
+// only the permitted addresses, as IP literals, trying each in turn
+// until one connects. The policy is therefore applied to the address
+// actually connected to, whatever the host resolved to when it was last
+// checked (DNS rebinding), and to every connection a client opens with
+// it, including one made to follow a redirect.
+//
+// A host that is already an IP literal is judged by policy directly,
+// without calling resolve. A nil policy is CheckAlwaysBlocked, a nil
+// resolve is net.DefaultResolver.LookupHost and a nil dial is a zero
+// net.Dialer's DialContext. When no address is permitted the error is
+// ErrNoPermittedAddress, which names neither the host nor any address;
+// an error from resolve or from the last dial attempt is returned
+// unchanged.
+func GuardedDialContext(policy AddrPolicy, resolve LookupFunc, dial DialContextFunc) DialContextFunc {
+	if policy == nil {
+		policy = CheckAlwaysBlocked
+	}
+	if dial == nil {
+		dial = (&net.Dialer{}).DialContext
+	}
+	lookup := GuardedLookup(policy, resolve)
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		var addrs []string
+		if ip := net.ParseIP(host); ip != nil {
+			if policy(host, ip) != nil {
+				return nil, ErrNoPermittedAddress
+			}
+			addrs = []string{host}
+		} else {
+			addrs, err = lookup(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+		}
+		var lastErr error
+		for _, a := range addrs {
+			// GuardedLookup keeps an "ip:port" entry from a custom
+			// resolver as it was; the port dialled is always addr's.
+			if h, _, splitErr := net.SplitHostPort(a); splitErr == nil {
+				a = h
+			}
+			conn, dialErr := dial(ctx, network, net.JoinHostPort(a, port))
+			if dialErr == nil {
+				return conn, nil
+			}
+			lastErr = dialErr
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		return nil, lastErr
+	}
+}

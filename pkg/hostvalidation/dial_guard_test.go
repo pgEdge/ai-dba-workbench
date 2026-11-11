@@ -132,6 +132,158 @@ func TestGuardedLookup(t *testing.T) {
 	}
 }
 
+func TestCheckNotInternal(t *testing.T) {
+	tests := []struct {
+		ip      string
+		blocked bool
+	}{
+		{"169.254.169.254", true},
+		{"0.0.0.0", true},
+		{"127.0.0.1", true},
+		{"::1", true},
+		{"10.0.0.5", true},
+		{"192.168.1.10", true},
+		{"fd00::1", true},
+		{"100.64.0.1", true},
+		{"::ffff:10.0.0.1", true},
+		{"8.8.8.8", false},
+		{"2606:4700:4700::1111", false},
+	}
+	for _, tt := range tests {
+		err := CheckNotInternal("h", net.ParseIP(tt.ip))
+		if (err != nil) != tt.blocked {
+			t.Errorf("CheckNotInternal(%s) = %v, want blocked=%v", tt.ip, err, tt.blocked)
+		}
+	}
+}
+
+// recordingDial returns a dial function that records each address it
+// is asked for and fails every one with errDialRecorded, and a pointer
+// to the record.
+func recordingDial() (DialContextFunc, *[]string) {
+	var seen []string
+	return func(_ context.Context, _, addr string) (net.Conn, error) {
+		seen = append(seen, addr)
+		return nil, errDialRecorded
+	}, &seen
+}
+
+var errDialRecorded = errors.New("dial recorded")
+
+func TestGuardedDialContext(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a name resolving to a blocked address is never dialled", func(t *testing.T) {
+		dial, seen := recordingDial()
+		guarded := GuardedDialContext(CheckNotInternal, fixedLookup("10.0.0.1", "169.254.169.254"), dial)
+		_, err := guarded(ctx, "tcp", "hooks.example.com:443")
+		if !errors.Is(err, ErrNoPermittedAddress) {
+			t.Fatalf("err = %v, want ErrNoPermittedAddress", err)
+		}
+		if len(*seen) != 0 {
+			t.Errorf("dialled %v", *seen)
+		}
+		if strings.Contains(err.Error(), "10.0.0.1") || strings.Contains(err.Error(), "example") {
+			t.Errorf("error %q names the host or an address", err)
+		}
+	})
+
+	t.Run("only permitted addresses are dialled, in order, on addr's port", func(t *testing.T) {
+		dial, seen := recordingDial()
+		guarded := GuardedDialContext(CheckNotInternal,
+			fixedLookup("127.0.0.1", "203.0.113.7", "[2001:db8::1]:9", "8.8.8.8"), dial)
+		_, err := guarded(ctx, "tcp", "hooks.example.com:443")
+		if !errors.Is(err, errDialRecorded) {
+			t.Fatalf("err = %v, want the last dial error", err)
+		}
+		// 203.0.113.7 is TEST-NET-3, which IsPrivateIP refuses; the
+		// resolver's own port on the IPv6 entry is replaced by addr's.
+		if want := []string{"[2001:db8::1]:443", "8.8.8.8:443"}; !reflect.DeepEqual(*seen, want) {
+			t.Errorf("dialled %v, want %v", *seen, want)
+		}
+	})
+
+	t.Run("every permitted address is tried until one connects", func(t *testing.T) {
+		var seen []string
+		client, server := net.Pipe()
+		defer func() { _ = client.Close() }()
+		defer func() { _ = server.Close() }()
+		dial := func(_ context.Context, _, addr string) (net.Conn, error) {
+			seen = append(seen, addr)
+			if addr == "8.8.8.8:25" {
+				return nil, errDialRecorded
+			}
+			return client, nil
+		}
+		guarded := GuardedDialContext(CheckAlwaysBlocked,
+			fixedLookup("169.254.169.254", "8.8.8.8", "1.1.1.1:99", "9.9.9.9"), dial)
+		conn, err := guarded(ctx, "tcp", "smtp.example.com:25")
+		if err != nil || conn != client {
+			t.Fatalf("conn, err = %v, %v", conn, err)
+		}
+		if want := []string{"8.8.8.8:25", "1.1.1.1:25"}; !reflect.DeepEqual(seen, want) {
+			t.Errorf("dialled %v, want %v", seen, want)
+		}
+	})
+
+	t.Run("an IP literal is judged without resolving", func(t *testing.T) {
+		dial, seen := recordingDial()
+		resolve := func(context.Context, string) ([]string, error) {
+			t.Error("resolve called for an IP literal")
+			return nil, nil
+		}
+		guarded := GuardedDialContext(CheckNotInternal, resolve, dial)
+		if _, err := guarded(ctx, "tcp", "[::1]:80"); !errors.Is(err, ErrNoPermittedAddress) {
+			t.Errorf("loopback literal: err = %v", err)
+		}
+		if _, err := guarded(ctx, "tcp", "8.8.8.8:80"); !errors.Is(err, errDialRecorded) {
+			t.Errorf("public literal: err = %v", err)
+		}
+		if want := []string{"8.8.8.8:80"}; !reflect.DeepEqual(*seen, want) {
+			t.Errorf("dialled %v, want %v", *seen, want)
+		}
+	})
+
+	t.Run("a resolver error and a malformed address pass through", func(t *testing.T) {
+		boom := errors.New("lookup failed")
+		guarded := GuardedDialContext(nil, func(context.Context, string) ([]string, error) {
+			return nil, boom
+		}, nil)
+		if _, err := guarded(ctx, "tcp", "hooks.example.com:443"); !errors.Is(err, boom) {
+			t.Errorf("err = %v, want the resolver's error", err)
+		}
+		if _, err := guarded(ctx, "tcp", "no-port"); err == nil {
+			t.Error("malformed addr: err = nil")
+		}
+	})
+
+	t.Run("a cancelled context stops the attempts", func(t *testing.T) {
+		cctx, cancel := context.WithCancel(ctx)
+		cancel()
+		dial, seen := recordingDial()
+		guarded := GuardedDialContext(nil, fixedLookup("8.8.8.8", "1.1.1.1"), dial)
+		if _, err := guarded(cctx, "tcp", "hooks.example.com:443"); !errors.Is(err, errDialRecorded) {
+			t.Errorf("err = %v", err)
+		}
+		if len(*seen) != 1 {
+			t.Errorf("dialled %v, want one attempt", *seen)
+		}
+	})
+
+	t.Run("the defaults dial a permitted literal for real", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		defer func() { _ = ln.Close() }()
+		conn, err := GuardedDialContext(nil, nil, nil)(ctx, "tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		_ = conn.Close()
+	})
+}
+
 func TestMustParseCIDRsPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {

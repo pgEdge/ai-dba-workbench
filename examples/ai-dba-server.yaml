@@ -232,6 +232,20 @@ connection_security:
   #   - "metadata.internal"
   #   - "169.254.169.254"
 
+  # Directory that the SSL certificate, key and root certificate
+  # files of user-created connections must live in. The server reads
+  # these files itself when it connects, so a path must be absolute,
+  # must not contain "..", and must resolve (following symbolic
+  # links) to a file inside this directory. Paths are checked when a
+  # connection is created or updated, and again at connect time.
+  # When unset, any connection naming an SSL file is refused;
+  # ssl_root_cert_path "system" (the platform trust store) is always
+  # allowed. Read at start-up only; a reload does not change it.
+  # Environment variable: PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR
+  # Command line flag: -connection-ssl-cert-dir
+  # Default: "" (unset)
+  # ssl_cert_dir: "/etc/pgedge/ai-dba-workbench/certs"
+
 #=========================================================================
 # DATABASE CONNECTION
 #=========================================================================

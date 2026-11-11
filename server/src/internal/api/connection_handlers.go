@@ -107,6 +107,29 @@ func (h *ConnectionHandler) validateConnectionTarget(w http.ResponseWriter, host
 	return true
 }
 
+// validateSSLFilePaths checks the sslcert, sslkey and sslrootcert paths
+// of a create or update request against connection_security.ssl_cert_dir,
+// since the server opens those files itself when it connects. A nil
+// field is left unchanged by an update and an empty one clears it, so
+// neither needs a check. It responds 400 and returns false when a path
+// is refused: with the instruction to configure the directory when none
+// is set, and otherwise with the field and rule, never the path.
+func (h *ConnectionHandler) validateSSLFilePaths(w http.ResponseWriter, sslCert, sslKey, sslRootCert *string) bool {
+	err := database.ValidateSSLFilePaths(h.datastore.SSLCertDir(), database.SSLFilePaths{
+		SSLCert:     sslCert,
+		SSLKey:      sslKey,
+		SSLRootCert: sslRootCert,
+	})
+	if err == nil {
+		return true
+	}
+	// Both errors ValidateSSLFilePaths returns, ErrSSLCertDirUnset and
+	// *SSLFilePathError, name a field and a rule but never the path.
+	log.Printf("[ERROR] Invalid SSL file path: %v", err)
+	RespondError(w, http.StatusBadRequest, err.Error())
+	return false
+}
+
 // ConnectionUpdateRequest is the request body for updating a connection (legacy, name-only)
 type ConnectionUpdateRequest struct {
 	Name *string `json:"name,omitempty"`
@@ -330,6 +353,9 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 	if !h.validateConnectionTarget(w, &req.Host, req.HostAddr) {
 		return
 	}
+	if !h.validateSSLFilePaths(w, req.SSLCert, req.SSLKey, req.SSLRootCert) {
+		return
+	}
 
 	// Validate port
 	if err := h.hostValidator.ValidatePort(req.Port); err != nil {
@@ -546,6 +572,9 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 
 	// Validate host and hostaddr if being updated (SSRF protection)
 	if !h.validateConnectionTarget(w, req.Host, req.HostAddr) {
+		return
+	}
+	if !h.validateSSLFilePaths(w, req.SSLCert, req.SSLKey, req.SSLRootCert) {
 		return
 	}
 

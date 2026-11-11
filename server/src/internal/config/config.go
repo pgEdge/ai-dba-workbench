@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -490,6 +491,16 @@ type ConnectionSecurityConfig struct {
 	// Evaluated after AllowedHosts.
 	// Example: ["metadata.internal", "169.254.169.254"]
 	BlockedHosts []string `yaml:"blocked_hosts"`
+
+	// SSLCertDir is the directory that the sslcert, sslkey and
+	// sslrootcert files of every monitored connection must live in. The
+	// server reads those files itself when it connects, so an
+	// unrestricted path would let anyone who can create a connection
+	// make the server open any file it can read. Paths are checked when
+	// a connection is created or updated and again at connect time.
+	// Default: empty, which refuses every connection that names an SSL
+	// file (sslrootcert=system, the platform trust store, is allowed).
+	SSLCertDir string `yaml:"ssl_cert_dir"`
 }
 
 // BuildConnectionString creates a PostgreSQL connection string from DatabaseConfig
@@ -959,6 +970,10 @@ type CLIFlags struct {
 	// Trace file flags
 	TraceFile    string
 	TraceFileSet bool
+
+	// Connection security flags
+	ConnectionSSLCertDir    string
+	ConnectionSSLCertDirSet bool
 }
 
 // defaultConfig returns configuration with hard-coded defaults
@@ -1373,6 +1388,9 @@ func mergeConfig(dest, src *Config) {
 	if len(src.ConnectionSecurity.BlockedHosts) > 0 {
 		dest.ConnectionSecurity.BlockedHosts = src.ConnectionSecurity.BlockedHosts
 	}
+	if src.ConnectionSecurity.SSLCertDir != "" {
+		dest.ConnectionSecurity.SSLCertDir = src.ConnectionSecurity.SSLCertDir
+	}
 
 	// Builtins - merge individual settings (pointer fields preserve explicit false values)
 	// Tools
@@ -1558,6 +1576,9 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.HTTP.Auth.AuditRetentionDaysPtr = intPtr(n)
 		}
 	}
+	if val := os.Getenv("PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR"); val != "" {
+		cfg.ConnectionSecurity.SSLCertDir = val
+	}
 }
 
 // applyCLIFlags overrides config with CLI flags if they were explicitly set
@@ -1629,6 +1650,11 @@ func applyCLIFlags(cfg *Config, flags CLIFlags) {
 	if flags.TraceFileSet {
 		cfg.TraceFile = flags.TraceFile
 	}
+
+	// Connection security
+	if flags.ConnectionSSLCertDirSet {
+		cfg.ConnectionSecurity.SSLCertDir = flags.ConnectionSSLCertDir
+	}
 }
 
 // validateConfig checks if the configuration is valid
@@ -1646,6 +1672,10 @@ func validateConfig(cfg *Config) error {
 	// Database configuration validation
 	if cfg.Database != nil && cfg.Database.User == "" {
 		return fmt.Errorf("database user is required (set via -db-user flag or config file)")
+	}
+
+	if dir := cfg.ConnectionSecurity.SSLCertDir; dir != "" && !filepath.IsAbs(dir) {
+		return fmt.Errorf("connection_security.ssl_cert_dir must be an absolute path")
 	}
 
 	if err := cfg.LLM.RequestSettings.Validate("llm"); err != nil {

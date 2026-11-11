@@ -226,7 +226,9 @@ func TestEncodeConnQueryRoundTrip(t *testing.T) {
 			SSLMode:      sql.NullString{String: "verify-full", Valid: true},
 			SSLRootCert:  sql.NullString{String: rootCert, Valid: true},
 		}
-		dsn := mustBuildConnString(t, &Datastore{}, conn, "", "")
+		ds := &Datastore{}
+		ds.SetSSLCertDir("/etc/ssl")
+		dsn := mustBuildConnString(t, ds, conn, "", "")
 		if want := "sslrootcert=%2Fetc%2Fssl%2Fmy%20certs%2Froot%2Bca.crt"; !strings.Contains(dsn, want) {
 			t.Errorf("DSN %q does not carry %q", dsn, want)
 		}

@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"maps"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
@@ -653,12 +655,38 @@ func (m *MonitoredConnectionPoolManager) Close() error {
 	return nil
 }
 
+// ErrInvalidMonitoredConnString is what createMonitoredPool returns when
+// pgx cannot parse a monitored connection's connection string. The pgx
+// error is logged instead of returned because the scheduler stores the
+// error text in the connection's connection_error column, which the
+// server's API shows to users, and that text carries what they must not
+// see: pgx's ParseConfigError quotes the connection string with the
+// password only redacted on a best-effort basis, and pgx reads the
+// sslrootcert, sslcert and sslkey files whilst parsing, so its errors
+// name those paths and reveal whether a file exists or can be read.
+var ErrInvalidMonitoredConnString = errors.New("invalid connection parameters")
+
+// describeParseConfigError returns the text of a pgx ParseConfig error
+// for the collector log, with the quoted connection string replaced, so
+// the log keeps the reason (including any file path) but not the
+// password.
+func describeParseConfigError(err error) string {
+	var pce *pgconn.ParseConfigError
+	if errors.As(err, &pce) {
+		redacted := *pce
+		redacted.ConnString = "<connection string>"
+		return redacted.Error()
+	}
+	return err.Error()
+}
+
 // createMonitoredPool creates a pgxpool.Pool for a monitored connection
 func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Pool, error) {
 	// Parse connection string
 	config, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse connection string: %w", err)
+		logger.Errorf("Failed to parse monitored connection string: %s", describeParseConfigError(err))
+		return nil, ErrInvalidMonitoredConnString
 	}
 
 	// Set MaxConns to match the per-server connection limit

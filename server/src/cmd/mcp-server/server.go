@@ -480,6 +480,11 @@ func (s *Server) initDatastore(serverSecret string) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to datastore: %w", err)
 	}
+	// The connect-time check on stored SSL file paths reads the
+	// directory from the datastore, and so does the connection handler
+	// that checks them on create and update, so both use this one value.
+	// Like the rest of connection_security, it takes effect at start-up.
+	s.datastore.SetSSLCertDir(s.cfg.ConnectionSecurity.SSLCertDir)
 
 	fmt.Fprintf(os.Stderr, "Datastore: connected to %s@%s:%d/%s\n",
 		s.cfg.Database.User, s.cfg.Database.Host, s.cfg.Database.Port, s.cfg.Database.Database)

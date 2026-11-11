@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net"
 	"net/url"
@@ -809,6 +810,11 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 // validated them, or by any other route, still cannot turn one target
 // into a multi-host list or carry an injected port. A refused row
 // returns ErrUnsafeConnectionTarget.
+//
+// The stored sslcert, sslkey and sslrootcert paths are checked against
+// connection_security.ssl_cert_dir (SetSSLCertDir) for the same reason,
+// because pgx reads those files as soon as it parses the string. A
+// refused path returns ErrUnsafeSSLPath, whose text names no path.
 func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password string, databaseOverride string) (string, error) {
 	hostaddr := ""
 	if conn.HostAddr.Valid {
@@ -816,6 +822,10 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 	}
 	if err := hostvalidation.CheckStoredTarget(conn.Host, hostaddr); err != nil {
 		return "", fmt.Errorf("connection %d: %w", conn.ID, ErrUnsafeConnectionTarget)
+	}
+	if err := d.checkStoredSSLPaths(conn); err != nil {
+		log.Printf("[WARN] connection %d: refusing stored SSL file path: %v", conn.ID, err)
+		return "", fmt.Errorf("connection %d: %w", conn.ID, ErrUnsafeSSLPath)
 	}
 
 	// Use override database if specified, otherwise use connection's default

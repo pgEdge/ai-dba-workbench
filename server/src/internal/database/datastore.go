@@ -38,4 +38,9 @@ type Datastore struct {
 	// deletes through (purgeableViews). Nil selects
 	// metrics.IsKnownProbe; tests set it to admit their fixture views.
 	isProbeView func(string) bool
+
+	// sslCertDir is connection_security.ssl_cert_dir: the directory
+	// stored SSL file paths must lie in. Empty refuses every such path.
+	// It is guarded by mu; see SetSSLCertDir.
+	sslCertDir string
 }

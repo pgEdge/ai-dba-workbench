@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -26,6 +27,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/config"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -116,16 +118,21 @@ func (c *Client) ConnectTo(connStr string) error {
 		return nil // Already connected
 	}
 
-	// Add application_name to connection string if not already present
+	// Add application_name to connection string if not already present.
+	// The url.Parse error quotes the whole string, password included, so
+	// neither it nor the pgx error below is returned: callers pass these
+	// errors on to API and MCP responses (see ErrInvalidConnectionString).
 	enhancedConnStr, err := addApplicationName(connStr, "pgEdge AI DBA Workbench")
 	if err != nil {
-		return fmt.Errorf("unable to enhance connection string: %w", err)
+		log.Printf("[ERROR] Connection string is not a valid URL")
+		return fmt.Errorf("unable to enhance connection string: %w", ErrInvalidConnectionString)
 	}
 
 	// Parse connection string into pgxpool.Config
 	poolConfig, err := pgxpool.ParseConfig(enhancedConnStr)
 	if err != nil {
-		return fmt.Errorf("unable to parse connection string: %w", err)
+		log.Printf("[ERROR] Unable to parse connection string: %s", describeParseConfigError(err))
+		return fmt.Errorf("unable to parse connection string: %w", ErrInvalidConnectionString)
 	}
 
 	// Log connection details if debug logging is enabled
@@ -201,6 +208,31 @@ func (c *Client) ConnectTo(connStr string) error {
 	LogConnection(connStr, duration, nil)
 
 	return nil
+}
+
+// ErrInvalidConnectionString is what ConnectTo returns when a
+// connection string cannot be parsed. The underlying errors are logged
+// rather than returned because their text reaches API and MCP responses
+// (the MCP tool and resource providers report "Database connection
+// error: %v"), and they carry what a caller must not see: pgx's
+// ParseConfigError quotes the connection string with the password only
+// redacted on a best-effort basis, and pgx reads the sslrootcert, sslcert
+// and sslkey files whilst parsing, so its errors name those paths and
+// reveal whether a file exists or can be read.
+var ErrInvalidConnectionString = errors.New("invalid connection string")
+
+// describeParseConfigError returns the text of a pgx ParseConfig error
+// for the server log, with the quoted connection string replaced, so
+// the log keeps the reason (including any file path) but never the
+// password.
+func describeParseConfigError(err error) string {
+	var pce *pgconn.ParseConfigError
+	if errors.As(err, &pce) {
+		redacted := *pce
+		redacted.ConnString = "<connection string>"
+		return redacted.Error()
+	}
+	return err.Error()
 }
 
 // addApplicationName adds application_name parameter to a PostgreSQL connection string

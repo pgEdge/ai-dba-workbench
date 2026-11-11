@@ -66,6 +66,25 @@ moved.
   the collector's `buildMonitoredConnectionParams`. pgx v5.12.0 has no
   `hostaddr` keyword (it would be sent as a startup parameter), so the
   collector, like the server, dials the validated address as `host`.
+- pgx reads `sslrootcert`, `sslcert` and `sslkey` while it parses a
+  connection string (the CA file even under `sslmode=disable`), so
+  stored SSL paths are a file-read primitive. The server confines them
+  to `connection_security.ssl_cert_dir` (`database.ValidateSSLFilePaths`
+  in `database/ssl_paths.go`): absolute, no `..` element, and resolved
+  through `EvalSymlinks` (nearest existing ancestor for a missing file)
+  to a location inside the directory. Unset refuses every path except
+  `sslrootcert=system`. The REST create and update handlers check on
+  write, and `Datastore.BuildConnectionString` checks again at connect
+  time (`ErrUnsafeSSLPath`). The collector has no such option and
+  still opens whatever path is stored; its only guard is the server's
+  write-time check.
+- pgx `ParseConfig` errors must never reach a response: they quote the
+  connection string with the password redacted only on a best-effort
+  basis, and name SSL file paths. `Client.ConnectTo` returns
+  `ErrInvalidConnectionString` and the collector's
+  `createMonitoredPool` returns `ErrInvalidMonitoredConnString` (its
+  error lands in `connection_error`, which the API shows); both log the
+  detail through `describeParseConfigError`, which drops the string.
 - Monitored-database credentials are encrypted at rest with a
   server-side secret and only decrypted in the collector when a pool
   is opened.

@@ -2485,6 +2485,9 @@ func TestDatabaseInfoStruct(t *testing.T) {
 
 func TestBuildConnectionString(t *testing.T) {
 	ds := &Datastore{}
+	// The SSL file cases name paths under /etc/ssl, which must then be
+	// the configured certificate directory.
+	ds.SetSSLCertDir("/etc/ssl")
 
 	tests := []struct {
 		name             string

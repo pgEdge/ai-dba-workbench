@@ -571,18 +571,31 @@ project adheres to
 
 ### Changed
 
-- Breaking: add the `connection_security.ssl_cert_dir` server option,
-  which names the absolute directory that the SSL certificate, key and
-  root certificate files of monitored connections must live in. The
+- Breaking: add the `connection_security.ssl_cert_dir` option to the
+  server and the collector, which names the absolute directory that the
+  SSL certificate, key and root certificate files of monitored
+  connections must live in. On the server, the
   `PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR` environment variable and
-  the `-connection-ssl-cert-dir` flag also set it. The option is empty
-  by default, and while it is empty the server refuses every SSL file
-  path except a root certificate value of `system`, so an existing
-  connection that names an SSL file stops working on the server until
-  the option is set and the files are kept inside the directory. A
-  relative path stops the server from starting, and the server reads
-  the option at start-up only. See
+  the `-connection-ssl-cert-dir` flag also set it; on the collector,
+  the `-connection-ssl-cert-dir` flag sets it, and there is no
+  environment variable. The option is empty by default, and while it is
+  empty each component refuses every SSL file path except a root
+  certificate value of `system`, so an existing connection that names
+  an SSL file stops working until the option is set on both components
+  and the files are kept inside the directory at the same paths on both
+  hosts. A relative path stops the component from starting, and each
+  component reads the option at start-up only. See
   [Upgrading to 2.0.0](admin-guide/upgrading-to-2.0.md#connection-ssl-files).
+
+- Breaking: treat the IPv6 unspecified address `::`, the
+  IPv4-compatible range `::/96`, the NAT64 prefixes `64:ff9b::/96` and
+  `64:ff9b:1::/48`, the 6to4 range `2002::/16` and the site-local range
+  `fec0::/10` as internal addresses. A deployment that reaches
+  monitored servers through NAT64 must set
+  `connection_security.allow_internal_networks` to `true` or add the
+  NAT64 prefix to `allowed_hosts`; the alerter refuses to deliver to a
+  webhook in these ranges whatever those settings say. See
+  [Upgrading to 2.0.0](admin-guide/upgrading-to-2.0.md#connection-host-addresses).
 
 - List and serve only the collector's probes from the metrics schema
   (#755). The `list_probes`, `describe_probe`, `query_metrics`,
@@ -2373,6 +2386,22 @@ project adheres to
   SSL file paths or passwords.
 
 - <!-- TODO: add the advisory ID, link and severity. -->
+  Stop a monitored connection or a notification channel reaching an
+  internal address that the `connection_security` checks should have
+  refused. The internal ranges left out the IPv6 unspecified address
+  `::`, which reaches the local host, and the IPv6 ranges that embed an
+  IPv4 address, so a connection host, `hostaddr` or webhook URL could
+  name them. The connection checks also ran only when a connection was
+  saved, so a host name could pass and later resolve to an internal
+  address (DNS rebinding). Release 1.0.0 is affected. The
+  server now applies the `connection_security` rules to every address a
+  monitored connection resolves to each time it connects, and connects
+  only to the addresses that pass; the collector refuses unspecified,
+  link-local and cloud metadata addresses each time it connects; and
+  the internal ranges now include `::`, `::/96`, `64:ff9b::/96`,
+  `64:ff9b:1::/48`, `2002::/16` and `fec0::/10`.
+
+- <!-- TODO: add the advisory ID, link and severity. -->
   Stop a user who can create a connection making the server open any
   file it can read. The server reads a connection's SSL certificate,
   key and root certificate files when it parses the connection string,
@@ -2381,8 +2410,27 @@ project adheres to
   symbolic links, to a location inside the directory named by the new
   `connection_security.ssl_cert_dir` option; the server checks them
   when a connection is created or updated and again before connecting.
-  A root certificate value of `system` is always allowed. Release 1.0.0
-  is affected.
+  The collector, which also reads these files when it connects, checks
+  each stored connection against its own
+  `connection_security.ssl_cert_dir` option before connecting, and
+  does not monitor a connection that fails the check. A root
+  certificate value of `system` is always allowed. Release 1.0.0 is
+  affected.
+
+- <!-- TODO: add the advisory ID, link and severity. -->
+  Stop the server writing database passwords to its log and returning
+  them in errors. The server masked only the password in the user
+  information of a URI connection string, so a password in a
+  keyword/value connection string, such as one set through
+  `PGEDGE_POSTGRES_CONNECTION_STRING`, or in a `password` or
+  `sslpassword` parameter appeared in the `[DATABASE]` log when
+  `PGEDGE_DB_LOG_LEVEL` was `info` or higher, and in MCP tool output
+  that names the default connection. A metadata load for a connection
+  that the server did not hold also returned the unmasked connection
+  string in its error. Release 1.0.0 is affected. The server now masks `password` and `sslpassword`
+  parameters in both connection string forms, and the metadata load
+  and query connection errors no longer quote the connection string.
+  Rotate any password that may have reached a log.
 
 - [GHSA-q38q-fvcv-jx25](https://github.com/pgEdge/ai-dba-workbench/security/advisories/GHSA-q38q-fvcv-jx25)
   (Critical): stop a database name override redirecting a monitored

@@ -73,6 +73,17 @@ manually alongside it.
   `collector/src/database/coldfront_insert.go`; update it when those
   messages change.
 
+- `connection_security` is documented for both components and must
+  agree across them: the internal-range table, the connect-time address
+  checks and the server `ssl_cert_dir` live in
+  `docs/getting-started/configuration/server.md#connection-security-connection_security`;
+  the collector's `ssl_cert_dir` and its fixed connect-time block list
+  (`pkg/hostvalidation/dial_guard.go`) live in the collector page's
+  "Connection Security Options" section. `docs/admin-guide/connections.md`
+  and the "Connection SSL Files" and "Connection Host Addresses"
+  sections of `docs/admin-guide/upgrading-to-2.0.md` summarise both;
+  update all four when `pkg/hostvalidation` or `pkg/sslpaths` changes.
+
 ## Maintenance
 
 Update this file in the same change whenever the documentation layout,

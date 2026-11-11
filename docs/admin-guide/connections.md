@@ -58,7 +58,8 @@ The server checks the target and the SSL file settings of a connection
 when a user creates or updates the connection; a refused value returns
 status 400. Before each connection attempt, the server checks the SSL
 file paths and the syntax of the stored `host` and `hostaddr` again,
-but not the network rules.
+and each time the server or the collector connects, each component
+checks every address that the target resolves to, as described below.
 
 The `host` and `hostaddr` fields name the monitored server:
 
@@ -75,18 +76,40 @@ The server and the collector also refuse a stored connection whose
 `host` contains one of the characters above or whose `hostaddr` is not
 a literal IP address.
 
-The server reads the files that the `ssl_cert_path`, `ssl_key_path` and
-`ssl_root_cert_path` fields name itself, so the server only accepts
-paths inside the directory that the `connection_security.ssl_cert_dir`
-option names. Each path must be absolute, must contain no `..` element
-or control character, and must resolve, following symbolic links, to a
-location inside that directory. When the option is unset, which is the
-default, the server refuses every SSL file path; a `ssl_root_cert_path`
-of `system`, which selects the platform trust store, is always allowed.
-An error names the refused field and the broken rule, or the option to
-set when the option is unset, but never quotes the path. See
+When the server connects, the server applies the same rules to each
+address that the target resolves to at that moment and connects only to
+the addresses that pass, which defeats DNS rebinding. At save time an
+allow-listed address can permit the whole host name; at connect time an
+allow-listed address permits only that address. The collector has none
+of the `connection_security` host settings; when the collector connects,
+the collector refuses only unspecified, link-local and cloud metadata
+addresses, and allows loopback and private addresses. The collector
+therefore refuses a link-local target even when the server's
+`allow_internal_networks` option permits it. See
+[Connection Address Checks](../getting-started/configuration/collector.md#connection-address-checks)
+for the collector's list.
+
+The server and the collector read the files that the `ssl_cert_path`,
+`ssl_key_path` and `ssl_root_cert_path` fields name themselves, so each
+component only accepts paths inside the directory that its own
+`connection_security.ssl_cert_dir` option names. Each path must be
+absolute, must contain no `..` element or control character, and must
+resolve, following symbolic links, to a location inside that directory.
+When the option is unset, which is the default, each component refuses
+every SSL file path; a `ssl_root_cert_path` of `system`, which selects
+the platform trust store, is always allowed. An error from the server
+names the refused field and the broken rule, or the option to set when
+the option is unset, but never quotes the path. The collector does not
+monitor a connection that its own check refuses, and records an error
+ending in `invalid connection parameters` against the connection.
+
+Set the option on both components, keep the files at the same paths on
+the server and collector hosts, and make each directory and its
+contents writable only by root or the service account. See
 [Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
-for the option.
+for the server option, and
+[Connection Security Options](../getting-started/configuration/collector.md#connection-security-options)
+for the collector option.
 
 ## REST API Endpoints
 

@@ -160,24 +160,31 @@ for the access rules.
 
 Release 2.0.0 confines the SSL certificate, key and root certificate
 files of monitored connections to one directory, which the new
-`connection_security.ssl_cert_dir` server option names. The option is
-empty by default, and while the option is empty the server refuses
-every SSL file path except a root certificate value of `system`, which
-selects the platform trust store. The server refuses to connect with a
-stored connection that names an SSL file, and refuses with status 400 a
-request to create or update such a connection. An existing connection
-with SSL file paths therefore stops working on the server until you set
-the option and keep the connection's files inside the directory.
+`connection_security.ssl_cert_dir` option names on the server and on
+the collector. The option is empty by default, and while the option is
+empty each component refuses every SSL file path except a root
+certificate value of `system`, which selects the platform trust store.
+The server refuses to connect with a stored connection that names an
+SSL file, and refuses with status 400 a request to create or update
+such a connection; the collector stops monitoring such a connection and
+records an error ending in `invalid connection parameters` against it.
+An
+existing connection with SSL file paths therefore stops working until
+you set the option on both components and keep the connection's files
+inside the directory.
 
-The server applies the following rules to each path:
+The server and the collector apply the following rules to each path:
 
 - the path is absolute and contains no `..` element or control
   character.
 - the path resolves, following symbolic links, to a location inside the
   `ssl_cert_dir` directory.
 
-The server reads the option at start-up only, and refuses to start when
-the option holds a relative path. In the following example, the query
+Each component reads the option at start-up only, and refuses to start
+when the option holds a relative path. The directory and every file and
+link in it must be writable only by root or the account that runs the
+component, because each component resolves a path before the database
+driver opens the file. In the following example, the query
 lists the connections in the datastore that name an SSL file:
 
 ```sql
@@ -190,27 +197,34 @@ WHERE (COALESCE(sslcert, '') <> ''
 
 Run the query before the upgrade; after the upgrade, add
 `AND deleted_at IS NULL` to leave out deleted connections. The server
-alone applies the directory rule; the collector still reads the stored
-paths, so keep each original file in place until the connection's
-paths point at the new copy.
+and the collector read the same stored paths, so the files must be at
+the same paths on the server host and the collector host.
 
 To keep these connections working, complete the following steps:
 
-1. Choose a directory that the account running the server can read,
-   such as `/etc/pgedge/ai-dba-workbench/certs`.
-2. Copy each listed file into the directory; a file that already lives
-   in the directory needs no change.
+1. Choose a directory that the accounts running the server and the
+   collector can read, such as `/etc/pgedge/ai-dba-workbench/certs`,
+   and make the directory writable only by root or the service account.
+2. Copy each listed file into the directory on the server host and on
+   the collector host; a file that already lives in the directory needs
+   no change.
 3. Set `connection_security.ssl_cert_dir` to the absolute path of the
    directory in the server's configuration file, or set the
    `PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR` environment variable or the
    `-connection-ssl-cert-dir` flag.
-4. After the upgrade, update the SSL paths of each connection whose
+4. Set `connection_security.ssl_cert_dir` to the same path in the
+   collector's configuration file, or pass the collector's
+   `-connection-ssl-cert-dir` flag; the collector has no environment
+   variable for the option.
+5. After the upgrade, update the SSL paths of each connection whose
    files you copied, in the web client or with
    `PUT /api/v1/connections/{id}`, and only then remove the original
    files.
 
 See [Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
-for the option.
+for the server option, and
+[Connection Security Options](../getting-started/configuration/collector.md#connection-security-options)
+for the collector option.
 
 ### Connection Host Addresses
 
@@ -238,6 +252,26 @@ An `allowed_hosts` entry that names a host does not cover the host's
 connection whose `hostaddr` is an internal address is refused, even if
 `allowed_hosts` names the `host`. Add the address, or a CIDR range that
 contains it, to `allowed_hosts`.
+
+Release 2.0.0 also checks the network rules each time the server or the
+collector connects, and not only when a connection is saved. The server
+applies its `connection_security` rules to every address that the
+target resolves to at that moment, and connects only to the addresses
+that pass. An allow-listed address permits only that address, so an
+internal host name that `allowed_hosts` does not name needs each of its
+addresses, or a range that holds them, in `allowed_hosts`. The
+collector refuses unspecified, link-local and cloud metadata addresses
+whatever the server allows, so the collector cannot connect to a
+link-local target even when `allow_internal_networks` is `true`.
+
+The internal ranges now include the IPv6 unspecified address `::`, the
+IPv4-compatible range `::/96`, the NAT64 prefixes `64:ff9b::/96` and
+`64:ff9b:1::/48`, the 6to4 range `2002::/16` and the site-local range
+`fec0::/10`. A deployment that reaches IPv4 servers through NAT64 must
+set `allow_internal_networks` to `true` or add the NAT64 prefix to
+`allowed_hosts`. See
+[Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
+for the full list.
 
 ### MCP Tool Changes
 
@@ -405,7 +439,8 @@ the following points in particular:
 - The URL of each notification channel, which must not redirect.
 - The new `connection_security.ssl_cert_dir` property, which every
   connection that names an SSL certificate, key or root certificate
-  file now needs; see [Connection SSL Files](#connection-ssl-files).
+  file now needs on both the server and the collector; see
+  [Connection SSL Files](#connection-ssl-files).
 
 ### Checking the Configuration with the New Server
 

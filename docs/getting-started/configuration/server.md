@@ -478,15 +478,66 @@ protection for user-created database connections.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `allow_internal_networks` | bool | `false` | Allow RFC 1918 addresses |
+| `allow_internal_networks` | bool | `false` | Allow internal network addresses |
 | `allowed_hosts` | list | `[]` | Always-permitted hosts |
 | `blocked_hosts` | list | `[]` | Always-blocked hosts |
 | `ssl_cert_dir` | string | `""` | Directory that holds connection SSL files |
+
+When `allow_internal_networks` is `false`, the server refuses a target in
+an internal network unless `allowed_hosts` permits the target. The
+following table lists the ranges that the server treats as internal:
+
+| Range | Description |
+|-------|-------------|
+| `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | RFC 1918 private networks |
+| `127.0.0.0/8`, `::1/128` | Loopback |
+| `169.254.0.0/16`, `fe80::/10` | Link-local, including cloud metadata services |
+| `0.0.0.0/8`, `::/128` | Unspecified addresses, which reach the local host |
+| `fc00::/7`, `fec0::/10` | IPv6 unique local and deprecated site-local |
+| `::/96` | IPv4-compatible IPv6, which embeds an IPv4 address |
+| `64:ff9b::/96`, `64:ff9b:1::/48` | NAT64 prefixes (RFC 6052 and RFC 8215) |
+| `2002::/16` | 6to4, which embeds an IPv4 address |
+| `100.64.0.0/10` | Carrier-grade NAT (RFC 6598) |
+| `192.0.0.0/24` | IETF protocol assignments |
+| `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` | Documentation networks (TEST-NET-1 to TEST-NET-3) |
+| `224.0.0.0/4`, `ff00::/8` | Multicast |
+| `240.0.0.0/4` | Reserved |
+
+An IPv4-mapped IPv6 address, such as `::ffff:10.0.0.1`, counts as the
+IPv4 address that it carries. The NAT64 prefixes are internal in their
+entirety, so a deployment on an IPv6-only network that reaches IPv4
+servers through NAT64 must set `allow_internal_networks` to `true` or
+add the prefix to `allowed_hosts`. The alerter refuses to deliver a
+notification to a webhook URL whose host resolves to any of these
+ranges; the alerter has no setting that changes this.
 
 The server applies the host checks to both the `host` and the `hostaddr`
 of a connection. A `hostaddr` must be a literal IPv4 or IPv6 address,
 and the server checks that address against the same blocklist, allowlist
 and internal network rules as a `host`.
+
+The server checks the target twice. When a user creates or updates a
+connection, the server resolves a host name and checks the addresses
+in turn; an address that `allowed_hosts` covers can permit the whole
+host name, including the name's other addresses. Each time the server
+connects to a monitored database, the server resolves the host name
+again and checks each address on its own, so a host name that later
+resolves to a refused address cannot reach that address; this check
+defeats DNS rebinding. At connect time, an address that `allowed_hosts`
+covers permits only that address, and the server connects only to the
+permitted addresses. A host name that `allowed_hosts` or
+`blocked_hosts` lists by name is still permitted or refused whatever
+the name resolves to. When no resolved address is permitted, the
+connection attempt fails with an error that says the host resolves only
+to addresses that connections are not permitted to. The server's own
+connection to the datastore is not checked.
+
+The collector applies a fixed check of its own when the collector
+connects; see
+[Connection Security Options](collector.md#connection-security-options).
+The collector refuses link-local addresses even when
+`allow_internal_networks` is `true`, so the collector cannot monitor a
+link-local target that the server accepts.
 
 The `ssl_cert_dir` option names the absolute directory that the SSL
 certificate, key and root certificate files of user-created connections
@@ -501,14 +552,25 @@ before each connection attempt; a path must meet the following rules:
 - the path resolves, following symbolic links, to a location inside the
   `ssl_cert_dir` directory.
 
+The directory and every file and link in it must be writable only by
+root or the account that runs the server. The server resolves a path
+before the database driver opens the file, so an account that can
+replace a symbolic link in the directory between the two steps could
+still point the driver at a file outside the directory.
+
 When `ssl_cert_dir` is empty, which is the default, the server refuses
 every connection that names an SSL file. A root certificate value of
 `system`, which selects the platform trust store, is always allowed.
 The server refuses to start when `ssl_cert_dir` holds a relative path.
-The server reads the option at start-up only, so a configuration reload
-does not change the directory. The
-`PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR` environment variable and the
-`-connection-ssl-cert-dir` flag also set the option.
+The server reads the option at start-up only, so a change takes effect
+only when the server restarts; a configuration reload does not change
+the directory. The `PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR` environment
+variable and the `-connection-ssl-cert-dir` flag also set the option.
+
+The collector reads the same SSL files when the collector connects, and
+has its own `connection_security.ssl_cert_dir` option with the same
+rules. Set the collector option as well, and keep the files at the same
+paths on the collector host.
 
 In the following example, the server accepts SSL files in the
 `/etc/pgedge/ai-dba-workbench/certs` directory:

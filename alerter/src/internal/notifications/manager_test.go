@@ -559,9 +559,13 @@ func TestManager_NilManager(t *testing.T) {
 // Location header names. Slack and Mattermost leak their whole webhook
 // URL, which is itself the secret, the same way.
 //
-// The generic webhook has a third reason: its endpoint host is checked
-// when the channel is saved, so a followed Location header would carry
-// the request to a host that check never saw.
+// The generic webhook has a third reason: a followed Location header
+// would carry the request to a host the operator never configured.
+//
+// The servers here listen on 127.0.0.1, so the manager is built with
+// allow_internal_networks set; the delivery dialer would otherwise
+// refuse them before any redirect was seen. dial_guard_test.go covers
+// that refusal.
 //
 // Every channel that goes through the shared client is exercised here -
 // Telegram, Slack, Mattermost and the generic webhook: the trap server
@@ -574,8 +578,9 @@ func TestManager_HTTPClientRefusesRedirects(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	m, err := NewManager(nil, &config.NotificationsConfig{
-		Enabled:    true,
-		SecretFile: secretPath,
+		Enabled:               true,
+		SecretFile:            secretPath,
+		AllowInternalNetworks: true,
 	}, false, nil)
 	if err != nil {
 		t.Fatalf("NewManager() unexpected error: %v", err)
@@ -615,14 +620,9 @@ func TestManager_HTTPClientRefusesRedirects(t *testing.T) {
 		assertNoToken(t, err.Error())
 	})
 
-	// The generic webhook needs two things the other two do not. Its
-	// URL lives in EndpointURL rather than WebhookURL, and its SSRF
-	// guard would reject an httptest address before the client ever
-	// ran, so it is rebuilt with internal addresses allowed. It still
-	// shares m.httpClient, which is where the redirect policy lives,
-	// and it is the one channel for which following a Location header
-	// would also sidestep the endpoint-host check performed when the
-	// channel was saved.
+	// The generic webhook's URL lives in EndpointURL rather than
+	// WebhookURL; all three share m.httpClient, which is where the
+	// redirect policy lives.
 	cases := []struct {
 		channelType database.NotificationChannelType
 		channel     *database.NotificationChannel
@@ -651,7 +651,7 @@ func TestManager_HTTPClientRefusesRedirects(t *testing.T) {
 				EndpointURL: strPtr(webhookURL),
 				HTTPMethod:  "POST",
 			},
-			notifier: NewWebhookNotifierAllowInternal(m.httpClient, m.renderer),
+			notifier: m.notifiers[database.ChannelTypeWebhook],
 		},
 	}
 

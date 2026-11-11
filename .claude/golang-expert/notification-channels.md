@@ -155,23 +155,21 @@ may quote the path with no scheme for `redactURLPath` to anchor on.
 Operator config echoed in an error (the HTTP method) goes through
 `sanitizeConfigEcho`.
 
-Four sites per sender leak, not one: the `Do` error, the response-body
-echo, the `http.NewRequest*` error (a `*url.Error` quoting the URL when
-it will not parse) and, in `webhook.go`, the SSRF-block error, which
-wraps `hostvalidation.ValidateURLHost` and so inherits `url.Parse`'s
-quoted URL.
+Three sites per sender leak, not one: the `Do` error, the
+response-body echo and the `http.NewRequest*` error (a `*url.Error`
+quoting the URL when it will not parse). A refusal by the delivery
+dialer arrives through the `Do` error, and is the fixed
+`hostvalidation.ErrNoPermittedAddress` text, naming neither host nor
+address.
 
 **Never echo a `url.Parse` failure, sanitised or not.** The first two
-sites go through the helpers, but the last two do not echo at all: they
-return a fixed "the URL is malformed" message. `(*url.Error).Error`
+sites go through the helpers, but the third does not echo at all: it
+returns a fixed "the URL is malformed" message. `(*url.Error).Error`
 renders `%s %q: %s` over the *raw input string* rather than a parsed
 URL, so on a parse failure the text is whatever the operator stored,
 and nothing validates that a stored `webhook_url` or `endpoint_url`
 carries a scheme. `redactURLPath` anchors on `://`, so a scheme-less
-stored URL would pass straight through it. In `webhook.go` the parse
-failure is picked out with `errors.As(err, &urlErr)`; every other
-`ValidateURLHost` failure names the host and nothing else, and is
-still worth echoing.
+stored URL would pass straight through it.
 
 **`redactURLPath` treats everything after the host as sensitive.** There
 is no `/bot`-style marker to anchor on, so the host is all that
@@ -211,8 +209,8 @@ That was VULN-001: a 3xx from the endpoint handed
 `https://api.telegram.org/bot<token>/sendMessage` - the live bot token -
 to whatever host `Location` named. Slack and Mattermost leak their whole
 webhook URL, which is itself the secret, identically, and for the
-generic webhook channel following a `Location` also bypasses the host
-validation done before the URL was stored.
+generic webhook channel following a `Location` would also hand the
+request to a host nobody configured.
 
 Set it on the *shared* client, not on a Telegram-only one. The cost is
 real and accepted: a provider that answers a delivery with a 3xx now
@@ -222,11 +220,41 @@ always refused redirects.
 `TestManager_HTTPClientRefusesRedirects` asserts the redirect target is
 never reached, and it exercises all four channel types that share the
 client: Telegram, Slack, Mattermost and the generic webhook. The webhook
-case needs two departures from the others - its URL lives in
-`EndpointURL`, not `WebhookURL`, and the notifier is rebuilt with
-`NewWebhookNotifierAllowInternal` because its SSRF guard would otherwise
-reject the `httptest` address before the shared client ever ran. Email
-is out of scope there: it does not use the HTTP client.
+case differs only in that its URL lives in `EndpointURL`, not
+`WebhookURL`. The manager there is built with
+`AllowInternalNetworks: true`, because the delivery dialer would
+otherwise refuse the `httptest` loopback address before the redirect
+was ever seen. Email is out of scope there: it does not use the HTTP
+client.
+
+## Every Delivery Is Checked at Dial Time
+
+The SSRF policy is enforced on the address actually dialled, never on
+a lookup done beforehand, because a name checked and then resolved
+again at connect time can be rebound to an internal address in
+between. `dial_guard.go` holds the whole of it: `deliveryPolicy`
+picks `hostvalidation.CheckNotInternal` (private, loopback and the
+always-blocked set) or, when `notifications.allow_internal_networks` is
+set, `hostvalidation.CheckAlwaysBlocked` (metadata, link-local and
+unspecified addresses stay refused). `deliveryDialer` wraps that in
+`hostvalidation.GuardedDialContext`, which resolves the name itself and
+dials only the permitted IP literals. `NewManager` builds one dialer
+and gives it to both the shared HTTP client (Slack, Mattermost,
+webhook, Telegram) and the email notifier, whose `sendWithTLS` and
+`sendWithStartTLS` dial through it. `webhook.go` therefore carries no
+host check of its own; do not add one back, since a pre-check is the
+rebinding gap this replaced.
+
+The transport's `Proxy` is nil on purpose: through a proxy the dialer
+would see only the proxy's address, so HTTP_PROXY and friends are
+ignored, as they always were with the transport literal. Any new
+outbound channel must use the same dialer.
+
+Tests never touch real DNS: `fakeResolver` in `dial_guard_test.go`
+maps a name to fixed addresses, and `email_smtp_test.go` has a
+configurable fake SMTP server using the `httptest` certificate (issued
+for `example.com` and `127.0.0.1`), trusted through the test-only
+`rootCAs` field on `emailNotifier`.
 
 ## Truncation and the Plain-Text Fallback
 

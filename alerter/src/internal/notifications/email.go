@@ -12,13 +12,16 @@ package notifications
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/smtp"
+	"strconv"
 	"strings"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // sanitizeHeader strips carriage-return and newline characters from a
@@ -31,13 +34,30 @@ func sanitizeHeader(s string) string {
 type emailNotifier struct {
 	serverSecret string
 	renderer     TemplateRenderer
+	// dial opens the connection to the SMTP server. It is a guarded
+	// dialer (see dial_guard.go), so the delivery policy is applied to
+	// the address actually connected to.
+	dial hostvalidation.DialContextFunc
+	// rootCAs verifies the SMTP server's certificate; nil is the system
+	// pool. Only tests set it.
+	rootCAs *x509.CertPool
 }
 
-// NewEmailNotifier creates a new email notifier
+// NewEmailNotifier creates a new email notifier that refuses SMTP
+// servers at internal addresses, the default delivery policy.
 func NewEmailNotifier(serverSecret string, renderer TemplateRenderer) Notifier {
+	return newEmailNotifierWithDialer(serverSecret, renderer,
+		deliveryDialer(deliveryPolicy(false), nil))
+}
+
+// newEmailNotifierWithDialer creates an email notifier that connects to
+// the SMTP server through dial, which the manager builds from the
+// configured delivery policy.
+func newEmailNotifierWithDialer(serverSecret string, renderer TemplateRenderer, dial hostvalidation.DialContextFunc) Notifier {
 	return &emailNotifier{
 		serverSecret: serverSecret,
 		renderer:     renderer,
+		dial:         dial,
 	}
 }
 
@@ -119,7 +139,9 @@ func (n *emailNotifier) Send(ctx context.Context, channel *database.Notification
 	if smtpPort == 0 {
 		smtpPort = 587
 	}
-	addr := fmt.Sprintf("%s:%d", smtpHost, smtpPort)
+	// JoinHostPort brackets an IPv6 literal, which the dialer needs to
+	// split the address again.
+	addr := net.JoinHostPort(smtpHost, strconv.Itoa(smtpPort))
 
 	// Decrypt password if present. If decryption fails, the value is
 	// assumed to be stored in plaintext and is used as-is.
@@ -203,11 +225,11 @@ func (n *emailNotifier) sendWithTLS(
 	tlsConfig := &tls.Config{
 		ServerName: smtpHost,
 		MinVersion: tls.VersionTLS12,
+		RootCAs:    n.rootCAs,
 	}
 
-	// Connect with context-aware dialer, then wrap with TLS
-	dialer := net.Dialer{}
-	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
+	// Connect through the guarded dialer, then wrap with TLS
+	rawConn, err := n.dial(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
@@ -246,9 +268,8 @@ func (n *emailNotifier) sendWithStartTLS(
 	msg []byte,
 	smtpHost string,
 ) error {
-	// Connect to SMTP server with context-aware dialer
-	dialer := net.Dialer{}
-	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
+	// Connect to the SMTP server through the guarded dialer
+	rawConn, err := n.dial(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
@@ -269,6 +290,7 @@ func (n *emailNotifier) sendWithStartTLS(
 		tlsConfig := &tls.Config{
 			ServerName: smtpHost,
 			MinVersion: tls.VersionTLS12,
+			RootCAs:    n.rootCAs,
 		}
 		if err := client.StartTLS(tlsConfig); err != nil {
 			return fmt.Errorf("STARTTLS failed: %w", err)

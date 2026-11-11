@@ -74,7 +74,7 @@ moved.
   collector, like the server, dials the validated address as `host`.
 - The internal-range test is `hostvalidation.IsPrivateIP`
   (`pkg/hostvalidation/hostvalidation.go`), shared by the server's
-  `HostValidator` and the alerter's webhook check. It ORs the
+  `HostValidator` and the alerter's delivery dialer. It ORs the
   `internalNetworks` list with the standard library's `IsUnspecified`,
   `IsLoopback`, `IsPrivate`, link-local and multicast predicates, so a
   range missing from the list is still caught; the list itself also
@@ -99,6 +99,25 @@ moved.
   metadata, and IPv6 forms embedding them); private and loopback
   targets pass, and with `allow_internal_networks` on, the server will
   dial link-local addresses that the collector refuses.
+- Alerter notification deliveries are guarded at the dial, not before
+  it: `notifications/dial_guard.go` builds one
+  `hostvalidation.GuardedDialContext` (resolves the host itself and
+  dials only permitted IP literals) and uses it as the
+  `http.Transport.DialContext` of the client the webhook, Slack,
+  Mattermost and Telegram notifiers share, and as the email
+  notifier's SMTP dial on both the port-465 and STARTTLS paths. The
+  policy is `hostvalidation.CheckNotInternal` (`IsPrivateIP` plus the
+  always-blocked set), or `CheckAlwaysBlocked` when the alerter's
+  `notifications.allow_internal_networks` is set; the alerter has no
+  allow- or block-list, and does not read the server's
+  `connection_security`. Refusals are `ErrNoPermittedAddress`, which
+  names neither host nor address. The transport's `Proxy` is nil on
+  purpose (HTTP_PROXY is ignored), since through a proxy the guard
+  would only see the proxy's address; the shared client also never
+  follows redirects. A new outbound notification path must dial
+  through the same function. The server's test-send senders
+  (`api/webhook_test_sender.go`, `email_test_sender.go`) still check
+  only before dialling.
 - pgx reads `sslrootcert`, `sslcert` and `sslkey` while it parses a
   connection string (the CA file even under `sslmode=disable`), so
   stored SSL paths are a file-read primitive. The server and the

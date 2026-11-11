@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // These are the regression tests for the credential leak in issue #498.
@@ -62,7 +63,7 @@ func TestWebhookSenders_TransportErrorRedactsURL(t *testing.T) {
 		},
 		{
 			name:     "generic webhook",
-			notifier: NewWebhookNotifierAllowInternal(http.DefaultClient, &mockTemplateRenderer{}),
+			notifier: NewWebhookNotifier(http.DefaultClient, &mockTemplateRenderer{}),
 			channel:  &database.NotificationChannel{EndpointURL: strPtr(unroutableWebhookURL)},
 			wantText: "failed to send webhook",
 		},
@@ -100,7 +101,7 @@ func TestWebhookSenders_CreateRequestErrorRedactsURL(t *testing.T) {
 		},
 		{
 			name:     "generic webhook",
-			notifier: NewWebhookNotifierAllowInternal(http.DefaultClient, &mockTemplateRenderer{}),
+			notifier: NewWebhookNotifier(http.DefaultClient, &mockTemplateRenderer{}),
 			channel:  &database.NotificationChannel{EndpointURL: strPtr(malformed)},
 		},
 	}
@@ -125,13 +126,12 @@ func TestWebhookSenders_CreateRequestErrorRedactsURL(t *testing.T) {
 	}
 }
 
-// TestWebhookNotifier_SSRFBlockDoesNotEchoAParseFailure covers the
-// SSRF-protection branch. It wraps hostvalidation.ValidateURLHost,
-// which wraps url.Parse, and (*url.Error).Error renders the RAW input
-// string: not a parsed URL, so it may carry no scheme for the redactor
-// to anchor on, and it may carry a password in its userinfo. Nothing
-// borrowed from a parse failure may reach the error.
-func TestWebhookNotifier_SSRFBlockDoesNotEchoAParseFailure(t *testing.T) {
+// TestWebhookNotifier_ParseFailureIsNotEchoed covers a URL that
+// http.NewRequest cannot parse. (*url.Error).Error renders the RAW
+// input string: not a parsed URL, so it may carry no scheme for the
+// redactor to anchor on, and it may carry a password in its userinfo.
+// Nothing borrowed from a parse failure may reach the error.
+func TestWebhookNotifier_ParseFailureIsNotEchoed(t *testing.T) {
 	tests := []struct {
 		name        string
 		endpointURL string
@@ -163,10 +163,7 @@ func TestWebhookNotifier_SSRFBlockDoesNotEchoAParseFailure(t *testing.T) {
 
 			err := notifier.Send(context.Background(), channel, createTestPayload())
 			if err == nil {
-				t.Fatal("Send() expected the endpoint to be blocked")
-			}
-			if !strings.Contains(err.Error(), "SSRF protection") {
-				t.Errorf("Send() error = %q, want it to mention SSRF protection", err)
+				t.Fatal("Send() expected the endpoint to be refused")
 			}
 			if !strings.Contains(err.Error(), "malformed") {
 				t.Errorf("Send() error = %q, want it to report a malformed URL", err)
@@ -182,12 +179,12 @@ func TestWebhookNotifier_SSRFBlockDoesNotEchoAParseFailure(t *testing.T) {
 	}
 }
 
-// TestWebhookNotifier_SSRFBlockNamesTheHost is the other side of the
-// branch above: a URL that parses but resolves somewhere internal is
-// reported with the host, which is what the operator needs and is not
-// the credential.
-func TestWebhookNotifier_SSRFBlockNamesTheHost(t *testing.T) {
-	notifier := NewWebhookNotifier(http.DefaultClient, &mockTemplateRenderer{})
+// TestWebhookNotifier_SSRFBlockIsGeneric is the other side of the
+// test above: a URL that parses but whose host is internal is refused
+// by the delivery dialer with a fixed message that names neither the
+// address nor anything from the URL.
+func TestWebhookNotifier_SSRFBlockIsGeneric(t *testing.T) {
+	notifier := NewWebhookNotifier(testDeliveryClient(false, nil), &mockTemplateRenderer{})
 	channel := &database.NotificationChannel{
 		EndpointURL: strPtr("http://127.0.0.1" + webhookSecretPath),
 	}
@@ -196,8 +193,11 @@ func TestWebhookNotifier_SSRFBlockNamesTheHost(t *testing.T) {
 	if err == nil {
 		t.Fatal("Send() expected the endpoint to be blocked")
 	}
-	if !strings.Contains(err.Error(), "127.0.0.1") {
-		t.Errorf("Send() error = %q, want it to name the blocked host", err)
+	if !strings.Contains(err.Error(), hostvalidation.ErrNoPermittedAddress.Error()) {
+		t.Errorf("Send() error = %q, want the generic refusal", err)
+	}
+	if strings.Contains(err.Error(), "127.0.0.1") {
+		t.Errorf("Send() error = %q names the refused address", err)
 	}
 	assertNoWebhookURL(t, err.Error())
 }
@@ -230,7 +230,7 @@ func TestWebhookSenders_ResponseBodyIsSanitizedAndCapped(t *testing.T) {
 		},
 		{
 			name:     "generic webhook",
-			notifier: NewWebhookNotifierAllowInternal(server.Client(), &mockTemplateRenderer{}),
+			notifier: NewWebhookNotifier(server.Client(), &mockTemplateRenderer{}),
 			channel:  &database.NotificationChannel{EndpointURL: strPtr(server.URL)},
 		},
 	}
@@ -285,7 +285,7 @@ func TestWebhookSenders_SchemelessPathEchoIsRedacted(t *testing.T) {
 		},
 		{
 			name:     "generic webhook",
-			notifier: NewWebhookNotifierAllowInternal(server.Client(), &mockTemplateRenderer{}),
+			notifier: NewWebhookNotifier(server.Client(), &mockTemplateRenderer{}),
 			channel:  &database.NotificationChannel{EndpointURL: strPtr(secretURL)},
 		},
 	}

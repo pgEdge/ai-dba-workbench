@@ -11,43 +11,28 @@ package notifications
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
-	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // webhookNotifier implements Notifier for generic REST webhooks
 type webhookNotifier struct {
-	httpClient    *http.Client
-	renderer      TemplateRenderer
-	allowInternal bool
+	httpClient *http.Client
+	renderer   TemplateRenderer
 }
 
-// NewWebhookNotifier creates a new webhook notifier. The notifier blocks
-// requests to private/internal IP addresses by default to prevent SSRF
-// attacks. Use NewWebhookNotifierAllowInternal for testing against
-// localhost endpoints.
+// NewWebhookNotifier creates a new webhook notifier. It enforces no
+// address policy of its own: the manager gives it the shared delivery
+// client, whose dialer refuses internal addresses unless
+// notifications.allow_internal_networks is set.
 func NewWebhookNotifier(httpClient *http.Client, renderer TemplateRenderer) Notifier {
 	return &webhookNotifier{
 		httpClient: httpClient,
 		renderer:   renderer,
-	}
-}
-
-// NewWebhookNotifierAllowInternal creates a webhook notifier that permits
-// requests to internal network addresses. This should only be used in
-// test environments.
-func NewWebhookNotifierAllowInternal(httpClient *http.Client, renderer TemplateRenderer) Notifier {
-	return &webhookNotifier{
-		httpClient:    httpClient,
-		renderer:      renderer,
-		allowInternal: true,
 	}
 }
 
@@ -89,28 +74,11 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 
 	endpointURL := *channel.EndpointURL
 
-	// SSRF protection: validate that the endpoint URL does not resolve
-	// to a private or internal IP address.
-	if !n.allowInternal {
-		if err := hostvalidation.ValidateURLHost(endpointURL); err != nil {
-			var urlErr *url.Error
-			if errors.As(err, &urlErr) {
-				// (*url.Error).Error renders the RAW input string, not
-				// a parsed URL, so this text is the stored endpoint URL
-				// in whatever shape the operator saved it - possibly
-				// with no scheme for redactURLPath to anchor on, and
-				// possibly with a password in its userinfo. Nothing
-				// borrowed from it may be reported, and nothing useful
-				// would be: the operator learns only that the URL is
-				// malformed either way.
-				return fmt.Errorf("webhook endpoint blocked (SSRF protection): " +
-					"the endpoint URL is malformed")
-			}
-			// Every other failure names the host and nothing else.
-			return fmt.Errorf("webhook endpoint blocked (SSRF protection): %s",
-				sanitizeWebhookEcho(err.Error(), endpointURL))
-		}
-	}
+	// No host check here. The SSRF policy is applied by the dialer of
+	// the client this notifier is given (see dial_guard.go), to every
+	// address it actually connects to; a check made here would resolve
+	// the name separately and could be answered differently from the
+	// dial (DNS rebinding).
 
 	method := channel.HTTPMethod
 	if method == "" {

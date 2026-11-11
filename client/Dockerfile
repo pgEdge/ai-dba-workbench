@@ -7,17 +7,13 @@
 #
 #--------------------------------------------------------------------------
 
-# Stage 1: Build the React SPA. We pin to the Debian 13 (trixie)
-# variant rather than the default `node:22-slim` (Debian 12 /
-# bookworm) because bookworm currently ships gnutls28 versions
-# affected by CVE-2026-33845 and CVE-2026-33846; trixie carries
-# the patched package. A residual CVE remains in this image
-# (CVE-2026-33671 in `picomatch` < 4.0.4, which is bundled inside
-# npm itself); npm has not yet shipped a release that pulls in
-# the fixed picomatch, and the issue is not reachable from our
-# build pipeline. Revisit when npm cuts a new release or when we
-# can move to Node 24 LTS.
-FROM node:22-trixie-slim AS builder
+# Stage 1: Build the React SPA on Node 26 (Active LTS). We name the
+# Debian 13 (trixie) variant explicitly rather than relying on the
+# default tag, because Debian 12 (bookworm) ships gnutls28 versions
+# affected by CVE-2026-33845 and CVE-2026-33846; trixie carries the
+# patched package. The npm bundled with Node 26 (11.20.0) includes
+# picomatch 4.0.4, which fixes CVE-2026-33671.
+FROM node:26-trixie-slim AS builder
 
 WORKDIR /build/client
 

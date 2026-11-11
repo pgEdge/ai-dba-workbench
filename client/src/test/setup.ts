@@ -9,7 +9,10 @@
  */
 
 import { vi } from 'vitest';
-import '@testing-library/jest-dom';
+// Use the Vitest entry point: it registers the matchers with Vitest's
+// expect and augments Vitest's Assertion type. Under Vitest 5 the bare
+// '@testing-library/jest-dom' import leaves the matchers untyped.
+import '@testing-library/jest-dom/vitest';
 import { configure as configureDom } from '@testing-library/dom';
 import { act } from '@testing-library/react';
 

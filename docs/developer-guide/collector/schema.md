@@ -84,7 +84,13 @@ The table contains the following key columns:
 
 - `id` is the unique connection identifier.
 - `name` is the display name for the connection.
-- `host` and `hostaddr` specify the server location.
+- `host` and `hostaddr` specify the server location; `hostaddr` must
+  be a literal IP address, and the server applies the same allow and
+  block checks to `hostaddr` as to `host`.
+- `sslcert`, `sslkey` and `sslrootcert` store SSL file paths, which the
+  server only accepts inside the `connection_security.ssl_cert_dir`
+  directory; an `sslrootcert` of `system` selects the platform trust
+  store.
 - `port` is the PostgreSQL port, which defaults to
   5432.
 - `database_name` is the database to connect to.

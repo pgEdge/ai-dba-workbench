@@ -156,6 +156,89 @@ connection. See the
 [permission model](managing-users-and-permissions/permission_model.md)
 for the access rules.
 
+### Connection SSL Files
+
+Release 2.0.0 confines the SSL certificate, key and root certificate
+files of monitored connections to one directory, which the new
+`connection_security.ssl_cert_dir` server option names. The option is
+empty by default, and while the option is empty the server refuses
+every SSL file path except a root certificate value of `system`, which
+selects the platform trust store. The server refuses to connect with a
+stored connection that names an SSL file, and refuses with status 400 a
+request to create or update such a connection. An existing connection
+with SSL file paths therefore stops working on the server until you set
+the option and keep the connection's files inside the directory.
+
+The server applies the following rules to each path:
+
+- the path is absolute and contains no `..` element or control
+  character.
+- the path resolves, following symbolic links, to a location inside the
+  `ssl_cert_dir` directory.
+
+The server reads the option at start-up only, and refuses to start when
+the option holds a relative path. In the following example, the query
+lists the connections in the datastore that name an SSL file:
+
+```sql
+SELECT id, name, sslcert, sslkey, sslrootcert
+FROM connections
+WHERE (COALESCE(sslcert, '') <> ''
+       OR COALESCE(sslkey, '') <> ''
+       OR COALESCE(sslrootcert, '') NOT IN ('', 'system'));
+```
+
+Run the query before the upgrade; after the upgrade, add
+`AND deleted_at IS NULL` to leave out deleted connections. The server
+alone applies the directory rule; the collector still reads the stored
+paths, so keep each original file in place until the connection's
+paths point at the new copy.
+
+To keep these connections working, complete the following steps:
+
+1. Choose a directory that the account running the server can read,
+   such as `/etc/pgedge/ai-dba-workbench/certs`.
+2. Copy each listed file into the directory; a file that already lives
+   in the directory needs no change.
+3. Set `connection_security.ssl_cert_dir` to the absolute path of the
+   directory in the server's configuration file, or set the
+   `PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR` environment variable or the
+   `-connection-ssl-cert-dir` flag.
+4. After the upgrade, update the SSL paths of each connection whose
+   files you copied, in the web client or with
+   `PUT /api/v1/connections/{id}`, and only then remove the original
+   files.
+
+See [Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
+for the option.
+
+### Connection Host Addresses
+
+Release 2.0.0 checks the `hostaddr` of a monitored connection as
+strictly as the `host`. A request to create or update a connection
+must give a `hostaddr` that is a literal IPv4 or IPv6 address, and the
+server checks that address against the same blocklist, allowlist and
+internal network rules as the `host`. A `host` that contains `,`, `[`,
+`]`, `/`, `?`, `@`, `#`, `%` or whitespace is refused; a stored `host`
+may keep one enclosing pair of square brackets.
+
+The server and the collector also check each stored connection before
+connecting, and refuse a connection whose `host` contains one of those
+characters or whose `hostaddr` is not a literal IP address. Release
+1.0.0 of the collector sent `hostaddr` as an unsupported parameter and
+left out `host`, so the driver connected to its default host (`PGHOST`
+or the local socket); the 2.0.0 collector connects to `hostaddr` when
+one is set, as the server already did. Before you upgrade, check that
+the `hostaddr` of each connection is empty or the correct IP address of
+the `host`.
+
+An `allowed_hosts` entry that names a host does not cover the host's
+`hostaddr`, because the server checks the address on its own. When
+`allow_internal_networks` is `false`, a request to create or update a
+connection whose `hostaddr` is an internal address is refused, even if
+`allowed_hosts` names the `host`. Add the address, or a CIDR range that
+contains it, to `allowed_hosts`.
+
 ### MCP Tool Changes
 
 Release 2.0.0 changes two MCP tools in ways that break an integration
@@ -320,6 +403,9 @@ the following points in particular:
 - The `http.auth.max_failed_attempts_before_lockout` property, which
   now defaults to `10` when omitted.
 - The URL of each notification channel, which must not redirect.
+- The new `connection_security.ssl_cert_dir` property, which every
+  connection that names an SSL certificate, key or root certificate
+  file now needs; see [Connection SSL Files](#connection-ssl-files).
 
 ### Checking the Configuration with the New Server
 

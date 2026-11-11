@@ -47,6 +47,17 @@ manually alongside it.
   `TestExampleConfigsParse` in `alerter/src/internal/config/config_test.go`
   parses all three examples, so run it after editing them.
 
+- Server configuration keys, flags and environment variables are
+  documented in `docs/getting-started/configuration/server.md`
+  (reference) and in the example configs `examples/ai-dba-server.yaml`
+  (complete), `docker/config/ai-dba-server.yaml` and
+  `examples/walkthrough/config/ai-dba-server.yaml` (minimal). A change
+  that breaks a 1.0.0 installation also needs an entry under Breaking
+  Changes in `docs/admin-guide/upgrading-to-2.0.md`. Validation of
+  monitored connection fields (`host`, `hostaddr`, SSL paths) is
+  described in `docs/admin-guide/connections.md` and in the OpenAPI
+  field descriptions in `server/src/internal/api/openapi.go`.
+
 - Collector configuration keys are documented in
   `docs/getting-started/configuration/collector.md` (reference) and in the
   example configs `examples/ai-dba-collector.yaml` and

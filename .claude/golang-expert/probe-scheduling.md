@@ -152,3 +152,43 @@ sorted parameter map with `dbname` set to the connection's own
 database, so every pool derived from one connection shares a hash.
 Never hash `connstring.Build` output: it iterates a map, so its order
 is random and each reload would re-dial every pool.
+
+## Config reload: inherited rows and disabled probes
+
+`loadConfigs` runs at start-up and every five minutes, and it is the
+only place probe configuration changes reach the scheduler.
+
+- **Inherited rows follow their parent.** `EnsureProbeConfig`
+  materialises one `scope = 'server'` row per (connection, probe),
+  copied from the first parent that resolves (cluster, group, global,
+  then hardcoded defaults) with `user_modified = FALSE`. Each reload
+  first runs `probes.SyncInheritedProbeConfigs`, one set-based UPDATE
+  that copies the parent's `is_enabled`, interval and retention onto
+  every such row (issue #810). A row with `user_modified = TRUE` is an
+  explicit override and is never touched, so every writer of a
+  server, cluster or group row must set it: `UpsertProbeOverride` and
+  `UpdateProbeConfig` in `server/src/internal/database/config_queries.go`
+  do. Migration 32 marked server rows the API had edited before that
+  (`updated_at > created_at`).
+
+- **Disabled rows are loaded, not filtered.** `LoadProbeConfigs`
+  returns enabled and disabled rows; the garbage collector skips the
+  disabled ones itself. `loadConfigs` iterates every global probe
+  name, so a server override can enable a globally disabled probe,
+  and removes a probe from `probesByConn` when its resolved config is
+  disabled (issue #811).
+
+- **Goroutines stop on identity, not interval.** A scheduling
+  goroutine runs only whilst `isCurrentProbe` finds its own probe
+  instance registered, checked after the initial wait and on every
+  tick. Comparing intervals let a probe disabled and re-enabled at the
+  same interval between two ticks run in two goroutines at once.
+
+- **Readers of a probe's settings use the server row.** Anything
+  outside the collector that asks whether a probe is enabled or how
+  often it runs must read the connection's `scope = 'server'` row and
+  fall back to the global row, as the alerter's
+  `GetProbeStalenessByConnection` and `GetProbeStalenessContext` and
+  the server's `metrics.ResolveProbeInterval` do. Reading the global
+  row alone raises false staleness alerts for a probe disabled on one
+  server.

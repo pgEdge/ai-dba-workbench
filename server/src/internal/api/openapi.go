@@ -3489,7 +3489,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Put: &OpenAPIOperation{
 				Summary:     "Update probe configuration",
-				Description: "Updates a probe configuration. Requires manage_probes permission. A configuration scoped to a connection, cluster or group the caller cannot see answers 404, as a missing one does, before the request body is read.",
+				Description: "Updates a probe configuration. Requires manage_probes permission. A configuration scoped to a connection, cluster or group the caller cannot see answers 404, as a missing one does, before the request body is read. Changing a configuration scoped to a connection, cluster or group marks it as an explicit override, which the collector no longer brings in step with the parent defaults.",
 				OperationID: "updateProbeConfig",
 				Tags:        []string{"Probe Configuration"},
 				Security:    bearerAuth,

@@ -199,8 +199,20 @@ level appear dimmed to indicate the setting is
 inherited.
 
 When a new monitored connection is added, the Collector
-automatically creates probe configurations based on
-the global defaults.
+automatically creates a server-level probe
+configuration for each probe, copied from the first
+level that resolves. Until a user overrides it, that
+copy follows its parent: on each configuration reload
+the Collector updates it to match any change made in
+Probe Defaults or to a cluster or group override. A
+row whose `user_modified` column is `TRUE` is an
+explicit override, and the Collector leaves it alone;
+the Probe Configuration tab and the
+`PUT /api/v1/probe-configs/{id}` endpoint both set
+this column when they change a server, cluster, or
+group setting. To return a server to the inherited
+settings, remove its override in the Probe
+Configuration tab.
 
 ## Automatic Configuration Reload
 
@@ -223,11 +235,15 @@ WHERE name = 'pg_stat_activity'
 ```
 
 In the following example, the query overrides the
-interval for a specific connection:
+interval for a specific connection; setting
+`user_modified` marks the row as an override, so the
+Collector does not copy the global default back over
+it:
 
 ```sql
 UPDATE probe_configs
-SET collection_interval_seconds = 30
+SET collection_interval_seconds = 30,
+    user_modified = TRUE
 WHERE name = 'pg_stat_activity'
   AND connection_id = 1;
 ```
@@ -266,7 +282,8 @@ retention for a specific connection:
 
 ```sql
 UPDATE probe_configs
-SET retention_days = 60
+SET retention_days = 60,
+    user_modified = TRUE
 WHERE name = 'pg_stat_activity'
   AND connection_id = 3;
 ```
@@ -298,13 +315,16 @@ for a specific connection only:
 
 ```sql
 UPDATE probe_configs
-SET is_enabled = FALSE
+SET is_enabled = FALSE,
+    user_modified = TRUE
 WHERE name = 'pg_stat_statements'
   AND connection_id = 2;
 ```
 
 Changes take effect within 5 minutes through the
-automatic configuration reload.
+automatic configuration reload; the Collector stops a
+disabled probe at its next scheduled run and starts it
+again once the probe is re-enabled.
 
 ## Collection Frequency Guidelines
 

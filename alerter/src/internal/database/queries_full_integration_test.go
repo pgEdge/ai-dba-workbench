@@ -1097,6 +1097,132 @@ func TestGetProbeStalenessContextIgnoresScopeOverrides(t *testing.T) {
 	}
 }
 
+// seedServerProbeConfig gives one connection a server-scope row for
+// probe, as the collector creates on first monitoring it.
+func seedServerProbeConfig(t *testing.T, pool *pgxpool.Pool, probe string,
+	connID, interval int, enabled bool) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO probe_configs
+			(name, collection_interval_seconds, is_enabled, scope, connection_id)
+		VALUES ($1, $2, $3, 'server', $4)
+	`, probe, interval, enabled, connID); err != nil {
+		t.Fatalf("failed to seed server probe config: %v", err)
+	}
+}
+
+// TestGetProbeStalenessByConnectionUsesServerRow pins that the staleness
+// view reads whether a probe is enabled, and its interval, from the
+// connection's server-scope row, which is what the collector runs from,
+// and falls back to the global row for a connection without one. See
+// GitHub issues #810 and #811.
+func TestGetProbeStalenessByConnectionUsesServerRow(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("server row disables a globally enabled probe", func(t *testing.T) {
+		ds, pool, cleanup := newFullTestDatastore(t)
+		defer cleanup()
+
+		disabled := seedProbeStalenessRow(t, pool, "server-disabled", 60)
+		seedServerProbeConfig(t, pool, "probe_x", disabled, 60, false)
+		inherited := insertTestConnection(t, pool, "server-inherited")
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO probe_availability (connection_id, probe_name, is_available, last_collected)
+			VALUES ($1, 'probe_x', TRUE, NOW() - INTERVAL '120 seconds')
+		`, inherited); err != nil {
+			t.Fatal(err)
+		}
+
+		results, err := ds.GetProbeStalenessByConnection(ctx)
+		if err != nil {
+			t.Fatalf("GetProbeStalenessByConnection: %v", err)
+		}
+		if len(results) != 1 || results[0].ConnectionID != inherited {
+			t.Fatalf("results = %+v, want only connection %d; the probe "+
+				"disabled on connection %d must not be reported",
+				results, inherited, disabled)
+		}
+	})
+
+	t.Run("server row enables a globally disabled probe", func(t *testing.T) {
+		ds, pool, cleanup := newFullTestDatastore(t)
+		defer cleanup()
+
+		connID := seedProbeStalenessRow(t, pool, "server-enabled", 60)
+		if _, err := pool.Exec(ctx,
+			`UPDATE probe_configs SET is_enabled = FALSE WHERE scope = 'global'`); err != nil {
+			t.Fatal(err)
+		}
+		seedServerProbeConfig(t, pool, "probe_x", connID, 60, true)
+
+		results, err := ds.GetProbeStalenessByConnection(ctx)
+		if err != nil {
+			t.Fatalf("GetProbeStalenessByConnection: %v", err)
+		}
+		if len(results) != 1 || results[0].ConnectionID != connID {
+			t.Fatalf("results = %+v, want connection %d, whose server "+
+				"row enables the probe", results, connID)
+		}
+	})
+
+	t.Run("server row supplies the interval", func(t *testing.T) {
+		ds, pool, cleanup := newFullTestDatastore(t)
+		defer cleanup()
+
+		connID := seedProbeStalenessRow(t, pool, "server-interval", 60)
+		seedServerProbeConfig(t, pool, "probe_x", connID, 240, true)
+
+		results, err := ds.GetProbeStalenessByConnection(ctx)
+		if err != nil {
+			t.Fatalf("GetProbeStalenessByConnection: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("results = %d, want 1", len(results))
+		}
+		if results[0].CollectionInterval != 240 {
+			t.Errorf("collection interval = %d, want the server row's 240",
+				results[0].CollectionInterval)
+		}
+		if results[0].StalenessRatio > 1 {
+			t.Errorf("ratio = %v, want about 0.5 against the server interval",
+				results[0].StalenessRatio)
+		}
+	})
+}
+
+// TestGetProbeStalenessContextUsesServerRow is the same check for the
+// single-probe lookup's interval. See GitHub issue #810.
+func TestGetProbeStalenessContextUsesServerRow(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "server-context-conn")
+	other := insertTestConnection(t, pool, "global-context-conn")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO probe_configs (name, collection_interval_seconds, is_enabled, connection_id)
+		VALUES ('probe_ctx', 90, TRUE, NULL)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	seedServerProbeConfig(t, pool, "probe_ctx", connID, 600, true)
+
+	for _, tc := range []struct {
+		connID int
+		want   int
+	}{{connID, 600}, {other, 90}} {
+		_, interval, found, err := ds.GetProbeStalenessContext(ctx, tc.connID, "probe_ctx")
+		if err != nil || !found {
+			t.Fatalf("GetProbeStalenessContext(%d) found = %v, err = %v",
+				tc.connID, found, err)
+		}
+		if interval != tc.want {
+			t.Errorf("GetProbeStalenessContext(%d) interval = %d, want %d",
+				tc.connID, interval, tc.want)
+		}
+	}
+}
+
 // TestGetProbeStalenessByConnectionReportsUnavailableProbes covers the
 // change issue #465 made to the query: an unavailable probe stays in the
 // result set, carrying its flag and reason, so the alert cleaner can tell

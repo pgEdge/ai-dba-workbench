@@ -109,8 +109,14 @@ on PostgreSQL releases before 14 and on servers where
 `compute_query_id` is off.
 
 The execution time and call count charts cover only the
-selected query, so the values reconcile with the tiles
-above.
+selected query in the database the view was opened for,
+which is the same database the tiles above cover. A
+statement that also runs in other databases, such as
+`BEGIN`, does not add their calls to the charts. The
+execution time chart averages the mean execution time
+recorded at each collection, whilst the Mean Time tile
+divides the total execution time in the window by the
+calls in the window, so the two can differ slightly.
 
 ## Query Plan
 

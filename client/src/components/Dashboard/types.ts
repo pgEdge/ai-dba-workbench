@@ -220,6 +220,14 @@ export interface MetricQueryParams {
      * represent exactly.
      */
     queryId?: string;
+    /**
+     * Restricts pg_stat_statements rows to the statements of this
+     * database, sent as statement_database_name. databaseName cannot do
+     * this on that probe, since there it names the database the
+     * statistics were collected through. The server accepts it only
+     * for pg_stat_statements on a single connection.
+     */
+    statementDatabaseName?: string;
     timeRange: TimeRange;
     buckets?: number;
     aggregation?: 'avg' | 'sum' | 'min' | 'max' | 'last';

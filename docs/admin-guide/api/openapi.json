@@ -6855,6 +6855,14 @@
             }
           },
           {
+            "name": "statement_database_name",
+            "in": "query",
+            "description": "pg_stat_statements only, with exactly one connection: keep the rows of statements that ran in this database. database_name on that probe names the database the statistics were collected through, which carries every database's statements, so this is the filter that matches a Top Queries row. A statement whose database ID no longer resolves to a name is attributed to the database it was collected through, as Top Queries does",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "buckets",
             "in": "query",
             "description": "Number of time buckets, 1 to 500 (default 150). The count is clamped so that no bucket is narrower than the probe's collection interval; a one-hour window on a five-minute probe therefore yields at most 12 buckets however many are requested.",
@@ -7047,7 +7055,7 @@
     "/metrics/top-queries": {
       "get": {
         "summary": "Get top queries",
-        "description": "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. A statement with no executions in the window is not reported. The query text is cut to 65,536 characters, and passwords in known forms in it are masked as ******** on a best-effort basis; a password in another form is returned as stored",
+        "description": "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. Each row covers one statement in one database: a statement run in several databases, such as BEGIN, is reported once for each database, with that database's figures only, and the database_name filter selects one of those rows. A statement with no executions in the window is not reported. The query text is cut to 65,536 characters, and passwords in known forms in it are masked as ******** on a best-effort basis; a password in another form is returned as stored",
         "operationId": "getTopQueries",
         "tags": [
           "Metrics"

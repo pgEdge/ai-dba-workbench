@@ -261,6 +261,15 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             queryid: objectName,
             limit: '1',
         });
+        /*
+         * The top-queries endpoint reports a statement once per
+         * database it ran in, so the request names the database the
+         * overlay was opened for; without it, the single row returned
+         * would be whichever database's figures sort first.
+         */
+        if (databaseName) {
+            params.set('database_name', databaseName);
+        }
         appendTimeRangeParams(params, selectedWindow);
 
         const url = `/api/v1/metrics/top-queries?${params.toString()}`;
@@ -313,7 +322,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             }
         }
     }, [
-        user, connectionId, objectName,
+        user, connectionId, databaseName, objectName,
         selectedRange, customStart, customEnd,
     ]);
 
@@ -337,6 +346,10 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     // which are keyed by the database the statistics were collected
     // through rather than by the statement's own database, so they
     // filter on the former whenever the server reports it.
+    // Every probing database carries every database's counters for the
+    // statement, so the charts also name the statement's own database,
+    // the one the summary above them is scoped to; without it they would
+    // add up the statement's runs in every database.
     const chartDatabaseName =
         queryData?.sample_database_name || databaseName;
 
@@ -348,6 +361,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 probeName: 'pg_stat_statements',
                 connectionId,
                 databaseName: chartDatabaseName,
+                statementDatabaseName: databaseName,
                 queryId: queryData.queryid,
                 timeRange: timeRange.range,
                 buckets: CHART_BUCKETS,
@@ -360,8 +374,8 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             };
         },
         [
-            connectionId, chartDatabaseName, timeRange.range,
-            queryData?.queryid,
+            connectionId, chartDatabaseName, databaseName,
+            timeRange.range, queryData?.queryid,
         ]
     );
 
@@ -373,6 +387,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 probeName: 'pg_stat_statements',
                 connectionId,
                 databaseName: chartDatabaseName,
+                statementDatabaseName: databaseName,
                 queryId: queryData.queryid,
                 timeRange: timeRange.range,
                 buckets: CHART_BUCKETS,
@@ -381,8 +396,8 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             };
         },
         [
-            connectionId, chartDatabaseName, timeRange.range,
-            queryData?.queryid,
+            connectionId, chartDatabaseName, databaseName,
+            timeRange.range, queryData?.queryid,
         ]
     );
 

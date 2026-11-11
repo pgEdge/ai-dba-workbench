@@ -331,6 +331,27 @@ describe('QueryDetail', () => {
                 await waitFor(() => {
                     expect(mockApiFetch).toHaveBeenCalledWith(
                         '/api/v1/metrics/top-queries?connection_id=4'
+                        + `&queryid=${QUERY_ID}&limit=1`
+                        + '&database_name=testdb&time_range=1h',
+                    );
+                });
+            });
+
+        it('omits the database filter when the overlay names none',
+            async () => {
+                render(
+                    <ThemeProvider theme={theme}>
+                        <QueryDetail
+                            connectionId={4}
+                            databaseName=""
+                            objectName={QUERY_ID}
+                        />
+                    </ThemeProvider>,
+                );
+
+                await waitFor(() => {
+                    expect(mockApiFetch).toHaveBeenCalledWith(
+                        '/api/v1/metrics/top-queries?connection_id=4'
                         + `&queryid=${QUERY_ID}&limit=1&time_range=1h`,
                     );
                 });
@@ -519,6 +540,21 @@ describe('QueryDetail', () => {
             });
             expect(paramsFor('calls_per_sec')?.databaseName)
                 .toBe('alpha');
+        });
+
+        it('limits both charts to the statement\'s own database, as the '
+            + 'summary is', async () => {
+            mockApiFetch.mockResolvedValue(okResponse([
+                makeQueryRow({ sample_database_name: 'alpha' }),
+            ]));
+            renderDetail();
+
+            await waitFor(() => {
+                expect(paramsFor(EXEC_KEY)?.statementDatabaseName)
+                    .toBe('testdb');
+            });
+            expect(paramsFor('calls_per_sec')?.statementDatabaseName)
+                .toBe('testdb');
         });
 
         it('draws the call rate as a smooth line', async () => {

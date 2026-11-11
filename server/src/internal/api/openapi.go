@@ -3889,6 +3889,17 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("index_name", "Filter by index name"),
 					queryParamString("mount_point", "Filter by filesystem mount point"),
 					queryParamString("queryid", "Filter by pg_stat_statements query ID"),
+					queryParamString("statement_database_name",
+						"pg_stat_statements only, with exactly one "+
+							"connection: keep the rows of statements that "+
+							"ran in this database. database_name on that "+
+							"probe names the database the statistics were "+
+							"collected through, which carries every "+
+							"database's statements, so this is the filter "+
+							"that matches a Top Queries row. A statement "+
+							"whose database ID no longer resolves to a name "+
+							"is attributed to the database it was collected "+
+							"through, as Top Queries does"),
 					queryParamInt("buckets", "Number of time buckets, "+
 						"1 to 500 (default 150). The count is clamped so "+
 						"that no bucket is narrower than the probe's "+
@@ -4054,7 +4065,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/top-queries": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get top queries",
-				Description: "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. A statement with no executions in the window is not reported. The query text is cut to 65,536 characters, and passwords in known forms in it are masked as ******** on a best-effort basis; a password in another form is returned as stored",
+				Description: "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. Each row covers one statement in one database: a statement run in several databases, such as BEGIN, is reported once for each database, with that database's figures only, and the database_name filter selects one of those rows. A statement with no executions in the window is not reported. The query text is cut to 65,536 characters, and passwords in known forms in it are masked as ******** on a best-effort basis; a password in another form is returned as stored",
 				OperationID: "getTopQueries",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,

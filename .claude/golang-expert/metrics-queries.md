@@ -1026,10 +1026,11 @@ clause from the same `MetricFilters` value and needs the clause adding
 there too, or the filter scopes the chart but not the KPI tile behind it.
 
 Two ordering rules govern `metricQueryClauses`. Every clause increments
-`argNum` except the last one, and the `QueryID` clause is deliberately
-last and deliberately omits the increment, with a comment saying so; a new
-filter therefore goes above it and carries its own `argNum++`, leaving
-that comment attached to whichever clause is genuinely last. And the
+`argNum` except the last one, and the `StatementDatabase` clause (three
+values, below) is deliberately last and deliberately omits the increment,
+with a comment saying so; a new filter therefore goes above it and
+carries its own `argNum++`, leaving that comment attached to whichever
+clause is genuinely last. And the
 dimension filters apply no probe-column-existence check: `SchemaName`,
 `TableName`, `IndexName` and `MountPoint` (issue #428, `mount_point`, so
 the Disk Space chart can scope to one real filesystem rather than
@@ -2327,6 +2328,27 @@ integer. The value is bound uncast as `queryid = $N`, never through a
 `queryid::text` cast. Responses still carry the identifier as a decimal
 string, because JavaScript cannot represent it exactly.
 
+`/metrics/query` also takes `statement_database_name` (PR #825, the
+follow-up to #802), so the query detail charts count only the statement's
+runs in the row's own database, as the summary tiles do. `database_name`
+cannot do this on pg_stat_statements, since every probing database carries
+every database's counters. `applyStatementDatabaseFilter` in
+`metrics_statement_database.go` validates the name with
+`database.ValidateDatabaseName`, refuses any other probe and more than one
+connection with `400`, and resolves the name through
+`statementDatabaseLookupSQL` (the Top Queries lookup) into
+`MetricFilters.StatementDatabase`: the dbids with that name, plus every
+resolved dbid. `statementDatabaseClause` then matches
+`dbid::bigint = ANY(<named>) OR (NOT dbid::bigint = ANY(<resolved>) AND
+database_name = $n)`, which is the Top Queries row key
+`COALESCE(db_names.datname, database_name)` without a join. The lists are
+bound as comma-separated text through `BigIntArrayExpr` and `Int64ListArg`
+(the bigint siblings of `IntArrayExpr`/`IntListArg`), never as an array
+parameter, for ColdFront; an empty list makes the `ANY` false, so an
+unknown name still matches rows collected through a database of that
+name. The handler test seeds a probe_configs row because the time-series
+path resolves the probe interval, and drops the table it created.
+
 Whether the `(connection_id, database_name, queryid, collected_at)`
 object index actually serves a queryid lookup depends on the predicate
 also naming `database_name`, the index's second column. Before
@@ -2406,24 +2428,37 @@ probing name as `sample_database_name`; `deltas` `LAG`s over
 `(queryid, userid, dbid, toplevel)`, `samples` applies the optional
 database filter, `totals` drops the pairs whose
 call or time delta is negative, floors the row and block deltas at
-zero, sums per `queryid` and keeps only statements with calls in the
-window, `latest_sample` supplies the OIDs, the probing name and the
-two lifetime columns `min_exec_time` and `max_exec_time`, which cannot
-be differenced, preferring a sample with calls in its interval so an
-idle `dbid` never labels the row (`TestTopQueries_LabelSkipsIdleIdentity`),
-and `deduped` resolves `database_name` from `dbid` through `db_names`. `mean_exec_time` is derived as
+zero, sums per `(queryid, database_name)`, the name being `dbid`
+resolved through `db_names` with the probing name as the fallback, and
+keeps only rows with calls in the window; `latest_sample` supplies, per
+the same pair, the OIDs, the probing name and the two lifetime columns
+`min_exec_time` and `max_exec_time`, which cannot be differenced,
+preferring a sample with calls in its interval so an idle identity never
+describes the row (`TestTopQueries_LabelSkipsIdleIdentity`).
+`mean_exec_time` is derived as
 `SUM(delta_time) / SUM(delta_calls)`. A statement present in the
 snapshot but not executed in the window therefore does not appear at
 all, which is a deliberate behaviour change from the pre-#387 endpoint.
+
+The list therefore has one row per statement **per database** (#802):
+`BEGIN` shares a `queryid` across databases, and grouping on `queryid`
+alone summed every database's calls onto one row labelled with one of
+them. The group is the resolved name, not the `dbid`, so a row's
+identity is the `(queryid, database_name)` pair the drill-down filters
+on, and an unresolved `dbid` whose fallback names a real database shares
+that database's row, as `/metrics/query-stats` sums it
+(`perf_summary_top_queries_per_database_test.go`). The page `ORDER BY`
+tiebreaker is `queryid, database_name`, and the client keys rows and
+requests the drill-down (`QueryDetail`) by the same pair.
 
 Two consequences follow, each pinned by a test. Partitioning on
 `database_name` as well would count every call once per database with
 the extension (`TestTopQueries_OneCounterStoredUnderSeveralDatabases`,
 which stores one counter under two names and expects it summed once);
 and the database filter has to select which counters are summed rather
-than filter the summed row, because `totals` sums every `dbid` of a
-`queryid` (`TestTopQueries_DatabaseFilterSumsOneDatabase`, 1,200 calls
-in one database and 12 in another). `queryStatsSQLTemplate` has the
+than filter the summed row (`TestTopQueries_DatabaseFilterSumsOneDatabase`,
+1,200 calls in one database and 12 in another, which unfiltered come
+back as two rows). `queryStatsSQLTemplate` has the
 same `readings` shape for its single `queryid`, and its identity is
 `(userid, dbid, toplevel)` too.
 
@@ -2465,7 +2500,9 @@ aggregation: its `UNION ALL` estimates about 200 rows, and the join
 turns the index-only scan on `idx_pg_stat_statements_identity_time` into
 a hash join over a sequential scan with a large external sort (PR #554).
 Test `dbid` against `db_names` with `IN`/`NOT IN` subqueries instead,
-join it only in `deduped` (once per statement), and keep the
+join it only in `totals` and `latest_sample`, which read `samples` after
+it is materialized (declared `MATERIALIZED` so the join can never be
+pulled down into the scan), and keep the
 `ORDER BY d.queryid` in `samples`, which lets `latest_sample` use an
 incremental sort. `/metrics/query-stats` resolves and filters the same
 way as the list, so it finds a statement by the name the list reported.

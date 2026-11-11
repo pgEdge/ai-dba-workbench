@@ -5,6 +5,9 @@
         "lib": ["ES2020", "DOM", "DOM.Iterable"],
         "module": "ESNext",
         "skipLibCheck": true,
+        // TypeScript 6 no longer loads every @types package by
+        // default; the tests use Node globals such as `global`.
+        "types": ["node"],
 
         /* Bundler mode */
         "moduleResolution": "bundler",

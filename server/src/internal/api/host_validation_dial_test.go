@@ -109,7 +109,11 @@ func TestOpenQueryPool_DialGuard(t *testing.T) {
 		t.Errorf("strict guard: ping err = %v, want ErrNoPermittedAddress", err)
 	}
 
-	if _, err := openQueryPool(ctx, "postgres://u@h:notaport/x", "test", guard); err == nil {
-		t.Error("expected a parse error")
+	_, err = openQueryPool(ctx, "postgres://u:s3cret@h:notaport/x", "test", guard)
+	if !errors.Is(err, database.ErrInvalidConnectionString) {
+		t.Errorf("parse failure: err = %v, want ErrInvalidConnectionString", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("parse error %q carries the password", err)
 	}
 }

@@ -1489,7 +1489,11 @@ func (h *ConnectionHandler) validateQuery(w http.ResponseWriter, r *http.Request
 func openQueryPool(ctx context.Context, connStr, appName string, guard database.DialGuard) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
-		return nil, fmt.Errorf("parse connection string: %w", err)
+		// pgx's parse error quotes the connection string (with the
+		// password masked only on a best-effort basis) and can name SSL
+		// file paths, and the callers log what this returns, so report
+		// the fixed sentinel instead.
+		return nil, fmt.Errorf("parse connection string: %w", database.ErrInvalidConnectionString)
 	}
 	if guard == nil {
 		guard = (*database.Datastore)(nil).GuardMonitoredConnConfig

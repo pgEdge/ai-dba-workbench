@@ -45,6 +45,11 @@ func (d *Datastore) SSLCertDir() string {
 // connection at connect time, so a row written before the API checked
 // these paths, or by any other route, cannot make the server read a file
 // outside the directory.
+//
+// The check assumes that ssl_cert_dir and everything in it are writable
+// only by root or the server's service account: the path is resolved
+// here and opened later by pgx, so anyone who could replace a link or
+// file in the directory between the two could still point pgx elsewhere.
 func (d *Datastore) checkStoredSSLPaths(conn *MonitoredConnection) error {
 	stored := func(v sql.NullString) *string {
 		if v.Valid && v.String != "" {

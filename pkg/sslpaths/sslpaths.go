@@ -67,6 +67,12 @@ func (e *SSLFilePathError) Error() string {
 //
 // An empty path is always accepted, since it names no file. Any other
 // path is refused with ErrSSLCertDirUnset when baseDir is empty.
+//
+// The check assumes that baseDir and everything in it are writable only
+// by root or the calling process's service account. The path is resolved
+// here but opened later by pgx, so anyone who could replace a symbolic
+// link or file inside baseDir between the two steps could still point
+// pgx at a file outside it; the check does not defend against that.
 func ValidateSSLFilePath(baseDir, p string) error {
 	if p == "" {
 		return nil

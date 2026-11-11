@@ -298,6 +298,10 @@ func (c *Client) LoadMetadata() error {
 	return c.LoadMetadataFor(connStr)
 }
 
+// errClientConnectionNotFound reports that a Client holds no pool for
+// the requested connection string; it deliberately does not name it.
+var errClientConnectionNotFound = errors.New("connection not found")
+
 // LoadMetadataFor loads table and column metadata for a specific connection
 func (c *Client) LoadMetadataFor(connStr string) error {
 	startTime := time.Now()
@@ -307,7 +311,9 @@ func (c *Client) LoadMetadataFor(connStr string) error {
 	c.mu.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("connection not found: %s", connStr)
+		// The connection string carries the password, so it must not
+		// appear in an error that can reach a caller or a log.
+		return errClientConnectionNotFound
 	}
 
 	ctx := context.Background()

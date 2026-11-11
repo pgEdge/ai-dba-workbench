@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -139,10 +140,24 @@ func LogMetadataDetails(connStr string, schemaCount, tableCount, columnCount int
 		sanitized, schemaCount, tableCount, columnCount)
 }
 
+// passwordParamPattern matches a password or sslpassword parameter in a
+// URI query string or a keyword/value connection string, with its value
+// (quoted or not) in the second group.
+var passwordParamPattern = regexp.MustCompile(
+	`(?i)((?:^|[\s?&])(?:ssl)?password\s*=\s*)('(?:[^'\\]|\\.)*'|[^\s&]*)`)
+
 // SanitizeConnStr sanitizes a PostgreSQL connection string by replacing the
 // password with "***". This should be used when displaying connection strings
-// to users or in error messages.
+// to users or in error messages. It masks the userinfo password of a URI and
+// any password or sslpassword parameter, in either the URI query or the
+// keyword/value form.
 func SanitizeConnStr(connStr string) string {
+	return passwordParamPattern.ReplaceAllString(maskURIUserinfo(connStr), "${1}***")
+}
+
+// maskURIUserinfo replaces the password in a URI's userinfo with "***",
+// returning any other string unchanged.
+func maskURIUserinfo(connStr string) string {
 	// Handle postgres://user:password@host:port/database?params format
 	// Find the scheme (postgres://)
 	schemeIdx := strings.Index(connStr, "://")

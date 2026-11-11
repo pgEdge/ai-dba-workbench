@@ -283,6 +283,36 @@ func TestSanitizeConnStr(t *testing.T) {
 			input:    "postgres://user:p@ssw0rd!123@localhost:5432/mydb",
 			expected: "postgres://user:***@localhost:5432/mydb",
 		},
+		{
+			name:     "password in URI query",
+			input:    "postgres://user@localhost/mydb?sslmode=require&password=s3cret&connect_timeout=5",
+			expected: "postgres://user@localhost/mydb?sslmode=require&password=***&connect_timeout=5",
+		},
+		{
+			name:     "sslpassword in URI query",
+			input:    "postgres://user:pw@localhost/mydb?sslpassword=keypass",
+			expected: "postgres://user:***@localhost/mydb?sslpassword=***",
+		},
+		{
+			name:     "keyword/value form",
+			input:    "host=localhost user=app password=s3cret dbname=mydb",
+			expected: "host=localhost user=app password=*** dbname=mydb",
+		},
+		{
+			name:     "keyword/value form, quoted value with spaces",
+			input:    "password = 'a b\\'c' host=localhost",
+			expected: "password = *** host=localhost",
+		},
+		{
+			name:     "keyword/value form, leading and mixed case",
+			input:    "PASSWORD=s3cret host=localhost",
+			expected: "PASSWORD=*** host=localhost",
+		},
+		{
+			name:     "keyword/value form without a password",
+			input:    "host=localhost user=app dbname=mydb",
+			expected: "host=localhost user=app dbname=mydb",
+		},
 	}
 
 	for _, tt := range tests {

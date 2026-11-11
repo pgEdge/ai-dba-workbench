@@ -123,6 +123,12 @@ moved.
   `createMonitoredPool` returns `ErrInvalidMonitoredConnString` (its
   error lands in `connection_error`, which the API shows); both log the
   detail through `describeParseConfigError`, which drops the string.
+  The API's `openQueryPool` and `Datastore.ListDatabases` also return
+  `ErrInvalidConnectionString`. No error may format a raw connection
+  string: `Client.LoadMetadataFor` returns a fixed "connection not
+  found", and anything shown or logged goes through `SanitizeConnStr`,
+  which masks the userinfo password and any `password` or
+  `sslpassword` parameter in URI or keyword/value form.
 - Monitored-database credentials are encrypted at rest with a
   server-side secret and only decrypted in the collector when a pool
   is opened.

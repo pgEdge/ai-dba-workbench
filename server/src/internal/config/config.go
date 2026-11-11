@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/pkg/llmsettings"
 	"gopkg.in/yaml.v3"
@@ -516,27 +517,32 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 	// When no password is resolved, emit the username only (no ':' and
 	// no empty password component) so pgx can still fall back to .pgpass,
 	// preserving the previous behavior.
-	var userinfo string
+	userinfo := url.User(cfg.User)
 	if password := cfg.EffectivePassword(); password != "" {
-		userinfo = url.UserPassword(cfg.User, password).String()
-	} else {
-		userinfo = url.User(cfg.User).String()
+		userinfo = url.UserPassword(cfg.User, password)
 	}
 
-	connStr := fmt.Sprintf("postgres://%s", userinfo)
-
-	// Percent-encode the database name: pgx (since v5.12) parses URIs as
-	// libpq does, rejecting an interior space and reading '?' as the
-	// start of the query string, whereas it decodes every %XX escape in
-	// the path back to the original character.
-	connStr += fmt.Sprintf("@%s:%d/%s", cfg.Host, cfg.Port, url.PathEscape(cfg.Database))
-
-	// Add SSL mode
+	// url.URL escapes every component for its position: the path keeps
+	// a database name's '?', '#', '%' and spaces inside the path, and pgx
+	// (since v5.12) strips exactly one leading '/' and decodes every %XX
+	// escape, so the name arrives unchanged. JoinHostPort brackets an
+	// IPv6 address, so its colons cannot be read as a port separator.
+	host := cfg.Host
+	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
+		host = host[1 : len(host)-1]
+	}
+	u := url.URL{
+		Scheme: "postgres",
+		User:   userinfo,
+		Host:   net.JoinHostPort(host, strconv.Itoa(cfg.Port)),
+		Path:   "/" + cfg.Database,
+	}
 	if cfg.SSLMode != "" {
-		connStr += "?sslmode=" + cfg.SSLMode
+		// Encoded as a value, so that '&' or '=' cannot add parameters.
+		u.RawQuery = connstring.EncodeURIQuery(url.Values{"sslmode": {cfg.SSLMode}})
 	}
 
-	return connStr
+	return u.String()
 }
 
 // LoadPassword resolves the database password from PasswordFile when

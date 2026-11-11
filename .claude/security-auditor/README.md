@@ -51,6 +51,12 @@ moved.
   its URI decoder, and any NUL in `StartupMessage.Encode`), but earlier
   releases did not, so the validator must not be dropped on the
   strength of the driver.
+- Both URI builders (`Datastore.BuildConnectionString` and the server's
+  own `config.DatabaseConfig.BuildConnectionString`) encode query values
+  with `connstring.EncodeURIQuery` (`pkg/connstring/uri.go`), because
+  libpq and pgx read '+' as a literal plus. `addApplicationName` appends
+  to the raw query and must never round-trip it through `url.Values`,
+  which would turn '+' into a space in values such as `sslrootcert`.
 - Monitored-connection targets are SSRF-sensitive. The REST create and
   update handlers (`validateConnectionTarget` in
   `api/connection_handlers.go`) are the only writers of `host` and

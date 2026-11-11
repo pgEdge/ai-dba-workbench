@@ -20,10 +20,10 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 
 	"github.com/jackc/pgx/v5"
@@ -235,36 +235,31 @@ func describeParseConfigError(err error) string {
 	return err.Error()
 }
 
-// addApplicationName adds application_name parameter to a PostgreSQL connection string
+// addApplicationName adds an application_name parameter to a
+// PostgreSQL connection URI unless it already carries one. The new
+// parameter is appended to the raw query instead of decoding and
+// re-encoding the whole query: url.Values decodes '+' as a space,
+// whereas libpq and pgx read it as a literal plus, so a round trip
+// would silently rewrite a value such as sslrootcert=/a+b.crt. The
+// caller must not pass the error on, since url.Parse quotes its input.
 func addApplicationName(connStr, appName string) (string, error) {
-	// Parse the connection string
 	u, err := url.Parse(connStr)
 	if err != nil {
 		return "", fmt.Errorf("invalid connection string: %w", err)
 	}
 
-	// Get existing query parameters
-	query := u.Query()
+	if u.Query().Has("application_name") {
+		return connStr, nil
+	}
 
-	// Add application_name if not already present
-	if !query.Has("application_name") {
-		query.Set("application_name", appName)
-		u.RawQuery = encodeConnQuery(query)
+	param := connstring.EncodeURIQuery(url.Values{"application_name": {appName}})
+	if u.RawQuery == "" {
+		u.RawQuery = param
+	} else {
+		u.RawQuery += "&" + param
 	}
 
 	return u.String(), nil
-}
-
-// encodeConnQuery encodes connection URI query parameters the way
-// libpq, and so pgx since v5.12, decodes them. url.Values.Encode
-// follows application/x-www-form-urlencoded rules and writes a space as
-// '+', but libpq reads '+' in a URI as a literal plus, so a value such
-// as "pgEdge AI DBA Workbench" would reach the server as
-// "pgEdge+AI+DBA+Workbench". Encode escapes a literal '+' as "%2B", so
-// every '+' left in its output stands for a space and can be rewritten
-// as "%20" without ambiguity.
-func encodeConnQuery(query url.Values) string {
-	return strings.ReplaceAll(query.Encode(), "+", "%20")
 }
 
 // GetDefaultConnection returns the current default connection string

@@ -17,6 +17,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/pgedge/ai-workbench/pkg/connstring"
 )
 
 // TestValidateDatabaseName covers the narrow checks applied to a
@@ -210,9 +212,9 @@ func TestEncodeConnQueryRoundTrip(t *testing.T) {
 	})
 
 	t.Run("literal plus survives", func(t *testing.T) {
-		got := encodeConnQuery(url.Values{"application_name": {"a+b c"}})
+		got := connstring.EncodeURIQuery(url.Values{"application_name": {"a+b c"}})
 		if want := "application_name=a%2Bb%20c"; got != want {
-			t.Errorf("encodeConnQuery = %q, want %q", got, want)
+			t.Errorf("EncodeURIQuery = %q, want %q", got, want)
 		}
 	})
 

@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
@@ -895,7 +896,7 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 		User:     userinfo,
 		Host:     net.JoinHostPort(host, strconv.Itoa(conn.Port)),
 		Path:     path,
-		RawQuery: encodeConnQuery(params),
+		RawQuery: connstring.EncodeURIQuery(params),
 	}
 
 	return dsn.String(), nil

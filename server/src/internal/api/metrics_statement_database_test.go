@@ -186,11 +186,15 @@ func TestHandleMetricsQuery_LatestRowsStatementDatabaseRejected(t *testing.T) {
 // 7101, and returns a metrics handler on the same pool together with the
 // top-queries handler. alpha is dbid 100 plus the unresolved dbid 400,
 // whose fallback under probing database alpha is alpha; gamma is dbid 300.
+// The pool teardown is registered with t.Cleanup before the probe
+// interval seed registers its own, so the seed's cleanup runs first,
+// whilst the pool is still open.
 func newStatementDatabaseMetricsHandler(t *testing.T) (
-	*MetricsHandler, *PerfSummaryHandler, func(),
+	*MetricsHandler, *PerfSummaryHandler,
 ) {
 	t.Helper()
 	ph, pool, cleanup := newTopQueriesTestHandler(t)
+	t.Cleanup(cleanup)
 	latest := seedPerDatabaseCounters(t, pool, 7101, []perDatabaseCounter{
 		{dbID: 100, calls: 30},
 		{dbID: 400, calls: 12},
@@ -201,7 +205,7 @@ func newStatementDatabaseMetricsHandler(t *testing.T) (
 	seedStatementsProbeInterval(t, pool)
 	mh := NewMetricsHandler(database.NewTestDatastore(pool), newTestAuthStore(t))
 	mh.sharingLookupFn = liveConnectionLookup
-	return mh, ph, cleanup
+	return mh, ph
 }
 
 // seedStatementsProbeInterval gives pg_stat_statements the five-minute
@@ -277,8 +281,7 @@ func sumSeries(t *testing.T, rec *httptest.ResponseRecorder, metric string) floa
 // the chart counts only that row's counters, including an unresolved dbid
 // the row counts under its fallback name.
 func TestMetricsQuery_StatementDatabaseMatchesTopQueries(t *testing.T) {
-	mh, ph, cleanup := newStatementDatabaseMetricsHandler(t)
-	defer cleanup()
+	mh, ph := newStatementDatabaseMetricsHandler(t)
 
 	rows, _ := decodeTopQueries(t, callTopQueries(t, ph,
 		"connection_id=4242&time_range=1h&queryid=7101"))
@@ -315,8 +318,7 @@ func TestMetricsQuery_StatementDatabaseMatchesTopQueries(t *testing.T) {
 // TestMetricsQuery_LatestRowsStatementDatabase checks the latest-row mode
 // against the database: only gamma's dbid comes back.
 func TestMetricsQuery_LatestRowsStatementDatabase(t *testing.T) {
-	mh, _, cleanup := newStatementDatabaseMetricsHandler(t)
-	defer cleanup()
+	mh, _ := newStatementDatabaseMetricsHandler(t)
 
 	rec := serveMetricsQuery(mh, "connection_id=4242&probe_name=pg_stat_statements"+
 		"&limit=10&queryid=7101&database_name=alpha&statement_database_name=gamma")

@@ -22,9 +22,9 @@ import (
 type DialGuard func(cfg *pgconn.Config)
 
 // SetDialPolicy sets the policy that GuardMonitoredConnConfig applies to
-// every address a monitored connection resolves to when it is dialled.
+// every address a monitored connection resolves to when it connects.
 // The server sets it once at start-up from connection_security, so the
-// address actually dialled passes the same allow-list, block-list and
+// address actually connected to passes the same allow-list, block-list and
 // allow_internal_networks rules as the host did when it was saved. A nil
 // policy selects hostvalidation.CheckAlwaysBlocked.
 func (d *Datastore) SetDialPolicy(policy hostvalidation.AddrPolicy) {

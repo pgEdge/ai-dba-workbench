@@ -190,7 +190,7 @@ var errDialAddrRefused = errors.New("address is not permitted by connection_secu
 
 // CheckDialAddr is a hostvalidation.AddrPolicy that applies this
 // validator's rules to ip, an address host resolved to when a monitored
-// connection is dialled, so that a host name which passed ValidateHost
+// connection is opened, so that a host name which passed ValidateHost
 // when it was saved cannot later be pointed somewhere it would not have
 // passed (DNS rebinding). The rules are ValidateHost's: a host name in
 // BlockedHosts refuses and one in AllowedHosts permits, whatever it

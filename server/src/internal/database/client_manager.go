@@ -319,8 +319,8 @@ func (cm *ClientManager) GetOrCreateClientWithConnString(key string, connStr str
 
 	// Create and initialize new client with connection string
 	// Every connection string reaching here was built from a stored
-	// monitored connection (see GetClientForSession), so its dialled
-	// addresses are checked.
+	// monitored connection (see GetClientForSession), so the addresses it
+	// connects to are checked.
 	client := NewClientWithConnectionString(connStr, cm.dbConfig)
 	client.dialGuard = cm.monitoredGuard
 	if client.dialGuard == nil {

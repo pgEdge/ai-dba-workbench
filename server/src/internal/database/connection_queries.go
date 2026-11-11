@@ -916,7 +916,7 @@ func (d *Datastore) ListDatabases(ctx context.Context, connectionID int) ([]Data
 		return nil, err
 	}
 
-	// Connect temporarily, dialling only the addresses the policy permits
+	// Connect temporarily, connecting only to the addresses the policy permits
 	poolConfig, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
 		log.Printf("[ERROR] Unable to parse connection string for connection %d: %s",

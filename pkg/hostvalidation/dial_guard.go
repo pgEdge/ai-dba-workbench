@@ -16,7 +16,7 @@ import (
 )
 
 // AddrPolicy decides whether a connection to host may be made at ip, one
-// of the addresses host resolved to when the connection was dialled. A
+// of the addresses host resolved to when the connection was opened. A
 // nil error permits the address.
 type AddrPolicy func(host string, ip net.IP) error
 
@@ -94,7 +94,7 @@ func embeddedIPv4(ip net.IP) net.IP {
 }
 
 // IsAlwaysBlockedIP reports whether ip is one no monitored connection
-// may be dialled at, whatever the deployment's other settings: an
+// may be opened to, whatever the deployment's other settings: an
 // unspecified address, a link-local address (unicast or multicast), a
 // known cloud metadata address, or an IPv6 address embedding any of
 // these IPv4 addresses.
@@ -132,7 +132,7 @@ func CheckAlwaysBlocked(_ string, ip net.IP) error {
 
 // GuardedLookup wraps resolve, the lookup function a connection would
 // otherwise use (net.DefaultResolver.LookupHost when nil), so that only
-// the addresses policy permits are returned for dialling. pgx calls its
+// the addresses policy permits are returned for pgx to connect to. pgx calls its
 // LookupFunc for every non-socket host, IP literals included, and dials
 // exactly the addresses it returns, so this closes the gap between a
 // host name being checked when a connection is saved and it being

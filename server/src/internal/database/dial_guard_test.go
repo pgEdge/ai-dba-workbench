@@ -70,7 +70,7 @@ func TestGuardMonitoredConnConfig(t *testing.T) {
 }
 
 // TestClientConnectTo_DialGuard checks that a client made for a
-// monitored connection refuses an always-blocked target before dialling,
+// monitored connection refuses an always-blocked target before connecting,
 // and that the error names no address.
 func TestClientConnectTo_DialGuard(t *testing.T) {
 	cm := NewClientManager(nil)

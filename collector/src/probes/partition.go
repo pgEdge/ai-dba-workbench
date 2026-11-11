@@ -219,9 +219,9 @@ func DropExpiredPartitions(ctx context.Context, conn DatastoreQuerier, tableName
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 
 	// For change-tracked probes (pg_settings, pg_hba_file_rules,
-	// pg_ident_file_mappings, pg_server_info) find the most recent
-	// partition with data for each connection. These partitions must
-	// never be dropped, regardless of age.
+	// pg_ident_file_mappings, pg_server_info, pg_extension) find the
+	// most recent partition with data for each connection. These
+	// partitions must never be dropped, regardless of age.
 	protectedPartitions, err := loadProtectedPartitions(ctx, conn, tableName)
 	if err != nil {
 		return 0, err
@@ -289,16 +289,17 @@ func loadProtectedPartitions(ctx context.Context, conn DatastoreQuerier, tableNa
 	protected := make(map[string]bool)
 
 	switch tableName {
-	case "pg_settings", "pg_hba_file_rules", "pg_ident_file_mappings", "pg_server_info":
+	case "pg_settings", "pg_hba_file_rules", "pg_ident_file_mappings", "pg_server_info",
+		"pg_extension":
 		// change-tracked; proceed
 	default:
 		return protected, nil
 	}
 
-	// tableName is one of the four change-tracked probe names matched by
+	// tableName is one of the five change-tracked probe names matched by
 	// the switch above, and protectedPartitionsQuery quotes it with
 	// pgx.Identifier; a relation cannot be bound as a placeholder.
-	//nosemgrep: go_sql_rule-concat-sqli -- table name is one of four internal probe names, sanitized by pgx.Identifier
+	//nosemgrep: go_sql_rule-concat-sqli -- table name is one of five internal probe names, sanitized by pgx.Identifier
 	rows, err := conn.Query(ctx, protectedPartitionsQuery(tableName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query protected partitions for %s: %w", tableName, err)

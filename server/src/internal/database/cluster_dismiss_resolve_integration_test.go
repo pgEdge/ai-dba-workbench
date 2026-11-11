@@ -116,6 +116,7 @@ CREATE TABLE metrics.pg_sys_os_info (
 
 CREATE TABLE metrics.pg_extension (
     connection_id INTEGER NOT NULL,
+    database_name TEXT NOT NULL DEFAULT 'postgres',
     extname TEXT NOT NULL,
     extversion TEXT,
     collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP

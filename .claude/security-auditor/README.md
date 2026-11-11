@@ -72,6 +72,17 @@ moved.
   the collector's `buildMonitoredConnectionParams`. pgx v5.12.0 has no
   `hostaddr` keyword (it would be sent as a startup parameter), so the
   collector, like the server, dials the validated address as `host`.
+- The internal-range test is `hostvalidation.IsPrivateIP`
+  (`pkg/hostvalidation/hostvalidation.go`), shared by the server's
+  `HostValidator` and the alerter's webhook check. It ORs the
+  `internalNetworks` list with the standard library's `IsUnspecified`,
+  `IsLoopback`, `IsPrivate`, link-local and multicast predicates, so a
+  range missing from the list is still caught; the list itself also
+  holds `::/128` (dialling `::` reaches localhost), the IPv4-embedding
+  prefixes `::/96`, `64:ff9b::/96`, `64:ff9b:1::/48` and `2002::/16`,
+  and `fec0::/10`. Blocking all of `64:ff9b::/96` means a deployment
+  on an IPv6-only NAT64 network must set `allow_internal_networks` or
+  allow-list the prefix.
 - pgx reads `sslrootcert`, `sslcert` and `sslkey` while it parses a
   connection string (the CA file even under `sslmode=disable`), so
   stored SSL paths are a file-read primitive. The server confines them

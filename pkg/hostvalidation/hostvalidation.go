@@ -27,6 +27,12 @@ var internalNetworks = []string{
 	"fc00::/7",        // IPv6 unique local
 	"fe80::/10",       // IPv6 link-local
 	"0.0.0.0/8",       // Current network (invalid as destination)
+	"::/128",          // IPv6 unspecified; dialling it reaches localhost
+	"::/96",           // IPv4-compatible IPv6 (deprecated), embeds an IPv4 address
+	"64:ff9b::/96",    // NAT64 well-known prefix (RFC 6052), embeds an IPv4 address
+	"64:ff9b:1::/48",  // Local-use NAT64 prefix (RFC 8215)
+	"2002::/16",       // 6to4 (RFC 3056), embeds an IPv4 address
+	"fec0::/10",       // IPv6 site-local (deprecated, RFC 3879)
 	"100.64.0.0/10",   // Carrier-grade NAT (RFC 6598)
 	"192.0.0.0/24",    // IETF protocol assignments
 	"192.0.2.0/24",    // TEST-NET-1
@@ -50,8 +56,16 @@ func init() {
 }
 
 // IsPrivateIP checks whether the given IP address belongs to a private,
-// loopback, link-local, or otherwise internal network range.
+// loopback, link-local, or otherwise internal network range. The
+// standard library's own classifications are consulted as well as the
+// list above, so that a range the list misses (the IPv6 unspecified
+// address "::" was one) is still caught.
 func IsPrivateIP(ip net.IP) bool {
+	if ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() {
+		return true
+	}
 	for _, internal := range parsedInternalNetworks {
 		if internal.Contains(ip) {
 			return true

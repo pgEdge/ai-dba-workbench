@@ -80,12 +80,14 @@ When the server connects, the server applies the same rules to each
 address that the target resolves to at that moment and connects only to
 the addresses that pass, which defeats DNS rebinding. At save time an
 allow-listed address can permit the whole host name; at connect time an
-allow-listed address permits only that address. The collector has none
-of the `connection_security` host settings; when the collector connects,
-the collector refuses only unspecified, link-local and cloud metadata
-addresses, and allows loopback and private addresses. The collector
-therefore refuses a link-local target even when the server's
-`allow_internal_networks` option permits it. See
+allow-listed address permits only that address. Before applying those
+rules at connect time, the server refuses unspecified, link-local and
+cloud metadata addresses, whatever `allowed_hosts` or
+`allow_internal_networks` say; a connection to such an address can be
+saved but never connects. The collector has none of the
+`connection_security` host settings; when the collector connects, the
+collector refuses only the same unspecified, link-local and cloud
+metadata addresses, and allows loopback and private addresses. See
 [Connection Address Checks](../getting-started/configuration/collector.md#connection-address-checks)
 for the collector's list.
 

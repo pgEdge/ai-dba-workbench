@@ -263,9 +263,11 @@ target resolves to at that moment, and connects only to the addresses
 that pass. An allow-listed address permits only that address, so an
 internal host name that `allowed_hosts` does not name needs each of its
 addresses, or a range that holds them, in `allowed_hosts`. The
-collector refuses unspecified, link-local and cloud metadata addresses
-whatever the server allows, so the collector cannot connect to a
-link-local target even when `allow_internal_networks` is `true`.
+server and the collector both refuse unspecified, link-local and cloud
+metadata addresses at connect time, whatever `allowed_hosts` or
+`allow_internal_networks` say, so neither connects to a link-local
+target. The server still accepts such a target when a connection is
+saved under `allow_internal_networks` or an `allowed_hosts` entry.
 
 The internal ranges now include the IPv6 unspecified address `::`, the
 IPv4-compatible range `::/96`, the NAT64 prefixes `64:ff9b::/96` and

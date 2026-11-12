@@ -505,15 +505,17 @@ following table lists the ranges that the server treats as internal:
 | `224.0.0.0/4`, `ff00::/8` | Multicast |
 | `240.0.0.0/4` | Reserved |
 
-An IPv4-mapped IPv6 address, such as `::ffff:10.0.0.1`, counts as the
-IPv4 address that it carries. The NAT64 prefixes are internal in their
-entirety, so a deployment on an IPv6-only network that reaches IPv4
-servers through NAT64 must set `allow_internal_networks` to `true` or
-add the prefix to `allowed_hosts`. By default, the alerter refuses to
-deliver a notification to any of these ranges, whatever the server's
-`connection_security` settings say. The alerter's own
-`notifications.allow_internal_networks` option permits them, except the
-unspecified, link-local and cloud metadata addresses. See
+An IPv4-mapped IPv6 address, such as `::ffff:10.0.0.1`, counts as the IPv4
+address that it carries. Neither `allow_internal_networks` nor `allowed_hosts`
+lets the server connect to an unspecified, link-local or cloud metadata
+address, although a connection that names one can still be saved; see the
+connect-time check below. The NAT64 prefixes are internal in their entirety, so
+a deployment on an IPv6-only network that reaches IPv4 servers through NAT64
+must set `allow_internal_networks` to `true` or add the prefix to
+`allowed_hosts`. By default, the alerter refuses to deliver a notification to
+any of these ranges, whatever the server's `connection_security` settings say.
+The alerter's own `notifications.allow_internal_networks` option permits them,
+except the unspecified, link-local and cloud metadata addresses. See
 [Delivery Address Checks](alerter.md#delivery-address-checks).
 
 A test notification follows these rules rather than the alerter's. The
@@ -538,11 +540,19 @@ host name, including the name's other addresses. Each time the server
 connects to a monitored database, the server resolves the host name
 again and checks each address on its own, so a host name that later
 resolves to a refused address cannot reach that address; this check
-defeats DNS rebinding. At connect time, an address that `allowed_hosts`
-covers permits only that address, and the server connects only to the
-permitted addresses. A host name that `allowed_hosts` or
-`blocked_hosts` lists by name is still permitted or refused whatever
-the name resolves to. When no resolved address is permitted, the
+defeats DNS rebinding. At connect time, the server first refuses
+unspecified, link-local and cloud metadata addresses, whatever
+`allowed_hosts` or `allow_internal_networks` say, and then applies
+`blocked_hosts`, `allowed_hosts` and `allow_internal_networks` to each
+remaining address. An address that `allowed_hosts` covers permits only
+that address, and the server connects only to the permitted addresses.
+Apart from those always-refused addresses, a host name that
+`allowed_hosts` or `blocked_hosts` lists by name is still permitted or
+refused whatever the name resolves to. The save-time check does not
+apply the always-refused addresses first, so a connection to a
+link-local address can be saved under `allow_internal_networks` or an
+`allowed_hosts` entry but never connects. When no resolved address is
+permitted, the
 connection attempt fails with an error that says the host resolves only
 to addresses that connections are not permitted to. The server's own
 connection to the datastore is not checked.
@@ -550,9 +560,9 @@ connection to the datastore is not checked.
 The collector applies a fixed check of its own when the collector
 connects; see
 [Connection Security Options](collector.md#connection-security-options).
-The collector refuses link-local addresses even when
-`allow_internal_networks` is `true`, so the collector cannot monitor a
-link-local target that the server accepts.
+The collector refuses the same unspecified, link-local and cloud
+metadata addresses as the server, so neither component connects to a
+link-local target, even when `allow_internal_networks` is `true`.
 
 The `ssl_cert_dir` option names the absolute directory that the SSL
 certificate, key and root certificate files of user-created connections

@@ -462,9 +462,9 @@ following fixed set of addresses:
 
 The collector allows loopback and private addresses, because a
 collector routinely monitors servers on the same host or network. The
-collector refuses a link-local target even when the server's
-`allow_internal_networks` option is `true`, so the collector cannot
-monitor a link-local target that the server accepts. When no resolved
+server refuses the same set of addresses when the server connects,
+whatever the server's `connection_security` settings say, so neither
+component connects to a link-local target. When no resolved
 address passes, the connection attempt fails with an error that says
 the host resolves only to addresses that connections are not permitted
 to.

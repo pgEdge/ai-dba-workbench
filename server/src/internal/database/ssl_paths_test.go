@@ -171,7 +171,10 @@ func TestBuildConnectionStringHostileSSLValues(t *testing.T) {
 			if err != nil {
 				t.Fatalf("url.Parse: %v", err)
 			}
-			q := u.Query()
+			q, err := url.ParseQuery(u.RawQuery)
+			if err != nil {
+				t.Fatalf("url.ParseQuery: %v", err)
+			}
 			want := url.Values{
 				"sslmode":     {"verify-full"},
 				"sslcert":     {certPath},
@@ -215,7 +218,11 @@ func TestBuildConnectionStringHostileSSLValues(t *testing.T) {
 		if err != nil {
 			t.Fatalf("url.Parse: %v", err)
 		}
-		if q := u.Query(); len(q) != 1 || q.Get("sslmode") != "verify-full"+h {
+		q, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			t.Fatalf("sslmode %q: url.ParseQuery: %v", h, err)
+		}
+		if len(q) != 1 || q.Get("sslmode") != conn.SSLMode.String {
 			t.Errorf("sslmode %q: query = %v", h, q)
 		}
 		if _, err := pgconn.ParseConfig(dsn); err == nil ||

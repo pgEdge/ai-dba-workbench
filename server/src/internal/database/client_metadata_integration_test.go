@@ -11,19 +11,39 @@ package database
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/server/internal/config"
 )
+
+// metadataTestSchemaName is the schema metadataTestSchema creates. The
+// statements below spell it literally, so that no SQL is assembled at
+// run time; the tests using it do not run in parallel.
+const metadataTestSchemaName = "ai_wb_client_meta_fixture"
+
+// metadataTestSchemaSQL builds the fixture, first dropping any copy a
+// crashed earlier run left behind.
+const metadataTestSchemaSQL = `
+DROP SCHEMA IF EXISTS ai_wb_client_meta_fixture CASCADE;
+CREATE SCHEMA ai_wb_client_meta_fixture;
+CREATE TABLE ai_wb_client_meta_fixture.widgets (id integer PRIMARY KEY, name text NOT NULL);
+COMMENT ON TABLE ai_wb_client_meta_fixture.widgets IS 'Test widgets';
+COMMENT ON COLUMN ai_wb_client_meta_fixture.widgets.name IS 'Widget name';
+CREATE VIEW ai_wb_client_meta_fixture.widget_names AS
+    SELECT name FROM ai_wb_client_meta_fixture.widgets;
+CREATE MATERIALIZED VIEW ai_wb_client_meta_fixture.widget_ids AS
+    SELECT id FROM ai_wb_client_meta_fixture.widgets;
+`
+
+// metadataTestSchemaDropSQL removes the fixture.
+const metadataTestSchemaDropSQL = `DROP SCHEMA IF EXISTS ai_wb_client_meta_fixture CASCADE`
 
 // metadataTestSchema creates a schema holding a commented table, a plain view
 // and a MATERIALIZED VIEW on the TEST_AI_WORKBENCH_SERVER instance, so
@@ -44,26 +64,15 @@ func metadataTestSchema(t *testing.T) (string, string) {
 	}
 	t.Cleanup(pool.Close)
 
-	schema := fmt.Sprintf("client_meta_%d", time.Now().UnixNano())
-	stmts := []string{
-		"CREATE SCHEMA " + schema,
-		"CREATE TABLE " + schema + ".widgets (id integer PRIMARY KEY, name text NOT NULL)",
-		"COMMENT ON TABLE " + schema + ".widgets IS 'Test widgets'",
-		"COMMENT ON COLUMN " + schema + ".widgets.name IS 'Widget name'",
-		"CREATE VIEW " + schema + ".widget_names AS SELECT name FROM " + schema + ".widgets",
-		"CREATE MATERIALIZED VIEW " + schema + ".widget_ids AS SELECT id FROM " + schema + ".widgets",
-	}
-	for _, s := range stmts {
-		if _, err := pool.Exec(ctx, s); err != nil {
-			t.Fatalf("%s: %v", s, err)
-		}
+	if _, err := pool.Exec(ctx, metadataTestSchemaSQL); err != nil {
+		t.Fatalf("create metadata fixture: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE"); err != nil {
-			t.Errorf("drop schema %s: %v", schema, err)
+		if _, err := pool.Exec(context.Background(), metadataTestSchemaDropSQL); err != nil {
+			t.Errorf("drop schema %s: %v", metadataTestSchemaName, err)
 		}
 	})
-	return connStr, schema
+	return connStr, metadataTestSchemaName
 }
 
 // testDatabaseConfig builds a DatabaseConfig equivalent to connStr.

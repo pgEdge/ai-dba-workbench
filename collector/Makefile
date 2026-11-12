@@ -18,7 +18,7 @@ BINARY := ai-dba-collector
 # Minimum acceptable total statement coverage, in percent; the coverage
 # target fails below it. The project floor is 90% (see CLAUDE.md, Tests);
 # this default sits just below the lowest total across CI's PostgreSQL
-# 14 to 18 and Go 1.26/1.27 matrix, measured on 4 November 2026 after
+# 15 to 18 and Go 1.26/1.27 matrix, measured on 4 November 2026 after
 # the ColdFront change-tracking and review fixes for issue #755: lowest
 # 94.4% on PG 17 with Go 1.26.10, up to 94.7% on PG 16. The total also
 # varies by about 0.1

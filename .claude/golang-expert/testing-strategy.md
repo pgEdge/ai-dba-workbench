@@ -357,10 +357,11 @@ the Go unit suites. Check the workflow file for the current Go version
 rather than recording it here.
 
 Because `make coverage` runs once per Postgres version, the ratchet must
-pass on the version that measures lowest, usually 14, not on the local
-dev host's 18: probes that branch on version or on whether a view exists
-only reach their other branches on other versions. Set `COVERAGE_MIN`
-from the lowest per-version total in the CI log (`gh run view <id>
+pass on the version that measures lowest (for the server, 15, which
+skips the `GENERIC_PLAN` tests), not on the local dev host's 18:
+probes that branch on version or on whether a view exists only reach
+their other branches on other versions. Set `COVERAGE_MIN` from the
+lowest per-version total in the CI log (`gh run view <id>
 --log`, "Total coverage" lines). To reach version branches from any
 version, `collector/src/probes/version_branch_test.go` shadows system
 views with temporary views (an unqualified name resolves to `pg_temp`

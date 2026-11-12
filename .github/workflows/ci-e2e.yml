@@ -23,8 +23,9 @@ on:
 jobs:
     e2e:
         name: E2E (${{ matrix.browser }})
-        # Held at 24.04: Playwright 1.59.1 (e2e/package-lock.json) has no
-        # browser builds for Ubuntu 26.04 (#827). Move on once it is bumped.
+        # Held at 24.04 (#827) because Playwright 1.59.1 had no browser
+        # builds for Ubuntu 26.04. The pinned 1.65.0 (e2e/package-lock.json)
+        # lists ubuntu26.04 as supported; move on once a CI run confirms it.
         runs-on: ubuntu-24.04
         strategy:
             fail-fast: false

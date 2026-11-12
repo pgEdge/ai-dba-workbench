@@ -199,7 +199,15 @@ var errDialAddrRefused = errors.New("address is not permitted by connection_secu
 // ranges. Unlike ValidateHost, each address is judged on its own: an
 // allow-listed address among a name's results permits only itself, not
 // the other addresses the name resolved to.
+//
+// Before any of that, an address hostvalidation.IsAlwaysBlockedIP
+// reports (unspecified, link-local or cloud metadata) is refused, so an
+// allowed_hosts name, or allow_internal_networks, which covers
+// link-local, cannot reach one.
 func (v *HostValidator) CheckDialAddr(host string, ip net.IP) error {
+	if hostvalidation.IsAlwaysBlockedIP(ip) {
+		return errDialAddrRefused
+	}
 	name := strings.TrimSuffix(strings.ToLower(host), ".")
 	for _, blocked := range v.BlockedHosts {
 		if strings.EqualFold(blocked, name) {

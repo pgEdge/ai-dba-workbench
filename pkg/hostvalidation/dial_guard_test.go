@@ -132,6 +132,42 @@ func TestGuardedLookup(t *testing.T) {
 	}
 }
 
+// TestGuardedLookup_AlwaysBlockedFloor checks that a policy permitting
+// everything, as an allowed_hosts name match does, still cannot reach an
+// always-blocked address, by name or as an IP literal.
+func TestGuardedLookup_AlwaysBlockedFloor(t *testing.T) {
+	ctx := context.Background()
+	permitAll := func(string, net.IP) error { return nil }
+
+	got, err := GuardedLookup(permitAll,
+		fixedLookup("169.254.169.254", "0.0.0.0", "fd00:ec2::254", "203.0.113.7"))(ctx, "allowed.example.com")
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if want := []string{"203.0.113.7"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("addrs = %v, want %v", got, want)
+	}
+
+	if _, err := GuardedLookup(permitAll, fixedLookup("169.254.169.254"))(ctx, "allowed.example.com"); !errors.Is(err, ErrNoPermittedAddress) {
+		t.Errorf("metadata only: err = %v, want ErrNoPermittedAddress", err)
+	}
+
+	dialled := false
+	dial := func(context.Context, string, string) (net.Conn, error) {
+		dialled = true
+		return nil, errors.New("dialled")
+	}
+	for _, addr := range []string{"169.254.169.254:80", "[fe80::1]:80", "0.0.0.0:80"} {
+		_, err := GuardedDialContext(permitAll, nil, dial)(ctx, "tcp", addr)
+		if !errors.Is(err, ErrNoPermittedAddress) {
+			t.Errorf("%s: err = %v, want ErrNoPermittedAddress", addr, err)
+		}
+	}
+	if dialled {
+		t.Error("an always-blocked IP literal was dialled")
+	}
+}
+
 func TestCheckNotInternal(t *testing.T) {
 	tests := []struct {
 		ip      string

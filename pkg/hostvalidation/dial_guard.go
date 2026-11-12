@@ -130,9 +130,21 @@ func CheckAlwaysBlocked(_ string, ip net.IP) error {
 	return nil
 }
 
+// permits reports whether a connection to host may be made at ip: the
+// address must not be one IsAlwaysBlockedIP reports, and policy must
+// permit it. The always-blocked check comes first so that no policy,
+// however permissive (an allowed_hosts name match, or
+// allow_internal_networks, which covers link-local), can reach an
+// unspecified, link-local or cloud metadata address.
+func permits(policy AddrPolicy, host string, ip net.IP) bool {
+	return !IsAlwaysBlockedIP(ip) && policy(host, ip) == nil
+}
+
 // GuardedLookup wraps resolve, the lookup function a connection would
 // otherwise use (net.DefaultResolver.LookupHost when nil), so that only
-// the addresses policy permits are returned for pgx to connect to. pgx calls its
+// the addresses policy permits are returned for pgx to connect to. The
+// addresses IsAlwaysBlockedIP reports are refused before policy is
+// consulted, whatever policy would say. pgx calls its
 // LookupFunc for every non-socket host, IP literals included, and dials
 // exactly the addresses it returns, so this closes the gap between a
 // host name being checked when a connection is saved and it being
@@ -166,7 +178,7 @@ func GuardedLookup(policy AddrPolicy, resolve LookupFunc) LookupFunc {
 			if ip == nil {
 				continue
 			}
-			if policy(host, ip) != nil {
+			if !permits(policy, host, ip) {
 				continue
 			}
 			permitted = append(permitted, addr)
@@ -204,8 +216,9 @@ type DialContextFunc = func(ctx context.Context, network, addr string) (net.Conn
 // checked (DNS rebinding), and to every connection a client opens with
 // it, including one made to follow a redirect.
 //
-// A host that is already an IP literal is judged by policy directly,
-// without calling resolve. A nil policy is CheckAlwaysBlocked, a nil
+// A host that is already an IP literal is judged directly, without
+// calling resolve. Either way, an address IsAlwaysBlockedIP reports is
+// refused before policy is consulted. A nil policy is CheckAlwaysBlocked, a nil
 // resolve is net.DefaultResolver.LookupHost and a nil dial is a zero
 // net.Dialer's DialContext. When no address is permitted the error is
 // ErrNoPermittedAddress, which names neither the host nor any address;
@@ -226,7 +239,7 @@ func GuardedDialContext(policy AddrPolicy, resolve LookupFunc, dial DialContextF
 		}
 		var addrs []string
 		if ip := net.ParseIP(host); ip != nil {
-			if policy(host, ip) != nil {
+			if !permits(policy, host, ip) {
 				return nil, ErrNoPermittedAddress
 			}
 			addrs = []string{host}

@@ -40,7 +40,11 @@ func TestHostValidator_CheckDialAddr(t *testing.T) {
 		{name: "rebound to private", host: "db.example.com", ip: "10.1.2.3", wantErr: true},
 		{name: "unspecified", host: "::", ip: "::", wantErr: true},
 		{name: "internal allowed", allowInternal: true, host: "db.example.com", ip: "10.1.2.3"},
-		{name: "link-local with internal allowed", allowInternal: true, host: "db.example.com", ip: "169.254.169.254"},
+		// The always-blocked floor holds whatever the configuration.
+		{name: "link-local with internal allowed", allowInternal: true, host: "db.example.com", ip: "169.254.169.254", wantErr: true},
+		{name: "allow-listed name, metadata address", allowed: []string{"db.example.com"}, host: "db.example.com", ip: "169.254.169.254", wantErr: true},
+		{name: "allow-listed range covering link-local", allowed: []string{"169.254.0.0/16"}, host: "db.example.com", ip: "169.254.1.1", wantErr: true},
+		{name: "allow-listed name, unspecified address", allowed: []string{"db.example.com"}, host: "db.example.com", ip: "0.0.0.0", wantErr: true},
 		{name: "allow-listed range", allowed: []string{"10.0.0.0/8"}, host: "db.example.com", ip: "10.1.2.3"},
 		{name: "allow-listed range does not cover another", allowed: []string{"10.0.0.0/8"}, host: "db.example.com", ip: "192.168.0.1", wantErr: true},
 		{name: "allow-listed name, any address", allowed: []string{"DB.example.com"}, host: "db.example.com.", ip: "127.0.0.1"},

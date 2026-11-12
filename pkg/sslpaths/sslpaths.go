@@ -62,7 +62,9 @@ func (e *SSLFilePathError) Error() string {
 // then resolved through filepath.EvalSymlinks; when the file does not
 // exist yet, the nearest existing ancestor is resolved instead and the
 // rest of the path appended, so a symbolic link in the directory cannot
-// point outside it whether or not the file has been created. The result
+// point outside it whether or not the file has been created. A symbolic
+// link whose target does not exist is refused, since its unresolved name
+// says nothing about where it points. The result
 // must lie strictly inside the resolved baseDir.
 //
 // An empty path is always accepted, since it names no file. Any other
@@ -84,8 +86,14 @@ func ValidateSSLFilePath(baseDir, p string) error {
 		return err
 	}
 
-	base := resolvePath(filepath.Clean(baseDir))
-	target := resolvePath(filepath.Clean(p))
+	base, err := resolvePath(filepath.Clean(baseDir))
+	if err != nil {
+		return errors.New("must be inside the configured SSL certificate directory")
+	}
+	target, err := resolvePath(filepath.Clean(p))
+	if err != nil {
+		return err
+	}
 	rel, err := filepath.Rel(base, target)
 	if err != nil || rel == "." || rel == ".." ||
 		strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
@@ -114,28 +122,42 @@ func checkPathSyntax(p string) error {
 	return nil
 }
 
+// errDanglingLink is resolvePath's refusal of a path that runs through
+// a symbolic link whose target does not exist.
+var errDanglingLink = errors.New("must not be a symbolic link to a file that does not exist")
+
 // resolvePath returns p with every symbolic link resolved. When p does
 // not exist, it resolves the nearest ancestor that does and appends the
 // remainder unchanged; when nothing resolves, it returns p as given,
 // which callers have already cleaned.
-func resolvePath(p string) string {
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		return resolved
-	}
+//
+// A component that exists (os.Lstat finds it) but does not resolve is a
+// symbolic link whose target is missing. Appending its name unresolved
+// would make the path look as though it stays inside the directory
+// whilst the link points anywhere, and creating the target later would
+// redirect pgx there, so such a path is refused with errDanglingLink. A
+// missing file or directory that is not a link is still accepted, as
+// one that has not been created yet.
+func resolvePath(p string) (string, error) {
 	rest := ""
 	dir := p
 	for {
+		resolved, err := filepath.EvalSymlinks(dir)
+		if err == nil {
+			return filepath.Join(resolved, rest), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return p, nil
+		}
+		if _, lerr := os.Lstat(dir); lerr == nil {
+			return "", errDanglingLink
+		}
 		parent := filepath.Dir(dir)
-		rest = filepath.Join(filepath.Base(dir), rest)
 		if parent == dir {
-			return p
+			return p, nil
 		}
+		rest = filepath.Join(filepath.Base(dir), rest)
 		dir = parent
-		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-			return filepath.Join(resolved, rest)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return p
-		}
 	}
 }
 

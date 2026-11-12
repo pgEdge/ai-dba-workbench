@@ -130,11 +130,57 @@ func TestResolvePathUnresolvable(t *testing.T) {
 	writeTestFile(t, file, []byte("x"))
 	// A path through a regular file fails with ENOTDIR, not ENOENT.
 	p := filepath.Join(file, "child", "x.crt")
-	if got := resolvePath(p); got != p {
-		t.Errorf("resolvePath(%q) = %q, want it unchanged", p, got)
+	if got, err := resolvePath(p); err != nil || got != p {
+		t.Errorf("resolvePath(%q) = %q, %v, want it unchanged", p, got, err)
 	}
-	if got := resolvePath("relative/x.crt"); got != "relative/x.crt" {
-		t.Errorf("resolvePath(relative) = %q, want it unchanged", got)
+	if got, err := resolvePath("relative/x.crt"); err != nil || got != "relative/x.crt" {
+		t.Errorf("resolvePath(relative) = %q, %v, want it unchanged", got, err)
+	}
+}
+
+// TestValidateSSLFilePathDanglingLink checks that a symbolic link whose
+// target does not exist is refused wherever it sits in the path and
+// wherever it points, inside the directory or out, whilst a missing
+// file that is not a link is still accepted.
+func TestValidateSSLFilePathDanglingLink(t *testing.T) {
+	dir := sslTestDir(t)
+	outside := sslTestDir(t)
+	links := map[string]string{
+		"out.crt":    filepath.Join(outside, "missing.crt"),
+		"in.crt":     filepath.Join(dir, "missing.crt"),
+		"outdir":     filepath.Join(outside, "missing"),
+		"chain.crt":  filepath.Join(dir, "out.crt"),
+		"relout.crt": "../" + filepath.Base(outside) + "/missing.crt",
+	}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, p := range []string{
+		filepath.Join(dir, "out.crt"),
+		filepath.Join(dir, "in.crt"),
+		filepath.Join(dir, "outdir", "x.crt"),
+		filepath.Join(dir, "chain.crt"),
+		filepath.Join(dir, "relout.crt"),
+	} {
+		err := ValidateSSLFilePath(dir, p)
+		if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+			t.Errorf("ValidateSSLFilePath(%q) = %v, want a dangling link refusal", p, err)
+		}
+	}
+	if err := ValidateSSLFilePath(dir, filepath.Join(dir, "not-yet.crt")); err != nil {
+		t.Errorf("missing ordinary file: %v, want nil", err)
+	}
+
+	// A configured directory that is itself a dangling link holds
+	// nothing.
+	base := filepath.Join(outside, "certs")
+	if err := os.Symlink(filepath.Join(outside, "gone"), base); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSSLFilePath(base, filepath.Join(base, "ca.crt")); err == nil {
+		t.Error("dangling base directory accepted")
 	}
 }
 

@@ -302,3 +302,98 @@ func TestEmailNotifier_SMTPFailures(t *testing.T) {
 		})
 	}
 }
+
+// TestEmailNotifier_SMTPHostForms delivers to an IPv6 literal saved with
+// and without brackets (1.0.0 required the bracketed form, and the
+// server still accepts it) and to a hostname. For each it checks the
+// address handed to the dialer is one net.SplitHostPort accepts, and
+// that TLS verification and PLAIN authentication succeed, which needs
+// the bare host as the TLS ServerName and the SMTP auth host. The test
+// certificate covers ::1 and example.com.
+func TestEmailNotifier_SMTPHostForms(t *testing.T) {
+	serverTLS, pool := testServerTLS(t)
+
+	hosts := []struct {
+		name     string
+		host     string
+		wantAddr string
+	}{
+		{"bracketed IPv6 literal", "[::1]", "[::1]:"},
+		{"unbracketed IPv6 literal", "::1", "[::1]:"},
+		{"hostname", "example.com", "example.com:"},
+	}
+	modes := []struct {
+		name string
+		port int
+		b    smtpBehaviour
+	}{
+		{"implicit TLS", 465, smtpBehaviour{implicitTLS: serverTLS}},
+		{"STARTTLS", 587, smtpBehaviour{startTLS: serverTLS}},
+	}
+	for _, h := range hosts {
+		for _, m := range modes {
+			t.Run(h.name+" over "+m.name, func(t *testing.T) {
+				server := newFakeSMTPServer(t, m.b)
+				n := smtpTestNotifier(server, pool)
+
+				// Record the address Send dials, then connect to the
+				// fake server on IPv4 loopback, so the test needs no
+				// IPv6 on the host running it.
+				var connectAddrs []string
+				guarded := deliveryDialer(deliveryPolicy(true), fakeResolver(nil))
+				serverAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(server.port()))
+				n.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					connectAddrs = append(connectAddrs, addr)
+					if _, _, err := net.SplitHostPort(addr); err != nil {
+						return nil, err
+					}
+					return guarded(ctx, network, serverAddr)
+				}
+
+				ch := smtpTestChannel(m.port, true, true)
+				ch.SMTPHost = strPtr(h.host)
+				if err := n.Send(context.Background(), ch, createTestPayload()); err != nil {
+					t.Fatalf("Send() = %v", err)
+				}
+				want := h.wantAddr + strconv.Itoa(m.port)
+				if len(connectAddrs) != 1 || connectAddrs[0] != want {
+					t.Errorf("Send connected to %q, want [%q]", connectAddrs, want)
+				}
+				if server.messageCount() != 1 {
+					t.Errorf("server received %d message(s), want 1", server.messageCount())
+				}
+			})
+		}
+	}
+}
+
+func TestBareSMTPHost(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"[2001:db8::25]", "2001:db8::25"},
+		{"2001:db8::25", "2001:db8::25"},
+		{"smtp.example.com", "smtp.example.com"},
+		{"[[2001:db8::25]]", "[2001:db8::25]"},
+		{"[2001:db8::25", "[2001:db8::25"},
+		{"2001:db8::25]", "2001:db8::25]"},
+		{"[]", ""},
+		{"[", "["},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := bareSMTPHost(tt.in); got != tt.want {
+			t.Errorf("bareSMTPHost(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestEmailNotifier_ValidateEmptyBracketedHost(t *testing.T) {
+	n := &emailNotifier{}
+	ch := smtpTestChannel(587, true, false)
+	ch.SMTPHost = strPtr("[]")
+	if err := n.Validate(ch); err == nil || !strings.Contains(err.Error(), "requires SMTP host") {
+		t.Fatalf("Validate() = %v, want an error requiring an SMTP host", err)
+	}
+}

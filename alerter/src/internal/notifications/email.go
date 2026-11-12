@@ -68,7 +68,7 @@ func (n *emailNotifier) Type() database.NotificationChannelType {
 
 // Validate implements Notifier.Validate
 func (n *emailNotifier) Validate(channel *database.NotificationChannel) error {
-	if channel.SMTPHost == nil || *channel.SMTPHost == "" {
+	if channel.SMTPHost == nil || bareSMTPHost(*channel.SMTPHost) == "" {
 		return fmt.Errorf("email channel requires SMTP host")
 	}
 	if channel.FromAddress == nil || *channel.FromAddress == "" {
@@ -134,13 +134,14 @@ func (n *emailNotifier) Send(ctx context.Context, channel *database.Notification
 	}
 
 	// Build SMTP connection parameters
-	smtpHost := *channel.SMTPHost
+	smtpHost := bareSMTPHost(*channel.SMTPHost)
 	smtpPort := channel.SMTPPort
 	if smtpPort == 0 {
 		smtpPort = 587
 	}
 	// JoinHostPort brackets an IPv6 literal, which the dialer needs to
-	// split the address again.
+	// split the address again. smtpHost is bare, so a host saved as
+	// "[2001:db8::25]" is not bracketed twice.
 	addr := net.JoinHostPort(smtpHost, strconv.Itoa(smtpPort))
 
 	// Decrypt password if present. If decryption fails, the value is
@@ -344,6 +345,19 @@ func (n *emailNotifier) sendViaSMTPClient(client *smtp.Client, from string, to [
 	}
 
 	return nil
+}
+
+// bareSMTPHost removes one enclosing pair of square brackets from an
+// SMTP host. Version 1.0.0 required an IPv6 literal to be saved in
+// brackets, as in "[2001:db8::25]", and the server still accepts that
+// form, whilst net.JoinHostPort, the TLS ServerName and the SMTP PLAIN
+// auth host all expect the bare address. Any other host is returned
+// unchanged.
+func bareSMTPHost(host string) string {
+	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
+		return host[1 : len(host)-1]
+	}
+	return host
 }
 
 // deref safely dereferences a string pointer, returning empty string if nil

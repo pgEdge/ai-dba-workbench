@@ -97,6 +97,41 @@ func (c *scriptedDoneCtx) doneCalls() int {
 	return c.calls
 }
 
+// acquireTimeout bounds acquireWithin. Every acquisition it guards
+// either returns at once or waits only on a select whose shutdown case
+// is already ready, so it finishes in microseconds when the code is
+// right; the bound only has to be long enough for a loaded CI runner.
+const acquireTimeout = 5 * time.Second
+
+// acquireWithin calls ps.acquireProbeSlot and fails the test if it has
+// not returned within acquireTimeout. The tests below fill the semaphore
+// a stage waits on, so a shutdown check missing from that stage would
+// otherwise block until go test's own timeout rather than fail. The
+// goroutine is left blocked when the bound is hit; the test has failed
+// by then, and it ends with the test binary.
+func acquireWithin(t *testing.T, ps *ProbeScheduler, connectionID int) (func(), bool) {
+	t.Helper()
+	type result struct {
+		release func()
+		ok      bool
+	}
+	done := make(chan result, 1)
+	go func() {
+		release, ok := ps.acquireProbeSlot(connectionID)
+		done <- result{release, ok}
+	}()
+	timer := time.NewTimer(acquireTimeout)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.release, r.ok
+	case <-timer.C:
+		t.Fatalf("acquireProbeSlot(%d) did not return within %s: a shutdown check did not stop the wait",
+			connectionID, acquireTimeout)
+		return nil, false
+	}
+}
+
 // TestAcquireProbeSlot_EveryShutdownCheck reaches each of the shutdown
 // checks in acquireProbeSlot in turn, both through shutdownChan and
 // through the context, and confirms that nothing is left held whichever
@@ -151,7 +186,7 @@ func TestAcquireProbeSlot_EveryShutdownCheck(t *testing.T) {
 				wantGlobal = 1
 			}
 
-			release, ok := ps.acquireProbeSlot(connectionID)
+			release, ok := acquireWithin(t, ps, connectionID)
 			if ok {
 				release()
 				t.Fatal("acquired a slot although the scheduler was stopping")
@@ -181,7 +216,7 @@ func TestAcquireProbeSlot_ScriptedContextNeverFinishing(t *testing.T) {
 	ctx := newScriptedDoneCtx(6, nil)
 	ps.ctx = ctx
 
-	release, ok := ps.acquireProbeSlot(1)
+	release, ok := acquireWithin(t, ps, 1)
 	if !ok {
 		t.Fatal("acquisition refused although the scheduler was not stopping")
 	}

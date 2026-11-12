@@ -12,18 +12,22 @@ package api
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 // TestHostValidator_ValidateHost_Syntax checks that a host carrying
 // connection-string structure is refused before any allowlist or DNS
-// check, even when the allowlist would otherwise admit it.
+// check, even when the allowlist would otherwise admit it. Every hostile
+// host is itself on the allowlist, so only the syntax check can refuse
+// it, and the error must be ErrHostSyntax, so that a refusal for some
+// other reason, such as a failed DNS lookup, does not count.
 func TestHostValidator_ValidateHost_Syntax(t *testing.T) {
-	v := NewHostValidator(true, []string{"db.example.com"}, nil)
 	hostile := []string{
 		"db.example.com,169.254.169.254",
 		"[[::1]]",
@@ -38,9 +42,10 @@ func TestHostValidator_ValidateHost_Syntax(t *testing.T) {
 		"db.example.com\t",
 		"db.example.com\n",
 	}
+	v := NewHostValidator(true, append([]string{"db.example.com"}, hostile...), nil)
 	for _, host := range hostile {
-		if err := v.ValidateHost(host); err == nil {
-			t.Errorf("ValidateHost(%q) succeeded, want an error", host)
+		if err := v.ValidateHost(host); !errors.Is(err, hostvalidation.ErrHostSyntax) {
+			t.Errorf("ValidateHost(%q) = %v, want ErrHostSyntax", host, err)
 		}
 	}
 	if err := v.ValidateHost("db.example.com"); err != nil {

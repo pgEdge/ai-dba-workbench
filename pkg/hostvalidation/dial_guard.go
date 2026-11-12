@@ -46,6 +46,8 @@ var alwaysBlockedNetworks = mustParseCIDRs(
 	"169.254.0.0/16",     // IPv4 link-local, incl. 169.254.169.254 (AWS, GCP, Azure, OCI, ...)
 	"fe80::/10",          // IPv6 link-local
 	"fd00:ec2::254/128",  // AWS instance metadata over IPv6
+	"fd00:ec2::23/128",   // AWS EKS Pod Identity Agent over IPv6
+	"fd20:ce::254/128",   // GCP metadata server on IPv6-only instances
 	"100.100.100.200/32", // Alibaba Cloud instance metadata
 )
 
@@ -69,11 +71,17 @@ func mustParseCIDRs(cidrs ...string) []*net.IPNet {
 //   - SIIT IPv4-translated, ::ffff:0:0:0/96 (RFC 2765), written
 //     ::ffff:0:a.b.c.d: bytes 12-15;
 //   - NAT64 well-known prefix, 64:ff9b::/96 (RFC 6052): bytes 12-15;
-//   - NAT64 local-use prefix, 64:ff9b:1::/48 (RFC 8215), in the RFC 6052
-//     /48 layout: bytes 6-7 and 9-10, with byte 8 (bits 64-71) the
-//     reserved octet. Its value is not checked, so a translator that
-//     ignores it cannot be used to slip past the caller;
 //   - 6to4, 2002::/16 (RFC 3056): bytes 2-5.
+//
+// The NAT64 local-use prefix, 64:ff9b:1::/48 (RFC 8215), is deliberately
+// not decoded. RFC 8215 leaves the /48 for the operator to divide, and
+// its own examples are /96 prefixes such as 64:ff9b:1:fffe::/96, so the
+// IPv4 address may sit at any of the RFC 6052 offsets and no single
+// reading is right for every network: the /48 layout once used here
+// read every address under 64:ff9b:1::/96 as 0.0.0.0, and read
+// 64:ff9b:1:fffe::a9fe:a9fe (169.254.169.254) as a public address. The
+// whole /48 is in internalNetworks instead, so IsPrivateIP refuses it
+// and only a deployment that permits internal networks can reach it.
 //
 // An IPv4-mapped address (::ffff:a.b.c.d) needs no special case:
 // net.IP.To4 already unwraps it, and net.IPNet.Contains with it.
@@ -101,8 +109,6 @@ func embeddedIPv4(ip net.IP) net.IP {
 		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
 	case isNAT64 && isZero(ip16[4:12]):
 		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
-	case isNAT64 && ip16[4] == 0x00 && ip16[5] == 0x01:
-		return net.IPv4(ip16[6], ip16[7], ip16[9], ip16[10])
 	case ip16[0] == 0x20 && ip16[1] == 0x02:
 		return net.IPv4(ip16[2], ip16[3], ip16[4], ip16[5])
 	}

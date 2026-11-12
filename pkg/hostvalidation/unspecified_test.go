@@ -33,6 +33,8 @@ func TestIsPrivateIP_UnspecifiedAndEmbedded(t *testing.T) {
 		{"local-use NAT64", "64:ff9b:1::1", true},
 		{"6to4", "2002:a9fe:a9fe::1", true},
 		{"local-use NAT64 metadata", "64:ff9b:1:a9fe:a9:fe00::", true},
+		{"local-use NAT64 /96 public", "64:ff9b:1::c633:6407", true},
+		{"local-use NAT64 /96 metadata", "64:ff9b:1:fffe::a9fe:a9fe", true},
 		{"SIIT metadata", "::ffff:0:169.254.169.254", true},
 		{"SIIT public", "::ffff:0:8.8.8.8", true},
 		{"IPv6 site-local", "fec0::1", true},

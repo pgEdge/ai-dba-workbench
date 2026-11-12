@@ -26,9 +26,12 @@ func TestEmbeddedIPv4(t *testing.T) {
 		{"::c000:201", "192.0.2.1"},
 		{"::ffff:0:192.0.2.1", "192.0.2.1"},
 		{"64:ff9b::c000:201", "192.0.2.1"},
-		{"64:ff9b:1:c000:2:100::", "192.0.2.1"},
-		{"64:ff9b:1:c000:ff02:100::", "192.0.2.1"}, // reserved byte 8 ignored
-		{"64:ff9b:1:a9fe:a9:fe00::", "169.254.169.254"},
+		// The RFC 8215 local-use prefix is not decoded, in either the
+		// RFC 6052 /48 layout or a /96 one.
+		{"64:ff9b:1:c000:2:100::", ""},
+		{"64:ff9b:1:a9fe:a9:fe00::", ""},
+		{"64:ff9b:1::c633:6407", ""},
+		{"64:ff9b:1:fffe::a9fe:a9fe", ""},
 		{"2002:c000:201::1", "192.0.2.1"},
 		{"192.0.2.1", ""},
 		{"::ffff:192.0.2.1", ""}, // IPv4-mapped: To4 unwraps it
@@ -56,7 +59,7 @@ func TestEmbeddedIPv4(t *testing.T) {
 }
 
 // TestGuardedDialContext_TranslatedMetadata checks that the floor holds
-// for the local-use NAT64 and SIIT forms of the metadata address under
+// for the well-known NAT64 and SIIT forms of the metadata address under
 // a policy that permits everything, as allow_internal_networks does.
 func TestGuardedDialContext_TranslatedMetadata(t *testing.T) {
 	permitAll := func(string, net.IP) error { return nil }
@@ -65,12 +68,47 @@ func TestGuardedDialContext_TranslatedMetadata(t *testing.T) {
 		return nil, errors.New("unexpected dial")
 	}
 	for _, addr := range []string{
-		"[64:ff9b:1:a9fe:a9:fe00::]:80",
+		"[64:ff9b::a9fe:a9fe]:80",
 		"[::ffff:0:169.254.169.254]:80",
 	} {
 		_, err := GuardedDialContext(permitAll, nil, dial)(context.Background(), "tcp", addr)
 		if !errors.Is(err, ErrNoPermittedAddress) {
 			t.Errorf("dial %s: err = %v, want ErrNoPermittedAddress", addr, err)
+		}
+	}
+}
+
+// TestLocalUseNAT64 pins how the RFC 8215 local-use prefix,
+// 64:ff9b:1::/48, is treated: the always-blocked floor leaves every
+// address in it alone, whatever IPv4 address a /48 or /96 reading would
+// find, and the internal-network policy refuses every one of them.
+func TestLocalUseNAT64(t *testing.T) {
+	for _, addr := range []string{
+		"64:ff9b:1::c633:6407",       // 198.51.100.7 under 64:ff9b:1::/96
+		"64:ff9b:1::",                // 0.0.0.0 under 64:ff9b:1::/96
+		"64:ff9b:1:fffe::a9fe:a9fe",  // 169.254.169.254 under 64:ff9b:1:fffe::/96
+		"64:ff9b:1:fffe::c633:6407",  // 198.51.100.7 under 64:ff9b:1:fffe::/96
+		"64:ff9b:1:a9fe:a9:fe00::",   // 169.254.169.254 in the /48 layout
+		"64:ff9b:1:6464:64:c800::",   // 100.100.100.200 in the /48 layout
+		"64:ff9b:1:ffff:ffff:ffff::", // top of the /48
+	} {
+		ip := net.ParseIP(addr)
+		if IsAlwaysBlockedIP(ip) {
+			t.Errorf("IsAlwaysBlockedIP(%s) = true, want false", addr)
+		}
+		if !IsPrivateIP(ip) {
+			t.Errorf("IsPrivateIP(%s) = false, want true", addr)
+		}
+		if err := CheckNotInternal("h", ip); err == nil {
+			t.Errorf("CheckNotInternal(%s) = nil, want a refusal", addr)
+		}
+	}
+	// Just outside the /48 on either side is neither.
+	for _, addr := range []string{"64:ff9b:0:ffff::1", "64:ff9b:2::1"} {
+		ip := net.ParseIP(addr)
+		if IsAlwaysBlockedIP(ip) || IsPrivateIP(ip) {
+			t.Errorf("%s: blocked=%v private=%v, want neither",
+				addr, IsAlwaysBlockedIP(ip), IsPrivateIP(ip))
 		}
 	}
 }
@@ -90,12 +128,8 @@ func TestIsAlwaysBlockedIP(t *testing.T) {
 		{"::a9fe:a9fe", true},
 		{"64:ff9b::a9fe:a9fe", true},
 		{"2002:a9fe:a9fe::1", true},
-		// RFC 8215 local-use NAT64 (/48 layout) and SIIT forms of the
-		// metadata, Alibaba metadata and unspecified addresses.
-		{"64:ff9b:1:a9fe:a9:fe00::", true},
-		{"64:ff9b:1:a9fe:ffa9:fe00::", true}, // reserved byte 8 set
-		{"64:ff9b:1:6464:64:c800::", true},
-		{"64:ff9b:1::", true},
+		// SIIT forms of the metadata, Alibaba metadata and unspecified
+		// addresses.
 		{"::ffff:0:169.254.169.254", true},
 		{"::ffff:0:100.100.100.200", true},
 		{"::ffff:0:0.0.0.0", true},
@@ -103,6 +137,10 @@ func TestIsAlwaysBlockedIP(t *testing.T) {
 		{"ff02::1", true},
 		{"224.0.0.1", true},
 		{"fd00:ec2::254", true},
+		{"fd00:ec2::23", true},  // AWS EKS Pod Identity Agent
+		{"fd20:ce::254", true},  // GCP metadata, IPv6-only instances
+		{"fd00:ec2::22", false}, // neighbours of the metadata addresses
+		{"fd20:ce::253", false},
 		{"100.100.100.200", true},
 		// Ranges a monitored connection may legitimately use.
 		{"127.0.0.1", false},
@@ -114,7 +152,7 @@ func TestIsAlwaysBlockedIP(t *testing.T) {
 		{"8.8.8.8", false},
 		{"64:ff9b::808:808", false},
 		{"2002:0808:0808::1", false},
-		{"64:ff9b:1:c000:2:100::", false}, // 192.0.2.1
+		{"64:ff9b:1::c633:6407", false}, // local-use NAT64: left to the internal policy
 		{"::ffff:0:192.0.2.1", false},
 		{"2001:db8::1", false},
 	}

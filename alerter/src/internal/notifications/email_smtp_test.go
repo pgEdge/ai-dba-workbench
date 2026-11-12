@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
@@ -395,5 +397,126 @@ func TestEmailNotifier_ValidateEmptyBracketedHost(t *testing.T) {
 	ch.SMTPHost = strPtr("[]")
 	if err := n.Validate(ch); err == nil || !strings.Contains(err.Error(), "requires SMTP host") {
 		t.Fatalf("Validate() = %v, want an error requiring an SMTP host", err)
+	}
+}
+
+// stallingSMTPNotifier returns an email notifier whose every connection
+// reaches a loopback listener that accepts and then never says
+// anything, as an SMTP server that has stopped answering would.
+func stallingSMTPNotifier(t *testing.T) *emailNotifier {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	var mu sync.Mutex
+	var held []net.Conn
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range held {
+			c.Close()
+		}
+	})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, c)
+			mu.Unlock()
+		}
+	}()
+	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", ln.Addr().String())
+	}
+	n, ok := newEmailNotifierWithDialer("secret", &mockTemplateRenderer{}, dial).(*emailNotifier)
+	if !ok {
+		t.Fatal("newEmailNotifierWithDialer returned an unexpected type")
+	}
+	return n
+}
+
+// TestEmailNotifier_StalledServer checks that an SMTP server which
+// accepts the connection and then goes quiet cannot hold a send open,
+// on the implicit TLS path (the handshake) and the STARTTLS path (the
+// greeting) alike: the connection's deadline is the context's, and
+// ending the context early closes the connection even before then.
+func TestEmailNotifier_StalledServer(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		port   int
+		useTLS bool
+	}{
+		{"implicit TLS", 465, true},
+		{"STARTTLS", 587, true},
+		{"TLS off", 25, false},
+	} {
+		send := func(ctx context.Context) error {
+			return stallingSMTPNotifier(t).Send(ctx, smtpTestChannel(tc.port, tc.useTLS, false), createTestPayload())
+		}
+		t.Run(tc.name+" deadline", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			start := time.Now()
+			if err := send(ctx); err == nil {
+				t.Fatal("expected the stalled send to fail")
+			}
+			if elapsed := time.Since(start); elapsed > 5*time.Second {
+				t.Errorf("send took %v, want it bounded by the deadline", elapsed)
+			}
+		})
+		t.Run(tc.name+" cancel", func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			timer := time.AfterFunc(200*time.Millisecond, cancel)
+			defer timer.Stop()
+			start := time.Now()
+			if err := send(ctx); err == nil {
+				t.Fatal("expected the send to fail once its context ended")
+			}
+			if elapsed := time.Since(start); elapsed > 5*time.Second {
+				t.Errorf("send took %v, want it ended by the cancellation", elapsed)
+			}
+		})
+	}
+}
+
+// deadlineRefusingConn is a connection whose SetDeadline fails.
+type deadlineRefusingConn struct {
+	net.Conn
+	closed atomic.Bool
+}
+
+func (c *deadlineRefusingConn) SetDeadline(time.Time) error {
+	return errors.New("deadline not supported")
+}
+
+func (c *deadlineRefusingConn) Close() error {
+	c.closed.Store(true)
+	return c.Conn.Close()
+}
+
+// TestEmailNotifier_DialSMTPDeadlineFailure checks that a connection
+// whose deadline cannot be set is closed and reported as a connect
+// failure rather than used without a bound.
+func TestEmailNotifier_DialSMTPDeadlineFailure(t *testing.T) {
+	client, server := net.Pipe()
+	defer server.Close()
+	conn := &deadlineRefusingConn{Conn: client}
+	n := &emailNotifier{dial: func(context.Context, string, string) (net.Conn, error) {
+		return conn, nil
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if _, _, err := n.dialSMTP(ctx, "example.com:25"); err == nil ||
+		!strings.Contains(err.Error(), "failed to connect to SMTP server") {
+		t.Fatalf("dialSMTP = %v, want a connect failure", err)
+	}
+	if !conn.closed.Load() {
+		t.Error("connection left open")
 	}
 }

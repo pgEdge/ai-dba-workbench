@@ -212,6 +212,31 @@ func (n *emailNotifier) sendEmail(
 	return n.sendWithStartTLS(ctx, addr, auth, from, to, msgBytes, smtpHost)
 }
 
+// dialSMTP connects to addr through the guarded dialer and ties the
+// connection to ctx: its read and write deadline is ctx's deadline, and
+// it is closed as soon as ctx is done, so a server that stops answering
+// part-way through the exchange fails the send instead of blocking the
+// worker. net/smtp has no context support of its own. The caller must
+// call the returned release function when it has finished with the
+// connection. The server's test send (dialSMTP in
+// server/src/internal/api/email_test_sender.go) does the same.
+func (n *emailNotifier) dialSMTP(ctx context.Context, addr string) (net.Conn, func(), error) {
+	conn, err := n.dial(ctx, "tcp", addr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to connect to SMTP server: %w", err)
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			_ = conn.Close() //nolint:errcheck // already failing
+			return nil, nil, fmt.Errorf("failed to connect to SMTP server: %w", err)
+		}
+	}
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.Close() //nolint:errcheck // unblocks a stalled read or write
+	})
+	return conn, func() { stop() }, nil
+}
+
 // sendWithTLS sends email using implicit TLS (port 465)
 func (n *emailNotifier) sendWithTLS(
 	ctx context.Context,
@@ -230,16 +255,16 @@ func (n *emailNotifier) sendWithTLS(
 	}
 
 	// Connect through the guarded dialer, then wrap with TLS
-	rawConn, err := n.dial(ctx, "tcp", addr)
+	rawConn, release, err := n.dialSMTP(ctx, addr)
 	if err != nil {
-		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+		return err
 	}
+	defer release()
 	conn := tls.Client(rawConn, tlsConfig)
+	defer conn.Close()
 	if err := conn.HandshakeContext(ctx); err != nil {
-		rawConn.Close()
 		return fmt.Errorf("TLS handshake failed: %w", err)
 	}
-	defer conn.Close()
 
 	// Create SMTP client
 	client, err := smtp.NewClient(conn, smtpHost)
@@ -270,10 +295,11 @@ func (n *emailNotifier) sendWithStartTLS(
 	smtpHost string,
 ) error {
 	// Connect to the SMTP server through the guarded dialer
-	rawConn, err := n.dial(ctx, "tcp", addr)
+	rawConn, release, err := n.dialSMTP(ctx, addr)
 	if err != nil {
-		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+		return err
 	}
+	defer release()
 	client, err := smtp.NewClient(rawConn, smtpHost)
 	if err != nil {
 		rawConn.Close()

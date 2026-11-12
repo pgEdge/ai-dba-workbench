@@ -246,7 +246,14 @@ and the injected `LookupFunc` the tests depend on would be lost.
 `NewManager` builds one dialer
 and gives it to both the shared HTTP client (Slack, Mattermost,
 webhook, Telegram) and the email notifier, whose `sendWithTLS` and
-`sendWithStartTLS` dial through it. `webhook.go` therefore carries no
+`sendWithStartTLS` dial through it, via `dialSMTP`, which sets the
+context's deadline on the connection and closes it when the context
+ends (`net/smtp` has no context support). Every send is bounded:
+`processNotification` wraps each `Send` in
+`context.WithTimeout(ctx, SendTimeout)` (30s, also
+`engine.NotificationTimeout`), because the pending-retry and reminder
+workers pass a context with no deadline. Because the dialer holds the
+policy, `webhook.go` carries no
 host check of its own; do not add one back, since a pre-check is the
 rebinding gap this replaced.
 

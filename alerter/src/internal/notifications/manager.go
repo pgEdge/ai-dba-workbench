@@ -21,6 +21,12 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 )
 
+// SendTimeout is the longest one notification send may take, from
+// connecting to the endpoint to its last reply. processNotification
+// applies it to every send, and the engine bounds a fired alert's
+// notifications with the same value (engine.NotificationTimeout).
+const SendTimeout = 30 * time.Second
+
 // Manager implements NotificationManager
 type Manager struct {
 	datastore    *database.Datastore
@@ -317,8 +323,14 @@ func (m *Manager) processNotification(ctx context.Context, history *database.Not
 		channel.Recipients = recipients
 	}
 
-	// Send notification
-	err := notifier.Send(ctx, channel, payload)
+	// Send notification. Each send has its own deadline, whatever ctx
+	// carries: the pending-retry and reminder workers pass a context
+	// with none, and without one a stalled endpoint would hold the
+	// worker indefinitely (the guarded dial would also give each
+	// address its full dial timeout).
+	sendCtx, cancel := context.WithTimeout(ctx, SendTimeout)
+	err := notifier.Send(sendCtx, channel, payload)
+	cancel()
 
 	now := time.Now()
 	if err == nil {

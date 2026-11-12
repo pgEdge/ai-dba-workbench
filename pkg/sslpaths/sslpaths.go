@@ -69,6 +69,15 @@ func (e *SSLFilePathError) Error() string {
 // is not a directory, a symbolic link loop). The result must lie
 // strictly inside the resolved baseDir.
 //
+// Every refusal after the syntax checks, whether the path resolves
+// outside baseDir or cannot be resolved at all, returns the same
+// errOutsideDir text. The reason reaches API responses, and resolution
+// fails in different ways depending on what exists outside baseDir (a
+// path through an existing regular file fails with ENOTDIR, one through
+// a missing directory resolves and then lies outside), so distinct
+// messages would tell the caller whether a file outside the directory
+// exists.
+//
 // An empty path is always accepted, since it names no file. Any other
 // path is refused with ErrSSLCertDirUnset when baseDir is empty.
 //
@@ -90,20 +99,26 @@ func ValidateSSLFilePath(baseDir, p string) error {
 
 	base, err := resolvePath(filepath.Clean(baseDir))
 	if err != nil {
-		return errors.New("must be inside the configured SSL certificate directory")
+		return errOutsideDir
 	}
 	target, err := resolvePath(filepath.Clean(p))
 	if err != nil {
-		return err
+		return errOutsideDir
 	}
 	rel, err := filepath.Rel(base, target)
 	if err != nil || rel == "." || rel == ".." ||
 		strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
 		filepath.IsAbs(rel) {
-		return errors.New("must be inside the configured SSL certificate directory")
+		return errOutsideDir
 	}
 	return nil
 }
+
+// errOutsideDir is ValidateSSLFilePath's one refusal for a path that
+// does not resolve to a location inside the directory, for whatever
+// reason. See ValidateSSLFilePath for why the reasons are not told
+// apart.
+var errOutsideDir = errors.New("must be inside the configured SSL certificate directory")
 
 // checkPathSyntax applies the checks on p that need no file system
 // access: no control characters, an absolute path, and no ".." element.
@@ -125,14 +140,14 @@ func checkPathSyntax(p string) error {
 }
 
 // errDanglingLink is resolvePath's refusal of a path that runs through
-// a symbolic link whose target does not exist.
+// a symbolic link whose target does not exist. ValidateSSLFilePath
+// reports it, like errUnresolvable, as errOutsideDir.
 var errDanglingLink = errors.New("must not be a symbolic link to a file that does not exist")
 
 // errUnresolvable is resolvePath's refusal of a path that cannot be
 // resolved for any reason other than part of it not existing: a
 // permission error, a component that is not a directory, or a symbolic
-// link loop. The OS error is not passed on, since the reason reaches API
-// responses.
+// link loop. The OS error is not passed on.
 var errUnresolvable = errors.New("must be a path whose symbolic links can be resolved")
 
 // resolvePath returns p with every symbolic link resolved. When p does

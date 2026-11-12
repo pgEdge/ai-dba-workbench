@@ -178,8 +178,8 @@ func TestValidateSSLFilePathUnresolvable(t *testing.T) {
 	}
 	for _, p := range paths {
 		err := ValidateSSLFilePath(dir, p)
-		if err == nil || err.Error() != errUnresolvable.Error() {
-			t.Errorf("ValidateSSLFilePath(%q) = %v, want %v", p, err, errUnresolvable)
+		if !errors.Is(err, errOutsideDir) {
+			t.Errorf("ValidateSSLFilePath(%q) = %v, want %v", p, err, errOutsideDir)
 		}
 	}
 	if err := ValidateSSLFilePath(dir, filepath.Join(dir, "missing", "new.crt")); err != nil {
@@ -219,8 +219,8 @@ func TestValidateSSLFilePathDanglingLink(t *testing.T) {
 		filepath.Join(dir, "relout.crt"),
 	} {
 		err := ValidateSSLFilePath(dir, p)
-		if err == nil || !strings.Contains(err.Error(), "symbolic link") {
-			t.Errorf("ValidateSSLFilePath(%q) = %v, want a dangling link refusal", p, err)
+		if !errors.Is(err, errOutsideDir) {
+			t.Errorf("ValidateSSLFilePath(%q) = %v, want %v", p, err, errOutsideDir)
 		}
 	}
 	if err := ValidateSSLFilePath(dir, filepath.Join(dir, "not-yet.crt")); err != nil {
@@ -235,6 +235,38 @@ func TestValidateSSLFilePathDanglingLink(t *testing.T) {
 	}
 	if err := ValidateSSLFilePath(base, filepath.Join(base, "ca.crt")); err == nil {
 		t.Error("dangling base directory accepted")
+	}
+}
+
+// TestValidateSSLFilePathNoExistenceOracle checks that a path outside
+// the directory gets the same refusal whether resolving it fails on an
+// existing regular file (ENOTDIR) or runs through a component that does
+// not exist, so the API response cannot tell a caller which files exist
+// outside the directory. ValidateSSLFilePaths, which builds the API
+// message, must give identical errors too.
+func TestValidateSSLFilePathNoExistenceOracle(t *testing.T) {
+	dir := sslTestDir(t)
+	outside := sslTestDir(t)
+	file := filepath.Join(outside, "exists")
+	writeTestFile(t, file, []byte("x"))
+
+	throughFile := filepath.Join(file, "x.crt")
+	throughMissing := filepath.Join(outside, "missing", "x.crt")
+
+	errFile := ValidateSSLFilePath(dir, throughFile)
+	errMissing := ValidateSSLFilePath(dir, throughMissing)
+	if errFile == nil || errMissing == nil {
+		t.Fatalf("outside paths accepted: %v, %v", errFile, errMissing)
+	}
+	if errFile.Error() != errMissing.Error() {
+		t.Errorf("errors differ: through a file %q, through a missing component %q",
+			errFile, errMissing)
+	}
+
+	pathsFile := ValidateSSLFilePaths(dir, SSLFilePaths{SSLCert: &throughFile})
+	pathsMissing := ValidateSSLFilePaths(dir, SSLFilePaths{SSLCert: &throughMissing})
+	if pathsFile == nil || pathsMissing == nil || pathsFile.Error() != pathsMissing.Error() {
+		t.Errorf("ValidateSSLFilePaths errors differ: %v, %v", pathsFile, pathsMissing)
 	}
 }
 

@@ -146,7 +146,15 @@ func (m *Manager) SendAlertNotification(ctx context.Context, alert *database.Ale
 	// Build payload
 	payload := m.buildPayload(alert, notifType, serverName, serverHost, serverPort)
 
-	// Queue notification for each channel
+	// Create every channel's pending history row before attempting any
+	// send, so that a slow send cannot use up ctx before a later
+	// channel's row exists. A row whose immediate send does not finish
+	// stays pending and ProcessPendingNotifications delivers it.
+	type queuedNotification struct {
+		history *database.NotificationHistory
+		channel *database.NotificationChannel
+	}
+	queue := make([]queuedNotification, 0, len(channels))
 	for _, channel := range channels {
 		// Create history record
 		history := &database.NotificationHistory{
@@ -164,9 +172,19 @@ func (m *Manager) SendAlertNotification(ctx context.Context, alert *database.Ale
 			m.log("ERROR: Failed to create notification history: %v", err)
 			continue
 		}
+		queue = append(queue, queuedNotification{history: history, channel: channel})
+	}
 
-		// Try to send immediately
-		m.processNotification(ctx, history, channel, payload)
+	// Try to send each one immediately. When ctx is done no outcome can
+	// be recorded, so the remaining rows are left pending for the retry
+	// worker rather than sent now and sent again on retry.
+	for i, q := range queue {
+		if ctx.Err() != nil {
+			m.log("WARNING: %d notification(s) for alert %d left pending for retry: %v",
+				len(queue)-i, alert.ID, ctx.Err())
+			break
+		}
+		m.processNotification(ctx, q.history, q.channel, payload)
 	}
 
 	return nil

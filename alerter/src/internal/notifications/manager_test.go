@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
@@ -750,5 +752,117 @@ func TestManager_TelegramNotifierUsesSharedHTTPClient(t *testing.T) {
 	}
 	if notifier.renderer != m.renderer {
 		t.Error("Telegram notifier does not use the manager's renderer")
+	}
+}
+
+// blockingNotifier blocks every send to the channel named in block until
+// the send's context is done, and records the names of the channels it
+// delivers to.
+type blockingNotifier struct {
+	mu    sync.Mutex
+	block string
+	sent  []string
+}
+
+func (b *blockingNotifier) Send(ctx context.Context, channel *database.NotificationChannel, _ *database.NotificationPayload) error {
+	b.mu.Lock()
+	block := b.block
+	b.mu.Unlock()
+	if channel.Name == block {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.sent = append(b.sent, channel.Name)
+	return nil
+}
+
+func (b *blockingNotifier) Type() database.NotificationChannelType {
+	return database.ChannelTypeSlack
+}
+
+func (b *blockingNotifier) Validate(*database.NotificationChannel) error { return nil }
+
+const channelHistorySQL = `
+SELECT nc.name, nh.status
+FROM notification_history nh
+JOIN notification_channels nc ON nc.id = nh.channel_id
+WHERE nh.alert_id = $1`
+
+// channelHistory returns the status of each channel's history row for
+// alertID, keyed by channel name.
+func channelHistory(t *testing.T, pool *pgxpool.Pool, alertID int64) map[string]string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), channelHistorySQL, alertID)
+	if err != nil {
+		t.Fatalf("read history: %v", err)
+	}
+	defer rows.Close()
+	got := make(map[string]string)
+	for rows.Next() {
+		var name, status string
+		if err := rows.Scan(&name, &status); err != nil {
+			t.Fatalf("scan history: %v", err)
+		}
+		got[name] = status
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read history: %v", err)
+	}
+	return got
+}
+
+// TestManager_SlowChannelDoesNotStarveOthers sends one alert to two
+// channels while the first channel's send holds the context until its
+// deadline. Both channels must still get a history row, so the retry
+// worker delivers to every channel whose immediate send did not finish.
+func TestManager_SlowChannelDoesNotStarveOthers(t *testing.T) {
+	m, _, pool := managerTestEnv(t)
+	notifier := &blockingNotifier{block: "a-slow"}
+	m.notifiers[database.ChannelTypeSlack] = notifier
+
+	bg := context.Background()
+	for _, name := range []string{"a-slow", "b-fast"} {
+		var id int64
+		if err := pool.QueryRow(bg, managerInsertChannelSQL, "slack", name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alertID := insertManagerAlert(t, pool, database.AlertTypeSystem, nil)
+	alert, err := m.datastore.GetAlert(bg, alertID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(bg, 200*time.Millisecond)
+	defer cancel()
+	if err := m.SendAlertNotification(ctx, alert, database.NotificationTypeAlertFire); err != nil {
+		t.Fatalf("SendAlertNotification: %v", err)
+	}
+
+	got := channelHistory(t, pool, alertID)
+	if _, ok := got["a-slow"]; !ok {
+		t.Errorf("no history row for the slow channel: %v", got)
+	}
+	switch got["b-fast"] {
+	case string(database.NotificationStatusPending), string(database.NotificationStatusSent):
+	default:
+		t.Fatalf("history row for the second channel = %q, want pending or sent (rows: %v)", got["b-fast"], got)
+	}
+
+	// The retry worker delivers every row the immediate sends left
+	// pending.
+	notifier.mu.Lock()
+	notifier.block = ""
+	notifier.mu.Unlock()
+	if err := m.ProcessPendingNotifications(bg); err != nil {
+		t.Fatalf("ProcessPendingNotifications: %v", err)
+	}
+	got = channelHistory(t, pool, alertID)
+	for _, name := range []string{"a-slow", "b-fast"} {
+		if got[name] != string(database.NotificationStatusSent) {
+			t.Errorf("history for %s after retry = %q, want sent", name, got[name])
+		}
 	}
 }

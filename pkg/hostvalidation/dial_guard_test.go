@@ -26,8 +26,8 @@ func TestEmbeddedIPv4(t *testing.T) {
 		{"::c000:201", "192.0.2.1"},
 		{"::ffff:0:192.0.2.1", "192.0.2.1"},
 		{"64:ff9b::c000:201", "192.0.2.1"},
-		// The RFC 8215 local-use prefix is not decoded, in either the
-		// RFC 6052 /48 layout or a /96 one.
+		// The RFC 8215 local-use prefix is not decoded here, in any
+		// layout; localUseNAT64Readings reads it instead.
 		{"64:ff9b:1:c000:2:100::", ""},
 		{"64:ff9b:1:a9fe:a9:fe00::", ""},
 		{"64:ff9b:1::c633:6407", ""},
@@ -78,38 +78,150 @@ func TestGuardedDialContext_TranslatedMetadata(t *testing.T) {
 	}
 }
 
-// TestLocalUseNAT64 pins how the RFC 8215 local-use prefix,
-// 64:ff9b:1::/48, is treated: the always-blocked floor leaves every
-// address in it alone, whatever IPv4 address a /48 or /96 reading would
-// find, and the internal-network policy refuses every one of them.
-func TestLocalUseNAT64(t *testing.T) {
-	for _, addr := range []string{
-		"64:ff9b:1::c633:6407",       // 198.51.100.7 under 64:ff9b:1::/96
-		"64:ff9b:1::",                // 0.0.0.0 under 64:ff9b:1::/96
-		"64:ff9b:1:fffe::a9fe:a9fe",  // 169.254.169.254 under 64:ff9b:1:fffe::/96
-		"64:ff9b:1:fffe::c633:6407",  // 198.51.100.7 under 64:ff9b:1:fffe::/96
-		"64:ff9b:1:a9fe:a9:fe00::",   // 169.254.169.254 in the /48 layout
-		"64:ff9b:1:6464:64:c800::",   // 100.100.100.200 in the /48 layout
-		"64:ff9b:1:ffff:ffff:ffff::", // top of the /48
-	} {
-		ip := net.ParseIP(addr)
-		if IsAlwaysBlockedIP(ip) {
-			t.Errorf("IsAlwaysBlockedIP(%s) = true, want false", addr)
-		}
-		if !IsPrivateIP(ip) {
-			t.Errorf("IsPrivateIP(%s) = false, want true", addr)
-		}
-		if err := CheckNotInternal("h", ip); err == nil {
-			t.Errorf("CheckNotInternal(%s) = nil, want a refusal", addr)
-		}
+// localUseAddr embeds v4 in 64:ff9b:1::/48 at the RFC 6052 offsets of
+// the given prefix length (48, 56, 64 or 96), with a zero suffix.
+func localUseAddr(t *testing.T, prefixLen int, v4 string) net.IP {
+	t.Helper()
+	offsets := map[int][]int{
+		48: {6, 7, 9, 10},
+		56: {7, 9, 10, 11},
+		64: {9, 10, 11, 12},
+		96: {12, 13, 14, 15},
+	}[prefixLen]
+	b := net.ParseIP(v4).To4()
+	if offsets == nil || b == nil {
+		t.Fatalf("bad layout /%d or address %s", prefixLen, v4)
 	}
+	ip := make(net.IP, net.IPv6len)
+	copy(ip, net.ParseIP("64:ff9b:1::"))
+	for i, off := range offsets {
+		ip[off] = b[i]
+	}
+	return ip
+}
+
+// TestLocalUseNAT64 pins how the RFC 8215 local-use prefix,
+// 64:ff9b:1::/48, is treated: the always-blocked floor refuses an
+// address whose reading at any RFC 6052 offset is a metadata address,
+// and leaves every other alone, and the internal-network policy refuses
+// every address in it.
+func TestLocalUseNAT64(t *testing.T) {
+	layouts := []int{48, 56, 64, 96}
+
+	t.Run("metadata under every layout is refused", func(t *testing.T) {
+		for _, layout := range layouts {
+			for _, v4 := range []string{"169.254.169.254", "100.100.100.200", "169.254.0.1"} {
+				ip := localUseAddr(t, layout, v4)
+				if !IsAlwaysBlockedIP(ip) {
+					t.Errorf("IsAlwaysBlockedIP(%s) (%s under /%d) = false, want true", ip, v4, layout)
+				}
+			}
+		}
+		for _, addr := range []string{
+			"64:ff9b:1::a9fe:a9fe",       // 169.254.169.254 under 64:ff9b:1::/96
+			"64:ff9b:1:fffe::a9fe:a9fe",  // 169.254.169.254 under 64:ff9b:1:fffe::/96
+			"64:ff9b:1:a9fe:a9:fe00::",   // 169.254.169.254 in the /48 layout
+			"64:ff9b:1:a9:fe:a9fe::",     // 169.254.169.254 in the /56 layout
+			"64:ff9b:1:0:a9:fea9:fe00:0", // 169.254.169.254 in the /64 layout
+			"64:ff9b:1::6464:64c8",       // 100.100.100.200 under 64:ff9b:1::/96
+			"64:ff9b:1:6464:64:c800::",   // 100.100.100.200 in the /48 layout
+			"64:ff9b:1:64:64:64c8::",     // 100.100.100.200 in the /56 layout
+			"64:ff9b:1:0:64:6464:c800:0", // 100.100.100.200 in the /64 layout
+			// A nonzero u-octet does not hide the /48 reading.
+			"64:ff9b:1:a9fe:ffa9:fe00::",
+		} {
+			ip := net.ParseIP(addr)
+			if !IsAlwaysBlockedIP(ip) {
+				t.Errorf("IsAlwaysBlockedIP(%s) = false, want true", addr)
+			}
+			if err := CheckAlwaysBlocked("h", ip); err == nil {
+				t.Errorf("CheckAlwaysBlocked(%s) = nil, want a refusal", addr)
+			}
+		}
+	})
+
+	t.Run("public and private under every layout pass the floor", func(t *testing.T) {
+		for _, layout := range layouts {
+			for _, v4 := range []string{"198.51.100.7", "8.8.8.8", "10.0.0.5", "192.168.1.10", "0.0.0.0"} {
+				ip := localUseAddr(t, layout, v4)
+				if IsAlwaysBlockedIP(ip) {
+					t.Errorf("IsAlwaysBlockedIP(%s) (%s under /%d) = true, want false", ip, v4, layout)
+				}
+				if !IsPrivateIP(ip) {
+					t.Errorf("IsPrivateIP(%s) = false, want true", ip)
+				}
+			}
+		}
+		for _, addr := range []string{
+			"64:ff9b:1::c633:6407",       // 198.51.100.7 under 64:ff9b:1::/96
+			"64:ff9b:1::a00:5",           // 10.0.0.5 under 64:ff9b:1::/96
+			"64:ff9b:1::",                // 0.0.0.0 under 64:ff9b:1::/96
+			"64:ff9b:1:fffe::c633:6407",  // 198.51.100.7 under 64:ff9b:1:fffe::/96
+			"64:ff9b:1:ffff:ffff:ffff::", // top of the /48
+		} {
+			ip := net.ParseIP(addr)
+			if IsAlwaysBlockedIP(ip) {
+				t.Errorf("IsAlwaysBlockedIP(%s) = true, want false", addr)
+			}
+			if !IsPrivateIP(ip) {
+				t.Errorf("IsPrivateIP(%s) = false, want true", addr)
+			}
+			if err := CheckNotInternal("h", ip); err == nil {
+				t.Errorf("CheckNotInternal(%s) = nil, want a refusal", addr)
+			}
+		}
+	})
+
+	// The false positives the code comment records: a destination of the
+	// form x.169.254.y under the /48 or /56 layout, or x.y.169.254 under
+	// the /48 layout, is read as link-local at another offset.
+	t.Run("recorded false positives", func(t *testing.T) {
+		for _, tc := range []struct {
+			layout  int
+			v4      string
+			blocked bool
+		}{
+			{48, "198.169.254.7", true},
+			{48, "198.51.169.254", true},
+			{56, "198.169.254.7", true},
+			{56, "198.51.169.254", false},
+			{64, "198.169.254.7", false},
+			{96, "198.169.254.7", false},
+			{96, "198.51.169.254", false},
+		} {
+			ip := localUseAddr(t, tc.layout, tc.v4)
+			if got := IsAlwaysBlockedIP(ip); got != tc.blocked {
+				t.Errorf("IsAlwaysBlockedIP(%s) (%s under /%d) = %v, want %v",
+					ip, tc.v4, tc.layout, got, tc.blocked)
+			}
+		}
+	})
+
+	t.Run("the guarded dial refuses metadata under a permissive policy", func(t *testing.T) {
+		permitAll := func(string, net.IP) error { return nil }
+		dial := func(context.Context, string, string) (net.Conn, error) {
+			t.Error("dial called for an always-blocked address")
+			return nil, errors.New("unexpected dial")
+		}
+		_, err := GuardedDialContext(permitAll, nil, dial)(context.Background(), "tcp", "[64:ff9b:1:fffe::a9fe:a9fe]:80")
+		if !errors.Is(err, ErrNoPermittedAddress) {
+			t.Errorf("err = %v, want ErrNoPermittedAddress", err)
+		}
+	})
+
 	// Just outside the /48 on either side is neither.
-	for _, addr := range []string{"64:ff9b:0:ffff::1", "64:ff9b:2::1"} {
+	for _, addr := range []string{"64:ff9b:0:ffff::1", "64:ff9b:2::1", "64:ff9b:2:a9fe:a9:fe00::"} {
 		ip := net.ParseIP(addr)
 		if IsAlwaysBlockedIP(ip) || IsPrivateIP(ip) {
 			t.Errorf("%s: blocked=%v private=%v, want neither",
 				addr, IsAlwaysBlockedIP(ip), IsPrivateIP(ip))
 		}
+	}
+	if localUseNAT64Readings(net.ParseIP("192.0.2.1")) != nil {
+		t.Error("localUseNAT64Readings of an IPv4 address should be nil")
+	}
+	if localUseNAT64Readings(net.IP{1, 2, 3}) != nil {
+		t.Error("localUseNAT64Readings of a malformed IP should be nil")
 	}
 }
 

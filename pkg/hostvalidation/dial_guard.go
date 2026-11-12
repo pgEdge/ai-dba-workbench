@@ -73,15 +73,9 @@ func mustParseCIDRs(cidrs ...string) []*net.IPNet {
 //   - NAT64 well-known prefix, 64:ff9b::/96 (RFC 6052): bytes 12-15;
 //   - 6to4, 2002::/16 (RFC 3056): bytes 2-5.
 //
-// The NAT64 local-use prefix, 64:ff9b:1::/48 (RFC 8215), is deliberately
-// not decoded. RFC 8215 leaves the /48 for the operator to divide, and
-// its own examples are /96 prefixes such as 64:ff9b:1:fffe::/96, so the
-// IPv4 address may sit at any of the RFC 6052 offsets and no single
-// reading is right for every network: the /48 layout once used here
-// read every address under 64:ff9b:1::/96 as 0.0.0.0, and read
-// 64:ff9b:1:fffe::a9fe:a9fe (169.254.169.254) as a public address. The
-// whole /48 is in internalNetworks instead, so IsPrivateIP refuses it
-// and only a deployment that permits internal networks can reach it.
+// The NAT64 local-use prefix, 64:ff9b:1::/48 (RFC 8215), is not decoded
+// here, because no single reading of it is right for every network; see
+// localUseNAT64Readings, which IsAlwaysBlockedIP uses for it instead.
 //
 // An IPv4-mapped address (::ffff:a.b.c.d) needs no special case:
 // net.IP.To4 already unwraps it, and net.IPNet.Contains with it.
@@ -115,11 +109,84 @@ func embeddedIPv4(ip net.IP) net.IP {
 	return nil
 }
 
+// metadataIPv4Networks are the IPv4 ranges in alwaysBlockedNetworks that
+// hold cloud instance metadata services. They are the only ranges an
+// address in the NAT64 local-use prefix is refused for; see
+// isLocalUseNAT64Metadata.
+var metadataIPv4Networks = mustParseCIDRs(
+	"169.254.0.0/16",     // IPv4 link-local, incl. 169.254.169.254
+	"100.100.100.200/32", // Alibaba Cloud instance metadata
+)
+
+// localUseNAT64 is the NAT64 local-use prefix (RFC 8215).
+var localUseNAT64 = mustParseCIDRs("64:ff9b:1::/48")[0]
+
+// localUseNAT64Readings returns every IPv4 address ip could carry if it
+// is in the NAT64 local-use prefix, 64:ff9b:1::/48, or nil when it is
+// not. RFC 8215 leaves the /48 for the operator to divide, and its own
+// examples are /96 prefixes such as 64:ff9b:1:fffe::/96, so a translator
+// may use any RFC 6052 prefix length that fits within it, and the IPv4
+// address may sit at any of the offsets those lengths use:
+//
+//   - a /48 prefix: bytes 6, 7, 9 and 10 (byte 8 is the u-octet);
+//   - a /56 prefix: bytes 7, 9, 10 and 11;
+//   - a /64 prefix: bytes 9, 10, 11 and 12;
+//   - a /96 prefix: bytes 12-15.
+//
+// (The /32 and /40 layouts need a prefix shorter than the /48, so none
+// lies within it.) The u-octet's value is not checked, so an address
+// with a nonzero u-octet is read the same way.
+func localUseNAT64Readings(ip net.IP) []net.IP {
+	ip16 := ip.To16()
+	if ip16 == nil || ip.To4() != nil || !localUseNAT64.Contains(ip16) {
+		return nil
+	}
+	return []net.IP{
+		net.IPv4(ip16[6], ip16[7], ip16[9], ip16[10]),
+		net.IPv4(ip16[7], ip16[9], ip16[10], ip16[11]),
+		net.IPv4(ip16[9], ip16[10], ip16[11], ip16[12]),
+		net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15]),
+	}
+}
+
+// isLocalUseNAT64Metadata reports whether ip is in the NAT64 local-use
+// prefix and any of its localUseNAT64Readings is a cloud metadata
+// address (metadataIPv4Networks). RFC 8215 lifts RFC 6052's ban on
+// translating non-global IPv4 addresses for this prefix, so a translator
+// on it may well forward to the metadata service.
+//
+// Only the metadata ranges are checked. An address under a /96 prefix
+// such as 64:ff9b:1::/96 has mostly zero bytes at the shorter layouts'
+// offsets, so refusing 0.0.0.0/8, or private readings, would refuse
+// ordinary servers (64:ff9b:1::c633:6407, 198.51.100.7, for example);
+// the whole /48 is in internalNetworks anyway, so IsPrivateIP refuses
+// it unless a deployment permits internal networks.
+//
+// Because every layout is read, this has a rare false positive, all of
+// it from 169.254.0.0/16 (no reading can put 100.100.100.200 together
+// from another address's bytes with a zero suffix). Under the /48
+// layout, an IPv4 destination of the form x.169.254.y is refused, since
+// the /56 reading takes it as 169.254.y.0, and so is one of the form
+// x.y.169.254, which the /64 reading takes as 169.254.0.0. Under the /56
+// layout, x.169.254.y is refused, through the /64 reading. The /64 and
+// /96 layouts have none, so neither do RFC 8215's own /96 examples.
+func isLocalUseNAT64Metadata(ip net.IP) bool {
+	for _, v4 := range localUseNAT64Readings(ip) {
+		for _, n := range metadataIPv4Networks {
+			if n.Contains(v4) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IsAlwaysBlockedIP reports whether ip is one no monitored connection
 // may be opened to, whatever the deployment's other settings: an
 // unspecified address, a link-local address (unicast or multicast), a
-// known cloud metadata address, or an IPv6 address embedding any of
-// these IPv4 addresses.
+// known cloud metadata address, an IPv6 address embedding any of these
+// IPv4 addresses, or an address in the NAT64 local-use prefix any of
+// whose readings is a metadata address (see isLocalUseNAT64Metadata).
 func IsAlwaysBlockedIP(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -135,6 +202,9 @@ func IsAlwaysBlockedIP(ip net.IP) bool {
 		if n.Contains(ip) {
 			return true
 		}
+	}
+	if isLocalUseNAT64Metadata(ip) {
+		return true
 	}
 	if v4 := embeddedIPv4(ip); v4 != nil {
 		return IsAlwaysBlockedIP(v4)

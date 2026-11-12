@@ -103,11 +103,27 @@ moved.
   metadata, and IPv6 forms embedding them); private and loopback
   targets pass. `GuardedLookup` applies that same floor before any
   policy, so the server refuses link-local addresses even with
-  `allow_internal_networks` on. The embedded forms are decoded by
-  `embeddedIPv4` in `pkg/hostvalidation/dial_guard.go` (IPv4-compatible,
-  SIIT, both NAT64 prefixes including the RFC 8215 /48 layout, and
-  6to4); a new IPv4-embedding form must be added there, or it bypasses
-  the floor.
+  `allow_internal_networks` on. The floor's IPv6 metadata addresses are
+  `fd00:ec2::254` (AWS), `fd00:ec2::23` (AWS EKS Pod Identity Agent)
+  and `fd20:ce::254` (GCP, IPv6-only instances); its IPv4 ones are
+  `169.254.0.0/16` and `100.100.100.200` (Alibaba). The embedded forms
+  are decoded by `embeddedIPv4` in `pkg/hostvalidation/dial_guard.go`
+  (IPv4-compatible, SIIT, the NAT64 well-known `64:ff9b::/96` and
+  6to4), and the whole embedded address is judged against the floor; a
+  new IPv4-embedding form must be added there, or it bypasses the
+  floor. The RFC 8215 local-use prefix `64:ff9b:1::/48` is handled
+  separately by `isLocalUseNAT64Metadata`, because the operator chooses
+  the sub-prefix length: it reads the IPv4 address at every RFC 6052
+  offset (/48: bytes 6,7,9,10; /56: 7,9,10,11; /64: 9-12; /96: 12-15)
+  and refuses the address when any reading is in `169.254.0.0/16` or
+  is `100.100.100.200`. It deliberately does not refuse `0.0.0.0/8` or
+  private readings, which would refuse ordinary servers under a /96
+  (`64:ff9b:1::c633:6407`); the accepted false positive is
+  `x.169.254.y` under the /48 or /56 layout and `x.y.169.254` under the
+  /48 layout. The whole /48 stays in `internalNetworks`, so only the
+  collector, or a policy that permits internal addresses
+  (`allow_internal_networks`, or a server `allowed_hosts` match), can
+  reach the rest of it.
 - Alerter notification deliveries are guarded at the dial, not before
   it: `notifications/dial_guard.go` builds one
   `hostvalidation.GuardedDialContext` (resolves the host itself and

@@ -866,3 +866,77 @@ func TestManager_SlowChannelDoesNotStarveOthers(t *testing.T) {
 		}
 	}
 }
+
+// hookNotifier counts the sends to each channel and, on the first send
+// to the channel named in hookOn, calls hook before reporting success.
+type hookNotifier struct {
+	mu     sync.Mutex
+	hookOn string
+	hook   func()
+	sends  map[string]int
+}
+
+func (h *hookNotifier) Send(_ context.Context, channel *database.NotificationChannel, _ *database.NotificationPayload) error {
+	h.mu.Lock()
+	h.sends[channel.Name]++
+	var hook func()
+	if channel.Name == h.hookOn {
+		hook, h.hook = h.hook, nil
+	}
+	h.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return nil
+}
+
+func (h *hookNotifier) Type() database.NotificationChannelType {
+	return database.ChannelTypeSlack
+}
+
+func (h *hookNotifier) Validate(*database.NotificationChannel) error { return nil }
+
+// TestManager_RetryPassSkipsRowsTheImmediateSendOwns runs a retry pass
+// while the first channel's immediate send is still in progress. The
+// retry pass must leave every row of that delivery alone, so each
+// channel receives the alert exactly once.
+func TestManager_RetryPassSkipsRowsTheImmediateSendOwns(t *testing.T) {
+	m, _, pool := managerTestEnv(t)
+	bg := context.Background()
+	notifier := &hookNotifier{hookOn: "a-slow", sends: map[string]int{}}
+	notifier.hook = func() {
+		if err := m.ProcessPendingNotifications(bg); err != nil {
+			t.Errorf("ProcessPendingNotifications: %v", err)
+		}
+	}
+	m.notifiers[database.ChannelTypeSlack] = notifier
+
+	for _, name := range []string{"a-slow", "b-fast"} {
+		var id int64
+		if err := pool.QueryRow(bg, managerInsertChannelSQL, "slack", name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alertID := insertManagerAlert(t, pool, database.AlertTypeSystem, nil)
+	alert, err := m.datastore.GetAlert(bg, alertID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(bg, 30*time.Second)
+	defer cancel()
+	if err := m.SendAlertNotification(ctx, alert, database.NotificationTypeAlertFire); err != nil {
+		t.Fatalf("SendAlertNotification: %v", err)
+	}
+
+	for _, name := range []string{"a-slow", "b-fast"} {
+		if n := notifier.sends[name]; n != 1 {
+			t.Errorf("%s received the alert %d times, want 1", name, n)
+		}
+	}
+	for name, status := range channelHistory(t, pool, alertID) {
+		if status != string(database.NotificationStatusSent) {
+			t.Errorf("history for %s = %q, want sent", name, status)
+		}
+	}
+}

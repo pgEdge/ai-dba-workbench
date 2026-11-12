@@ -150,6 +150,18 @@ func (m *Manager) SendAlertNotification(ctx context.Context, alert *database.Ale
 	// send, so that a slow send cannot use up ctx before a later
 	// channel's row exists. A row whose immediate send does not finish
 	// stays pending and ProcessPendingNotifications delivers it.
+	//
+	// Until ctx's deadline the immediate sends below own these rows, so
+	// each row's next_retry_at is set to that deadline: the retry worker,
+	// which runs on its own schedule, skips them until then instead of
+	// sending a row the immediate path is about to send or record. An
+	// outcome processNotification records either ends the row (sent or
+	// failed) or gives it a new next_retry_at (retrying); a row with no
+	// recorded outcome becomes eligible when the deadline passes.
+	var ownedUntil *time.Time
+	if deadline, ok := ctx.Deadline(); ok {
+		ownedUntil = &deadline
+	}
 	type queuedNotification struct {
 		history *database.NotificationHistory
 		channel *database.NotificationChannel
@@ -165,6 +177,7 @@ func (m *Manager) SendAlertNotification(ctx context.Context, alert *database.Ale
 			Status:           database.NotificationStatusPending,
 			AttemptCount:     0,
 			MaxAttempts:      m.config.MaxRetryAttempts,
+			NextRetryAt:      ownedUntil,
 			CreatedAt:        time.Now(),
 		}
 

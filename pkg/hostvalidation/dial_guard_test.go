@@ -18,6 +18,63 @@ import (
 	"testing"
 )
 
+func TestEmbeddedIPv4(t *testing.T) {
+	tests := []struct {
+		ip   string
+		want string // "" for no embedded address
+	}{
+		{"::c000:201", "192.0.2.1"},
+		{"::ffff:0:192.0.2.1", "192.0.2.1"},
+		{"64:ff9b::c000:201", "192.0.2.1"},
+		{"64:ff9b:1:c000:2:100::", "192.0.2.1"},
+		{"64:ff9b:1:c000:ff02:100::", "192.0.2.1"}, // reserved byte 8 ignored
+		{"64:ff9b:1:a9fe:a9:fe00::", "169.254.169.254"},
+		{"2002:c000:201::1", "192.0.2.1"},
+		{"192.0.2.1", ""},
+		{"::ffff:192.0.2.1", ""}, // IPv4-mapped: To4 unwraps it
+		{"::1:ffff:0:c000:201", ""},
+		{"::ffff:1:c000:201", ""},
+		{"64:ff9b:2:c000:2:100::", ""},
+		{"2001:db8::1", ""},
+	}
+	for _, tt := range tests {
+		ip := net.ParseIP(tt.ip)
+		if ip == nil {
+			t.Fatalf("failed to parse %s", tt.ip)
+		}
+		got := embeddedIPv4(ip)
+		if tt.want == "" {
+			if got != nil {
+				t.Errorf("embeddedIPv4(%s) = %s, want nil", tt.ip, got)
+			}
+			continue
+		}
+		if !got.Equal(net.ParseIP(tt.want)) {
+			t.Errorf("embeddedIPv4(%s) = %v, want %s", tt.ip, got, tt.want)
+		}
+	}
+}
+
+// TestGuardedDialContext_TranslatedMetadata checks that the floor holds
+// for the local-use NAT64 and SIIT forms of the metadata address under
+// a policy that permits everything, as allow_internal_networks does.
+func TestGuardedDialContext_TranslatedMetadata(t *testing.T) {
+	permitAll := func(string, net.IP) error { return nil }
+	dial := func(context.Context, string, string) (net.Conn, error) {
+		t.Error("dial called for an always-blocked address")
+		return nil, errors.New("unexpected dial")
+	}
+	for _, addr := range []string{
+		"[64:ff9b:1:a9fe:a9:fe00::]:80",
+		"[::ffff:0:169.254.169.254]:80",
+	} {
+		_, err := GuardedDialContext(permitAll, nil, dial)(context.Background(), "tcp", addr)
+		if !errors.Is(err, ErrNoPermittedAddress) {
+			t.Errorf("dial %s: err = %v, want ErrNoPermittedAddress", addr, err)
+		}
+	}
+}
+
 func TestIsAlwaysBlockedIP(t *testing.T) {
 	tests := []struct {
 		ip      string
@@ -33,6 +90,15 @@ func TestIsAlwaysBlockedIP(t *testing.T) {
 		{"::a9fe:a9fe", true},
 		{"64:ff9b::a9fe:a9fe", true},
 		{"2002:a9fe:a9fe::1", true},
+		// RFC 8215 local-use NAT64 (/48 layout) and SIIT forms of the
+		// metadata, Alibaba metadata and unspecified addresses.
+		{"64:ff9b:1:a9fe:a9:fe00::", true},
+		{"64:ff9b:1:a9fe:ffa9:fe00::", true}, // reserved byte 8 set
+		{"64:ff9b:1:6464:64:c800::", true},
+		{"64:ff9b:1::", true},
+		{"::ffff:0:169.254.169.254", true},
+		{"::ffff:0:100.100.100.200", true},
+		{"::ffff:0:0.0.0.0", true},
 		{"fe80::1", true},
 		{"ff02::1", true},
 		{"224.0.0.1", true},
@@ -48,6 +114,8 @@ func TestIsAlwaysBlockedIP(t *testing.T) {
 		{"8.8.8.8", false},
 		{"64:ff9b::808:808", false},
 		{"2002:0808:0808::1", false},
+		{"64:ff9b:1:c000:2:100::", false}, // 192.0.2.1
+		{"::ffff:0:192.0.2.1", false},
 		{"2001:db8::1", false},
 	}
 	for _, tt := range tests {

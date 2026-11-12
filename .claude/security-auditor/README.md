@@ -70,8 +70,12 @@ moved.
   whitespace and a non-IP hostaddr, in both the server's
   `Datastore.BuildConnectionString` (`ErrUnsafeConnectionTarget`) and
   the collector's `buildMonitoredConnectionParams`. pgx v5.12.0 has no
-  `hostaddr` keyword (it would be sent as a startup parameter), so the
-  collector, like the server, dials the validated address as `host`.
+  `hostaddr` keyword (it would be sent as a startup parameter). The
+  server dials the validated `hostaddr` as `host`; the collector's
+  `createMonitoredPool` (`collector/src/database/monitored_pool.go`)
+  removes it from the runtime parameters, keeps `host` as the TLS
+  server name, and returns the address from `LookupFunc`, which is then
+  wrapped by `GuardedLookup` like any resolved address.
 - The internal-range test is `hostvalidation.IsPrivateIP`
   (`pkg/hostvalidation/hostvalidation.go`), shared by the server's
   `HostValidator` and the alerter's delivery dialer. It ORs the
@@ -79,10 +83,10 @@ moved.
   `IsLoopback`, `IsPrivate`, link-local and multicast predicates, so a
   range missing from the list is still caught; the list itself also
   holds `::/128` (dialling `::` reaches localhost), the IPv4-embedding
-  prefixes `::/96`, `64:ff9b::/96`, `64:ff9b:1::/48` and `2002::/16`,
-  and `fec0::/10`. Blocking all of `64:ff9b::/96` means a deployment
-  on an IPv6-only NAT64 network must set `allow_internal_networks` or
-  allow-list the prefix.
+  prefixes `::/96`, `::ffff:0:0:0/96` (SIIT), `64:ff9b::/96`,
+  `64:ff9b:1::/48` and `2002::/16`, and `fec0::/10`. Blocking all of
+  `64:ff9b::/96` means a deployment on an IPv6-only NAT64 network must
+  set `allow_internal_networks` or allow-list the prefix.
 - Save-time checks cannot stop DNS rebinding, so every monitored
   connect path re-checks the addresses pgx actually dials, by wrapping
   `pgconn.Config.LookupFunc` with `hostvalidation.GuardedLookup` (pgx
@@ -97,8 +101,13 @@ moved.
   config, so `createMonitoredPool` applies only
   `hostvalidation.CheckAlwaysBlocked` (unspecified, link-local, cloud
   metadata, and IPv6 forms embedding them); private and loopback
-  targets pass, and with `allow_internal_networks` on, the server will
-  dial link-local addresses that the collector refuses.
+  targets pass. `GuardedLookup` applies that same floor before any
+  policy, so the server refuses link-local addresses even with
+  `allow_internal_networks` on. The embedded forms are decoded by
+  `embeddedIPv4` in `pkg/hostvalidation/dial_guard.go` (IPv4-compatible,
+  SIIT, both NAT64 prefixes including the RFC 8215 /48 layout, and
+  6to4); a new IPv4-embedding form must be added there, or it bypasses
+  the floor.
 - Alerter notification deliveries are guarded at the dial, not before
   it: `notifications/dial_guard.go` builds one
   `hostvalidation.GuardedDialContext` (resolves the host itself and

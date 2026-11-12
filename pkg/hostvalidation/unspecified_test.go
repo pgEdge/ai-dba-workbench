@@ -32,6 +32,9 @@ func TestIsPrivateIP_UnspecifiedAndEmbedded(t *testing.T) {
 		{"NAT64 public", "64:ff9b::808:808", true},
 		{"local-use NAT64", "64:ff9b:1::1", true},
 		{"6to4", "2002:a9fe:a9fe::1", true},
+		{"local-use NAT64 metadata", "64:ff9b:1:a9fe:a9:fe00::", true},
+		{"SIIT metadata", "::ffff:0:169.254.169.254", true},
+		{"SIIT public", "::ffff:0:8.8.8.8", true},
 		{"IPv6 site-local", "fec0::1", true},
 		{"IPv6 link-local multicast", "ff02::2", true},
 		{"IPv6 global multicast", "ff0e::1", true},
@@ -60,6 +63,8 @@ func TestValidateURLHost_Unspecified(t *testing.T) {
 		"http://[::]:8080/hook",
 		"http://[::ffff:0.0.0.0]/hook",
 		"http://[64:ff9b::a9fe:a9fe]/latest/meta-data",
+		"http://[64:ff9b:1:a9fe:a9:fe00::]/latest/meta-data",
+		"http://[::ffff:0:169.254.169.254]/latest/meta-data",
 		"http://0.0.0.0/hook",
 	} {
 		if err := ValidateURLHost(u); err == nil {

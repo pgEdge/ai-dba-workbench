@@ -61,11 +61,22 @@ func mustParseCIDRs(cidrs ...string) []*net.IPNet {
 	return nets
 }
 
-// embeddedIPv4 returns the IPv4 address that an IPv4-compatible
-// (::/96), NAT64 (64:ff9b::/96) or 6to4 (2002::/16) IPv6 address
-// carries, or nil when ip is none of these. An IPv4-mapped address needs
-// no special case: net.IP.To4 already unwraps it, and net.IPNet.Contains
-// with it.
+// embeddedIPv4 returns the IPv4 address that an IPv6 address carries
+// in one of the forms a translator or tunnel can turn back into an IPv4
+// destination, or nil when ip is none of them:
+//
+//   - IPv4-compatible, ::/96 (RFC 4291, deprecated): bytes 12-15;
+//   - SIIT IPv4-translated, ::ffff:0:0:0/96 (RFC 2765), written
+//     ::ffff:0:a.b.c.d: bytes 12-15;
+//   - NAT64 well-known prefix, 64:ff9b::/96 (RFC 6052): bytes 12-15;
+//   - NAT64 local-use prefix, 64:ff9b:1::/48 (RFC 8215), in the RFC 6052
+//     /48 layout: bytes 6-7 and 9-10, with byte 8 (bits 64-71) the
+//     reserved octet. Its value is not checked, so a translator that
+//     ignores it cannot be used to slip past the caller;
+//   - 6to4, 2002::/16 (RFC 3056): bytes 2-5.
+//
+// An IPv4-mapped address (::ffff:a.b.c.d) needs no special case:
+// net.IP.To4 already unwraps it, and net.IPNet.Contains with it.
 func embeddedIPv4(ip net.IP) net.IP {
 	if ip.To4() != nil {
 		return nil
@@ -82,11 +93,16 @@ func embeddedIPv4(ip net.IP) net.IP {
 		}
 		return true
 	}
+	isNAT64 := ip16[0] == 0x00 && ip16[1] == 0x64 && ip16[2] == 0xff && ip16[3] == 0x9b
 	switch {
 	case isZero(ip16[:12]):
 		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
-	case ip16[0] == 0x00 && ip16[1] == 0x64 && ip16[2] == 0xff && ip16[3] == 0x9b && isZero(ip16[4:12]):
+	case isZero(ip16[:8]) && ip16[8] == 0xff && ip16[9] == 0xff && isZero(ip16[10:12]):
 		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
+	case isNAT64 && isZero(ip16[4:12]):
+		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
+	case isNAT64 && ip16[4] == 0x00 && ip16[5] == 0x01:
+		return net.IPv4(ip16[6], ip16[7], ip16[9], ip16[10])
 	case ip16[0] == 0x20 && ip16[1] == 0x02:
 		return net.IPv4(ip16[2], ip16[3], ip16[4], ip16[5])
 	}

@@ -29,6 +29,7 @@ var internalNetworks = []string{
 	"0.0.0.0/8",       // Current network (invalid as destination)
 	"::/128",          // IPv6 unspecified; connecting to it reaches localhost
 	"::/96",           // IPv4-compatible IPv6 (deprecated), embeds an IPv4 address
+	"::ffff:0:0:0/96", // SIIT IPv4-translated (RFC 2765), embeds an IPv4 address
 	"64:ff9b::/96",    // NAT64 well-known prefix (RFC 6052), embeds an IPv4 address
 	"64:ff9b:1::/48",  // Local-use NAT64 prefix (RFC 8215)
 	"2002::/16",       // 6to4 (RFC 3056), embeds an IPv4 address

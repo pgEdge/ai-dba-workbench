@@ -294,6 +294,37 @@ func TestSanitizeConnStr(t *testing.T) {
 			expected: "postgres://user:***@localhost/mydb?sslpassword=***",
 		},
 		{
+			// pgx percent-decodes query keys, so pass%77ord is password.
+			name:     "percent-encoded password key in URI query",
+			input:    "postgres://db.example.com/app?pass%77ord=s3cret",
+			expected: "postgres://db.example.com/app?pass%77ord=***",
+		},
+		{
+			name:     "fully percent-encoded password key in URI query",
+			input:    "postgres://db.example.com/app?sslmode=require&%70%61%73%73%77%6F%72%64=s3cret&x=1",
+			expected: "postgres://db.example.com/app?sslmode=require&%70%61%73%73%77%6F%72%64=***&x=1",
+		},
+		{
+			name:     "percent-encoded sslpassword key in URI query",
+			input:    "postgres://db.example.com/app?ssl%70assword=keypass&sslmode=verify-full",
+			expected: "postgres://db.example.com/app?ssl%70assword=***&sslmode=verify-full",
+		},
+		{
+			name:     "white space and mixed case around an encoded key",
+			input:    "postgres://db.example.com/app? %53SLPASSWORD =keypass",
+			expected: "postgres://db.example.com/app? %53SLPASSWORD =***",
+		},
+		{
+			name:     "malformed percent sequence in a key is left alone",
+			input:    "postgres://db.example.com/app?pass%7word=x&password%zz=y",
+			expected: "postgres://db.example.com/app?pass%7word=x&password%zz=y",
+		},
+		{
+			name:     "decoded key that is not a password",
+			input:    "postgres://db.example.com/app?pass%77=x&?=y&a",
+			expected: "postgres://db.example.com/app?pass%77=x&?=y&a",
+		},
+		{
 			name:     "keyword/value form",
 			input:    "host=localhost user=app password=s3cret dbname=mydb",
 			expected: "host=localhost user=app password=*** dbname=mydb",

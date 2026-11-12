@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -140,11 +139,6 @@ func LogMetadataDetails(connStr string, schemaCount, tableCount, columnCount int
 		sanitized, schemaCount, tableCount, columnCount)
 }
 
-// uriPasswordParamPattern matches a password or sslpassword parameter in
-// a URI query string. Only '&' ends a value there, since a literal '&'
-// in a value must be percent-encoded, so everything up to it is masked.
-var uriPasswordParamPattern = regexp.MustCompile(`(?i)([?&]\s*(?:ssl)?password\s*=)[^&]*`)
-
 // connStrSpace lists the characters libpq's conninfo parser treats as
 // white space (isspace in the C locale).
 const connStrSpace = " \t\n\v\f\r"
@@ -156,9 +150,93 @@ const connStrSpace = " \t\n\v\f\r"
 // keyword/value form.
 func SanitizeConnStr(connStr string) string {
 	if isURIConnStr(connStr) {
-		return uriPasswordParamPattern.ReplaceAllString(maskURIUserinfo(connStr), "${1}***")
+		return maskURIQueryPasswords(maskURIUserinfo(connStr))
 	}
 	return maskKeywordValuePasswords(connStr)
+}
+
+// maskURIQueryPasswords replaces the value of every password or
+// sslpassword parameter in a URI query string with "***". A parameter
+// starts after any '?' or '&' and its key runs to the next '='. pgx, like
+// libpq, percent-decodes a query key before matching it, so pass%77ord
+// sets the password; the key is therefore decoded the same way before it
+// is compared, then trimmed of white space and compared without regard
+// to case, which masks every spelling pgx accepts and some it does not.
+// Only '&' ends a value, since a literal '&' in a value must be
+// percent-encoded, so everything up to it is masked.
+func maskURIQueryPasswords(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	last := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] != '?' && s[i] != '&' {
+			continue
+		}
+		eq := strings.IndexAny(s[i+1:], "=?&")
+		if eq < 0 {
+			break
+		}
+		eq += i + 1
+		if s[eq] != '=' || !isURIPasswordKey(s[i+1:eq]) {
+			continue
+		}
+		end := strings.IndexByte(s[eq+1:], '&')
+		if end < 0 {
+			end = len(s)
+		} else {
+			end += eq + 1
+		}
+		b.WriteString(s[last : eq+1])
+		b.WriteString("***")
+		last = end
+		i = end - 1
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+// isURIPasswordKey reports whether rawKey, a URI query key as written,
+// names the password or sslpassword parameter once percent-decoded.
+func isURIPasswordKey(rawKey string) bool {
+	key := strings.Trim(percentDecodeLenient(rawKey), connStrSpace)
+	return strings.EqualFold(key, "password") || strings.EqualFold(key, "sslpassword")
+}
+
+// percentDecodeLenient decodes every valid %XX sequence in s and copies
+// anything else, including a malformed sequence, unchanged. pgx refuses
+// a malformed sequence, so no key it accepts is decoded differently.
+func percentDecodeLenient(s string) string {
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) {
+			hi, okHi := hexValue(s[i+1])
+			lo, okLo := hexValue(s[i+2])
+			if okHi && okLo {
+				b.WriteByte(hi<<4 | lo)
+				i += 2
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// hexValue returns the value of the hexadecimal digit c.
+func hexValue(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	}
+	return 0, false
 }
 
 // isURIConnStr reports whether connStr is in the URI form: a scheme

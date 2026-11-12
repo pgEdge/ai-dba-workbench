@@ -97,6 +97,17 @@ manually alongside it.
   agreement. The quoted refusal text is
   `hostvalidation.ErrNoPermittedAddress`.
 
+- The server's "send test notification" address check
+  (`server/src/internal/api/test_send_guard.go`: the always-blocked
+  floor, then `connection_security` via `HostValidator.CheckDialAddr`;
+  no proxy, no redirects) is documented in the "Test Sends" section of
+  `docs/admin-guide/notification-channels.md`, including the refusal
+  status and message table and the warning that test sends and
+  deliveries use different settings. That mismatch is repeated in the
+  alerter page's "Delivery Address Checks", the server page's
+  `connection_security` section and the upgrade guide's "Notification
+  Delivery Addresses"; keep all four in agreement.
+
 ## Maintenance
 
 Update this file in the same change whenever the documentation layout,

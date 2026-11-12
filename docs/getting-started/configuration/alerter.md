@@ -1069,6 +1069,15 @@ destination. The alerter also never follows an HTTP
 redirect; see
 [Notification Channels](../../admin-guide/notification-channels.md#redirects).
 
+The alerter's option governs real deliveries only. A test send from the
+Send icon in the web client is made by the server, which checks the
+destination against the server's `connection_security` section instead,
+and only the server honours `allowed_hosts` and `blocked_hosts`. A test
+send can therefore succeed where a real delivery is refused, or fail where
+a real delivery succeeds; set this option to match the server's settings
+for the channels you test. See
+[Test Sends](../../admin-guide/notification-channels.md#test-sends).
+
 The `allow_internal_networks` option has no
 command-line flag or environment variable. The alerter
 reads the option at start-up, so a `SIGHUP` reload does

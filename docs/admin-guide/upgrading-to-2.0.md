@@ -314,10 +314,11 @@ settings.
 
 Release 1.0.0 of the alerter checked the host of a webhook channel
 before sending, but resolved the host again when connecting, and did not
-check Slack, Mattermost, Telegram or email channels at all. Release
-2.0.0 checks every address that the alerter connects to, for every
-channel type, and refuses private, loopback and other internal addresses
-by default. An email channel that uses an internal SMTP relay, or a
+check Slack, Mattermost or email channels at all. Release 2.0.0 checks
+every address that the alerter connects to, for every channel type
+including the new Telegram channel, and refuses private, loopback and
+other internal addresses by default. An email channel that uses an
+internal SMTP relay, or a
 Mattermost channel that points at a self-hosted server on the local
 network, stops delivering notifications after the upgrade; each delivery
 fails with an error containing the following text:
@@ -344,6 +345,15 @@ As in release 1.0.0, the alerter ignores `HTTP_PROXY`, `HTTPS_PROXY`
 and `NO_PROXY` and connects to each provider directly, so that the
 alerter can check the destination address. See
 [Delivery Address Checks](../getting-started/configuration/alerter.md#delivery-address-checks).
+
+The server's test send, from the Send icon of a channel, now checks every
+address that the send connects to as well. The server refuses unspecified,
+link-local and cloud metadata addresses and then applies its own
+`connection_security` rules, not the alerter's option, so a test send can
+succeed for a channel whose deliveries the alerter refuses. A test send no
+longer uses the `HTTP_PROXY` or `HTTPS_PROXY` environment variables; a
+server that reached a provider only through a proxy now fails the test.
+See [Test Sends](notification-channels.md#test-sends).
 
 ### Retired Alert Rule
 

@@ -474,7 +474,9 @@ http:
 ### Connection Security (`connection_security`)
 
 The connection security section controls SSRF
-protection for user-created database connections.
+protection for user-created database connections and for the test
+notifications that the server sends from the Send icon of a notification
+channel.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -513,6 +515,16 @@ deliver a notification to any of these ranges, whatever the server's
 `notifications.allow_internal_networks` option permits them, except the
 unspecified, link-local and cloud metadata addresses. See
 [Delivery Address Checks](alerter.md#delivery-address-checks).
+
+A test notification follows these rules rather than the alerter's. The
+server checks every address that a test send connects to, refusing
+unspecified, link-local and cloud metadata addresses first and then
+applying `blocked_hosts`, `allowed_hosts` and `allow_internal_networks`.
+The alerter reads neither `allowed_hosts` nor `blocked_hosts`, so a test
+send can succeed where a real delivery is refused, or the reverse.
+Loosening this section so that a test send reaches an internal host also
+loosens the checks on database connections to that host. See
+[Test Sends](../../admin-guide/notification-channels.md#test-sends).
 
 The server applies the host checks to both the `host` and the `hostaddr`
 of a connection. A `hostaddr` must be a literal IPv4 or IPv6 address,

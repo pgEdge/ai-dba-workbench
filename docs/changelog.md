@@ -987,6 +987,14 @@ project adheres to
   writes, and building it blocks the collector's inserts whilst it
   runs, which took about 15 seconds for 2.6 million rows in testing.
 
+- Stop the server's "send test notification" path using the
+  `HTTP_PROXY` and `HTTPS_PROXY` environment variables. A test send to
+  a webhook, Slack, Mattermost or Telegram channel now connects to the
+  provider directly, as the alerter's deliveries always have, so that
+  the server can check the address it connects to. A server that
+  reaches a provider only through a proxy now fails the test. See
+  [Test Sends](admin-guide/notification-channels.md#test-sends).
+
 ### Fixed
 
 - Make an unbracketed IPv6 SMTP host, such as `2001:db8::25`, work in
@@ -2420,16 +2428,26 @@ project adheres to
   saved, so a host name could pass and later resolve to an internal
   address (DNS rebinding). The alerter likewise checked a webhook
   channel's host before delivery and then resolved the host again to
-  connect, and checked Slack, Mattermost, Telegram and email (SMTP)
-  channels not at all. Release 1.0.0 is affected. The
+  connect, and checked Slack, Mattermost and email (SMTP) channels not
+  at all. The server's "send test notification" path
+  checked a webhook, Slack, Mattermost or email channel's host and then
+  resolved the host again to connect. Release 1.0.0 is affected. The
   server now applies the `connection_security` rules to every address a
   monitored connection resolves to each time it connects, and connects
   only to the addresses that pass; the collector refuses unspecified,
   link-local and cloud metadata addresses each time it connects; the
   alerter resolves the host of every notification delivery, on every
   channel, and connects only to an address that its delivery policy
-  permits; and the internal ranges now include `::`, `::/96`,
-  `64:ff9b::/96`, `64:ff9b:1::/48`, `2002::/16` and `fec0::/10`.
+  permits; the server's test send, on every channel, refuses
+  unspecified, link-local and cloud metadata addresses and then applies
+  the server's `connection_security` rules to every address that the
+  send connects to, answering a refusal with a generic 400 error (a 502
+  for Telegram); and the internal ranges now include `::`, `::/96`,
+  `64:ff9b::/96`, `64:ff9b:1::/48`, `2002::/16` and `fec0::/10`. A test
+  send uses the server's `connection_security` settings and a delivery
+  uses the alerter's `notifications.allow_internal_networks` option, so
+  one can succeed where the other is refused; see
+  [Test Sends](admin-guide/notification-channels.md#test-sends).
 
 - <!-- TODO: add the advisory ID, link and severity. -->
   Stop a user who can create a connection making the server open any

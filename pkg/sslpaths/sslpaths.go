@@ -80,6 +80,24 @@ func ValidateSSLFilePath(baseDir, p string) error {
 	if baseDir == "" {
 		return ErrSSLCertDirUnset
 	}
+	if err := checkPathSyntax(p); err != nil {
+		return err
+	}
+
+	base := resolvePath(filepath.Clean(baseDir))
+	target := resolvePath(filepath.Clean(p))
+	rel, err := filepath.Rel(base, target)
+	if err != nil || rel == "." || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
+		filepath.IsAbs(rel) {
+		return errors.New("must be inside the configured SSL certificate directory")
+	}
+	return nil
+}
+
+// checkPathSyntax applies the checks on p that need no file system
+// access: no control characters, an absolute path, and no ".." element.
+func checkPathSyntax(p string) error {
 	for _, r := range p {
 		if unicode.IsControl(r) {
 			return errors.New("must not contain control characters")
@@ -92,15 +110,6 @@ func ValidateSSLFilePath(baseDir, p string) error {
 		if elem == ".." {
 			return errors.New("must not contain '..'")
 		}
-	}
-
-	base := resolvePath(filepath.Clean(baseDir))
-	target := resolvePath(filepath.Clean(p))
-	rel, err := filepath.Rel(base, target)
-	if err != nil || rel == "." || rel == ".." ||
-		strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
-		filepath.IsAbs(rel) {
-		return errors.New("must be inside the configured SSL certificate directory")
 	}
 	return nil
 }

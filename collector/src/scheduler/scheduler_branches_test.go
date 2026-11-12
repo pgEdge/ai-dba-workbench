@@ -439,8 +439,8 @@ func TestConfigReloadLoop_ReloadFailureKeepsLooping(t *testing.T) {
 // server waits for it rather than dropping it.
 const scratchDBName = "ai_workbench_sched_branch_scratch"
 
-// scratchDBLockSQL takes the session advisory lock that serialises use
-// of scratchDBName; closing the session releases it.
+// scratchDBLockSQL takes the session advisory lock that lets only one
+// test run use scratchDBName at a time; closing the session releases it.
 const scratchDBLockSQL = `SELECT pg_advisory_lock(hashtext('ai_workbench_sched_branch_scratch'))`
 
 // scratchDBDropSQL removes the scratch database, including a copy a

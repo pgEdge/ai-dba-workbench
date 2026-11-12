@@ -813,7 +813,7 @@ func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName strin
 	host := hostvalidation.BareHost(conn.Host)
 
 	if hostaddr != "" {
-		// As in libpq, hostaddr is the address dialled whilst host stays
+		// As in libpq, hostaddr is the address connected to whilst host stays
 		// the name that TLS verifies and sends as SNI. pgx (v5.12.0) has
 		// no hostaddr keyword, so createMonitoredPool takes it out of the
 		// parsed config and turns it into the pool's address lookup; with

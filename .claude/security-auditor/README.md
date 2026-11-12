@@ -115,9 +115,18 @@ moved.
   purpose (HTTP_PROXY is ignored), since through a proxy the guard
   would only see the proxy's address; the shared client also never
   follows redirects. A new outbound notification path must dial
-  through the same function. The server's test-send senders
-  (`api/webhook_test_sender.go`, `email_test_sender.go`) still check
-  only before dialling.
+  through the same function.
+- The server's "send test notification" senders are guarded at the
+  dial as well: `api/test_send_guard.go` builds one
+  `GuardedDialContext` for the Slack, Mattermost, generic webhook and
+  Telegram HTTP client (Proxy nil, redirects refused) and the SMTP
+  implicit TLS, STARTTLS and plain dials. The policy is
+  `testSendPolicy`: `CheckAlwaysBlocked`, then the server's
+  `HostValidator.CheckDialAddr` (`connection_security`), so it can
+  differ from the alerter's `notifications.allow_internal_networks`
+  and only the server honours allow- and block-lists. Refusals answer
+  400 with the pre-check's generic message (Telegram 502), naming
+  neither host nor address.
 - pgx reads `sslrootcert`, `sslcert` and `sslkey` while it parses a
   connection string (the CA file even under `sslmode=disable`), so
   stored SSL paths are a file-read primitive. The server and the

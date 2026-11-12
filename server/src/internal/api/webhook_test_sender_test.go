@@ -10,6 +10,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,7 +51,7 @@ func TestSendTestWebhook_RefusesRedirect(t *testing.T) {
 	}))
 	defer redirectServer.Close()
 
-	err := sendTestWebhook(redirectServer.URL, "slack")
+	err := loopbackTestSender.sendTestWebhook(context.Background(), redirectServer.URL, "slack")
 	if err == nil {
 		t.Fatalf("expected error from non-2xx status, got nil")
 	}
@@ -79,7 +80,7 @@ func TestSendTestGenericWebhook_RefusesRedirect(t *testing.T) {
 	}))
 	defer redirectServer.Close()
 
-	err := sendTestGenericWebhook(redirectServer.URL, http.MethodPost, nil, "", "")
+	err := loopbackTestSender.sendTestGenericWebhook(context.Background(), redirectServer.URL, http.MethodPost, nil, "", "")
 	if err == nil {
 		t.Fatalf("expected error from non-2xx status, got nil")
 	}
@@ -109,7 +110,7 @@ func TestSendTestWebhook_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := sendTestWebhook(server.URL, "slack"); err != nil {
+	if err := loopbackTestSender.sendTestWebhook(context.Background(), server.URL, "slack"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotContentType != "application/json" {
@@ -129,7 +130,7 @@ func TestSendTestWebhook_NonOKStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := sendTestWebhook(server.URL, "slack")
+	err := loopbackTestSender.sendTestWebhook(context.Background(), server.URL, "slack")
 	if err == nil {
 		t.Fatal("expected error for non-200 status, got nil")
 	}
@@ -144,7 +145,7 @@ func TestSendTestWebhook_NonOKStatus(t *testing.T) {
 // TestSendTestWebhook_BadURL verifies that an unparseable URL yields an
 // error from http.NewRequest rather than a panic.
 func TestSendTestWebhook_BadURL(t *testing.T) {
-	err := sendTestWebhook("http://\x00invalid", "slack")
+	err := loopbackTestSender.sendTestWebhook(context.Background(), "http://\x00invalid", "slack")
 	if err == nil {
 		t.Fatal("expected error for malformed URL, got nil")
 	}
@@ -163,7 +164,7 @@ func TestSendTestWebhook_UnreachableHost(t *testing.T) {
 	closedURL := closedServer.URL
 	closedServer.Close()
 
-	err := sendTestWebhook(closedURL, "slack")
+	err := loopbackTestSender.sendTestWebhook(context.Background(), closedURL, "slack")
 	if err == nil {
 		t.Fatal("expected error for unreachable host, got nil")
 	}
@@ -190,7 +191,7 @@ func TestSendTestGenericWebhook_DefaultMethodAndBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := sendTestGenericWebhook(server.URL, "", nil, "", ""); err != nil {
+	if err := loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, "", nil, "", ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotMethod != http.MethodPost {
@@ -222,7 +223,7 @@ func TestSendTestGenericWebhook_GetNoBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := sendTestGenericWebhook(server.URL, http.MethodGet, nil, "", ""); err != nil {
+	if err := loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, http.MethodGet, nil, "", ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotMethod != http.MethodGet {
@@ -247,7 +248,7 @@ func TestSendTestGenericWebhook_CustomHeaders(t *testing.T) {
 	defer server.Close()
 
 	headers := map[string]string{"X-Custom-Header": "test-value"}
-	if err := sendTestGenericWebhook(server.URL, http.MethodPost, headers, "", ""); err != nil {
+	if err := loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, http.MethodPost, headers, "", ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotCustom != "test-value" {
@@ -266,7 +267,7 @@ func TestSendTestGenericWebhook_BasicAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := sendTestGenericWebhook(server.URL, http.MethodPost, nil, "basic", "alice:s3cret")
+	err := loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, http.MethodPost, nil, "basic", "alice:s3cret")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -289,7 +290,7 @@ func TestSendTestGenericWebhook_BasicAuthMalformed(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := sendTestGenericWebhook(server.URL, http.MethodPost, nil, "basic", "nocolon"); err != nil {
+	if err := loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, http.MethodPost, nil, "basic", "nocolon"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotOK {
@@ -307,7 +308,7 @@ func TestSendTestGenericWebhook_BearerAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := sendTestGenericWebhook(server.URL, http.MethodPost, nil, "bearer", "abc123"); err != nil {
+	if err := loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, http.MethodPost, nil, "bearer", "abc123"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotAuth != "Bearer abc123" {
@@ -325,7 +326,7 @@ func TestSendTestGenericWebhook_APIKeyAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := sendTestGenericWebhook(server.URL, http.MethodPost, nil, "api_key", "X-API-Key:secret-token")
+	err := loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, http.MethodPost, nil, "api_key", "X-API-Key:secret-token")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -347,7 +348,7 @@ func TestSendTestGenericWebhook_APIKeyAuthMalformed(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := sendTestGenericWebhook(server.URL, http.MethodPost, nil, "api_key", "nocolon"); err != nil {
+	if err := loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, http.MethodPost, nil, "api_key", "nocolon"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -362,7 +363,7 @@ func TestSendTestGenericWebhook_UnknownAuthType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := sendTestGenericWebhook(server.URL, http.MethodPost, nil, "mystery", "value"); err != nil {
+	if err := loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, http.MethodPost, nil, "mystery", "value"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotAuth != "" {
@@ -379,7 +380,7 @@ func TestSendTestGenericWebhook_NonSuccessStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := sendTestGenericWebhook(server.URL, http.MethodPost, nil, "", "")
+	err := loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, http.MethodPost, nil, "", "")
 	if err == nil {
 		t.Fatal("expected error for 4xx status, got nil")
 	}
@@ -394,7 +395,7 @@ func TestSendTestGenericWebhook_NonSuccessStatus(t *testing.T) {
 // TestSendTestGenericWebhook_BadURL verifies that an unparseable URL
 // produces a create-request error.
 func TestSendTestGenericWebhook_BadURL(t *testing.T) {
-	err := sendTestGenericWebhook("http://\x00invalid", http.MethodPost, nil, "", "")
+	err := loopbackTestSender.sendTestGenericWebhook(context.Background(), "http://\x00invalid", http.MethodPost, nil, "", "")
 	if err == nil {
 		t.Fatal("expected error for malformed URL, got nil")
 	}
@@ -413,7 +414,7 @@ func TestSendTestGenericWebhook_UnreachableHost(t *testing.T) {
 	closedURL := closedServer.URL
 	closedServer.Close()
 
-	err := sendTestGenericWebhook(closedURL, http.MethodPost, nil, "", "")
+	err := loopbackTestSender.sendTestGenericWebhook(context.Background(), closedURL, http.MethodPost, nil, "", "")
 	if err == nil {
 		t.Fatal("expected error for unreachable host, got nil")
 	}
@@ -443,7 +444,7 @@ func TestSendTestGenericWebhook_PutAndPatch(t *testing.T) {
 			}))
 			defer server.Close()
 
-			if err := sendTestGenericWebhook(server.URL, method, nil, "", ""); err != nil {
+			if err := loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, method, nil, "", ""); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if gotMethod != method {
@@ -498,7 +499,7 @@ func TestSendTestTelegram_Success(t *testing.T) {
 	defer server.Close()
 	withTelegramBaseURL(t, server.URL)
 
-	if err := sendTestTelegram(telegramProbeToken, "-1001234567890"); err != nil {
+	if err := loopbackTestSender.sendTestTelegram(context.Background(), telegramProbeToken, "-1001234567890"); err != nil {
 		t.Fatalf("sendTestTelegram: %v", err)
 	}
 
@@ -536,7 +537,7 @@ func TestSendTestTelegram_UsernameChatID(t *testing.T) {
 	defer server.Close()
 	withTelegramBaseURL(t, server.URL)
 
-	if err := sendTestTelegram(telegramProbeToken, "@workbench_alerts"); err != nil {
+	if err := loopbackTestSender.sendTestTelegram(context.Background(), telegramProbeToken, "@workbench_alerts"); err != nil {
 		t.Fatalf("sendTestTelegram: %v", err)
 	}
 	if gotBody.ChatID != "@workbench_alerts" {
@@ -557,7 +558,7 @@ func TestSendTestTelegram_NotOK(t *testing.T) {
 	defer server.Close()
 	withTelegramBaseURL(t, server.URL)
 
-	err := sendTestTelegram(telegramProbeToken, "-1001234567890")
+	err := loopbackTestSender.sendTestTelegram(context.Background(), telegramProbeToken, "-1001234567890")
 	if err == nil {
 		t.Fatal("expected an error when the API reports ok:false")
 	}
@@ -580,7 +581,7 @@ func TestSendTestTelegram_NonJSONErrorStatus(t *testing.T) {
 	defer server.Close()
 	withTelegramBaseURL(t, server.URL)
 
-	err := sendTestTelegram(telegramProbeToken, "-1001234567890")
+	err := loopbackTestSender.sendTestTelegram(context.Background(), telegramProbeToken, "-1001234567890")
 	if err == nil {
 		t.Fatal("expected an error for a non-JSON failure response")
 	}
@@ -599,7 +600,7 @@ func TestSendTestTelegram_NonJSONSuccessStatus(t *testing.T) {
 	defer server.Close()
 	withTelegramBaseURL(t, server.URL)
 
-	err := sendTestTelegram(telegramProbeToken, "-1001234567890")
+	err := loopbackTestSender.sendTestTelegram(context.Background(), telegramProbeToken, "-1001234567890")
 	if err == nil {
 		t.Fatal("expected an error for an undecodable 200 response")
 	}
@@ -627,7 +628,7 @@ func TestSendTestTelegram_RefusesRedirect(t *testing.T) {
 	defer redirectServer.Close()
 	withTelegramBaseURL(t, redirectServer.URL)
 
-	err := sendTestTelegram(telegramProbeToken, "-1001234567890")
+	err := loopbackTestSender.sendTestTelegram(context.Background(), telegramProbeToken, "-1001234567890")
 	if err == nil {
 		t.Fatal("expected an error when the API answers with a redirect")
 	}
@@ -648,7 +649,7 @@ func TestSendTestTelegram_TransportErrorRedactsToken(t *testing.T) {
 	closedServer.Close()
 	withTelegramBaseURL(t, closedURL)
 
-	err := sendTestTelegram(telegramProbeToken, "-1001234567890")
+	err := loopbackTestSender.sendTestTelegram(context.Background(), telegramProbeToken, "-1001234567890")
 	if err == nil {
 		t.Fatal("expected an error for an unreachable host")
 	}
@@ -669,7 +670,7 @@ func TestSendTestTelegram_TransportErrorRedactsToken(t *testing.T) {
 func TestSendTestTelegram_MalformedBaseURLRedactsToken(t *testing.T) {
 	withTelegramBaseURL(t, "http://\x00invalid")
 
-	err := sendTestTelegram(telegramProbeToken, "-1001234567890")
+	err := loopbackTestSender.sendTestTelegram(context.Background(), telegramProbeToken, "-1001234567890")
 	if err == nil {
 		t.Fatal("expected an error for a malformed URL")
 	}
@@ -689,7 +690,7 @@ func TestSendTestTelegram_DescriptionRedaction(t *testing.T) {
 	defer server.Close()
 	withTelegramBaseURL(t, server.URL)
 
-	err := sendTestTelegram(telegramProbeToken, "-1001234567890")
+	err := loopbackTestSender.sendTestTelegram(context.Background(), telegramProbeToken, "-1001234567890")
 	if err == nil {
 		t.Fatal("expected an error when the API reports ok:false")
 	}
@@ -1114,7 +1115,7 @@ func TestSendTestTelegram_BoundsEchoedResponseBody(t *testing.T) {
 	defer server.Close()
 	withTelegramBaseURL(t, server.URL)
 
-	err := sendTestTelegram(telegramProbeToken, "-1001234567890")
+	err := loopbackTestSender.sendTestTelegram(context.Background(), telegramProbeToken, "-1001234567890")
 	if err == nil {
 		t.Fatal("expected an error for a non-JSON 502")
 	}
@@ -1138,7 +1139,7 @@ func TestSendTestTelegram_BoundsEchoedDescription(t *testing.T) {
 	defer server.Close()
 	withTelegramBaseURL(t, server.URL)
 
-	err := sendTestTelegram(telegramProbeToken, "-1001234567890")
+	err := loopbackTestSender.sendTestTelegram(context.Background(), telegramProbeToken, "-1001234567890")
 	if err == nil {
 		t.Fatal("expected an error when the API reports ok:false")
 	}

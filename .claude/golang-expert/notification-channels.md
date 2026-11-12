@@ -256,6 +256,40 @@ configurable fake SMTP server using the `httptest` certificate (issued
 for `example.com` and `127.0.0.1`), trusted through the test-only
 `rootCAs` field on `emailNotifier`.
 
+## Server Test Sends Are Checked at Dial Time Too
+
+The server's "send test notification" endpoint (`testChannel` in
+`notification_channel_handlers.go`) opens every connection through
+`h.testSender`, a `notificationTestSender` from
+`server/src/internal/api/test_send_guard.go`. It holds one
+`hostvalidation.GuardedDialContext`, used as the `DialContext` of the
+HTTP client the Slack, Mattermost, generic webhook and Telegram senders
+share, and as the SMTP dial on the implicit TLS, STARTTLS and plain
+paths. The `ValidateHost` pre-checks in `testChannel` stay, for their
+specific error messages, but the dial is what holds against rebinding.
+
+The policy is `testSendPolicy(h.hostValidator)`: the always-blocked
+floor first, then `HostValidator.CheckDialAddr`, so the server's own
+`connection_security` rules (shared with database connections) apply,
+and an `allowed_hosts` name or `allow_internal_networks` still cannot
+reach a metadata or link-local address. The server has no notification
+settings of its own, and does not read the alerter's
+`notifications.allow_internal_networks`, so the two can disagree: a
+test send may succeed where the alerter's delivery is refused, or the
+reverse, and only the server honours `allowed_hosts` and
+`blocked_hosts`.
+
+A refusal is `hostvalidation.ErrNoPermittedAddress` (`isRefusedTarget`),
+which the senders return bare and the handler answers with 400 and the
+pre-check's generic message (`Invalid webhook host`, `Invalid endpoint
+host`, `Invalid SMTP host`); Telegram, whose host is a constant, keeps
+its 502. The transport's `Proxy` is nil and redirects are refused, as in
+the alerter. Tests swap `handler.testSender` for one built with
+`fakeTestSendResolver` (`test_send_guard_test.go`); `loopbackTestSender`
+permits loopback for the `httptest` sender tests, and the SMTP tests use
+a fake server with the `httptest` certificate trusted through the
+test-only `rootCAs` field.
+
 ## Truncation and the Plain-Text Fallback
 
 `truncateTelegramText` cuts at rune 4095 of the *already escaped*
@@ -365,13 +399,15 @@ scanned into `TelegramBotToken`.
 `TelegramChatID` is **not** redacted: it addresses the destination chat
 rather than authenticating to it, and the UI displays it.
 
-## sendTestTelegram Has No Host Validation, Deliberately
+## sendTestTelegram Has No Host Pre-Check, Deliberately
 
 `server/src/internal/api/webhook_test_sender.go` sits next to two
 senders that are each preceded by `h.hostValidator.ValidateHost(...)` in
 `testChannel`, because both dispatch to an operator-supplied URL.
 `sendTestTelegram` is not, and must not be: it builds its destination
 from the constant `telegramAPIBaseURL`, so there is no host to validate.
+It still connects through the guarded dialer shared by every test send,
+as the alerter's Telegram delivery does.
 The seam `telegramSendBaseURL` exists only for in-package tests. Making
 it configurable would manufacture the SSRF surface the validator exists
 to close.

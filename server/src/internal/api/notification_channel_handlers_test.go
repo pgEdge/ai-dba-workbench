@@ -2231,6 +2231,9 @@ func TestTestChannel_TelegramSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 	withTelegramBaseURL(t, server.URL)
+	// The stand-in Bot API is on loopback, which the strict handler's
+	// guarded dialer refuses.
+	handler.testSender = loopbackTestSender
 
 	token := telegramHandlerToken
 	chatID := "-1001234567890"
@@ -2259,6 +2262,9 @@ func TestTestChannel_TelegramAPIFailure(t *testing.T) {
 	}))
 	defer server.Close()
 	withTelegramBaseURL(t, server.URL)
+	// The stand-in Bot API is on loopback, which the strict handler's
+	// guarded dialer refuses.
+	handler.testSender = loopbackTestSender
 
 	token := telegramHandlerToken
 	chatID := "-1001234567890"

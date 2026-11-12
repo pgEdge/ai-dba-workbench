@@ -10,6 +10,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -38,7 +39,7 @@ func assertNoWebhookURL(t *testing.T, s string) {
 const unroutableWebhookURL = "http://127.0.0.1:1" + webhookSecretPath
 
 func TestSendTestWebhook_TransportErrorRedactsURL(t *testing.T) {
-	err := sendTestWebhook(unroutableWebhookURL, "Slack")
+	err := loopbackTestSender.sendTestWebhook(context.Background(), unroutableWebhookURL, "Slack")
 	if err == nil {
 		t.Fatal("expected an error for an unreachable host")
 	}
@@ -49,7 +50,7 @@ func TestSendTestWebhook_TransportErrorRedactsURL(t *testing.T) {
 }
 
 func TestSendTestGenericWebhook_TransportErrorRedactsURL(t *testing.T) {
-	err := sendTestGenericWebhook(unroutableWebhookURL, http.MethodPost, nil, "", "")
+	err := loopbackTestSender.sendTestGenericWebhook(context.Background(), unroutableWebhookURL, http.MethodPost, nil, "", "")
 	if err == nil {
 		t.Fatal("expected an error for an unreachable host")
 	}
@@ -68,7 +69,7 @@ func TestSendTestWebhook_CreateRequestErrorRedactsURL(t *testing.T) {
 	malformed := "svc:hunter2@127.0.0.1\x00:1" + webhookSecretPath
 
 	t.Run("slack or mattermost", func(t *testing.T) {
-		err := sendTestWebhook(malformed, "Slack")
+		err := loopbackTestSender.sendTestWebhook(context.Background(), malformed, "Slack")
 		if err == nil {
 			t.Fatal("expected an error for a malformed URL")
 		}
@@ -85,7 +86,7 @@ func TestSendTestWebhook_CreateRequestErrorRedactsURL(t *testing.T) {
 	})
 
 	t.Run("generic webhook", func(t *testing.T) {
-		err := sendTestGenericWebhook(malformed, http.MethodPost, nil, "", "")
+		err := loopbackTestSender.sendTestGenericWebhook(context.Background(), malformed, http.MethodPost, nil, "", "")
 		if err == nil {
 			t.Fatal("expected an error for a malformed URL")
 		}
@@ -110,7 +111,7 @@ func TestSendTestWebhook_SchemeLessURLIsNotEchoed(t *testing.T) {
 	malformed := "hooks.example.com" + webhookSecretPath + "%zz"
 
 	t.Run("slack or mattermost", func(t *testing.T) {
-		err := sendTestWebhook(malformed, "Slack")
+		err := loopbackTestSender.sendTestWebhook(context.Background(), malformed, "Slack")
 		if err == nil {
 			t.Fatal("expected an error for a malformed URL")
 		}
@@ -118,7 +119,7 @@ func TestSendTestWebhook_SchemeLessURLIsNotEchoed(t *testing.T) {
 	})
 
 	t.Run("generic webhook", func(t *testing.T) {
-		err := sendTestGenericWebhook(malformed, http.MethodPost, nil, "", "")
+		err := loopbackTestSender.sendTestGenericWebhook(context.Background(), malformed, http.MethodPost, nil, "", "")
 		if err == nil {
 			t.Fatal("expected an error for a malformed URL")
 		}
@@ -145,12 +146,12 @@ func TestSendTestWebhook_ResponseBodyIsSanitizedAndCapped(t *testing.T) {
 	}{
 		{
 			name: "slack or mattermost",
-			send: func() error { return sendTestWebhook(server.URL, "Slack") },
+			send: func() error { return loopbackTestSender.sendTestWebhook(context.Background(), server.URL, "Slack") },
 		},
 		{
 			name: "generic webhook",
 			send: func() error {
-				return sendTestGenericWebhook(server.URL, http.MethodPost, nil, "", "")
+				return loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL, http.MethodPost, nil, "", "")
 			},
 		},
 	}
@@ -187,9 +188,11 @@ func TestSendTestWebhook_SchemelessPathEchoIsRedacted(t *testing.T) {
 	defer server.Close()
 
 	for name, send := range map[string]func() error{
-		"slack": func() error { return sendTestWebhook(server.URL+webhookSecretPath, "Slack") },
+		"slack": func() error {
+			return loopbackTestSender.sendTestWebhook(context.Background(), server.URL+webhookSecretPath, "Slack")
+		},
 		"generic webhook": func() error {
-			return sendTestGenericWebhook(server.URL+webhookSecretPath, http.MethodPost, nil, "", "")
+			return loopbackTestSender.sendTestGenericWebhook(context.Background(), server.URL+webhookSecretPath, http.MethodPost, nil, "", "")
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -206,7 +209,7 @@ func TestSendTestWebhook_SchemelessPathEchoIsRedacted(t *testing.T) {
 }
 
 func TestSendTestGenericWebhook_InvalidMethodIsSanitized(t *testing.T) {
-	err := sendTestGenericWebhook("https://hooks.example.com"+webhookSecretPath,
+	err := loopbackTestSender.sendTestGenericWebhook(context.Background(), "https://hooks.example.com"+webhookSecretPath,
 		"DELETE\n[ERROR] forged", nil, "", "")
 	if err == nil {
 		t.Fatal("expected an invalid method error")

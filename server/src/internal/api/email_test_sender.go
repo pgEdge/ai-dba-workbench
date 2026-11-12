@@ -10,12 +10,13 @@
 package api
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
 	"net/smtp"
+	"strconv"
 	"strings"
-	"time"
 )
 
 // sanitizeSMTPHeader removes CR/LF characters from an SMTP header or
@@ -27,9 +28,12 @@ func sanitizeSMTPHeader(s string) string {
 }
 
 // sendTestEmail sends a test email via SMTP to verify channel configuration.
-// It mirrors the alerter's SMTP logic but is self-contained with no
-// external dependencies beyond the standard library.
-func sendTestEmail(
+// It mirrors the alerter's SMTP logic, including connecting through the
+// guarded dialer, so the address policy holds on the address actually
+// connected to. When the guard refuses every address the SMTP host
+// resolves to, the error wraps hostvalidation.ErrNoPermittedAddress.
+func (s *notificationTestSender) sendTestEmail(
+	ctx context.Context,
 	smtpHost string,
 	smtpPort int,
 	smtpUsername string,
@@ -39,7 +43,9 @@ func sendTestEmail(
 	fromName string,
 	toAddresses []string,
 ) error {
-	addr := fmt.Sprintf("%s:%d", smtpHost, smtpPort)
+	// JoinHostPort brackets an IPv6 literal, which the guarded dialer
+	// needs to split the address again.
+	addr := net.JoinHostPort(smtpHost, strconv.Itoa(smtpPort))
 
 	// Setup authentication if credentials provided
 	var auth smtp.Auth
@@ -58,12 +64,12 @@ func sendTestEmail(
 
 	// Select the sending strategy based on port and TLS setting
 	if smtpPort == 465 && useTLS {
-		return sendWithImplicitTLS(addr, auth, fromAddress, toAddresses, msg, smtpHost)
+		return s.sendWithImplicitTLS(ctx, addr, auth, fromAddress, toAddresses, msg, smtpHost)
 	}
 	if useTLS {
-		return sendWithSTARTTLS(addr, auth, fromAddress, toAddresses, msg, smtpHost)
+		return s.sendWithSTARTTLS(ctx, addr, auth, fromAddress, toAddresses, msg, smtpHost)
 	}
-	return sendPlainSMTP(addr, auth, fromAddress, toAddresses, msg, smtpHost)
+	return s.sendPlainSMTP(ctx, addr, auth, fromAddress, toAddresses, msg, smtpHost)
 }
 
 // buildTestEmailMessage constructs the MIME headers and HTML body for the
@@ -89,7 +95,8 @@ func buildTestEmailMessage(fromHeader string, toAddresses []string) []byte {
 }
 
 // sendWithImplicitTLS sends email using implicit TLS (port 465).
-func sendWithImplicitTLS(
+func (s *notificationTestSender) sendWithImplicitTLS(
+	ctx context.Context,
 	addr string,
 	auth smtp.Auth,
 	from string,
@@ -100,14 +107,19 @@ func sendWithImplicitTLS(
 	tlsConfig := &tls.Config{
 		ServerName: smtpHost,
 		MinVersion: tls.VersionTLS12,
+		RootCAs:    s.rootCAs,
 	}
 
-	dialer := &net.Dialer{Timeout: 30 * time.Second}
-	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
+	// Connect through the guarded dialer, then wrap with TLS
+	rawConn, err := s.dial(ctx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to connect with TLS: %w", err)
+		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
+	conn := tls.Client(rawConn, tlsConfig)
 	defer conn.Close()
+	if err := conn.HandshakeContext(ctx); err != nil {
+		return fmt.Errorf("TLS handshake failed: %w", err)
+	}
 
 	client, err := smtp.NewClient(conn, smtpHost)
 	if err != nil {
@@ -125,7 +137,8 @@ func sendWithImplicitTLS(
 }
 
 // sendWithSTARTTLS sends email using STARTTLS (typically port 587 or 25).
-func sendWithSTARTTLS(
+func (s *notificationTestSender) sendWithSTARTTLS(
+	ctx context.Context,
 	addr string,
 	auth smtp.Auth,
 	from string,
@@ -133,10 +146,8 @@ func sendWithSTARTTLS(
 	msg []byte,
 	smtpHost string,
 ) error {
-	// The SMTP host in `addr` is validated by the caller via
-	// hostValidator.ValidateHost before this function is invoked, so the
-	// connection target is not an unchecked user-controlled URL.
-	conn, err := net.DialTimeout("tcp", addr, 30*time.Second) //nolint:gosec // G704: SMTP host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
+	// Connect to the SMTP server through the guarded dialer
+	conn, err := s.dial(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
@@ -156,6 +167,7 @@ func sendWithSTARTTLS(
 		tlsConfig := &tls.Config{
 			ServerName: smtpHost,
 			MinVersion: tls.VersionTLS12,
+			RootCAs:    s.rootCAs,
 		}
 		if err := client.StartTLS(tlsConfig); err != nil {
 			return fmt.Errorf("STARTTLS failed: %w", err)
@@ -172,7 +184,8 @@ func sendWithSTARTTLS(
 }
 
 // sendPlainSMTP sends email over a plain (unencrypted) SMTP connection.
-func sendPlainSMTP(
+func (s *notificationTestSender) sendPlainSMTP(
+	ctx context.Context,
 	addr string,
 	auth smtp.Auth,
 	from string,
@@ -180,10 +193,8 @@ func sendPlainSMTP(
 	msg []byte,
 	smtpHost string,
 ) error {
-	// The SMTP host in `addr` is validated by the caller via
-	// hostValidator.ValidateHost before this function is invoked, so the
-	// connection target is not an unchecked user-controlled URL.
-	conn, err := net.DialTimeout("tcp", addr, 30*time.Second) //nolint:gosec // G704: SMTP host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
+	// Connect to the SMTP server through the guarded dialer
+	conn, err := s.dial(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}

@@ -104,8 +104,9 @@ monitor a connection that its own check refuses, and records an error
 ending in `invalid connection parameters` against the connection.
 
 Set the option on both components, keep the files at the same paths on
-the server and collector hosts, and make each directory and its
-contents writable only by root or the service account. See
+the server and collector hosts, and make each directory, its contents
+and its parent directories writable only by root or the service
+account. See
 [Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
 for the server option, and
 [Connection Security Options](../getting-started/configuration/collector.md#connection-security-options)

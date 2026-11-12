@@ -241,8 +241,10 @@ connection_security:
   # When unset, any connection naming an SSL file is refused;
   # ssl_root_cert_path "system" (the platform trust store) is always
   # allowed. Read at start-up only; a reload does not change it.
-  # The directory and its contents must be writable only by root or
-  # the server's service account. Set the collector's
+  # The directory, its contents and every parent directory must be
+  # writable only by root or the server's service account, because
+  # a symbolic link swapped in through a writable parent defeats the
+  # check. Set the collector's
   # connection_security.ssl_cert_dir as well, with the files at the
   # same paths on the collector host.
   # Environment variable: PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR

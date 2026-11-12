@@ -214,8 +214,10 @@ scheduler:
   # file is refused; ssl_root_cert_path "system" (the platform trust
   # store) is always allowed. Set it to the same directory as the
   # server's connection_security.ssl_cert_dir, holding the same files,
-  # and make the directory and its contents writable only by root or
-  # the collector's service account.
+  # and make the directory, its contents and every parent directory
+  # writable only by root or the collector's service account, because
+  # a symbolic link swapped in through a writable parent defeats the
+  # check.
   # Command-line: -connection-ssl-cert-dir
   # Default: "" (unset)
 #   ssl_cert_dir: "/etc/pgedge/ai-dba-workbench/certs"

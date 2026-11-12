@@ -425,12 +425,13 @@ the refused field without the path, and records an error ending in
 
 Set the option on the collector as well as on the server, and keep the
 certificate files at the same paths on the collector host, because both
-components read the same stored paths. The directory and every file and
-link in it must be writable only by root or the account that runs the
-collector. The collector resolves a path before the database driver
-opens the file, so an account that can replace a symbolic link in the
-directory between the two steps could still point the driver at a file
-outside the directory.
+components read the same stored paths. The directory, every file and
+link in it, and every parent directory must be writable only by root
+or the account that runs the collector. The collector resolves a path
+before the database driver opens the file, so an account that can
+replace a symbolic link in the directory, or replace the directory
+itself through a writable parent, between the two steps could still
+point the driver at a file outside the directory.
 
 In the following example, the collector accepts SSL files in the
 `/etc/pgedge/ai-dba-workbench/certs` directory:

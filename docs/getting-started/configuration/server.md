@@ -567,11 +567,13 @@ before each connection attempt; a path must meet the following rules:
 - the path resolves, following symbolic links, to a location inside the
   `ssl_cert_dir` directory.
 
-The directory and every file and link in it must be writable only by
-root or the account that runs the server. The server resolves a path
-before the database driver opens the file, so an account that can
-replace a symbolic link in the directory between the two steps could
-still point the driver at a file outside the directory.
+The directory, every file and link in it, and every parent directory
+must be writable only by root or the account that runs the server.
+The server resolves a path before the database driver opens the file,
+so an account that can replace a symbolic link in the directory, or
+replace the directory itself through a writable parent, between the
+two steps could still point the driver at a file outside the
+directory.
 
 When `ssl_cert_dir` is empty, which is the default, the server refuses
 every connection that names an SSL file. A root certificate value of

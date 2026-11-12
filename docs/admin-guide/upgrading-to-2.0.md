@@ -181,11 +181,13 @@ The server and the collector apply the following rules to each path:
   `ssl_cert_dir` directory.
 
 Each component reads the option at start-up only, and refuses to start
-when the option holds a relative path. The directory and every file and
-link in it must be writable only by root or the account that runs the
-component, because each component resolves a path before the database
-driver opens the file. In the following example, the query
-lists the connections in the datastore that name an SSL file:
+when the option holds a relative path. The directory, every file and
+link in it, and every parent directory must be writable only by root
+or the account that runs the component, because each component
+resolves a path before the database driver opens the file; a symbolic
+link swapped in through a writable parent defeats the check. In the
+following example, the query lists the connections in the datastore
+that name an SSL file:
 
 ```sql
 SELECT id, name, sslcert, sslkey, sslrootcert
@@ -204,7 +206,8 @@ To keep these connections working, complete the following steps:
 
 1. Choose a directory that the accounts running the server and the
    collector can read, such as `/etc/pgedge/ai-dba-workbench/certs`,
-   and make the directory writable only by root or the service account.
+   and make the directory and every parent directory writable only by
+   root or the service account.
 2. Copy each listed file into the directory on the server host and on
    the collector host; a file that already lives in the directory needs
    no change.

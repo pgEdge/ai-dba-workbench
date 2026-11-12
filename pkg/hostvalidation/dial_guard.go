@@ -232,11 +232,17 @@ type DialContextFunc = func(ctx context.Context, network, addr string) (net.Conn
 
 // GuardedDialContext returns a dial function that resolves the host in
 // addr itself, through GuardedLookup(policy, resolve), and hands dial
-// only the permitted addresses, as IP literals, trying each in turn
-// until one connects. The policy is therefore applied to the address
-// actually connected to, whatever the host resolved to when it was last
-// checked (DNS rebinding), and to every connection a client opens with
-// it, including one made to follow a redirect.
+// only the permitted addresses, as IP literals. The policy is therefore
+// applied to the address actually connected to, whatever the host
+// resolved to when it was last checked (DNS rebinding), and to every
+// connection a client opens with it, including one made to follow a
+// redirect.
+//
+// The permitted addresses are tried the way net.Dialer tries the
+// addresses of a host name (see dialAddrs): when the host has addresses
+// of both families, the second family is tried alongside the first once
+// fallbackDelay has passed, so an IPv6 route that silently drops traffic
+// costs a fraction of a second rather than the whole dial timeout.
 //
 // A host that is already an IP literal is judged directly, without
 // calling resolve. Either way, an address IsAlwaysBlockedIP reports is
@@ -244,8 +250,8 @@ type DialContextFunc = func(ctx context.Context, network, addr string) (net.Conn
 // resolve is net.DefaultResolver.LookupHost and a nil dial is a zero
 // net.Dialer's DialContext. When no address is permitted the error is
 // ErrNoPermittedAddress, which names neither the host nor any address;
-// an error from resolve or from the last dial attempt is returned
-// unchanged.
+// an error from resolve is returned unchanged, and when every permitted
+// address fails to connect, dialAddrs's error is.
 func GuardedDialContext(policy AddrPolicy, resolve LookupFunc, dial DialContextFunc) DialContextFunc {
 	if policy == nil {
 		policy = CheckAlwaysBlocked
@@ -271,22 +277,15 @@ func GuardedDialContext(policy AddrPolicy, resolve LookupFunc, dial DialContextF
 				return nil, err
 			}
 		}
-		var lastErr error
+		ips := make([]string, 0, len(addrs))
 		for _, a := range addrs {
 			// GuardedLookup keeps an "ip:port" entry from a custom
-			// resolver as it was; the port dialled is always addr's.
+			// resolver as it was; the port used is always addr's.
 			if h, _, splitErr := net.SplitHostPort(a); splitErr == nil {
 				a = h
 			}
-			conn, dialErr := dial(ctx, network, net.JoinHostPort(a, port))
-			if dialErr == nil {
-				return conn, nil
-			}
-			lastErr = dialErr
-			if ctx.Err() != nil {
-				break
-			}
+			ips = append(ips, a)
 		}
-		return nil, lastErr
+		return dialAddrs(ctx, dial, network, port, ips)
 	}
 }

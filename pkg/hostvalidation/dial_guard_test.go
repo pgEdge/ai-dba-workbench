@@ -139,7 +139,7 @@ func TestIsAlwaysBlockedIP(t *testing.T) {
 		{"fd00:ec2::254", true},
 		{"fd00:ec2::23", true},  // AWS EKS Pod Identity Agent
 		{"fd20:ce::254", true},  // GCP metadata, IPv6-only instances
-		{"fd00:ec2::22", false}, // neighbours of the metadata addresses
+		{"fd00:ec2::22", false}, // adjacent to the metadata addresses
 		{"fd20:ce::253", false},
 		{"100.100.100.200", true},
 		// Ranges a monitored connection may legitimately use.

@@ -238,7 +238,12 @@ always-blocked set) or, when `notifications.allow_internal_networks` is
 set, `hostvalidation.CheckAlwaysBlocked` (metadata, link-local and
 unspecified addresses stay refused). `deliveryDialer` wraps that in
 `hostvalidation.GuardedDialContext`, which resolves the name itself and
-dials only the permitted IP literals. `NewManager` builds one dialer
+dials only the permitted IP literals, falling back between IPv6 and
+IPv4 after 300ms as `net.Dialer` does (`pkg/hostvalidation/dial_addrs.go`).
+Do not replace that with `net.Dialer` dialling the name and checking in
+its `Control` hook: the dial would resolve through `net.Dialer.Resolver`,
+and the injected `LookupFunc` the tests depend on would be lost.
+`NewManager` builds one dialer
 and gives it to both the shared HTTP client (Slack, Mattermost,
 webhook, Telegram) and the email notifier, whose `sendWithTLS` and
 `sendWithStartTLS` dial through it. `webhook.go` therefore carries no

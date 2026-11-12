@@ -1,28 +1,26 @@
 # Database Schema
 
-This document describes the database schema that the
-Collector uses to store configuration and metrics data.
+This document describes the database schema that the Collector uses to store
+configuration and metrics data.
 
 ## Schema Overview
 
 The Collector uses two PostgreSQL schemas:
 
 - The public schema contains core configuration tables.
-- The metrics schema contains time-series metrics
-  tables that use partitioning.
+- The metrics schema contains time-series metrics tables that use partitioning.
 
 For detailed information about schema migrations, see
 [Schema Management](schema-management.md).
 
 ## Core Tables (public schema)
 
-The public schema contains the tables that store
-system configuration and connection information.
+The public schema contains the tables that store system configuration and
+connection information.
 
 ### schema_version
 
-The `schema_version` table tracks applied database
-migrations.
+The `schema_version` table tracks applied database migrations.
 
 ```sql
 CREATE TABLE schema_version (
@@ -35,17 +33,17 @@ CREATE TABLE schema_version (
 
 The table contains the following columns:
 
-- `version` stores the migration version number in
-  sequential order.
-- `description` stores a human-readable description
-  of the migration.
-- `applied_at` stores the timestamp when the migration
-  was applied.
+- `version` stores the migration version number in sequential order.
+- `description` stores a human-readable description of the migration.
+- `applied_at` stores the timestamp when the migration was applied.
 
 ### connections
 
-The `connections` table stores information about
-PostgreSQL servers to monitor.
+The `connections` table stores information about PostgreSQL servers to monitor.
+The following definition is a simplified excerpt; the Collector's migrations in
+`collector/src/database/schema.go` create the full table, which also includes
+the `enabled`, `cluster_id`, `role`, `connection_error`, `description`,
+`membership_source`, and `deleted_at` columns:
 
 ```sql
 CREATE TABLE connections (
@@ -85,117 +83,130 @@ The table contains the following key columns:
 - `id` is the unique connection identifier.
 - `name` is the display name for the connection.
 - `host` and `hostaddr` specify the server location.
-- `port` is the PostgreSQL port, which defaults to
-  5432.
+- `port` is the PostgreSQL port, which defaults to 5432.
 - `database_name` is the database to connect to.
 - `username` is the username for the connection.
-- `password_encrypted` stores the AES-256-GCM
-  encrypted password.
-- `is_shared` indicates whether the connection is
-  shared across all users.
-- `is_monitored` indicates whether the connection is
-  actively monitored.
-- `owner_username` and `owner_token` store ownership
-  information.
+- `password_encrypted` stores the AES-256-GCM encrypted password.
+- `is_shared` indicates whether the connection is shared across all users.
+- `is_monitored` indicates whether the connection is actively monitored.
+- `owner_username` and `owner_token` store ownership information.
 
 The table has the following indexes:
 
 - A primary key exists on `id`.
-- An index on `owner_token` supports fast ownership
-  lookups.
-- A partial index on `is_monitored = TRUE` supports
-  active connection queries.
+- An index on `owner_token` supports fast ownership lookups.
+- A partial index on `is_monitored = TRUE` supports active connection queries.
 - An index on `name` supports lookups by name.
 
 ### probe_configs
 
-The `probe_configs` table defines monitoring probes
-and their configuration. The table supports both global
-defaults and per-connection overrides.
+The `probe_configs` table defines monitoring probes and their configuration.
+The table supports global defaults and group, cluster, and server overrides.
+The definition references the `clusters` and `cluster_groups` tables, which the
+Collector's migrations create before `probe_configs`; the definition does not
+run on a database that lacks those tables:
 
 ```sql
 CREATE TABLE probe_configs (
     id INTEGER GENERATED ALWAYS AS IDENTITY
         PRIMARY KEY,
+    connection_id INTEGER
+        REFERENCES connections(id)
+        ON DELETE CASCADE,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     name TEXT NOT NULL,
     description TEXT NOT NULL,
     collection_interval_seconds INTEGER NOT NULL
         DEFAULT 60,
     retention_days INTEGER NOT NULL DEFAULT 28,
-    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    connection_id INTEGER
-        REFERENCES connections(id)
+    scope TEXT NOT NULL DEFAULT 'global',
+    group_id INTEGER
+        REFERENCES cluster_groups(id)
         ON DELETE CASCADE,
-    created_at TIMESTAMP NOT NULL
+    cluster_id INTEGER
+        REFERENCES clusters(id)
+        ON DELETE CASCADE,
+    user_modified BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL
         DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL
+    updated_at TIMESTAMPTZ NOT NULL
         DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_name_not_empty
         CHECK (name <> ''),
     CONSTRAINT chk_collection_interval_positive
         CHECK (collection_interval_seconds > 0),
     CONSTRAINT chk_retention_days_positive
-        CHECK (retention_days > 0)
+        CHECK (retention_days > 0),
+    CONSTRAINT probe_configs_scope_check
+        CHECK (scope IN ('global', 'group', 'cluster', 'server')),
+    CONSTRAINT probe_configs_scope_ids_check CHECK (
+        (scope = 'global' AND connection_id IS NULL
+            AND group_id IS NULL AND cluster_id IS NULL)
+        OR (scope = 'group' AND group_id IS NOT NULL
+            AND connection_id IS NULL AND cluster_id IS NULL)
+        OR (scope = 'cluster' AND cluster_id IS NOT NULL
+            AND connection_id IS NULL AND group_id IS NULL)
+        OR (scope = 'server' AND connection_id IS NOT NULL
+            AND group_id IS NULL AND cluster_id IS NULL)
+    )
 );
 ```
 
 The table contains the following key columns:
 
 - `id` is the unique probe configuration identifier.
-- `name` is the probe name, which matches the
-  `pg_stat_*` view name.
+- `name` is the registered probe name, such as `pg_stat_activity`,
+  `pg_node_role`, or `pg_sys_os_info`.
 - `description` is a human-readable description.
-- `collection_interval_seconds` defines how often
-  the probe runs in seconds.
-- `retention_days` defines how long the system
-  retains data in days.
+- `collection_interval_seconds` defines how often the probe runs in seconds.
+- `retention_days` defines how long the system retains data in days.
 - `is_enabled` controls whether the probe runs.
-- `connection_id` references the connection for
-  per-server configuration; a NULL value indicates
-  a global default.
+- `scope` identifies the level the row applies to: `global`, `group`,
+  `cluster`, or `server`.
+- `connection_id`, `cluster_id`, and `group_id` identify the server, cluster,
+  or group for a scoped row; the column that matches the `scope` is set, and
+  the others are NULL.
+- `user_modified` marks the row as an explicit override; the Collector keeps a
+  server row whose `user_modified` is `FALSE` in step with its parent.
 
 #### Configuration Hierarchy
 
-The Collector uses a fallback hierarchy for probe
-settings:
+The Collector uses a fallback hierarchy for probe settings:
 
-1. Per-server configuration applies if a
-   `probe_configs` row exists with the specific
-   `connection_id`.
-2. Global default applies if no per-server
-   configuration exists; the system uses the
-   `probe_configs` row where `scope = 'global'`;
-   cluster and group overrides also have a NULL
-   `connection_id`, so the global row is matched on
-   its scope.
-3. Hardcoded default applies if no database
-   configuration exists.
+1. Server configuration applies if a `probe_configs` row exists with
+   `scope = 'server'` and the connection's `connection_id`.
+2. Cluster configuration applies if no server row exists and a row with
+   `scope = 'cluster'` exists for the connection's cluster.
+3. Group configuration applies if neither applies and a row with
+   `scope = 'group'` exists for the group of the connection's cluster.
+4. Global configuration applies if no scoped row exists; the system uses the
+   `probe_configs` row where `scope = 'global'`.
+5. Hardcoded defaults apply if no database configuration exists.
+
+When a connection first needs a probe and has no server row, the Collector
+creates one by copying the values from the first level that resolves. At each
+configuration reload, the Collector copies any later change to the cluster,
+group, or global row onto every server row whose `user_modified` is `FALSE`.
 
 The table has the following indexes:
 
 - A primary key exists on `id`.
-- A partial unique index on
-  `name WHERE scope = 'global'` ensures only one
+- A partial unique index on `name WHERE scope = 'global'` ensures only one
   global default per probe.
-- Partial unique indexes on `(name, connection_id)`,
-  `(name, cluster_id)` and `(name, group_id)`, each
-  limited to the matching `scope`, allow one
-  configuration per probe per server, cluster or
-  group.
-- An index on `is_enabled` supports enabled probe
-  lookups.
+- Partial unique indexes on `(name, connection_id)`, `(name, cluster_id)` and
+  `(name, group_id)`, each limited to the matching `scope`, allow one
+  configuration per probe per server, cluster or group.
+- An index on `is_enabled` supports enabled probe lookups.
 
 ## Metrics Tables (metrics schema)
 
-Each probe has its own metrics table, partitioned
-by week. This section describes the common structure
-and partitioning strategy.
+Each probe has its own metrics table, partitioned by week. This section
+describes the common structure and partitioning strategy.
 
 ### Common Structure
 
-All metrics tables share common columns for
-identifying the source connection and collection
-time.
+All metrics tables share common columns for identifying the source connection
+and collection time.
 
 ```sql
 CREATE TABLE metrics.{probe_name} (
@@ -208,13 +219,12 @@ CREATE TABLE metrics.{probe_name} (
 The common columns are:
 
 - `connection_id` references `connections.id`.
-- `collected_at` stores the timestamp of metric
-  collection.
+- `collected_at` stores the timestamp of metric collection.
 
 ### Partitioning
 
-The system uses range partitioning by `collected_at`
-with a weekly interval from Monday to Sunday.
+The system uses range partitioning by `collected_at` with a weekly interval
+from Monday to Sunday.
 
 The following example shows partition creation:
 
@@ -234,8 +244,7 @@ CREATE TABLE metrics.pg_stat_activity_20251111
 
 ### Example: pg_stat_activity
 
-The following example shows the `pg_stat_activity`
-metrics table definition:
+The following example shows the `pg_stat_activity` metrics table definition:
 
 ```sql
 CREATE TABLE metrics.pg_stat_activity (
@@ -266,22 +275,18 @@ CREATE TABLE metrics.pg_stat_activity (
 ) PARTITION BY RANGE (collected_at);
 ```
 
-The columns map directly to `pg_stat_activity` view
-columns, plus `connection_id` and `collected_at`.
+The columns map directly to `pg_stat_activity` view columns, plus
+`connection_id` and `collected_at`.
 
-Schema migration 12 adds the `query_id` column, which
-joins an activity sample to the matching `queryid` in
-`metrics.pg_stat_statements`. PostgreSQL adds the
-underlying column in release 14 and populates it only
-whilst `compute_query_id` is on, so the column is
-null for idle backends and for every row collected
-from a server that predates release 14 or runs with
-that setting off.
+Schema migration 12 adds the `query_id` column, which joins an activity sample
+to the matching `queryid` in `metrics.pg_stat_statements`. PostgreSQL adds the
+underlying column in release 14 and populates it only whilst `compute_query_id`
+is on, so the column is null for idle backends and for every row collected from
+a server that predates release 14 or runs with that setting off.
 
 ### Example: pg_stat_database
 
-The following example shows the `pg_stat_database`
-metrics table definition:
+The following example shows the `pg_stat_database` metrics table definition:
 
 ```sql
 CREATE TABLE metrics.pg_stat_database (
@@ -320,10 +325,9 @@ CREATE TABLE metrics.pg_stat_database (
 
 ### Example: pg_stat_statements Indexes
 
-Most metrics tables carry no indexes, but
-`metrics.pg_stat_statements` carries three, because the
-query leaderboards read it far more selectively than a
-chart reads a time series.
+Most metrics tables carry no indexes, but `metrics.pg_stat_statements` carries
+three, because the query leaderboards read it far more selectively than a chart
+reads a time series.
 
 The following example shows the index definitions:
 
@@ -344,115 +348,97 @@ CREATE INDEX idx_pg_stat_statements_identity_time
 
 Each index serves a different access pattern:
 
-- `idx_pg_stat_statements_conn_time` serves a scan of one
-  connection over a time range.
-- `idx_pg_stat_statements_object` serves a lookup of one
-  statement in one database, including the query text that
-  the server resolves once per returned row.
-- `idx_pg_stat_statements_identity_time` serves the
-  windowed aggregation behind
-  `/api/v1/metrics/top-queries`, which was added by
-  migration 15.
+- `idx_pg_stat_statements_conn_time` serves a scan of one connection over a
+  time range.
+- `idx_pg_stat_statements_object` serves a lookup of one statement in one
+  database, including the query text that the server resolves once per returned
+  row.
+- `idx_pg_stat_statements_identity_time` serves the windowed aggregation behind
+  `/api/v1/metrics/top-queries`, which migration 15 added.
 
-The third index repays a closer look, because the column
-order is not arbitrary. The `pg_stat_statements` counters
-are cumulative within a statement identity, so the
-aggregation subtracts consecutive samples with a window
-function partitioned by `(queryid, userid, dbid,
-toplevel)` and ordered by `collected_at`. The probe runs
-in every database that has the extension installed and
-reads the same cluster-wide view each time, so one
-counter is stored once per such database under a
-different `database_name`; the aggregation keeps a single
-copy per identity and `collected_at` before differencing,
-choosing the lowest `database_name`. Listing the identity
-columns first, then `collected_at`, then `database_name`
-gives the planner that exact order, so the aggregation
-reads the rows already sorted rather than sorting a whole
-window of samples into temporary files. The `INCLUDE` list holds
-every counter the aggregation reads, which keeps the scan
-index-only; the query text is deliberately left out,
-because it is by far the widest column and carrying it
-would roughly triple the size of the index.
+The third index repays a closer look, because the column order is not
+arbitrary. The `pg_stat_statements` counters are cumulative within a statement
+identity, so the aggregation subtracts consecutive samples with a window
+function partitioned by `(queryid, userid, dbid, toplevel)` and ordered by
+`collected_at`. The probe runs in every database that has the extension
+installed and reads the same cluster-wide view each time, so one counter is
+stored once per such database under a different `database_name`; the
+aggregation keeps a single copy per identity and `collected_at` before
+differencing, choosing the lowest `database_name`. Listing the identity columns
+first, then `collected_at`, then `database_name` gives the planner that exact
+order, so the aggregation reads the rows already sorted rather than sorting a
+whole window of samples into temporary files. The `INCLUDE` list holds every
+counter the aggregation reads, which keeps the scan index-only; the query text
+is deliberately left out, because it is by far the widest column and carrying
+it would roughly triple the size of the index.
 
-The index is not free. On a test fixture it added about
-17% to the storage of the table and about 56% to the
-write-ahead log volume of a collector batch, in exchange
-for taking a 30-day page of the leaderboard from 11.5
-seconds to 5.5 seconds.
+The index is not free. On a test fixture it added about 17% to the storage of
+the table and about 56% to the write-ahead log volume of a collector batch, in
+exchange for taking a 30-day page of the leaderboard from 11.5 seconds to 5.5
+seconds.
 
 ## Schema Design Principles
 
-The schema follows several design principles for
-reliability and performance.
+The schema follows several design principles for reliability and performance.
 
 ### Normalization
 
-The `connections` table stores server information
-once; metrics reference the connection by
-`connection_id`. The `probe_configs` table stores
-probe configuration once; the system uses the
-configuration to control collection and retention.
+The `connections` table stores server information once; metrics reference the
+connection by `connection_id`. The `probe_configs` table stores probe
+configuration once; the system uses the configuration to control collection and
+retention.
 
 ### Partitioning Benefits
 
 Partitioning provides the following advantages:
 
-- Query performance improves because queries filtering
-  by time scan only relevant partitions.
-- Data management is simpler because dropping old
-  partitions replaces DELETE operations.
-- Index maintenance is easier because smaller indexes
-  per partition reduce overhead.
-- Parallel operations are possible because PostgreSQL
-  can operate on partitions in parallel.
+- Query performance improves because queries filtering by time scan only
+  relevant partitions.
+- Data management is simpler because dropping old partitions replaces DELETE
+  operations.
+- Index maintenance is easier because smaller indexes per partition reduce
+  overhead.
+- Parallel operations are possible because PostgreSQL can operate on partitions
+  in parallel.
 
 ### Storage Optimization
 
 The system optimizes storage in several ways:
 
-- The system partitions by week to balance partition
-  count and partition size.
-- Metrics tables have no indexes by default; the
-  system relies on partition pruning. The exception is
-  `metrics.pg_stat_statements`, described above.
-- The system uses efficient data types such as
-  INTEGER versus BIGINT and TEXT versus VARCHAR.
+- The system partitions by week to balance partition count and partition size.
+- Metrics tables have no indexes by default; the system relies on partition
+  pruning. The exception is `metrics.pg_stat_statements`, described above.
+- The system uses efficient data types such as INTEGER versus BIGINT and TEXT
+  versus VARCHAR.
 
 ## Data Retention
 
-The garbage collector manages data retention
-automatically. When the `use_coldfront_for_metrics`
-option is enabled, the collector creates no partitions,
-does not start the garbage collector, and ignores
-`retention_days`; the
-[Storing Metrics in pgEdge ColdFront](../../getting-started/configuration/coldfront-metrics.md)
-document describes that mode.
+The garbage collector manages data retention automatically. When the
+`use_coldfront_for_metrics` option is enabled, the collector creates no
+partitions, does not start the garbage collector, and ignores
+`retention_days`; the [Storing Metrics in pgEdge ColdFront](../../configuration/collector/coldfront-metrics.md) page
+describes that mode.
 
 ### Automatic Cleanup
 
 The garbage collector performs the following steps:
 
-1. The collector runs daily, with the first run
-   after 5 minutes.
-2. For each probe, the collector calculates the cutoff
-   as `NOW() - retention_days`.
-3. The collector finds partitions entirely before the
-   cutoff date.
-4. The collector executes `DROP TABLE` on expired
-   partitions.
+1. The collector runs daily, with the first run after 5 minutes.
+2. For each probe, the collector calculates the cutoff as
+   `NOW() - retention_days`.
+3. The collector finds partitions entirely before the cutoff date.
+4. The collector executes `DROP TABLE` on expired partitions.
 
 ### Manual Cleanup
 
-To manually drop a partition, first check existing
-partitions and then drop the target partition. Manual
-cleanup applies to PostgreSQL storage only; a ColdFront
-datastore has no partitions, and the
-[Managing Metrics Retention](../../getting-started/configuration/coldfront-metrics.md#managing-metrics-retention)
-section describes how to delete old rows in that mode.
+To manually drop a partition, first check existing partitions and then drop the
+target partition. Manual cleanup applies to PostgreSQL storage only; a
+ColdFront datastore has no partitions, and the
+[Managing Metrics Retention](../../configuration/collector/coldfront-metrics.md#managing-metrics-retention) section describes
+how to delete old rows in that mode.
 
-In the following example, the query lists all
-partitions for `pg_stat_activity`:
+In the following example, the query lists all partitions for
+`pg_stat_activity`:
 
 ```sql
 SELECT schemaname, tablename
@@ -462,8 +448,7 @@ WHERE schemaname = 'metrics'
 ORDER BY tablename;
 ```
 
-In the following example, the command drops a
-specific partition:
+In the following example, the command drops a specific partition:
 
 ```sql
 DROP TABLE metrics.pg_stat_activity_20251104;
@@ -471,16 +456,13 @@ DROP TABLE metrics.pg_stat_activity_20251104;
 
 ### Adjusting Retention
 
-Update the `probe_configs` table to change retention
-settings. The `retention_days` value applies to
-PostgreSQL storage only; the collector ignores the
-value when the `use_coldfront_for_metrics` option is
-enabled, as the
-[Managing Metrics Retention](../../getting-started/configuration/coldfront-metrics.md#managing-metrics-retention)
-section describes.
+Update the `probe_configs` table to change retention settings. The
+`retention_days` value applies to PostgreSQL storage only; the collector
+ignores the value when the `use_coldfront_for_metrics` option is enabled, as
+the [Managing Metrics Retention](../../configuration/collector/coldfront-metrics.md#managing-metrics-retention) section
+describes.
 
-In the following example, the command updates the
-global default retention:
+In the following example, the command updates the global default retention:
 
 ```sql
 UPDATE probe_configs
@@ -489,28 +471,45 @@ WHERE name = 'pg_stat_activity'
   AND scope = 'global';
 ```
 
-In the following example, the command sets retention
-for a specific connection:
+A row with `user_modified = TRUE` overrides every inherited setting, not only
+the one you change: the Collector stops copying `is_enabled`,
+`collection_interval_seconds`, and `retention_days` from the parent, so later
+parent changes, including disabling the probe, no longer reach that connection.
+In the following example, the command sets retention for a specific connection
+and marks the row as an override:
 
 ```sql
 UPDATE probe_configs
-SET retention_days = 30
+SET retention_days = 30,
+    user_modified = TRUE
 WHERE name = 'pg_stat_activity'
   AND connection_id = 1;
 ```
 
-Changes take effect on the next garbage collection
-run.
+Each garbage collection run reads the global and server rows directly, so a
+retention change that you make to a row applies at the next run, which can come
+before the next configuration reload. A change to a global row reaches the
+server rows that inherit from it, those without an override and without a
+cluster or group override above them, at the next reload, within five minutes;
+a garbage collection run in between still uses their old values. Server rows
+that inherit from a cluster or group override keep that override's values.
+Coordinate retention changes with the garbage collection schedule to avoid
+dropping partitions unexpectedly, and query `probe_configs` to confirm the
+retention on each enabled row for the probe.
+
+All connections share one metrics table per probe, and garbage collection
+applies the retention of a single enabled configuration row for the probe to
+the whole table. A longer retention on one connection's row therefore does not
+guarantee that the collector keeps that connection's data for longer; keep
+`retention_days` the same on every enabled row for a probe.
 
 ## Querying Metrics
 
-This section provides examples for querying the
-metrics tables.
+This section provides examples for querying the metrics tables.
 
 ### Simple Query
 
-In the following example, the query retrieves recent
-activity data:
+In the following example, the query retrieves recent activity data:
 
 ```sql
 SELECT connection_id, collected_at,
@@ -524,8 +523,8 @@ ORDER BY collected_at DESC;
 
 ### Join with Connection
 
-In the following example, the query retrieves activity
-data with connection names:
+In the following example, the query retrieves activity data with connection
+names:
 
 ```sql
 SELECT
@@ -545,8 +544,7 @@ ORDER BY a.collected_at DESC;
 
 ### Time-Series Analysis
 
-In the following example, the query retrieves active
-connections over time:
+In the following example, the query retrieves active connections over time:
 
 ```sql
 SELECT
@@ -566,8 +564,7 @@ ORDER BY minute DESC, server_name;
 
 ### Partition Information
 
-In the following example, the query checks partition
-sizes:
+In the following example, the query checks partition sizes:
 
 ```sql
 SELECT
@@ -589,14 +586,12 @@ ORDER BY
 
 ## Schema Maintenance
 
-This section covers routine schema maintenance
-operations.
+This section covers routine schema maintenance operations.
 
 ### Vacuum
 
-PostgreSQL autovacuum handles most maintenance
-automatically. In the following example, the command
-manually vacuums a specific partition:
+PostgreSQL autovacuum handles most maintenance automatically. In the following
+example, the command manually vacuums a specific partition:
 
 ```sql
 VACUUM ANALYZE metrics.pg_stat_activity_20251104;
@@ -604,8 +599,7 @@ VACUUM ANALYZE metrics.pg_stat_activity_20251104;
 
 ### Analyze
 
-In the following example, the command updates
-statistics for query planning:
+In the following example, the command updates statistics for query planning:
 
 ```sql
 ANALYZE metrics.pg_stat_activity;
@@ -613,8 +607,7 @@ ANALYZE metrics.pg_stat_activity;
 
 ### Reindex
 
-If indexes become bloated, run the following command
-to rebuild them:
+If indexes become bloated, run the following command to rebuild them:
 
 ```sql
 REINDEX TABLE metrics.pg_stat_activity;
@@ -624,9 +617,7 @@ REINDEX TABLE metrics.pg_stat_activity;
 
 The following resources provide additional details.
 
-- [Schema Management](schema-management.md) covers
-  the migration system details.
-- [Probes](probes.md) explains how probes collect
-  and store data.
-- [Architecture](architecture.md) describes the
-  overall system design.
+- [Schema Management](schema-management.md) covers the migration system
+  details.
+- [Probes](probes.md) explains how probes collect and store data.
+- [Architecture](architecture.md) describes the overall system design.

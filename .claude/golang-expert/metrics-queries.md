@@ -345,7 +345,7 @@ alerter pools are not covered by this change.
   the Workbench with its `search_path` set before the collector's first
   start, so the tables are created in, and later read from, the schema
   that role controls (see the ColdFront metrics page,
-  `docs/getting-started/configuration/coldfront-metrics.md`, on the
+  `docs/configuration/collector/coldfront-metrics.md`, on the
   #755 docs branch).
 - **Type JSON builder literals.** ColdFront rewrites the JSON builders
   for DuckDB, which cannot type an untyped string literal passed as a
@@ -1299,7 +1299,7 @@ The gate was `StalenessRatio <= probeFreshnessRatioLimit` (3 intervals),
 which lined up with the 15 minute windows only at the collector's 300
 second default: an operator raising
 `probe_configs.collection_interval_seconds`, which
-`docs/admin-guide/probes.md` invites, widened the gate whilst the window
+`docs/admin-guide/probes/index.md` invites, widened the gate whilst the window
 stayed where the SQL put it, so ordinary collection emptied the query and
 the cleaner cleared a condition nobody had seen end. A per-connection
 override never reached the ratio at all, because

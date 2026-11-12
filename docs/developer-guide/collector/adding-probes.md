@@ -1,17 +1,13 @@
 # Adding New Probes
 
-This guide explains how to add custom probes to
-the Collector.
+This guide explains how to add custom probes to the Collector.
 
 ## When to Add a Probe
 
-Consider adding a probe when you need to accomplish
-one of the following goals:
+Consider adding a probe when you need to accomplish one of the following goals:
 
-- Monitor a PostgreSQL extension's views such as
-  pgBouncer or Citus.
-- Collect custom application metrics stored in
-  PostgreSQL.
+- Monitor a PostgreSQL extension's views such as pgBouncer or Citus.
+- Collect custom application metrics stored in PostgreSQL.
 - Monitor specific queries or patterns.
 - Gather data from custom functions.
 
@@ -21,9 +17,8 @@ Follow these steps to create a new probe.
 
 ### 1. Create Probe File
 
-Create a new file in `/collector/src/probes/`. In
-the following example, the commands create a new
-probe file:
+Create a new file in `/collector/src/probes/`. In the following example, the
+commands create a new probe file:
 
 ```bash
 cd collector/src/probes
@@ -32,8 +27,7 @@ touch pg_stat_custom_probe.go
 
 ### 2. Implement the Probe
 
-The following code shows a complete probe
-implementation:
+The following code shows a complete probe implementation:
 
 ```go
 /*-----------------------------------------------
@@ -182,8 +176,7 @@ func (p *PgStatCustomProbe) EnsurePartition(
 
 ### 3. Add Constant
 
-Add the probe name to
-`/collector/src/probes/constants.go`. In the following
+Add the probe name to `/collector/src/probes/constants.go`. In the following
 example, the constant defines the probe name:
 
 ```go
@@ -194,18 +187,16 @@ const (
 ```
 
 Add the same name to the `knownProbes` set in
-`/server/src/internal/metrics/known_probes.go` in the
-same change. The server lists and serves only the
-probes in that set, and the
-`TestKnownProbesMatchCollectorSchema` test fails when
-the set and the collector's metrics tables differ.
+`/server/src/internal/metrics/known_probes.go` in the same change. The server
+lists and serves only the probes in that set, and the
+`TestKnownProbesMatchCollectorSchema` test fails when the set and the
+collector's metrics tables differ.
 
 ### 4. Register in Scheduler
 
-Add probe creation to
-`/collector/src/scheduler/scheduler.go` in the
-`createProbe` method. In the following example, the
-case statement registers the new probe:
+Add probe creation to `/collector/src/scheduler/scheduler.go` in the
+`createProbe` method. In the following example, the case statement registers
+the new probe:
 
 ```go
 func (ps *ProbeScheduler) createProbe(
@@ -225,15 +216,12 @@ func (ps *ProbeScheduler) createProbe(
 
 ### 5. Add Database Migration
 
-Add a migration to
-`/collector/src/database/schema.go`, and create the
-metrics table through `sm.execMetricsDDL` rather than
-`tx.Exec`. In the default mode, `execMetricsDDL` runs
-the DDL block as written; when the collector stores
-metrics in pgEdge ColdFront, the function creates the
-table through `coldfront.create_iceberg_table` instead.
-In the following example, the migration creates the
-metrics table:
+Add a migration to `/collector/src/database/schema.go`, and create the metrics
+table through `sm.execMetricsDDL` rather than `tx.Exec`. In the default mode,
+`execMetricsDDL` runs the DDL block as written; when the collector stores
+metrics in pgEdge ColdFront, the function creates the table through
+`coldfront.create_iceberg_table` instead. In the following example, the
+migration creates the metrics table:
 
 ```go
 // Migration N: Create pg_stat_custom table
@@ -270,13 +258,11 @@ sm.migrations = append(sm.migrations, Migration{
 })
 ```
 
-In the same change, add the table's column
-specification to the `tables` list in
-`/collector/src/coldfront/spec.go`. The specification
-lists every column in order with the type that
-`format_type()` reports, and `CreatedIn` names the
-migration that creates the table. In the following
-example, the entry matches the migration above:
+In the same change, add the table's column specification to the `tables` list
+in `/collector/src/coldfront/spec.go`. The specification lists every column in
+order with the type that `format_type()` reports, and `CreatedIn` names the
+migration that creates the table. In the following example, the entry matches
+the migration above:
 
 ```go
 {Name: "pg_stat_custom", CreatedIn: N, Columns: []Column{
@@ -288,27 +274,22 @@ example, the entry matches the migration above:
 }},
 ```
 
-Under ColdFront, `execMetricsDDL` checks the
-`CREATE TABLE` statement against the specification and
-refuses a table that has none, and the
-`TestColdFrontSpecMatchesMigratedSchema` test fails
-when the two differ. ColdFront stores an unbounded
-`NUMERIC` column as `numeric(38,0)`, which discards
-any fractional part, so use `DOUBLE PRECISION` or a
-bounded `NUMERIC(p,s)` for a value that is not a whole
-number. A later migration that adds a column must give
-the column a type that ColdFront stores natively, and
-must set the column's `AddedIn` field to that
-migration's version.
+Under ColdFront, `execMetricsDDL` checks the `CREATE TABLE` statement against
+the specification and refuses a table that has none, and the
+`TestColdFrontSpecMatchesMigratedSchema` test fails when the two differ.
+ColdFront stores an unbounded `NUMERIC` column as `numeric(38,0)`, which
+discards any fractional part, so use `DOUBLE PRECISION` or a bounded
+`NUMERIC(p,s)` for a value that is not a whole number. A later migration that
+adds a column must give the column a type that ColdFront stores natively, and
+must set the column's `AddedIn` field to that migration's version.
 
 ### 6. Insert Probe Configuration
 
-After deploying, insert the probe configuration
-into the database. In the following example, the
-INSERT statement adds the probe configuration:
+After deploying, insert the probe configuration into the database. In the
+following example, the INSERT statement adds the probe configuration:
 
 ```sql
-INSERT INTO probes (
+INSERT INTO probe_configs (
     name,
     description,
     collection_interval_seconds,
@@ -325,10 +306,8 @@ INSERT INTO probes (
 
 ### 7. Test the Probe
 
-Write tests in
-`/collector/src/probes/pg_stat_custom_probe_test.go`.
-In the following example, the test verifies the
-probe configuration:
+Write tests in `/collector/src/probes/pg_stat_custom_probe_test.go`. In the
+following example, the test verifies the probe configuration:
 
 ```go
 package probes
@@ -367,10 +346,8 @@ func TestPgStatCustomProbe(t *testing.T) {
 
 ## Database-Scoped Probes
 
-For probes that run per-database, set the
-`IsDatabaseScoped` method to return `true`. In the
-following example, the method indicates a
-database-scoped probe:
+For probes that run per-database, set the `IsDatabaseScoped` method to return
+`true`. In the following example, the method indicates a database-scoped probe:
 
 ```go
 func (p *PgStatCustomProbe) IsDatabaseScoped() bool {
@@ -378,9 +355,8 @@ func (p *PgStatCustomProbe) IsDatabaseScoped() bool {
 }
 ```
 
-The scheduler will automatically query `pg_database`
-for a list of databases, execute the probe against
-each database, and store all collected metrics
+The scheduler will automatically query `pg_database` for a list of databases,
+execute the probe against each database, and store all collected metrics
 together.
 
 ## Best Practices
@@ -391,46 +367,38 @@ Follow these best practices when designing probes.
 
 The following guidelines apply to query design:
 
-- Limit result set size by using WHERE clauses to
-  filter results.
-- Avoid expensive operations by minimizing sorts or
-  aggregates if possible.
-- Handle NULL values by using COALESCE where
-  appropriate.
+- Limit result set size by using WHERE clauses to filter results.
+- Avoid expensive operations by minimizing sorts or aggregates if possible.
+- Handle NULL values by using COALESCE where appropriate.
 - Use appropriate types by matching PostgreSQL types.
 
 ### Performance
 
 The following guidelines apply to performance:
 
-- Set appropriate intervals to balance freshness
-  against load.
-- Consider result set size because large results
-  require more memory.
-- Test query performance by running EXPLAIN on the
-  query.
+- Set appropriate intervals to balance freshness against load.
+- Consider result set size because large results require more memory.
+- Test query performance by running EXPLAIN on the query.
 - Ensure the views have appropriate indexes.
 
 ### Error Handling
 
 The following guidelines apply to error handling:
 
-- Handle missing tables or views by checking whether
-  the extension is installed.
-- Implement graceful degradation so the probe does
-  not fail when the extension is missing.
-- Log errors clearly by including the probe name
-  and connection.
+- Handle missing tables or views by checking whether the extension is
+  installed.
+- Implement graceful degradation so the probe does not fail when the extension
+  is missing.
+- Log errors clearly by including the probe name and connection.
 
 ### Storage
 
 The following guidelines apply to storage:
 
-- Match column order because the columns list must
-  match the values order.
+- Match column order because the columns list must match the values order.
 - Handle all data types by testing with various data.
-- Consider partition size, which is retention
-  multiplied by interval and result size.
+- Consider partition size, which is retention multiplied by interval and result
+  size.
 
 ## Troubleshooting
 
@@ -449,10 +417,8 @@ If the probe is not executing, check the following:
 
 If no data is collected, check the following:
 
-1. Verify the query returns data on the monitored
-   server.
-2. Verify the view or table exists on the monitored
-   server.
+1. Verify the query returns data on the monitored server.
+2. Verify the view or table exists on the monitored server.
 3. Check the user permissions.
 4. Review the logs for execution errors.
 
@@ -469,8 +435,7 @@ If storage errors occur, check the following:
 
 If memory usage is high, consider the following:
 
-1. Reduce the result set size by adding a WHERE
-   clause.
+1. Reduce the result set size by adding a WHERE clause.
 2. Increase the collection interval.
 3. Check for memory leaks in the probe code.
 
@@ -478,9 +443,6 @@ If memory usage is high, consider the following:
 
 The following resources provide additional details.
 
-- [Probes](probes.md) explains how probes work
-  internally.
-- [Probe Reference](probe-reference.md) lists all
-  existing probes.
-- [Testing and Development](testing.md) covers the
-  development setup.
+- [Probes](probes.md) explains how probes work internally.
+- [Probe Reference](probe-reference.md) lists all existing probes.
+- [Testing and Development](testing.md) covers the development setup.

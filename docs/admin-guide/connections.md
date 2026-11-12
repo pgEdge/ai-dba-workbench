@@ -1,26 +1,36 @@
 # Connection Management
 
-The MCP server provides REST APIs for managing
-connections to monitored PostgreSQL databases. This
-feature allows users to select which database connection
-they want to work with for their session.
+The MCP server provides REST API endpoints that manage connections to
+monitored PostgreSQL databases, so that each user can select the database
+connection to work with during a session.
 
-## Overview
+When the MCP server connects to the datastore, the server reads the connection
+information that the collector stores. The connection endpoints let a user:
 
-When the MCP server is configured with a datastore
-connection, the server can access connection information
-stored by the Collector. This enables users to:
+- list the available database connections.
+- select a connection for the session.
+- switch between the databases on a connection.
+- keep the selection across requests.
 
-- List available database connections.
-- Select a connection for their session.
-- Switch between databases on a connection.
-- Persist their selection across requests.
+!!! hint
 
-## Configuration
+    The server stores each connection selection in the authentication
+    database (`auth.db`), so the selection persists across requests and server
+    restarts. Each token holds an independent connection selection.
 
-To enable connection management, configure the server's
-database settings to point to the same datastore used
-by the Collector:
+When a user selects a connection, the database tools (`query_database`,
+`get_schema_info`, `similarity_search`, `execute_explain`, `count_rows`, and
+`test_query`) run against the selected database unless the request names a
+connection with the `connection_id` argument. When a request names no
+connection and the token has no selected connection, the tools return the
+following error:
+
+```text
+No database connection available. Specify connection_id or select a connection first.
+```
+
+To enable connection management, configure the server's database settings to
+point to the same datastore that the collector uses:
 
 ```yaml
 database:
@@ -34,32 +44,34 @@ database:
 secret_file: /etc/ai-workbench/secret
 ```
 
-The `secret_file` must contain the same secret used by
-the Collector for encrypting connection passwords. For
-full configuration details, see the
-[Server Configuration](../getting-started/configuration/server.md).
+The `secret_file` must contain the same secret as the collector's secret file,
+because the server encrypts the connection passwords that the collector
+decrypts. For full configuration details, see
+[Configuring the Server](../configuration/server/index.md).
 
-## Monitored Server Privileges
-
-Each connection stores the credentials of a PostgreSQL
-role on the monitored server. Before creating a
-connection, grant that role the privileges the
-Workbench needs, which are the `pg_monitor` predefined
-role and `CONNECT` on every database you want to
-monitor. The
-[Monitored Database Privileges](../getting-started/configuration/monitored-database-privileges.md)
-document covers the least-privilege grants, the
-optional extensions, and the gaps that remain without
-superuser access.
+The role whose credentials a connection stores needs privileges on the
+monitored server;
+[Preparing Monitored Servers](monitored-database-privileges.md)
+describes those privileges.
 
 ## REST API Endpoints
 
-All endpoints require authentication via Bearer token.
+All endpoints require a Bearer token in the `Authorization` header; the
+[Authentication](api/reference.md#authentication) section of the API Reference
+shows an example, and
+[Managing Tokens](managing-users-and-permissions/tokens.md) describes how to
+create a token. This section describes the endpoints that list connections and
+their databases, select and clear a session's connection, and delete a
+connection. The [Connections](api/reference.md#connections) table in the API
+Reference lists every connection endpoint, including the endpoints that create
+and update a connection and validate a query against one, and the
+[API Browser](api/browser.md) shows the request and response schema for each
+endpoint.
 
 ### List Connections
 
-The following endpoint lists all available database
-connections from the datastore:
+The following endpoint lists all available database connections from the
+datastore:
 
 ```
 GET /api/v1/connections
@@ -91,8 +103,7 @@ Response:
 
 ### List Databases
 
-The following endpoint lists all databases on a
-specific connection:
+The following endpoint lists all databases on a specific connection:
 
 ```
 GET /api/v1/connections/{id}/databases
@@ -120,8 +131,8 @@ Response:
 
 ### Get Current Connection
 
-The following endpoint returns the currently selected
-connection for the session:
+The following endpoint returns the currently selected connection for the
+session:
 
 ```
 GET /api/v1/connections/current
@@ -150,8 +161,7 @@ Response (404 Not Found):
 
 ### Set Current Connection
 
-The following endpoint selects a connection and
-optionally a specific database:
+The following endpoint selects a connection and optionally a specific database:
 
 ```
 POST /api/v1/connections/current
@@ -164,8 +174,8 @@ Content-Type: application/json
 }
 ```
 
-The `database_name` is optional. If not specified, the
-connection's default database is used.
+The `database_name` is optional. If not specified, the connection's default
+database is used.
 
 Response:
 
@@ -181,8 +191,7 @@ Response:
 
 ### Clear Current Connection
 
-The following endpoint clears the current connection
-selection:
+The following endpoint clears the current connection selection:
 
 ```
 DELETE /api/v1/connections/current
@@ -193,13 +202,11 @@ Response: `204 No Content`
 
 ### Delete a Connection
 
-The following endpoint deletes a connection; the caller
-must own the connection or hold the `manage_connections`
-permission, and must be able to see the connection. A
-connection the caller cannot see answers `404 Not Found`,
-exactly as a missing one does, even to a holder of
-`manage_connections`; updating a connection follows the
-same rule:
+The caller must own the connection or hold the `manage_connections`
+permission, and must be able to see the connection, to delete it. A connection
+the caller cannot see returns `404 Not Found`, exactly as a missing connection
+does, even to a holder of `manage_connections`; updating a connection follows
+the same rule. The following endpoint deletes a connection:
 
 ```
 DELETE /api/v1/connections/{id}
@@ -208,49 +215,23 @@ Authorization: Bearer <token>
 
 Response: `204 No Content`
 
-The server answers as soon as the connection is marked
-deleted. From that moment the connection disappears from
-every listing, the API and the MCP tools, and the
-collector and alerter stop monitoring it. The server then
-removes the connection's collected metrics in the
-background, in small batches, and removes the connection
-itself once the metrics are gone. A connection with a long
-metrics history may take some time to clear from the
-datastore, but the delete request does not wait for it.
+The server responds as soon as it marks the connection deleted. From that
+moment, the connection disappears from every listing, the API, and the MCP
+tools, and the collector and alerter stop monitoring it. The server then
+removes the connection's collected metrics in the background, in small
+batches, and removes the connection itself when the metrics are gone. A
+connection with a long metrics history may take some time to clear from the
+datastore, but the delete request does not wait for the purge.
 
-The background purge runs when the server starts, every
-five minutes, and immediately after each delete; a server
-restart resumes any purge that was interrupted.
+The background purge runs when the server starts, every five minutes, and
+immediately after each delete; a server restart resumes any interrupted purge.
 
-On a datastore that stores metrics in pgEdge ColdFront,
-the purge deletes the connection's rows from each metrics
-view in a separate transaction before removing the
-connection. When a view delete fails, the purge keeps the
+On a datastore that stores metrics in pgEdge ColdFront, the purge deletes the
+connection's rows from each metrics view in a separate transaction before
+removing the connection. When a view delete fails, the purge keeps the
 connection and retries it on a later run. The
-[Storing Metrics in pgEdge ColdFront](../getting-started/configuration/coldfront-metrics.md)
-document describes that mode.
-
-## Session Persistence
-
-Connection selections are stored in the authentication
-database (`auth.db`) and persist across requests and
-server restarts. Each token has an independent
-connection selection.
-
-## Tool Behavior
-
-When a connection is selected, all database tools
-(`query_database`, `get_schema_info`,
-`similarity_search`, `execute_explain`, `count_rows`)
-operate on the selected database.
-
-If no connection is selected, the tools return an error
-message instructing the user to select a connection:
-
-```
-No database connection selected. Please select a
-database connection using the web client.
-```
+[Storing Metrics in pgEdge ColdFront](../configuration/collector/coldfront-metrics.md)
+page describes that mode.
 
 ## Error Handling
 
@@ -265,21 +246,10 @@ The connection APIs return standard error responses.
 | 500 | Internal server error. |
 | 503 | Datastore not configured. |
 
-In the following example, an error response uses the
-standard JSON format:
+In the following example, an error response uses the standard JSON format:
 
 ```json
 {
     "error": "Description of the error"
 }
 ```
-
-## Related Documentation
-
-- [Managing Users and Permissions](managing-users-and-permissions/permission_model.md) covers tokens and
-  access control.
-- [API Reference](api/reference.md) provides
-  interactive API documentation.
-- [Monitored Database Privileges](../getting-started/configuration/monitored-database-privileges.md)
-  describes the PostgreSQL grants a monitored role
-  needs.

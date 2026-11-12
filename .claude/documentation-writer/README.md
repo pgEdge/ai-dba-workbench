@@ -39,7 +39,7 @@ manually alongside it.
 - Filenames under `docs/` are lowercase with hyphens between words.
 - Prose wraps at 79 characters; long URLs and nav paths are exempt.
 - Alerter configuration keys are documented in three places that must
-  agree: `docs/getting-started/configuration/alerter.md` (reference),
+  agree: `docs/configuration/alerter/configuration_file.md` (reference),
   `docs/developer-guide/alerter/anomaly-detection.md` (design) and the
   example configs `examples/ai-dba-alerter.yaml`,
   `docker/config/ai-dba-alerter.yaml` and
@@ -48,12 +48,12 @@ manually alongside it.
   parses all three examples, so run it after editing them.
 
 - Collector configuration keys are documented in
-  `docs/getting-started/configuration/collector.md` (reference) and in the
+  `docs/configuration/collector/configuration_file.md` (reference) and in the
   example configs `examples/ai-dba-collector.yaml` and
   `docker/config/ai-dba-collector.yaml`. The ColdFront metrics storage
   mode (`use_coldfront_for_metrics`) has its own page,
-  `docs/getting-started/configuration/coldfront-metrics.md`, which the
-  retention and purge sections in `docs/admin-guide/probes.md`,
+  `docs/configuration/collector/coldfront-metrics.md`, which the
+  retention and purge sections in `docs/admin-guide/probes/index.md`,
   `docs/admin-guide/connections.md` and
   `docs/developer-guide/collector/` link to; keep them in agreement.
   The "ColdFront Metrics Storage Errors" table in the collector page's

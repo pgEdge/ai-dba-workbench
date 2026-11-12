@@ -118,7 +118,7 @@ project adheres to
   ColdFront 1.0.0-beta3 or later, prepared before the collector's
   first start; the operator must schedule ColdFront's compactor, and
   an existing datastore cannot switch between storage modes. The
-  [Storing Metrics in pgEdge ColdFront](getting-started/configuration/coldfront-metrics.md)
+  [Storing Metrics in pgEdge ColdFront](configuration/collector/coldfront-metrics.md)
   page describes the prerequisites, the setup and every difference
   from a standard datastore.
 

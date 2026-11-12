@@ -920,7 +920,7 @@ func (d *Datastore) ListDatabases(ctx context.Context, connectionID int) ([]Data
 	poolConfig, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
 		log.Printf("[ERROR] Unable to parse connection string for connection %d: %s",
-			connectionID, describeParseConfigError(err))
+			connectionID, strconv.Quote(describeParseConfigError(err)))
 		return nil, fmt.Errorf("failed to connect to server: %w", ErrInvalidConnectionString)
 	}
 	d.GuardMonitoredConnConfig(&poolConfig.ConnConfig.Config)

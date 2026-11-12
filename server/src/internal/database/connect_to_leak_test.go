@@ -54,6 +54,11 @@ func TestConnectToErrorsNameNoSecrets(t *testing.T) {
 		{"bad URL",
 			"postgres://user:" + password + "@db.example.com:5432/%zz",
 			"not a valid URL", []string{password, "%zz"}},
+		// The decoded sslrootcert path reaches pgx's reason, so the log
+		// line must quote it rather than let the newline forge a second line.
+		{"newline in path",
+			"postgres://user:" + password + "@db.example.com:5432/mydb?sslmode=disable&sslrootcert=" + missing + "%0A%5BINFO%5D%20forged",
+			"forged", []string{password, "\n[INFO]"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -132,7 +132,8 @@ func (c *Client) ConnectTo(connStr string) error {
 	// Parse connection string into pgxpool.Config
 	poolConfig, err := pgxpool.ParseConfig(enhancedConnStr)
 	if err != nil {
-		log.Printf("[ERROR] Unable to parse connection string: %s", describeParseConfigError(err))
+		log.Printf("[ERROR] Unable to parse connection string: %s",
+			strconv.Quote(describeParseConfigError(err)))
 		return fmt.Errorf("unable to parse connection string: %w", ErrInvalidConnectionString)
 	}
 
@@ -231,7 +232,10 @@ var ErrInvalidConnectionString = errors.New("invalid connection string")
 // describeParseConfigError returns the text of a pgx ParseConfig error
 // for the server log, with the quoted connection string replaced, so
 // the log keeps the reason (including any file path) but never the
-// password.
+// password. The reason can repeat values from the connection string, so
+// callers pass the result through strconv.Quote before logging it, where
+// a newline in one could otherwise start a forged log line (gosec G706
+// does not follow the taint into this function's return value).
 func describeParseConfigError(err error) string {
 	var pce *pgconn.ParseConfigError
 	if errors.As(err, &pce) {

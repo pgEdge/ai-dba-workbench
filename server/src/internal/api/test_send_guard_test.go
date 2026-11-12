@@ -613,7 +613,7 @@ func stallingSMTPSender(t *testing.T) *notificationTestSender {
 // accepts the connection and then goes quiet cannot hold a test send
 // open, on the implicit TLS path (the handshake) and the STARTTLS path
 // (the greeting) alike: the connection's deadline is the context's, and
-// cancelling the context closes the connection even before then.
+// ending the context early closes the connection even before then.
 func TestSendTestEmail_StalledServer(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -647,7 +647,7 @@ func TestSendTestEmail_StalledServer(t *testing.T) {
 			defer timer.Stop()
 			start := time.Now()
 			if err := send(ctx); err == nil {
-				t.Fatal("expected the cancelled send to fail")
+				t.Fatal("expected the send to fail once its context ended")
 			}
 			if elapsed := time.Since(start); elapsed > 5*time.Second {
 				t.Errorf("send took %v, want it ended by the cancellation", elapsed)
@@ -805,9 +805,9 @@ func TestTestChannel_BracketedSMTPHost(t *testing.T) {
 
 	handler := NewNotificationChannelHandlerWithSecurity(ds, authStore, auth.NewRBACChecker(authStore),
 		true, nil, nil)
-	var dialled atomic.Value
+	var connAddr atomic.Value
 	handler.testSender = &notificationTestSender{dial: func(_ context.Context, _, addr string) (net.Conn, error) {
-		dialled.Store(addr)
+		connAddr.Store(addr)
 		return nil, errors.New("no connection made")
 	}}
 
@@ -826,7 +826,7 @@ func TestTestChannel_BracketedSMTPHost(t *testing.T) {
 	}
 
 	assertTestChannelError(t, handler, userID, email.ID, http.StatusBadGateway, "Failed to send test email")
-	if got, _ := dialled.Load().(string); got != "[2001:db8::25]:25" {
+	if got, _ := connAddr.Load().(string); got != "[2001:db8::25]:25" {
 		t.Errorf("dial address %q, want %q", got, "[2001:db8::25]:25")
 	}
 }

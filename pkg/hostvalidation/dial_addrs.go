@@ -49,8 +49,11 @@ type dialResult struct {
 // comes first. The first connection made wins; the attempt still
 // running is stopped, and a connection it makes anyway is closed. When
 // every address fails, the primary family's error is returned, as
-// net.Dialer does.
+// net.Dialer does. An empty ips is ErrNoPermittedAddress.
 func dialAddrs(ctx context.Context, dial DialContextFunc, network, port string, ips []string) (net.Conn, error) {
+	if len(ips) == 0 {
+		return nil, ErrNoPermittedAddress
+	}
 	primaries, fallbacks := splitByFamily(ips)
 	if len(fallbacks) == 0 {
 		return dialSerial(ctx, dial, network, port, primaries)
@@ -88,7 +91,11 @@ func dialAddrs(ctx context.Context, dial DialContextFunc, network, port string, 
 	for {
 		select {
 		case <-timer.C:
-			startFallback()
+			// The timer can fire as the context ends; a fallback
+			// started then could only fail.
+			if ctx.Err() == nil {
+				startFallback()
+			}
 		case res := <-results:
 			running--
 			if res.err == nil {
@@ -151,12 +158,22 @@ func isIPv4Literal(s string) bool {
 // deadline, each attempt gets an equal share of the time left (but at
 // least minAttemptTimeout, or all of it if less is left), as net.Dialer
 // does, so one silent address cannot use up the time the others need.
-// It stops early once ctx is done, and returns the last attempt's error.
+// It stops early once ctx is done, and returns the last attempt's error;
+// when no address is tried, the error is ErrNoPermittedAddress.
+//
+// Each address is dialled in the canonical text form of the IP the
+// policy checked, not as the resolver wrote it, so the dialler cannot
+// read the text differently from net.ParseIP. An entry that does not
+// parse is skipped; GuardedDialContext never passes one.
 func dialSerial(ctx context.Context, dial DialContextFunc, network, port string, ips []string) (net.Conn, error) {
-	var lastErr error
-	for i, ip := range ips {
+	lastErr := ErrNoPermittedAddress
+	for i, ipText := range ips {
+		ip := net.ParseIP(ipText)
+		if ip == nil {
+			continue
+		}
 		attemptCtx, cancel := attemptContext(ctx, len(ips)-i)
-		conn, err := dial(attemptCtx, network, net.JoinHostPort(ip, port))
+		conn, err := dial(attemptCtx, network, net.JoinHostPort(ip.String(), port))
 		cancel()
 		if err == nil {
 			return conn, nil

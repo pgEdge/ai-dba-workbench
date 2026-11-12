@@ -210,6 +210,86 @@ func TestDialAddrs(t *testing.T) {
 			t.Errorf("tried %v, want %v", seen, w)
 		}
 	})
+
+	t.Run("a fallback timer firing after the context has ended starts nothing", func(t *testing.T) {
+		setDialTimings(t, 5*time.Millisecond, minAttemptTimeout)
+		cctx, cancel := context.WithCancel(ctx)
+		cancel()
+		release := make(chan struct{})
+		var mu sync.Mutex
+		var seen []string
+		dial := func(_ context.Context, _, addr string) (net.Conn, error) {
+			mu.Lock()
+			seen = append(seen, addr)
+			mu.Unlock()
+			if addr == "8.8.8.8:443" {
+				// Holds the primary attempt open until well after
+				// the fallback timer has fired.
+				<-release
+			}
+			return nil, errDialRecorded
+		}
+		time.AfterFunc(100*time.Millisecond, func() { close(release) })
+		if _, err := dialAddrs(cctx, dial, "tcp", "443", []string{"8.8.8.8", "2001:db8::1"}); !errors.Is(err, errDialRecorded) {
+			t.Errorf("err = %v", err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if w := []string{"8.8.8.8:443"}; !reflect.DeepEqual(seen, w) {
+			t.Errorf("tried %v, want %v", seen, w)
+		}
+	})
+
+	t.Run("an empty address list is ErrNoPermittedAddress", func(t *testing.T) {
+		dial := func(context.Context, string, string) (net.Conn, error) {
+			t.Error("dial called with no addresses")
+			return nil, errDialRecorded
+		}
+		for _, ips := range [][]string{nil, {}} {
+			if conn, err := dialAddrs(ctx, dial, "tcp", "443", ips); conn != nil || !errors.Is(err, ErrNoPermittedAddress) {
+				t.Errorf("dialAddrs(%v) = %v, %v, want ErrNoPermittedAddress", ips, conn, err)
+			}
+			if conn, err := dialSerial(ctx, dial, "tcp", "443", ips); conn != nil || !errors.Is(err, ErrNoPermittedAddress) {
+				t.Errorf("dialSerial(%v) = %v, %v, want ErrNoPermittedAddress", ips, conn, err)
+			}
+		}
+		// Only unparseable entries is the same as none.
+		if conn, err := dialSerial(ctx, dial, "tcp", "443", []string{"not-an-ip"}); conn != nil || !errors.Is(err, ErrNoPermittedAddress) {
+			t.Errorf("dialSerial(not-an-ip) = %v, %v, want ErrNoPermittedAddress", conn, err)
+		}
+	})
+
+	t.Run("each address is dialled in canonical form", func(t *testing.T) {
+		var seen []string
+		dial := func(_ context.Context, _, addr string) (net.Conn, error) {
+			seen = append(seen, addr)
+			return nil, errDialRecorded
+		}
+		_, _ = dialSerial(ctx, dial, "tcp", "443", []string{ //nolint:errcheck // only the addresses matter
+			"2001:0DB8:0000::0001", "::ffff:192.0.2.1", "not-an-ip", "198.51.100.1"})
+		want := []string{"[2001:db8::1]:443", "192.0.2.1:443", "198.51.100.1:443"}
+		if !reflect.DeepEqual(seen, want) {
+			t.Errorf("dialled %v, want %v", seen, want)
+		}
+	})
+}
+
+// TestGuardedDialContext_CanonicalAddress checks that the address a
+// custom resolver returns is dialled in the form net.ParseIP reads it,
+// the form the policy judged.
+func TestGuardedDialContext_CanonicalAddress(t *testing.T) {
+	var seen []string
+	dial := func(_ context.Context, _, addr string) (net.Conn, error) {
+		seen = append(seen, addr)
+		return nil, errDialRecorded
+	}
+	guarded := GuardedDialContext(CheckAlwaysBlocked, fixedLookup("2001:DB8:0::5"), dial)
+	if _, err := guarded(context.Background(), "tcp", "db.example.com:5432"); !errors.Is(err, errDialRecorded) {
+		t.Fatalf("err = %v", err)
+	}
+	if want := []string{"[2001:db8::5]:5432"}; !reflect.DeepEqual(seen, want) {
+		t.Errorf("dialled %v, want %v", seen, want)
+	}
 }
 
 func TestSplitByFamily(t *testing.T) {

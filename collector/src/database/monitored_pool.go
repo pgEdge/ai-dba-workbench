@@ -700,8 +700,10 @@ func describeParseConfigError(err error) string {
 	return err.Error()
 }
 
-// createMonitoredPool creates a pgxpool.Pool for a monitored connection
-func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Pool, error) {
+// monitoredPoolConfig parses a monitored connection string into the
+// pool configuration createMonitoredPool opens, with the pool limits,
+// the hostaddr handling and the dial guard applied.
+func monitoredPoolConfig(connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Config, error) {
 	// Parse connection string
 	config, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
@@ -715,6 +717,23 @@ func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxI
 	}
 	config.MaxConns = int32(maxConns) // #nosec G115 - bounds checked above
 	config.MinConns = 0               // Start with no connections
+
+	// pgx has no hostaddr keyword and would send one to the server as a
+	// startup parameter. Take it out and dial that address for the host
+	// instead, so that sslmode=verify-full still checks the certificate
+	// against the host name (pgx's TLS ServerName) rather than the IP.
+	if raw, ok := config.ConnConfig.RuntimeParams["hostaddr"]; ok {
+		delete(config.ConnConfig.RuntimeParams, "hostaddr")
+		ip, err := hostvalidation.ParseHostAddr(raw)
+		if err != nil {
+			logger.Errorf("Monitored connection string carries a hostaddr that is not an IP address")
+			return nil, ErrInvalidMonitoredConnString
+		}
+		addr := ip.String()
+		config.ConnConfig.LookupFunc = func(context.Context, string) ([]string, error) {
+			return []string{addr}, nil
+		}
+	}
 
 	// Check the addresses pgx actually dials, not only the host name the
 	// server checked when the connection was saved: the name can resolve
@@ -732,6 +751,15 @@ func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxI
 	// pgxpool will close connections that have been idle for this duration
 	if maxIdleSeconds > 0 {
 		config.MaxConnIdleTime = time.Duration(maxIdleSeconds) * time.Second
+	}
+	return config, nil
+}
+
+// createMonitoredPool creates a pgxpool.Pool for a monitored connection
+func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Pool, error) {
+	config, err := monitoredPoolConfig(connStr, maxConns, maxIdleSeconds)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create the pool
@@ -773,22 +801,33 @@ func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName strin
 	// other route, must not reach libpq. The value itself is left out of
 	// the error, which ends up in connections.connection_error.
 	unsafeTarget := fmt.Errorf("connection %d: stored host or hostaddr is not valid", conn.ID)
-	if err := hostvalidation.CheckStoredTarget(conn.Host, ""); err != nil {
+	hostaddr := ""
+	if conn.HostAddr.Valid {
+		hostaddr = conn.HostAddr.String
+	}
+	if err := hostvalidation.CheckStoredTarget(conn.Host, hostaddr); err != nil {
 		return nil, unsafeTarget
 	}
-	params["host"] = conn.Host
+	// A keyword/value host takes no brackets, so an IPv6 literal stored
+	// as "[2001:db8::1]" goes in bare.
+	host := hostvalidation.BareHost(conn.Host)
 
-	if conn.HostAddr.Valid && conn.HostAddr.String != "" {
-		// pgx (v5.12.0) has no hostaddr keyword: it passes an unknown
-		// key to the server as a startup parameter and dials its default
-		// host instead. The address therefore replaces host, as in the
-		// server's URL connection string, in its bare parsed form.
-		ip, err := hostvalidation.ParseHostAddr(conn.HostAddr.String)
+	if hostaddr != "" {
+		// As in libpq, hostaddr is the address dialled whilst host stays
+		// the name that TLS verifies and sends as SNI. pgx (v5.12.0) has
+		// no hostaddr keyword, so createMonitoredPool takes it out of the
+		// parsed config and turns it into the pool's address lookup; with
+		// no host, the address stands in for one, as libpq does.
+		ip, err := hostvalidation.ParseHostAddr(hostaddr)
 		if err != nil {
 			return nil, unsafeTarget
 		}
-		params["host"] = ip.String()
+		params["hostaddr"] = ip.String()
+		if host == "" {
+			host = ip.String()
+		}
 	}
+	params["host"] = host
 
 	params["port"] = fmt.Sprintf("%d", conn.Port)
 

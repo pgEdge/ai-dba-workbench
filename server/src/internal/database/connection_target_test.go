@@ -40,6 +40,8 @@ func TestBuildConnectionStringRefusesUnsafeTarget(t *testing.T) {
 		{"comma hostaddr list", "db.example.com", "127.0.0.1,127.0.0.2"},
 		{"hostaddr with port", "db.example.com", "127.0.0.1:6379"},
 		{"hostaddr host name", "db.example.com", "evil.example.com"},
+		{"neither host nor hostaddr", "", ""},
+		{"empty bracketed host", "[]", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

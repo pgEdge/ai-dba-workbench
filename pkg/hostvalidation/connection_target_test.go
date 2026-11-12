@@ -99,4 +99,33 @@ func TestCheckStoredTarget(t *testing.T) {
 				c.host, c.hostaddr)
 		}
 	}
+
+	// No target at all: an empty host, or an empty bracket pair, with
+	// no hostaddr. A hostaddr on its own is a target.
+	for _, host := range []string{"", "[]"} {
+		if err := CheckStoredTarget(host, ""); !errors.Is(err, ErrNoTarget) {
+			t.Errorf("CheckStoredTarget(%q, \"\") = %v, want ErrNoTarget", host, err)
+		}
+	}
+	if err := CheckStoredTarget("", "192.0.2.1"); err != nil {
+		t.Errorf("CheckStoredTarget(\"\", hostaddr) = %v, want nil", err)
+	}
+}
+
+func TestBareHost(t *testing.T) {
+	cases := map[string]string{
+		"[2001:db8::1]":  "2001:db8::1",
+		"2001:db8::1":    "2001:db8::1",
+		"db.example.com": "db.example.com",
+		"[[::1]]":        "[::1]",
+		"[::1":           "[::1",
+		"[]":             "",
+		"[":              "[",
+		"":               "",
+	}
+	for in, want := range cases {
+		if got := BareHost(in); got != want {
+			t.Errorf("BareHost(%q) = %q, want %q", in, got, want)
+		}
+	}
 }

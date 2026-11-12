@@ -51,10 +51,17 @@ func CheckHostSyntax(host string) error {
 	return nil
 }
 
-// trimOneBracketPair removes a single enclosing pair of square
-// brackets, as an IPv6 literal may carry, and nothing else, so a value
-// such as "[[::1]]" keeps its inner brackets and is still rejected.
-func trimOneBracketPair(s string) string {
+// ErrNoTarget is returned when a stored connection has neither a host
+// nor a hostaddr, which libpq and pgx would each fill in with a default
+// (a local socket or localhost) that nobody chose.
+var ErrNoTarget = errors.New("connection has neither a host nor a hostaddr")
+
+// BareHost removes a single enclosing pair of square brackets, as an
+// IPv6 literal may be stored with, and nothing else, so a value such as
+// "[[::1]]" keeps its inner brackets and is still rejected by
+// CheckHostSyntax. A keyword/value connection string, net.JoinHostPort
+// and a TLS server name all need the bare form.
+func BareHost(s string) string {
 	if len(s) >= 2 && s[0] == '[' && s[len(s)-1] == ']' {
 		return s[1 : len(s)-1]
 	}
@@ -67,7 +74,7 @@ func trimOneBracketPair(s string) string {
 // separator or other structure, so a value that parses cannot reshape
 // the connection string it is placed into.
 func ParseHostAddr(hostaddr string) (net.IP, error) {
-	ip := net.ParseIP(trimOneBracketPair(hostaddr))
+	ip := net.ParseIP(BareHost(hostaddr))
 	if ip == nil {
 		return nil, ErrHostAddrNotIP
 	}
@@ -81,9 +88,14 @@ func ParseHostAddr(hostaddr string) (net.IP, error) {
 // still not be able to turn one target into a multi-host list or carry
 // an injected port. The host may keep one enclosing bracket pair, which
 // is stripped before the syntax check; a non-empty hostaddr must be a
-// literal IP address.
+// literal IP address. At least one of the two must be set
+// (ErrNoTarget).
 func CheckStoredTarget(host, hostaddr string) error {
-	if err := CheckHostSyntax(trimOneBracketPair(host)); err != nil {
+	bare := BareHost(host)
+	if bare == "" && hostaddr == "" {
+		return ErrNoTarget
+	}
+	if err := CheckHostSyntax(bare); err != nil {
 		return err
 	}
 	if hostaddr != "" {

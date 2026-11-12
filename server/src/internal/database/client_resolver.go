@@ -49,8 +49,9 @@ type ConnectionInfoProvider interface {
 	// GetConnectionWithPassword returns the connection info and decrypted password.
 	GetConnectionWithPassword(ctx context.Context, connectionID int) (*MonitoredConnection, string, error)
 
-	// BuildConnectionString constructs a connection string from the connection info.
-	BuildConnectionString(conn *MonitoredConnection, password string, databaseOverride string) string
+	// BuildConnectionString constructs a connection string from the
+	// connection info, refusing a stored row that is unsafe to connect to.
+	BuildConnectionString(conn *MonitoredConnection, password string, databaseOverride string) (string, error)
 }
 
 // ClientResolver resolves the appropriate database Client for a request.
@@ -155,7 +156,10 @@ func (r *ClientResolver) ResolveClient(ctx context.Context) (*Client, error) {
 			}
 
 			// Build connection string with the validated override.
-			connStr := r.ConnInfo.BuildConnectionString(conn, password, databaseOverride)
+			connStr, err := r.ConnInfo.BuildConnectionString(conn, password, databaseOverride)
+			if err != nil {
+				return nil, err
+			}
 
 			// Get or create client using the session helper
 			if r.ClientManager == nil {

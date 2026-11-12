@@ -20,6 +20,13 @@ without warning. Review each one against your installation before you
 upgrade; the [changelog](../changelog.md) describes every change in
 full.
 
+### Supported PostgreSQL Versions
+
+Release 2.0.0 drops support for PostgreSQL 14, which reached end of life
+on 12 November 2026; PostgreSQL 15 is now the oldest supported version.
+Before you upgrade, move the datastore and every monitored server that
+runs PostgreSQL 14 to PostgreSQL 15 or later.
+
 ### Upgrade Order
 
 The collector owns the datastore schema and migrates the schema
@@ -149,6 +156,162 @@ connection. See the
 [permission model](managing-users-and-permissions/permission_model.md)
 for the access rules.
 
+### Connection SSL Files
+
+Release 2.0.0 confines the SSL certificate, key and root certificate
+files of monitored connections to one directory, which the new
+`connection_security.ssl_cert_dir` option names on the server and on
+the collector. The option is empty by default, and while the option is
+empty each component refuses every SSL file path except a root
+certificate value of `system`, which selects the platform trust store.
+The server refuses to connect with a stored connection that names an
+SSL file, and refuses with status 400 a request to create or update
+such a connection; the collector stops monitoring such a connection and
+records an error ending in `invalid connection parameters` against it.
+An
+existing connection with SSL file paths therefore stops working until
+you set the option on both components and keep the connection's files
+inside the directory.
+
+The server and the collector apply the following rules to each path:
+
+- the path is absolute and contains no `..` element or control
+  character.
+- the path resolves, following symbolic links, to a location inside the
+  `ssl_cert_dir` directory.
+
+Each component reads the option at start-up only, and refuses to start
+when the option holds a relative path. The directory, every file and
+link in it, and every parent directory must be writable only by root
+or the account that runs the component, because each component
+resolves a path before the database driver opens the file; a symbolic
+link swapped in through a writable parent defeats the check. In the
+following example, the query lists the connections in the datastore
+that name an SSL file:
+
+```sql
+SELECT id, name, sslcert, sslkey, sslrootcert
+FROM connections
+WHERE (COALESCE(sslcert, '') <> ''
+       OR COALESCE(sslkey, '') <> ''
+       OR COALESCE(sslrootcert, '') NOT IN ('', 'system'));
+```
+
+Run the query before the upgrade; after the upgrade, add
+`AND deleted_at IS NULL` to leave out deleted connections. The server
+and the collector read the same stored paths, so the files must be at
+the same paths on the server host and the collector host.
+
+To keep these connections working, complete the following steps:
+
+1. Choose a directory that the accounts running the server and the
+   collector can read, such as `/etc/pgedge/ai-dba-workbench/certs`,
+   and make the directory and every parent directory writable only by
+   root or the service account.
+2. Copy each listed file into the directory on the server host and on
+   the collector host; a file that already lives in the directory needs
+   no change.
+3. Set `connection_security.ssl_cert_dir` to the absolute path of the
+   directory in the server's configuration file, or set the
+   `PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR` environment variable or the
+   `-connection-ssl-cert-dir` flag.
+4. Set `connection_security.ssl_cert_dir` to the same path in the
+   collector's configuration file, or pass the collector's
+   `-connection-ssl-cert-dir` flag; the collector has no environment
+   variable for the option.
+5. After the upgrade, update the SSL paths of each connection whose
+   files you copied, in the web client or with
+   `PUT /api/v1/connections/{id}`, and only then remove the original
+   files.
+
+See [Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
+for the server option, and
+[Connection Security Options](../getting-started/configuration/collector.md#connection-security-options)
+for the collector option.
+
+### Connection Host Addresses
+
+Release 2.0.0 checks the `hostaddr` of a monitored connection as
+strictly as the `host`. A request to create or update a connection
+must give a `hostaddr` that is a literal IPv4 or IPv6 address, and the
+server checks that address against the same blocklist, allowlist and
+internal network rules as the `host`. A `host` that contains `,`, `[`,
+`]`, `/`, `?`, `@`, `#`, `%` or whitespace is refused; a stored `host`
+may keep one enclosing pair of square brackets.
+
+The server and the collector also check each stored connection before
+connecting, and refuse a connection whose `host` contains one of those
+characters or whose `hostaddr` is not a literal IP address. Release
+1.0.0 of the collector sent `hostaddr` as an unsupported parameter and
+left out `host`, so the driver connected to its default host (`PGHOST`
+or the local socket); the 2.0.0 collector connects to `hostaddr` when
+one is set, as the server already did. Before you upgrade, check that
+the `hostaddr` of each connection is empty or the correct IP address of
+the `host`. Neither the web client nor the API shows a connection's
+`hostaddr`, so query the datastore instead. In the following example,
+the query lists the connections in the datastore that have a
+`hostaddr`:
+
+```sql
+SELECT id, name, host, hostaddr
+FROM connections
+WHERE COALESCE(hostaddr, '') <> '';
+```
+
+Run the query before the upgrade; after the upgrade, add
+`AND deleted_at IS NULL` to leave out deleted connections. The
+components treat an empty `hostaddr` as unset, so the query leaves out
+an empty value as well as a null one.
+
+An `allowed_hosts` entry that names a host does not cover the host's
+`hostaddr`, because the server checks the address on its own. When
+`allow_internal_networks` is `false`, a request to create or update a
+connection whose `hostaddr` is an internal address is refused, even if
+`allowed_hosts` names the `host`. Add the address, or a CIDR range that
+contains it, to `allowed_hosts`.
+
+Release 2.0.0 also checks the network rules each time the server or the
+collector connects, and not only when a connection is saved. The server
+applies its `connection_security` rules to every address that the
+target resolves to at that moment, and connects only to the addresses
+that pass. An allow-listed address permits only that address, so an
+internal host name that `allowed_hosts` does not name needs each of its
+addresses, or a range that holds them, in `allowed_hosts`. The
+server and the collector both refuse unspecified, link-local and cloud
+metadata addresses at connect time, whatever `allowed_hosts` or
+`allow_internal_networks` say, so neither connects to a link-local
+target. The server still accepts such a target when a connection is
+saved under `allow_internal_networks` or an `allowed_hosts` entry.
+
+The internal ranges now include the IPv6 unspecified address `::`, the
+IPv4-compatible range `::/96`, the SIIT range `::ffff:0:0:0/96`, the NAT64
+prefixes `64:ff9b::/96` and `64:ff9b:1::/48`, the 6to4 range `2002::/16`
+and the site-local range `fec0::/10`. A deployment that reaches IPv4
+servers through NAT64 must set `allow_internal_networks` to `true` or add
+the NAT64 prefix to `allowed_hosts`. See
+[Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
+for the full list.
+
+The refusal of unspecified, link-local and cloud metadata addresses
+that no setting lifts also covers an address in `::/96`,
+`::ffff:0:0:0/96`, `64:ff9b::/96` or `2002::/16` that embeds one of
+those IPv4 addresses. For the local-use NAT64 prefix `64:ff9b:1::/48`,
+the refusal reads the IPv4 address at every RFC 6052 offset within the
+prefix, and refuses the address only if a reading is in `169.254.0.0/16`
+or is `100.100.100.200`. The server treats the rest of the /48 as
+internal under `allow_internal_networks` and `allowed_hosts`; the
+collector applies only the refusal, so the collector connects to any
+other address in the prefix.
+
+The alerter also refuses the NAT64 prefixes by default, and has no
+`allowed_hosts` option. On an IPv6-only alerter host that reaches
+IPv4-only notification providers, such as Slack or an SMTP relay,
+through NAT64, deliveries to those providers fail after the upgrade
+until you set the alerter's `notifications.allow_internal_networks`
+option to `true`. The option permits every internal range, not only the
+NAT64 prefixes; see
+[Notification Delivery Addresses](#notification-delivery-addresses).
+
 ### MCP Tool Changes
 
 Release 2.0.0 changes two MCP tools in ways that break an integration
@@ -185,6 +348,51 @@ check that the URL of each notification channel is the final URL, and
 not a URL that the provider redirects. See
 [Notification Channels](notification-channels.md) for the channel
 settings.
+
+### Notification Delivery Addresses
+
+Release 1.0.0 of the alerter checked the host of a webhook channel
+before sending, but resolved the host again when connecting, and did not
+check Slack, Mattermost or email channels at all. Release 2.0.0 checks
+every address that the alerter connects to, for every channel type
+including the new Telegram channel, and refuses private, loopback and
+other internal addresses by default. An email channel that uses an
+internal SMTP relay, or a
+Mattermost channel that points at a self-hosted server on the local
+network, stops delivering notifications after the upgrade; each delivery
+fails with an error containing the following text:
+
+```text
+host resolves only to addresses that connections are not permitted to
+```
+
+A webhook channel whose endpoint is an internal address was already
+refused by release 1.0.0, and gains the same option. To deliver to
+internal addresses, set the new alerter option before you restart the
+alerter, as in the following example:
+
+```yaml
+notifications:
+  allow_internal_networks: true
+```
+
+The option has no command-line flag or environment variable, and the
+alerter reads the option only at start-up. Unspecified, link-local and
+cloud metadata addresses stay refused even when the option is `true`.
+
+As in release 1.0.0, the alerter ignores `HTTP_PROXY`, `HTTPS_PROXY`
+and `NO_PROXY` and connects to each provider directly, so that the
+alerter can check the destination address. See
+[Delivery Address Checks](../getting-started/configuration/alerter.md#delivery-address-checks).
+
+The server's test send, from the Send icon of a channel, now checks every
+address that the send connects to as well. The server refuses unspecified,
+link-local and cloud metadata addresses and then applies its own
+`connection_security` rules, not the alerter's option, so a test send can
+succeed for a channel whose deliveries the alerter refuses. A test send no
+longer uses the `HTTP_PROXY` or `HTTPS_PROXY` environment variables; a
+server that reached a provider only through a proxy now fails the test.
+See [Test Sends](notification-channels.md#test-sends).
 
 ### Retired Alert Rule
 
@@ -313,6 +521,10 @@ the following points in particular:
 - The `http.auth.max_failed_attempts_before_lockout` property, which
   now defaults to `10` when omitted.
 - The URL of each notification channel, which must not redirect.
+- The new `connection_security.ssl_cert_dir` property, which every
+  connection that names an SSL certificate, key or root certificate
+  file now needs on both the server and the collector; see
+  [Connection SSL Files](#connection-ssl-files).
 
 ### Checking the Configuration with the New Server
 

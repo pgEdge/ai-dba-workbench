@@ -44,10 +44,144 @@ moved.
   run operator-supplied SQL execute it as written, under the
   monitored connection's own privileges.
 - `BuildConnectionString` builds the URL with `net/url`, and a name
-  with a leading `/` goes in the `dbname` query parameter; since
-  `%00` still decodes to NUL, `ValidateDatabaseName` must run on every
-  override path, because its NUL check is the only guard against
-  startup-packet injection.
+  with a leading `/` goes in the `dbname` query parameter.
+  `ValidateDatabaseName` must still run on every override path: it is
+  the first guard against startup-packet injection by an embedded NUL.
+  pgx v5.12.0 refuses a NUL too (a raw NUL in `ParseConfig`, `%00` in
+  its URI decoder, and any NUL in `StartupMessage.Encode`), but earlier
+  releases did not, so the validator must not be dropped on the
+  strength of the driver.
+- Both URI builders (`Datastore.BuildConnectionString` and the server's
+  own `config.DatabaseConfig.BuildConnectionString`) encode query values
+  with `connstring.EncodeURIQuery` (`pkg/connstring/uri.go`), because
+  libpq and pgx read '+' as a literal plus. `addApplicationName` appends
+  to the raw query and must never round-trip it through `url.Values`,
+  which would turn '+' into a space in values such as `sslrootcert`.
+- Monitored-connection targets are SSRF-sensitive. The REST create and
+  update handlers (`validateConnectionTarget` in
+  `api/connection_handlers.go`) are the only writers of `host` and
+  `hostaddr`; `host` goes through `HostValidator.ValidateHost` and a
+  non-empty `hostaddr` through `ValidateHostAddr`, which requires a
+  literal IP and then applies the same blocklist, allowlist and
+  internal-range checks. The server URL prefers `hostaddr` over
+  `host`, so skipping either check lets an allowed name front an
+  internal address. At connect time `hostvalidation.CheckStoredTarget`
+  (in `pkg/`) refuses a stored host carrying `, [ ] / ? @ # %` or
+  whitespace and a non-IP hostaddr, in both the server's
+  `Datastore.BuildConnectionString` (`ErrUnsafeConnectionTarget`) and
+  the collector's `buildMonitoredConnectionParams`. pgx v5.12.0 has no
+  `hostaddr` keyword (it would be sent as a startup parameter). The
+  server dials the validated `hostaddr` as `host`; the collector's
+  `createMonitoredPool` (`collector/src/database/monitored_pool.go`)
+  removes it from the runtime parameters, keeps `host` as the TLS
+  server name, and returns the address from `LookupFunc`, which is then
+  wrapped by `GuardedLookup` like any resolved address.
+- The internal-range test is `hostvalidation.IsPrivateIP`
+  (`pkg/hostvalidation/hostvalidation.go`), shared by the server's
+  `HostValidator` and the alerter's delivery dialer. It ORs the
+  `internalNetworks` list with the standard library's `IsUnspecified`,
+  `IsLoopback`, `IsPrivate`, link-local and multicast predicates, so a
+  range missing from the list is still caught; the list itself also
+  holds `::/128` (dialling `::` reaches localhost), the IPv4-embedding
+  prefixes `::/96`, `::ffff:0:0:0/96` (SIIT), `64:ff9b::/96`,
+  `64:ff9b:1::/48` and `2002::/16`, and `fec0::/10`. Blocking all of
+  `64:ff9b::/96` means a deployment on an IPv6-only NAT64 network must
+  set `allow_internal_networks` or allow-list the prefix.
+- Save-time checks cannot stop DNS rebinding, so every monitored
+  connect path re-checks the addresses pgx actually dials, by wrapping
+  `pgconn.Config.LookupFunc` with `hostvalidation.GuardedLookup` (pgx
+  calls it for every non-socket host, IP literals included). On the
+  server the policy is `HostValidator.CheckDialAddr` (the save-time
+  rules, judged per address), installed by `Datastore.SetDialPolicy`
+  in `initDatastore` and applied by `Datastore.GuardMonitoredConnConfig`
+  in `ClientManager.GetOrCreateClientWithConnString` (via
+  `Client.dialGuard`), `api.openQueryPool` and `ListDatabases`. A new
+  monitored pool path must apply it too. The datastore's own
+  connections are deliberately unguarded. The collector has no policy
+  config, so `createMonitoredPool` applies only
+  `hostvalidation.CheckAlwaysBlocked` (unspecified, link-local, cloud
+  metadata, and IPv6 forms embedding them); private and loopback
+  targets pass. `GuardedLookup` applies that same floor before any
+  policy, so the server refuses link-local addresses even with
+  `allow_internal_networks` on. The floor's IPv6 metadata addresses are
+  `fd00:ec2::254` (AWS), `fd00:ec2::23` (AWS EKS Pod Identity Agent)
+  and `fd20:ce::254` (GCP, IPv6-only instances); its IPv4 ones are
+  `169.254.0.0/16` and `100.100.100.200` (Alibaba). The embedded forms
+  are decoded by `embeddedIPv4` in `pkg/hostvalidation/dial_guard.go`
+  (IPv4-compatible, SIIT, the NAT64 well-known `64:ff9b::/96` and
+  6to4), and the whole embedded address is judged against the floor; a
+  new IPv4-embedding form must be added there, or it bypasses the
+  floor. The RFC 8215 local-use prefix `64:ff9b:1::/48` is handled
+  separately by `isLocalUseNAT64Metadata`, because the operator chooses
+  the sub-prefix length: it reads the IPv4 address at every RFC 6052
+  offset (/48: bytes 6,7,9,10; /56: 7,9,10,11; /64: 9-12; /96: 12-15)
+  and refuses the address when any reading is in `169.254.0.0/16` or
+  is `100.100.100.200`. It deliberately does not refuse `0.0.0.0/8` or
+  private readings, which would refuse ordinary servers under a /96
+  (`64:ff9b:1::c633:6407`); the accepted false positive is
+  `x.169.254.y` under the /48 or /56 layout and `x.y.169.254` under the
+  /48 layout. The whole /48 stays in `internalNetworks`, so only the
+  collector, or a policy that permits internal addresses
+  (`allow_internal_networks`, or a server `allowed_hosts` match), can
+  reach the rest of it.
+- Alerter notification deliveries are guarded at the dial, not before
+  it: `notifications/dial_guard.go` builds one
+  `hostvalidation.GuardedDialContext` (resolves the host itself and
+  dials only permitted IP literals) and uses it as the
+  `http.Transport.DialContext` of the client the webhook, Slack,
+  Mattermost and Telegram notifiers share, and as the email
+  notifier's SMTP dial on both the port-465 and STARTTLS paths. The
+  policy is `hostvalidation.CheckNotInternal` (`IsPrivateIP` plus the
+  always-blocked set), or `CheckAlwaysBlocked` when the alerter's
+  `notifications.allow_internal_networks` is set; the alerter has no
+  allow- or block-list, and does not read the server's
+  `connection_security`. Refusals are `ErrNoPermittedAddress`, which
+  names neither host nor address. The transport's `Proxy` is nil on
+  purpose (HTTP_PROXY is ignored), since through a proxy the guard
+  would only see the proxy's address; the shared client also never
+  follows redirects. A new outbound notification path must dial
+  through the same function.
+- The server's "send test notification" senders are guarded at the
+  dial as well: `api/test_send_guard.go` builds one
+  `GuardedDialContext` for the Slack, Mattermost, generic webhook and
+  Telegram HTTP client (Proxy nil, redirects refused) and the SMTP
+  implicit TLS, STARTTLS and plain dials. The policy is
+  `testSendPolicy`: `CheckAlwaysBlocked`, then the server's
+  `HostValidator.CheckDialAddr` (`connection_security`), so it can
+  differ from the alerter's `notifications.allow_internal_networks`
+  and only the server honours allow- and block-lists. Refusals answer
+  400 with the pre-check's generic message (Telegram 502), naming
+  neither host nor address.
+- pgx reads `sslrootcert`, `sslcert` and `sslkey` while it parses a
+  connection string (the CA file even under `sslmode=disable`), so
+  stored SSL paths are a file-read primitive. The server and the
+  collector each confine them to their own
+  `connection_security.ssl_cert_dir` (`sslpaths.ValidateSSLFilePaths`
+  in `pkg/sslpaths`): absolute, no `..` element, and resolved through
+  `EvalSymlinks` (nearest existing ancestor for a missing file) to a
+  location inside the directory. Unset refuses every path except
+  `sslrootcert=system`. On the server the REST create and update
+  handlers check on write, and `Datastore.BuildConnectionString`
+  checks again at connect time (`ErrUnsafeSSLPath`). The collector
+  (flag `-connection-ssl-cert-dir`; it has no environment layer)
+  checks in `buildMonitoredConnectionParams`, logging only the field
+  name and returning `ErrInvalidMonitoredConnString`. Both assume the
+  directory and its contents are writable only by root or the service
+  account: the path is resolved and then opened separately by pgx, so
+  a writer there could swap a link in between (no `os.OpenRoot`).
+- pgx `ParseConfig` errors must never reach a response: they quote the
+  connection string with the password redacted only on a best-effort
+  basis, and name SSL file paths. `Client.ConnectTo` returns
+  `ErrInvalidConnectionString` and the collector's
+  `createMonitoredPool` returns `ErrInvalidMonitoredConnString` (its
+  error lands in `connection_error`, which the API shows); both log the
+  detail through `describeParseConfigError`, which drops the string.
+  The API's `openQueryPool` and `Datastore.ListDatabases` also return
+  `ErrInvalidConnectionString`. No error may format a raw connection
+  string: `Client.LoadMetadataFor` returns a fixed "connection not
+  found", and anything shown or logged goes through `SanitizeConnStr`,
+  which masks the userinfo password and any `password` or
+  `sslpassword` parameter in URI or keyword/value form.
 - Monitored-database credentials are encrypted at rest with a
   server-side secret and only decrypted in the collector when a pool
   is opened.

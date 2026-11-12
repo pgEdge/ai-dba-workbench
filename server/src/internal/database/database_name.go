@@ -33,16 +33,19 @@ const maxDatabaseNameLen = 63
 // character, none of which can name a real database and any of which
 // would be awkward in a log line or an error message.
 //
-// For a NUL byte, though, this check is the only defense. pgx writes
-// each startup parameter as a NUL-terminated string without checking
-// for an embedded NUL (StartupMessage.Encode in pgproto3, fed from
-// pgconn's connect path, as of v5.9.2), and URL escaping does not help
-// because pgx decodes %00 in the URL back to a NUL byte. A name with an
-// embedded NUL could therefore end the database parameter early and
-// inject startup parameters of the caller's choosing, such as options,
-// replication or user. Every path that accepts a database override
-// must call this function before the name reaches
-// BuildConnectionString.
+// A NUL byte matters most, because the startup packet is a run of
+// NUL-terminated strings: a name with an embedded NUL could end the
+// database parameter early and inject startup parameters of the
+// caller's choosing, such as options, replication or user. As of pgx
+// v5.12.0 pgx itself refuses this in three places: ParseConfig rejects
+// a raw NUL byte in either connection-string form, its URI decoder
+// rejects %00 (pgconn/parse_url.go), and StartupMessage.Encode in
+// pgproto3 refuses a parameter carrying a NUL. Earlier releases did
+// none of these. This check stays the first guard regardless, so that
+// the refusal does not depend on the driver version and the caller gets
+// a clear validation error rather than a connection failure: every
+// path that accepts a database override must call this function before
+// the name reaches BuildConnectionString.
 func ValidateDatabaseName(name string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("database name must not be empty")

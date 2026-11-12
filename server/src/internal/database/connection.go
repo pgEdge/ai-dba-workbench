@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -22,9 +23,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -45,6 +48,7 @@ type Client struct {
 	defaultConnStr string                     // current default connection string
 	initialConnStr string                     // original connection string from env
 	dbConfig       *config.DatabaseConfig     // database configuration for pool settings
+	dialGuard      DialGuard                  // applied to every pool this client opens; nil for the datastore
 	mu             sync.RWMutex
 }
 
@@ -115,16 +119,28 @@ func (c *Client) ConnectTo(connStr string) error {
 		return nil // Already connected
 	}
 
-	// Add application_name to connection string if not already present
+	// Add application_name to connection string if not already present.
+	// The url.Parse error quotes the whole string, password included, so
+	// neither it nor the pgx error below is returned: callers pass these
+	// errors on to API and MCP responses (see ErrInvalidConnectionString).
 	enhancedConnStr, err := addApplicationName(connStr, "pgEdge AI DBA Workbench")
 	if err != nil {
-		return fmt.Errorf("unable to enhance connection string: %w", err)
+		log.Printf("[ERROR] Connection string is not a valid URL")
+		return fmt.Errorf("unable to enhance connection string: %w", ErrInvalidConnectionString)
 	}
 
 	// Parse connection string into pgxpool.Config
 	poolConfig, err := pgxpool.ParseConfig(enhancedConnStr)
 	if err != nil {
-		return fmt.Errorf("unable to parse connection string: %w", err)
+		log.Printf("[ERROR] Unable to parse connection string: %s",
+			strconv.Quote(describeParseConfigError(err)))
+		return fmt.Errorf("unable to parse connection string: %w", ErrInvalidConnectionString)
+	}
+
+	// A client for a monitored database restricts the addresses pgx
+	// dials; one for the server's own datastore has no guard.
+	if c.dialGuard != nil {
+		c.dialGuard(&poolConfig.ConnConfig.Config)
 	}
 
 	// Log connection details if debug logging is enabled
@@ -202,21 +218,56 @@ func (c *Client) ConnectTo(connStr string) error {
 	return nil
 }
 
-// addApplicationName adds application_name parameter to a PostgreSQL connection string
+// ErrInvalidConnectionString is what ConnectTo returns when a
+// connection string cannot be parsed. The underlying errors are logged
+// rather than returned because their text reaches API and MCP responses
+// (the MCP tool and resource providers report "Database connection
+// error: %v"), and they carry what a caller must not see: pgx's
+// ParseConfigError quotes the connection string with the password only
+// redacted on a best-effort basis, and pgx reads the sslrootcert, sslcert
+// and sslkey files whilst parsing, so its errors name those paths and
+// reveal whether a file exists or can be read.
+var ErrInvalidConnectionString = errors.New("invalid connection string")
+
+// describeParseConfigError returns the text of a pgx ParseConfig error
+// for the server log, with the quoted connection string replaced, so
+// the log keeps the reason (including any file path) but never the
+// password. The reason can repeat values from the connection string, so
+// callers pass the result through strconv.Quote before logging it, where
+// a newline in one could otherwise start a forged log line (gosec G706
+// does not follow the taint into this function's return value).
+func describeParseConfigError(err error) string {
+	var pce *pgconn.ParseConfigError
+	if errors.As(err, &pce) {
+		redacted := *pce
+		redacted.ConnString = "<connection string>"
+		return redacted.Error()
+	}
+	return err.Error()
+}
+
+// addApplicationName adds an application_name parameter to a
+// PostgreSQL connection URI unless it already carries one. The new
+// parameter is appended to the raw query instead of decoding and
+// re-encoding the whole query: url.Values decodes '+' as a space,
+// whereas libpq and pgx read it as a literal plus, so a round trip
+// would silently rewrite a value such as sslrootcert=/a+b.crt. The
+// caller must not pass the error on, since url.Parse quotes its input.
 func addApplicationName(connStr, appName string) (string, error) {
-	// Parse the connection string
 	u, err := url.Parse(connStr)
 	if err != nil {
 		return "", fmt.Errorf("invalid connection string: %w", err)
 	}
 
-	// Get existing query parameters
-	query := u.Query()
+	if u.Query().Has("application_name") {
+		return connStr, nil
+	}
 
-	// Add application_name if not already present
-	if !query.Has("application_name") {
-		query.Set("application_name", appName)
-		u.RawQuery = query.Encode()
+	param := connstring.EncodeURIQuery(url.Values{"application_name": {appName}})
+	if u.RawQuery == "" {
+		u.RawQuery = param
+	} else {
+		u.RawQuery += "&" + param
 	}
 
 	return u.String(), nil
@@ -251,6 +302,10 @@ func (c *Client) LoadMetadata() error {
 	return c.LoadMetadataFor(connStr)
 }
 
+// errClientConnectionNotFound reports that a Client holds no pool for
+// the requested connection string; it deliberately does not name it.
+var errClientConnectionNotFound = errors.New("connection not found")
+
 // LoadMetadataFor loads table and column metadata for a specific connection
 func (c *Client) LoadMetadataFor(connStr string) error {
 	startTime := time.Now()
@@ -260,7 +315,9 @@ func (c *Client) LoadMetadataFor(connStr string) error {
 	c.mu.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("connection not found: %s", connStr)
+		// The connection string carries the password, so it must not
+		// appear in an error that can reach a caller or a log.
+		return errClientConnectionNotFound
 	}
 
 	ctx := context.Background()

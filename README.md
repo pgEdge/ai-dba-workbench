@@ -101,7 +101,7 @@
 ## pgEdge AI DBA Workbench
 
 The pgEdge AI DBA Workbench is a unified environment for monitoring and
-management of any PostgreSQL v14+ instance, including Supabase and Amazon
+management of any PostgreSQL v15+ instance, including Supabase and Amazon
 RDS, with an optional AI agent. The Workbench watches every instance,
 catches anomalies before they become outages, and walks through diagnosis
 and resolution step by step.

@@ -24,6 +24,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/server/internal/api"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/conversations"
@@ -480,6 +481,19 @@ func (s *Server) initDatastore(serverSecret string) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to datastore: %w", err)
 	}
+	// The connect-time check on stored SSL file paths reads the
+	// directory from the datastore, and so does the connection handler
+	// that checks them on create and update, so both use this one value.
+	// Like the rest of connection_security, it takes effect at start-up.
+	s.datastore.SetSSLCertDir(s.cfg.ConnectionSecurity.SSLCertDir)
+	// Every connection to a monitored database re-checks, at dial time,
+	// the addresses its host resolves to against the same rules the
+	// connection handler applies on save, so a name re-pointed after it
+	// was saved (DNS rebinding) cannot reach an address the rules
+	// refuse. The datastore's own connection is not affected.
+	cs := s.cfg.ConnectionSecurity
+	s.datastore.SetDialPolicy(api.NewHostValidator(
+		cs.AllowInternalNetworks, cs.AllowedHosts, cs.BlockedHosts).CheckDialAddr)
 
 	fmt.Fprintf(os.Stderr, "Datastore: connected to %s@%s:%d/%s\n",
 		s.cfg.Database.User, s.cfg.Database.Host, s.cfg.Database.Port, s.cfg.Database.Database)
@@ -489,6 +503,9 @@ func (s *Server) initDatastore(serverSecret string) error {
 // initClientManager initializes the client manager for database connections
 func (s *Server) initClientManager() error {
 	s.clientManager = database.NewClientManager(s.cfg.Database)
+	// The datastore may be nil here, in which case the guard applies
+	// only the always-blocked floor.
+	s.clientManager.SetMonitoredDialGuard(s.datastore.GuardMonitoredConnConfig)
 
 	if s.cfg.Database != nil && s.cfg.Database.User != "" {
 		fmt.Fprintf(os.Stderr, "Database configured: %s@%s:%d/%s (per-session connections)\n",

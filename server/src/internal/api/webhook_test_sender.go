@@ -11,12 +11,14 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"time"
+
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // sendTestGenericWebhook sends a test message to a generic REST webhook endpoint.
@@ -26,20 +28,43 @@ import (
 // The endpoint URL may carry a credential in its path or query string, so no
 // error returned from here wraps with %w anything net/http produced, and no
 // text borrowed from the endpoint is echoed raw: both go through the helpers
-// in sanitize.go, since the caller logs what this returns.
-func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]string, authType, authCredentials string) error {
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		// Refuse to follow redirects. hostValidator.ValidateHost is
-		// applied to the originally configured URL only; following a
-		// 3xx Location header would allow an attacker-controlled
-		// endpoint to bounce the request to a private/metadata host
-		// and bypass SSRF protections.
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+// in sanitize.go, since the caller logs what this returns. When the guard
+// refuses every address the endpoint's host resolves to, the error is
+// hostvalidation.ErrNoPermittedAddress itself.
+func (s *notificationTestSender) sendTestGenericWebhook(ctx context.Context, endpointURL, httpMethod string,
+	headers map[string]string, authType, authCredentials string) error {
+	req, err := newGenericWebhookRequest(ctx, endpointURL, httpMethod)
+	if err != nil {
+		return err
 	}
 
+	// Apply custom headers
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	applyWebhookAuth(req, authType, authCredentials)
+
+	resp, err := s.client.Do(req) //nolint:gosec // G704: URL host validated upstream, every address connected to re-checked by the guarded dialer, and redirects refused
+	if err != nil {
+		if isRefusedTarget(err) {
+			return hostvalidation.ErrNoPermittedAddress
+		}
+		return fmt.Errorf("failed to send request: %s", webhookTransportError(err, endpointURL))
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return webhookStatusError(resp, endpointURL)
+	}
+
+	return nil
+}
+
+// newGenericWebhookRequest builds the test request for a generic
+// webhook: the method defaults to POST, anything but GET, POST, PUT or
+// PATCH is refused, and every method but GET carries a JSON body. Its
+// errors borrow nothing from endpointURL.
+func newGenericWebhookRequest(ctx context.Context, endpointURL, httpMethod string) (*http.Request, error) {
 	if httpMethod == "" {
 		httpMethod = http.MethodPost
 	}
@@ -48,7 +73,7 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 		// time, but a row written before that check existed may still
 		// carry one. http.NewRequest would otherwise fail on it and be
 		// reported as a malformed URL.
-		return fmt.Errorf("invalid HTTP method %q: must be GET, POST, PUT or PATCH",
+		return nil, fmt.Errorf("invalid HTTP method %q: must be GET, POST, PUT or PATCH",
 			sanitizeConfigEcho(httpMethod))
 	}
 
@@ -59,11 +84,11 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 		reqBody = strings.NewReader(body)
 	}
 
-	// The endpoint URL host is validated by hostValidator.ValidateHost at
-	// the call site to reject private/loopback/metadata endpoints before
-	// the request is ever dispatched, so this is not an unchecked
-	// user-supplied URL.
-	req, err := http.NewRequest(httpMethod, endpointURL, reqBody) //nolint:gosec // G704: URL host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
+	// The endpoint URL host is checked by hostValidator.ValidateHost at
+	// the call site, and every address the request connects to is
+	// checked again by the guarded dialer in s.client, so DNS rebinding
+	// cannot move it to an address the policy refuses.
+	req, err := http.NewRequestWithContext(ctx, httpMethod, endpointURL, reqBody) //nolint:gosec // G704: URL host validated upstream and every address connected to re-checked by the guarded dialer (test_send_guard.go)
 	if err != nil {
 		// http.NewRequest fails here only when url.Parse rejects the
 		// URL, and (*url.Error).Error quotes the raw stored string
@@ -72,54 +97,50 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 		// to anchor on. Report nothing borrowed from it. The handler
 		// parses the URL before calling either sender, so this is
 		// unreachable from it today; the senders do not rely on that.
-		return fmt.Errorf("failed to create request: the URL is malformed")
+		return nil, fmt.Errorf("failed to create request: the URL is malformed")
 	}
 
 	// Set content type for non-GET requests
 	if httpMethod != http.MethodGet {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	return req, nil
+}
 
-	// Apply custom headers
-	for key, value := range headers {
-		req.Header.Set(key, value)
+// applyWebhookAuth sets the credentials of a generic webhook on req.
+// Basic and api_key credentials take the form "name:value"; one without
+// a colon, an unknown type or an empty credential sets nothing.
+func applyWebhookAuth(req *http.Request, authType, authCredentials string) {
+	if authType == "" || authCredentials == "" {
+		return
 	}
-
-	// Apply authentication
-	if authType != "" && authCredentials != "" {
-		switch authType {
-		case "basic":
-			parts := strings.SplitN(authCredentials, ":", 2)
-			if len(parts) == 2 {
-				req.SetBasicAuth(parts[0], parts[1])
-			}
-		case "bearer":
-			req.Header.Set("Authorization", "Bearer "+authCredentials)
-		case "api_key":
-			parts := strings.SplitN(authCredentials, ":", 2)
-			if len(parts) == 2 {
-				req.Header.Set(parts[0], parts[1])
-			}
+	switch authType {
+	case "basic":
+		parts := strings.SplitN(authCredentials, ":", 2)
+		if len(parts) == 2 {
+			req.SetBasicAuth(parts[0], parts[1])
+		}
+	case "bearer":
+		req.Header.Set("Authorization", "Bearer "+authCredentials)
+	case "api_key":
+		parts := strings.SplitN(authCredentials, ":", 2)
+		if len(parts) == 2 {
+			req.Header.Set(parts[0], parts[1])
 		}
 	}
+}
 
-	resp, err := client.Do(req) //nolint:gosec // G704: URL host validated upstream and redirects disabled so the validated host cannot be bypassed via Location header; DNS rebinding between validation and dial is a known, admin-scope residual risk
-	if err != nil {
-		return fmt.Errorf("failed to send request: %s", webhookTransportError(err, endpointURL))
+// webhookStatusError reports a webhook's unsuccessful response status
+// with up to 1 MiB of its body, passed through sanitizeWebhookEcho so
+// that nothing of endpointURL is echoed back.
+func webhookStatusError(resp *http.Response, endpointURL string) error {
+	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		return fmt.Errorf("webhook returned status %d (failed to read body: %s)",
+			resp.StatusCode, sanitizeWebhookEcho(readErr.Error(), endpointURL))
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		if readErr != nil {
-			return fmt.Errorf("webhook returned status %d (failed to read body: %s)",
-				resp.StatusCode, sanitizeWebhookEcho(readErr.Error(), endpointURL))
-		}
-		return fmt.Errorf("webhook returned status %d: %s",
-			resp.StatusCode, sanitizeWebhookEcho(string(respBody), endpointURL))
-	}
-
-	return nil
+	return fmt.Errorf("webhook returned status %d: %s",
+		resp.StatusCode, sanitizeWebhookEcho(string(respBody), endpointURL))
 }
 
 // sendTestWebhook sends a test message to a Slack or Mattermost webhook URL.
@@ -127,30 +148,20 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 // The whole webhook URL is the credential for both services, so no error
 // returned from here wraps with %w anything net/http produced, and no text
 // borrowed from the far end is echoed raw: both go through the helpers in
-// sanitize.go, since the caller logs what this returns.
-func sendTestWebhook(webhookURL string, channelType string) error {
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		// Refuse to follow redirects. hostValidator.ValidateHost is
-		// applied to the originally configured URL only; following a
-		// 3xx Location header would allow an attacker-controlled
-		// endpoint to bounce the request to a private/metadata host
-		// and bypass SSRF protections.
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
+// sanitize.go, since the caller logs what this returns. When the guard
+// refuses every address the webhook's host resolves to, the error is
+// hostvalidation.ErrNoPermittedAddress itself.
+func (s *notificationTestSender) sendTestWebhook(ctx context.Context, webhookURL string, channelType string) error {
 	body := fmt.Sprintf(
 		`{"text":"This is a test message from the AI DBA Workbench to verify your %s webhook configuration."}`,
 		channelType,
 	)
 
-	// The webhook URL host is validated by hostValidator.ValidateHost at
-	// the call site to reject private/loopback/metadata endpoints before
-	// the request is ever dispatched, so this is not an unchecked
-	// user-supplied URL.
-	req, err := http.NewRequest(http.MethodPost, webhookURL, strings.NewReader(body)) //nolint:gosec // G704: URL host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
+	// The webhook URL host is checked by hostValidator.ValidateHost at
+	// the call site, and every address the request connects to is
+	// checked again by the guarded dialer in s.client, so DNS rebinding
+	// cannot move it to an address the policy refuses.
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, strings.NewReader(body)) //nolint:gosec // G704: URL host validated upstream and every address connected to re-checked by the guarded dialer (test_send_guard.go)
 	if err != nil {
 		// http.NewRequest fails here only when url.Parse rejects the
 		// URL, and (*url.Error).Error quotes the raw stored string
@@ -163,20 +174,17 @@ func sendTestWebhook(webhookURL string, channelType string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req) //nolint:gosec // G704: URL host validated upstream and redirects disabled so the validated host cannot be bypassed via Location header; DNS rebinding between validation and dial is a known, admin-scope residual risk
+	resp, err := s.client.Do(req) //nolint:gosec // G704: URL host validated upstream, every address connected to re-checked by the guarded dialer, and redirects refused
 	if err != nil {
+		if isRefusedTarget(err) {
+			return hostvalidation.ErrNoPermittedAddress
+		}
 		return fmt.Errorf("failed to send request: %s", webhookTransportError(err, webhookURL))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		if readErr != nil {
-			return fmt.Errorf("webhook returned status %d (failed to read body: %s)",
-				resp.StatusCode, sanitizeWebhookEcho(readErr.Error(), webhookURL))
-		}
-		return fmt.Errorf("webhook returned status %d: %s",
-			resp.StatusCode, sanitizeWebhookEcho(string(respBody), webhookURL))
+		return webhookStatusError(resp, webhookURL)
 	}
 
 	return nil
@@ -242,18 +250,12 @@ type telegramResponse struct {
 // verbatim. The caller logs these errors, so no error returned from here
 // may wrap the original with %w; borrowed text is passed through
 // redactTelegramToken instead.
-func sendTestTelegram(botToken, chatID string) error {
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		// Consistent with the neighboring senders: never follow a
-		// redirect. The Bot API does not redirect in normal operation,
-		// and a 3xx Location must not be allowed to move the request
-		// (which carries the bot token) to another host.
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
+//
+// The request still connects through the guarded dialer in s.client,
+// as the alerter's Telegram delivery does, so a resolver answering for
+// the Bot API host with an internal or metadata address is refused; the
+// error is then hostvalidation.ErrNoPermittedAddress itself.
+func (s *notificationTestSender) sendTestTelegram(ctx context.Context, botToken, chatID string) error {
 	body, err := json.Marshal(telegramSendMessageRequest{
 		ChatID:                chatID,
 		Text:                  telegramTestMessage,
@@ -267,7 +269,7 @@ func sendTestTelegram(botToken, chatID string) error {
 
 	endpoint := fmt.Sprintf("%s/bot%s/sendMessage", telegramSendBaseURL, botToken)
 
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body)) //nolint:gosec // G704: no host validation happens here and none is required. The host is the compile-time constant telegramAPIBaseURL, reached through the unexported telegramSendBaseURL that only in-package tests reassign, so no operator input reaches it. The tainted component is the bot token, and it lands in the path, where telegramBotTokenPattern forbids whitespace, '/', '?' and '#' and so leaves it unable to alter the path structure or the authority.
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body)) //nolint:gosec // G704: no host validation happens here and none is required. The host is the compile-time constant telegramAPIBaseURL, reached through the unexported telegramSendBaseURL that only in-package tests reassign, so no operator input reaches it. The tainted component is the bot token, and it lands in the path, where telegramBotTokenPattern forbids whitespace, '/', '?' and '#' and so leaves it unable to alter the path structure or the authority.
 	if err != nil {
 		// The error from net/http carries the request URL, which embeds
 		// the bot token; report only the redacted form.
@@ -275,8 +277,11 @@ func sendTestTelegram(botToken, chatID string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req) //nolint:gosec // G704: the request built above, whose host is the constant telegramAPIBaseURL rather than anything operator-supplied; CheckRedirect refuses every 3xx, so no Location header can move the request to another host.
+	resp, err := s.client.Do(req) //nolint:gosec // G704: the request built above, whose host is the constant telegramAPIBaseURL rather than anything operator-supplied; CheckRedirect refuses every 3xx, so no Location header can move the request to another host.
 	if err != nil {
+		if isRefusedTarget(err) {
+			return hostvalidation.ErrNoPermittedAddress
+		}
 		return fmt.Errorf("failed to send request: %s", telegramTransportError(err))
 	}
 	defer resp.Body.Close()

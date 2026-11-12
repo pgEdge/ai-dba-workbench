@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net"
 	"net/url"
@@ -25,7 +26,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 )
@@ -802,7 +805,30 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 // the libpq query string and redirect the connection, sending the
 // stored password to a host of the caller's choosing. url.URL escapes
 // the '?' into the path, where pgx reads it back as part of the name.
-func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password string, databaseOverride string) string {
+//
+// The stored host and hostaddr are checked before use
+// (hostvalidation.CheckStoredTarget), so a row written before the API
+// validated them, or by any other route, still cannot turn one target
+// into a multi-host list or carry an injected port. A refused row
+// returns ErrUnsafeConnectionTarget.
+//
+// The stored sslcert, sslkey and sslrootcert paths are checked against
+// connection_security.ssl_cert_dir (SetSSLCertDir) for the same reason,
+// because pgx reads those files as soon as it parses the string. A
+// refused path returns ErrUnsafeSSLPath, whose text names no path.
+func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password string, databaseOverride string) (string, error) {
+	hostaddr := ""
+	if conn.HostAddr.Valid {
+		hostaddr = conn.HostAddr.String
+	}
+	if err := hostvalidation.CheckStoredTarget(conn.Host, hostaddr); err != nil {
+		return "", fmt.Errorf("connection %d: %w", conn.ID, ErrUnsafeConnectionTarget)
+	}
+	if err := d.checkStoredSSLPaths(conn); err != nil {
+		log.Printf("[WARN] connection %d: refusing stored SSL file path: %v", conn.ID, err)
+		return "", fmt.Errorf("connection %d: %w", conn.ID, ErrUnsafeSSLPath)
+	}
+
 	// Use override database if specified, otherwise use connection's default
 	database := conn.DatabaseName
 	if databaseOverride != "" {
@@ -830,8 +856,8 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 
 	// Use hostaddr if available, otherwise host
 	host := conn.Host
-	if conn.HostAddr.Valid && conn.HostAddr.String != "" {
-		host = conn.HostAddr.String
+	if hostaddr != "" {
+		host = hostaddr
 	}
 
 	// net.JoinHostPort brackets an IPv6 literal, so strip any brackets
@@ -851,11 +877,14 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 	addParam("sslcert", conn.SSLCert)
 	addParam("sslkey", conn.SSLKey)
 
-	// pgx strips every leading '/' from the URL path, so a name that
-	// itself begins with '/' (which PostgreSQL allows) would connect to
-	// a different database. Such a name travels in the dbname query
-	// parameter instead, which pgx applies after the path; every other
-	// name keeps the conventional path form.
+	// pgx v5.12.0 (pgconn/parse_url.go) strips exactly one leading '/'
+	// from the URL path, as libpq does, so "//name" would already reach
+	// the server as "/name". Earlier pgx releases trimmed every leading
+	// '/', though, and a name that begins with '/' (which PostgreSQL
+	// allows) would then connect to a different database. Such a name
+	// therefore travels in the dbname query parameter, which pgx applies
+	// after the path, so it does not depend on how a given parser treats
+	// the path; every other name keeps the conventional path form.
 	path := "/" + database
 	if strings.HasPrefix(database, "/") {
 		path = "/"
@@ -867,10 +896,10 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 		User:     userinfo,
 		Host:     net.JoinHostPort(host, strconv.Itoa(conn.Port)),
 		Path:     path,
-		RawQuery: params.Encode(),
+		RawQuery: connstring.EncodeURIQuery(params),
 	}
 
-	return dsn.String()
+	return dsn.String(), nil
 }
 
 // ListDatabases returns a list of databases on a monitored server
@@ -882,10 +911,20 @@ func (d *Datastore) ListDatabases(ctx context.Context, connectionID int) ([]Data
 	}
 
 	// Build connection string to template1 (always exists)
-	connStr := d.BuildConnectionString(conn, password, "template1")
+	connStr, err := d.BuildConnectionString(conn, password, "template1")
+	if err != nil {
+		return nil, err
+	}
 
-	// Connect temporarily
-	tempPool, err := pgxpool.New(ctx, connStr)
+	// Connect temporarily, connecting only to the addresses the policy permits
+	poolConfig, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		log.Printf("[ERROR] Unable to parse connection string for connection %d: %s",
+			connectionID, strconv.Quote(describeParseConfigError(err)))
+		return nil, fmt.Errorf("failed to connect to server: %w", ErrInvalidConnectionString)
+	}
+	d.GuardMonitoredConnConfig(&poolConfig.ConnConfig.Config)
+	tempPool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}

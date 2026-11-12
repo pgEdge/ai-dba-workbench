@@ -52,6 +52,68 @@ document covers the least-privilege grants, the
 optional extensions, and the gaps that remain without
 superuser access.
 
+## Connection Targets and SSL Files
+
+The server checks the target and the SSL file settings of a connection
+when a user creates or updates the connection; a refused value returns
+status 400. Before each connection attempt, the server checks the SSL
+file paths and the syntax of the stored `host` and `hostaddr` again,
+and each time the server or the collector connects, each component
+checks every address that the target resolves to, as described below.
+
+The `host` and `hostaddr` fields name the monitored server:
+
+- `host` is a host name or IP address, and must not contain `,`, `[`,
+  `]`, `/`, `?`, `@`, `#`, `%` or whitespace.
+- `hostaddr` is optional and must be a literal IPv4 or IPv6 address,
+  optionally in one pair of square brackets; the server connects to the
+  address in place of resolving `host`.
+
+The server checks both `host` and `hostaddr` against the
+`connection_security` blocklist, allowlist and internal network rules,
+so a permitted host name cannot stand in front of a blocked address.
+The server and the collector also refuse a stored connection whose
+`host` contains one of the characters above or whose `hostaddr` is not
+a literal IP address.
+
+When the server connects, the server applies the same rules to each
+address that the target resolves to at that moment and connects only to
+the addresses that pass, which defeats DNS rebinding. At save time an
+allow-listed address can permit the whole host name; at connect time an
+allow-listed address permits only that address. Before applying those
+rules at connect time, the server refuses unspecified, link-local and
+cloud metadata addresses, whatever `allowed_hosts` or
+`allow_internal_networks` say; a connection to such an address can be
+saved but never connects. The collector has none of the
+`connection_security` host settings; when the collector connects, the
+collector refuses only the same unspecified, link-local and cloud
+metadata addresses, and allows loopback and private addresses. See
+[Connection Address Checks](../getting-started/configuration/collector.md#connection-address-checks)
+for the collector's list.
+
+The server and the collector read the files that the `ssl_cert_path`,
+`ssl_key_path` and `ssl_root_cert_path` fields name themselves, so each
+component only accepts paths inside the directory that its own
+`connection_security.ssl_cert_dir` option names. Each path must be
+absolute, must contain no `..` element or control character, and must
+resolve, following symbolic links, to a location inside that directory.
+When the option is unset, which is the default, each component refuses
+every SSL file path; a `ssl_root_cert_path` of `system`, which selects
+the platform trust store, is always allowed. An error from the server
+names the refused field and the broken rule, or the option to set when
+the option is unset, but never quotes the path. The collector does not
+monitor a connection that its own check refuses, and records an error
+ending in `invalid connection parameters` against the connection.
+
+Set the option on both components, keep the files at the same paths on
+the server and collector hosts, and make each directory, its contents
+and its parent directories writable only by root or the service
+account. See
+[Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
+for the server option, and
+[Connection Security Options](../getting-started/configuration/collector.md#connection-security-options)
+for the collector option.
+
 ## REST API Endpoints
 
 All endpoints require authentication via Bearer token.

@@ -1003,6 +1003,7 @@ through external channels.
 | `retry_backoff_minutes` | list | `[5, 15, 60]` | Retry backoff schedule |
 | `http_timeout_seconds` | integer | `30` | HTTP request timeout |
 | `http_max_idle_conns` | integer | `10` | Max idle HTTP connections |
+| `allow_internal_networks` | boolean | `false` | Allow deliveries to internal addresses |
 
 The `secret_file` option specifies a file containing
 the same plain text secret used by the server
@@ -1011,8 +1012,89 @@ notification channel credentials that the server
 encrypted. The alerter and the server must reference
 the same secret file.
 
+#### Delivery Address Checks
+
+The alerter checks the address of every notification
+delivery when the alerter connects, for webhook, Slack,
+Mattermost, Telegram and email (SMTP) channels alike.
+The alerter resolves the channel's host itself and
+connects only to an address that the delivery policy
+permits, so a host name cannot pass a check and then
+resolve to a different address before delivery (DNS
+rebinding). A host that is an IP address literal is
+checked directly.
+
+The `allow_internal_networks` option chooses the policy:
+
+- When `allow_internal_networks` is `false`, the
+  alerter refuses every address in the internal ranges
+  that the server's
+  [Connection Security](server.md#connection-security-connection_security)
+  section lists, which include the private, loopback
+  and IPv6 unique local ranges.
+- When `allow_internal_networks` is `true`, the alerter
+  permits the internal ranges, including private and
+  loopback addresses, so a channel can reach an
+  internal mail relay or a self-hosted Mattermost or
+  webhook endpoint.
+
+The alerter refuses some addresses whatever the setting
+says: the unspecified addresses (`0.0.0.0/8` and `::`),
+link-local unicast and multicast addresses (including
+`169.254.0.0/16`, which holds most cloud instance
+metadata services, and `fe80::/10`), and the metadata
+addresses `fd00:ec2::254`, `fd00:ec2::23`,
+`fd20:ce::254` and `100.100.100.200`. An address in
+`::/96`, `::ffff:0:0:0/96`, `64:ff9b::/96` or
+`2002::/16` that embeds one of these IPv4 addresses is
+refused in the same way. An address in the local-use
+NAT64 prefix `64:ff9b:1::/48` is refused when the IPv4
+address at any RFC 6052 offset within the prefix is in
+`169.254.0.0/16` or is `100.100.100.200`; any other
+address in the prefix follows `allow_internal_networks`
+like the other internal ranges. See
+[Connection Security](server.md#connection-security-connection_security)
+for the offsets read.
+
+A refused delivery fails with a generic error that
+names neither the host nor the address. The error that
+the notification history records contains the
+following text:
+
+```text
+host resolves only to addresses that connections are not permitted to
+```
+
+The alerter retries a refused delivery on the usual
+schedule, and marks the notification `failed` once the
+attempts run out.
+
+The alerter connects to every destination directly,
+and ignores the `HTTP_PROXY`, `HTTPS_PROXY` and
+`NO_PROXY` environment variables. Through a proxy, the
+only address that the alerter connects to is the
+proxy's, so the alerter could not check the
+destination. The alerter also never follows an HTTP
+redirect; see
+[Notification Channels](../../admin-guide/notification-channels.md#redirects).
+
+The alerter's option governs real deliveries only. A test send from the
+Send icon in the web client is made by the server, which checks the
+destination against the server's `connection_security` section instead,
+and only the server honours `allowed_hosts` and `blocked_hosts`. A test
+send can therefore succeed where a real delivery is refused, or fail where
+a real delivery succeeds; set this option to match the server's settings
+for the channels you test. See
+[Test Sends](../../admin-guide/notification-channels.md#test-sends).
+
+The `allow_internal_networks` option has no
+command-line flag or environment variable. The alerter
+reads the option at start-up, so a `SIGHUP` reload does
+not apply a changed value; restart the alerter instead.
+
 In the following example, the `notifications` section
-enables delivery with custom retry settings:
+enables delivery with custom retry settings and permits
+deliveries to internal addresses:
 
 ```yaml
 notifications:
@@ -1022,6 +1104,7 @@ notifications:
   max_retry_attempts: 5
   retry_backoff_minutes: [5, 15, 30]
   http_timeout_seconds: 60
+  allow_internal_networks: true
 ```
 
 ## API Key Management

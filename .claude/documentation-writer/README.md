@@ -47,6 +47,17 @@ manually alongside it.
   `TestExampleConfigsParse` in `alerter/src/internal/config/config_test.go`
   parses all three examples, so run it after editing them.
 
+- Server configuration keys, flags and environment variables are
+  documented in `docs/getting-started/configuration/server.md`
+  (reference) and in the example configs `examples/ai-dba-server.yaml`
+  (complete), `docker/config/ai-dba-server.yaml` and
+  `examples/walkthrough/config/ai-dba-server.yaml` (minimal). A change
+  that breaks a 1.0.0 installation also needs an entry under Breaking
+  Changes in `docs/admin-guide/upgrading-to-2.0.md`. Validation of
+  monitored connection fields (`host`, `hostaddr`, SSL paths) is
+  described in `docs/admin-guide/connections.md` and in the OpenAPI
+  field descriptions in `server/src/internal/api/openapi.go`.
+
 - Collector configuration keys are documented in
   `docs/getting-started/configuration/collector.md` (reference) and in the
   example configs `examples/ai-dba-collector.yaml` and
@@ -61,6 +72,41 @@ manually alongside it.
   `collector/src/database/coldfront_check.go` and
   `collector/src/database/coldfront_insert.go`; update it when those
   messages change.
+
+- `connection_security` is documented for both components and must
+  agree across them: the internal-range table, the connect-time address
+  checks and the server `ssl_cert_dir` live in
+  `docs/getting-started/configuration/server.md#connection-security-connection_security`;
+  the collector's `ssl_cert_dir` and its fixed connect-time block list
+  (`pkg/hostvalidation/dial_guard.go`) live in the collector page's
+  "Connection Security Options" section. `docs/admin-guide/connections.md`
+  and the "Connection SSL Files" and "Connection Host Addresses"
+  sections of `docs/admin-guide/upgrading-to-2.0.md` summarise both;
+  update all four when `pkg/hostvalidation` or `pkg/sslpaths` changes.
+
+- The alerter's notification delivery address check
+  (`notifications.allow_internal_networks`, implemented in
+  `alerter/src/internal/notifications/dial_guard.go` on top of
+  `pkg/hostvalidation/dial_guard.go`) is documented in the "Delivery
+  Address Checks" section of
+  `docs/getting-started/configuration/alerter.md`, summarised in the
+  "Delivery Addresses" section of `docs/admin-guide/notification-channels.md`,
+  the "Notification Delivery Addresses" section of
+  `docs/admin-guide/upgrading-to-2.0.md` and the internal-range note in
+  `docs/getting-started/configuration/server.md`; keep all four in
+  agreement. The quoted refusal text is
+  `hostvalidation.ErrNoPermittedAddress`.
+
+- The server's "send test notification" address check
+  (`server/src/internal/api/test_send_guard.go`: the always-blocked
+  floor, then `connection_security` via `HostValidator.CheckDialAddr`;
+  no proxy, no redirects) is documented in the "Test Sends" section of
+  `docs/admin-guide/notification-channels.md`, including the refusal
+  status and message table and the warning that test sends and
+  deliveries use different settings. That mismatch is repeated in the
+  alerter page's "Delivery Address Checks", the server page's
+  `connection_security` section and the upgrade guide's "Notification
+  Delivery Addresses"; keep all four in agreement.
 
 ## Maintenance
 

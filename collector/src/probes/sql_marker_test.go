@@ -22,6 +22,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
 
@@ -76,6 +77,7 @@ func (f *fakeRows) CommandTag() pgconn.CommandTag                { return pgconn
 func (f *fakeRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
 func (f *fakeRows) RawValues() [][]byte                          { return nil }
 func (f *fakeRows) Conn() *pgx.Conn                              { return nil }
+func (f *fakeRows) TypeMap() *pgtype.Map                         { return nil }
 func (f *fakeRows) Values() ([]any, error)                       { return nil, nil }
 
 func (f *fakeRows) Next() bool {

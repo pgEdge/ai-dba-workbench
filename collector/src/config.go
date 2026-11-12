@@ -13,6 +13,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
@@ -31,6 +32,10 @@ type Config struct {
 	// Probe scheduling settings
 	Scheduler SchedulerConfig `yaml:"scheduler"`
 
+	// Settings that limit what a monitored connection can make the
+	// collector do
+	ConnectionSecurity ConnectionSecurityConfig `yaml:"connection_security"`
+
 	// Path to file containing server secret for encryption.
 	// When unset, LoadSecret searches the per-user config directory
 	// (e.g. ~/.config/pgedge/ai-dba-collector.secret) first and
@@ -48,6 +53,20 @@ type Config struct {
 
 	// Loaded server secret (not from YAML, loaded from SecretFile)
 	serverSecret string
+}
+
+// ConnectionSecurityConfig holds the settings that limit what a stored
+// monitored connection can make the collector do.
+type ConnectionSecurityConfig struct {
+	// SSLCertDir is the directory that the sslcert, sslkey and
+	// sslrootcert files of every monitored connection must live in. The
+	// collector reads those files itself when it opens a pool, so an
+	// unrestricted path would let anyone who can create a connection
+	// make the collector open any file it can read. It mirrors the
+	// server option of the same name. Default: empty, which refuses
+	// every connection that names an SSL file (sslrootcert=system, the
+	// platform trust store, is allowed).
+	SSLCertDir string `yaml:"ssl_cert_dir"`
 }
 
 // PoolConfig holds connection pool settings
@@ -170,6 +189,9 @@ func (c *Config) ApplyFlags(passed flagutil.Set) {
 	if passed.Has(flagPGSSLRootCert) {
 		c.Datastore.SSLRootCert = *pgSSLRootCert
 	}
+	if passed.Has(flagConnectionSSLCertDir) {
+		c.ConnectionSecurity.SSLCertDir = *connectionSSLCertDir
+	}
 	if passed.Has(flagUseColdFrontForMetrics) {
 		c.UseColdFrontForMetrics = *useColdFrontForMetrics
 	}
@@ -280,6 +302,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Scheduler.StartupJitterSeconds < 0 {
 		return fmt.Errorf("scheduler.startup_jitter_seconds must be non-negative")
+	}
+	if dir := c.ConnectionSecurity.SSLCertDir; dir != "" && !filepath.IsAbs(dir) {
+		return fmt.Errorf("connection_security.ssl_cert_dir must be an absolute path")
 	}
 	return nil
 }

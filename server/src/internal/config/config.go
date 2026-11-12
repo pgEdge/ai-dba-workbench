@@ -14,9 +14,11 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/pkg/llmsettings"
 	"gopkg.in/yaml.v3"
@@ -490,6 +492,16 @@ type ConnectionSecurityConfig struct {
 	// Evaluated after AllowedHosts.
 	// Example: ["metadata.internal", "169.254.169.254"]
 	BlockedHosts []string `yaml:"blocked_hosts"`
+
+	// SSLCertDir is the directory that the sslcert, sslkey and
+	// sslrootcert files of every monitored connection must live in. The
+	// server reads those files itself when it connects, so an
+	// unrestricted path would let anyone who can create a connection
+	// make the server open any file it can read. Paths are checked when
+	// a connection is created or updated and again at connect time.
+	// Default: empty, which refuses every connection that names an SSL
+	// file (sslrootcert=system, the platform trust store, is allowed).
+	SSLCertDir string `yaml:"ssl_cert_dir"`
 }
 
 // BuildConnectionString creates a PostgreSQL connection string from DatabaseConfig
@@ -505,23 +517,62 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 	// When no password is resolved, emit the username only (no ':' and
 	// no empty password component) so pgx can still fall back to .pgpass,
 	// preserving the previous behavior.
-	var userinfo string
+	userinfo := url.User(cfg.User)
 	if password := cfg.EffectivePassword(); password != "" {
-		userinfo = url.UserPassword(cfg.User, password).String()
-	} else {
-		userinfo = url.User(cfg.User).String()
+		userinfo = url.UserPassword(cfg.User, password)
 	}
 
-	connStr := fmt.Sprintf("postgres://%s", userinfo)
-
-	connStr += fmt.Sprintf("@%s:%d/%s", cfg.Host, cfg.Port, cfg.Database)
-
-	// Add SSL mode
+	// url.URL escapes every component for its position: the path keeps
+	// a database name's '?', '#', '%' and spaces inside the path, and pgx
+	// (since v5.12) strips exactly one leading '/' and decodes every %XX
+	// escape, so the name arrives unchanged. The host list is built by
+	// uriHostList, which gives every host a port.
+	u := url.URL{
+		Scheme: "postgres",
+		User:   userinfo,
+		Host:   uriHostList(cfg.Host, cfg.Port),
+		Path:   "/" + cfg.Database,
+	}
 	if cfg.SSLMode != "" {
-		connStr += "?sslmode=" + cfg.SSLMode
+		// Encoded as a value, so that '&' or '=' cannot add parameters.
+		u.RawQuery = connstring.EncodeURIQuery(url.Values{"sslmode": {cfg.SSLMode}})
 	}
 
-	return connStr
+	return u.String()
+}
+
+// uriHostList turns database.host, which may be a comma-separated list
+// of hosts as libpq accepts, into the netloc list of a URI with a port
+// on every entry. pgx (since v5.11) pairs URI hosts and ports by
+// position, as libpq does, so "h1,h2:5433" would leave h1 on the default
+// port rather than database.port. An entry that carries its own valid
+// port, as "h1:5434" or "[2001:db8::1]:5434", keeps it; every other entry
+// gets port. JoinHostPort brackets an IPv6 address, so its colons cannot
+// be read as a port separator, and an address already in brackets has
+// them removed first rather than nested.
+func uriHostList(hosts string, port int) string {
+	defaultPort := strconv.Itoa(port)
+	entries := strings.Split(hosts, ",")
+	for i, entry := range entries {
+		if h, p, err := net.SplitHostPort(entry); err == nil {
+			if p == "" {
+				p = defaultPort
+			} else if n, convErr := strconv.Atoi(p); convErr != nil || n < 1 || n > 65535 {
+				// Not a port: leave the whole entry as the host, for
+				// pgx to refuse, rather than drop the text.
+				entries[i] = net.JoinHostPort(entry, defaultPort)
+				continue
+			}
+			entries[i] = net.JoinHostPort(h, p)
+			continue
+		}
+		h := entry
+		if len(h) >= 2 && h[0] == '[' && h[len(h)-1] == ']' {
+			h = h[1 : len(h)-1]
+		}
+		entries[i] = net.JoinHostPort(h, defaultPort)
+	}
+	return strings.Join(entries, ",")
 }
 
 // LoadPassword resolves the database password from PasswordFile when
@@ -955,6 +1006,10 @@ type CLIFlags struct {
 	// Trace file flags
 	TraceFile    string
 	TraceFileSet bool
+
+	// Connection security flags
+	ConnectionSSLCertDir    string
+	ConnectionSSLCertDirSet bool
 }
 
 // defaultConfig returns configuration with hard-coded defaults
@@ -1369,6 +1424,9 @@ func mergeConfig(dest, src *Config) {
 	if len(src.ConnectionSecurity.BlockedHosts) > 0 {
 		dest.ConnectionSecurity.BlockedHosts = src.ConnectionSecurity.BlockedHosts
 	}
+	if src.ConnectionSecurity.SSLCertDir != "" {
+		dest.ConnectionSecurity.SSLCertDir = src.ConnectionSecurity.SSLCertDir
+	}
 
 	// Builtins - merge individual settings (pointer fields preserve explicit false values)
 	// Tools
@@ -1554,6 +1612,9 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.HTTP.Auth.AuditRetentionDaysPtr = intPtr(n)
 		}
 	}
+	if val := os.Getenv("PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR"); val != "" {
+		cfg.ConnectionSecurity.SSLCertDir = val
+	}
 }
 
 // applyCLIFlags overrides config with CLI flags if they were explicitly set
@@ -1625,6 +1686,11 @@ func applyCLIFlags(cfg *Config, flags CLIFlags) {
 	if flags.TraceFileSet {
 		cfg.TraceFile = flags.TraceFile
 	}
+
+	// Connection security
+	if flags.ConnectionSSLCertDirSet {
+		cfg.ConnectionSecurity.SSLCertDir = flags.ConnectionSSLCertDir
+	}
 }
 
 // validateConfig checks if the configuration is valid
@@ -1642,6 +1708,10 @@ func validateConfig(cfg *Config) error {
 	// Database configuration validation
 	if cfg.Database != nil && cfg.Database.User == "" {
 		return fmt.Errorf("database user is required (set via -db-user flag or config file)")
+	}
+
+	if dir := cfg.ConnectionSecurity.SSLCertDir; dir != "" && !filepath.IsAbs(dir) {
+		return fmt.Errorf("connection_security.ssl_cert_dir must be an absolute path")
 	}
 
 	if err := cfg.LLM.RequestSettings.Validate("llm"); err != nil {

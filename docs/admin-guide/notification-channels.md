@@ -95,16 +95,103 @@ Mattermost webhook URLs are themselves secrets, and the
 Telegram URL carries the bot token in its path, so
 following a redirect would disclose the credential to
 whichever host the `Location` header names. A webhook
-channel gains a second protection, because the
-workbench validates the endpoint host when the channel
-is saved, and a redirect could carry the request past
-that check to a private host. The measure is
-preventive; the Send icon has always refused redirects,
-and delivery now behaves in the same way.
+channel gains a second protection, because a
+`Location` header could otherwise send the request to
+a host that the operator never configured. The measure
+is preventive; the Send icon has always refused
+redirects, and delivery now behaves in the same way.
 
 Configure the final URL in the channel when an endpoint
 answers with a redirect. Email channels are unaffected,
 because email is delivered over SMTP rather than HTTP.
+
+### Delivery Addresses
+
+The alerter checks the address of every delivery when
+the alerter connects, for every channel type including
+email. By default, the alerter refuses private,
+loopback and other internal addresses, so a channel
+whose host is an internal SMTP relay or a self-hosted
+Mattermost or webhook endpoint fails until the
+administrator sets the alerter's
+`notifications.allow_internal_networks` option to
+`true`. Unspecified, link-local and cloud metadata
+addresses are refused whatever the option says.
+
+A refused delivery is retried on the schedule above,
+and the recorded error contains the text
+`host resolves only to addresses that connections are not permitted to`,
+which names neither the host nor the address. The
+alerter connects directly and ignores the `HTTP_PROXY`
+and `HTTPS_PROXY` environment variables. See
+[Delivery Address Checks](../getting-started/configuration/alerter.md#delivery-address-checks)
+for the full rules. A test send from the Send icon follows the server's
+rules instead; see [Test Sends](#test-sends).
+
+### Test Sends
+
+The Send icon asks the server, not the alerter, to send a test message, so
+a test send follows the server's settings rather than the alerter's. The
+server checks every address that a test send connects to, for webhook,
+Slack, Mattermost, Telegram and email (SMTP) channels alike. The server
+resolves the channel's host itself and connects only to an address that
+passes, so a host name cannot pass the check and then resolve to a
+different address before the connection is made (DNS rebinding).
+
+The server checks each address in the following order:
+
+- the server refuses unspecified, link-local and cloud metadata addresses
+  whatever the configuration says, even for a host that `allowed_hosts`
+  lists.
+- the server then applies the `blocked_hosts`, `allowed_hosts` and
+  `allow_internal_networks` rules of its `connection_security` section;
+  see
+  [Connection Security](../getting-started/configuration/server.md#connection-security-connection_security).
+
+A test send connects directly, and ignores the `HTTP_PROXY`, `HTTPS_PROXY`
+and `NO_PROXY` environment variables, because through a proxy the server
+could check only the proxy's address. A test send also never follows an
+HTTP redirect, so a provider that answers with a 3xx response fails the
+test.
+
+The following table shows the response to a test send whose destination
+the server refuses:
+
+| Channel Type | Status | Message |
+|--------------|--------|---------|
+| Email | 400 | `Invalid SMTP host` |
+| Slack and Mattermost | 400 | `Invalid webhook host` |
+| Webhook | 400 | `Invalid endpoint host` |
+| Telegram | 502 | `Failed to send test Telegram message` |
+
+The message names neither the host nor the address. For email, Slack,
+Mattermost and webhook channels, the server gives the same response when
+the host fails the check that the server makes before connecting. A
+Telegram channel always
+connects to the fixed Bot API host, so the server makes no check before
+connecting, and reports a refusal as it reports any other failed Telegram
+test.
+
+!!! warning "A test send and a delivery use different settings"
+
+    A test send uses the server's `connection_security` section, whilst
+    the alerter delivers every notification under its own
+    `notifications.allow_internal_networks` option. Only the server
+    honours `allowed_hosts` and `blocked_hosts`; the alerter reads
+    neither. A test send can therefore succeed for a channel whose
+    deliveries the alerter refuses, or fail for a channel that the
+    alerter delivers to without error. For example, a channel whose host
+    is an internal SMTP relay passes the test when the server's
+    `allowed_hosts` lists the relay, but every delivery fails until the
+    alerter's `notifications.allow_internal_networks` option is `true`.
+
+    The server's `connection_security` section also governs monitored
+    database connections. Loosening the section so that a test send can
+    reach an internal host, by listing the host in `allowed_hosts` or by
+    setting `allow_internal_networks` to `true`, also lets a user who can
+    create a connection point the connection at that host. Check that
+    change against the needs of your database connections before you
+    make it.
 
 ## Email Channels
 
@@ -117,7 +204,7 @@ The following settings configure the SMTP connection:
 
 | Setting | Required | Default | Description |
 |---------|----------|---------|-------------|
-| SMTP Host | Yes | - | The SMTP server hostname. |
+| SMTP Host | Yes | - | The SMTP server hostname or IP address; an IPv6 address works with or without square brackets. |
 | SMTP Port | No | 587 | The SMTP server port number. |
 | SMTP Username | No | - | The username for SMTP authentication. |
 | SMTP Password | No | - | The password for SMTP authentication. |

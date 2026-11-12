@@ -309,7 +309,8 @@ func TestToReloadCLIFlags(t *testing.T) {
 		"-config", "/etc/test.yaml", "-addr", ":9090", "-trace-file", "trace.log",
 		"-tls", "-cert", "server.crt", "-key", "server.key", "-chain", "chain.pem",
 		"-db-host", "testhost", "-db-port", "5433", "-db-name", "testdb",
-		"-db-user", "testuser", "-db-password", "testpass", "-db-sslmode", "require")
+		"-db-user", "testuser", "-db-password", "testpass", "-db-sslmode", "require",
+		"-connection-ssl-cert-dir", "/etc/pgedge/certs")
 
 	got := f.ToReloadCLIFlags()
 	want := config.CLIFlags{
@@ -326,6 +327,7 @@ func TestToReloadCLIFlags(t *testing.T) {
 		DBUserSet: true, DBUser: "testuser",
 		DBPassSet: true, DBPassword: "testpass",
 		DBSSLSet: true, DBSSLMode: "require",
+		ConnectionSSLCertDirSet: true, ConnectionSSLCertDir: "/etc/pgedge/certs",
 	}
 	if got != want {
 		t.Errorf("ToReloadCLIFlags() = %+v, want %+v", got, want)

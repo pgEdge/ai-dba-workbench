@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "AI DBA Workbench API",
-    "version": "1.0.0",
+    "version": "2.0.0-beta1",
     "description": "REST API for AI DBA Workbench - PostgreSQL monitoring and AI-assisted database administration"
   },
   "servers": [
@@ -7892,6 +7892,16 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid request body, channel incompletely configured or of an unsupported type, or the delivery host or a resolved address is refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -7914,6 +7924,26 @@
           },
           "404": {
             "description": "Channel not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to fetch the notification channel",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The test notification could not be delivered",
             "content": {
               "application/json": {
                 "schema": {
@@ -12456,7 +12486,7 @@
           },
           "hostaddr": {
             "type": "string",
-            "description": "Database host IP address",
+            "description": "Database host IP address, which the server connects to in place of the address that host resolves to",
             "nullable": true
           },
           "id": {
@@ -12592,7 +12622,7 @@
           },
           "hostaddr": {
             "type": "string",
-            "description": "Database host IP address"
+            "description": "Database host IP address, which the server connects to in place of the address that host resolves to. Must be a literal IPv4 or IPv6 address, optionally in one pair of square brackets, and passes the same connection_security blocklist, allowlist and internal-network checks as host; any other value is refused with status 400. An empty string names no address"
           },
           "is_monitored": {
             "type": "boolean",
@@ -12616,11 +12646,11 @@
           },
           "ssl_cert_path": {
             "type": "string",
-            "description": "SSL certificate path"
+            "description": "Absolute path of the client SSL certificate file, which the server reads itself when it connects. The path must not contain '..' or a control character, and must resolve, following symbolic links, to a location inside the directory named by the server's connection_security.ssl_cert_dir option; while that option is unset, any path is refused with status 400. An empty string names no file"
           },
           "ssl_key_path": {
             "type": "string",
-            "description": "SSL key path"
+            "description": "Absolute path of the client SSL private key file, which the server reads itself when it connects. The path must not contain '..' or a control character, and must resolve, following symbolic links, to a location inside the directory named by the server's connection_security.ssl_cert_dir option; while that option is unset, any path is refused with status 400. An empty string names no file"
           },
           "ssl_mode": {
             "type": "string",
@@ -12628,7 +12658,7 @@
           },
           "ssl_root_cert_path": {
             "type": "string",
-            "description": "SSL root certificate path"
+            "description": "Absolute path of the root certificate file that verifies the database server certificate, or system to use the platform trust store, which is always allowed. The server reads the file itself when it connects. A path must not contain '..' or a control character, and must resolve, following symbolic links, to a location inside the directory named by the server's connection_security.ssl_cert_dir option; while that option is unset, any path is refused with status 400. An empty string names no file"
           },
           "username": {
             "type": "string",
@@ -12733,7 +12763,7 @@
           },
           "hostaddr": {
             "type": "string",
-            "description": "Database host IP address"
+            "description": "Database host IP address, which the server connects to in place of the address that host resolves to. Must be a literal IPv4 or IPv6 address, optionally in one pair of square brackets, and passes the same connection_security blocklist, allowlist and internal-network checks as host; any other value is refused with status 400. An empty string names no address"
           },
           "is_monitored": {
             "type": "boolean",
@@ -12757,11 +12787,11 @@
           },
           "ssl_cert_path": {
             "type": "string",
-            "description": "SSL certificate path"
+            "description": "Absolute path of the client SSL certificate file, which the server reads itself when it connects. The path must not contain '..' or a control character, and must resolve, following symbolic links, to a location inside the directory named by the server's connection_security.ssl_cert_dir option; while that option is unset, any path is refused with status 400. An empty string names no file"
           },
           "ssl_key_path": {
             "type": "string",
-            "description": "SSL key path"
+            "description": "Absolute path of the client SSL private key file, which the server reads itself when it connects. The path must not contain '..' or a control character, and must resolve, following symbolic links, to a location inside the directory named by the server's connection_security.ssl_cert_dir option; while that option is unset, any path is refused with status 400. An empty string names no file"
           },
           "ssl_mode": {
             "type": "string",
@@ -12769,7 +12799,7 @@
           },
           "ssl_root_cert_path": {
             "type": "string",
-            "description": "SSL root certificate path"
+            "description": "Absolute path of the root certificate file that verifies the database server certificate, or system to use the platform trust store, which is always allowed. The server reads the file itself when it connects. A path must not contain '..' or a control character, and must resolve, following symbolic links, to a location inside the directory named by the server's connection_security.ssl_cert_dir option; while that option is unset, any path is refused with status 400. An empty string names no file"
           },
           "username": {
             "type": "string",

@@ -9,7 +9,10 @@
  */
 
 import { vi } from 'vitest';
-import '@testing-library/jest-dom';
+// Use the Vitest entry point: it registers the matchers with Vitest's
+// expect and augments Vitest's Assertion type. Under Vitest 5 the bare
+// '@testing-library/jest-dom' import leaves the matchers untyped.
+import '@testing-library/jest-dom/vitest';
 import { configure as configureDom } from '@testing-library/dom';
 import { act } from '@testing-library/react';
 
@@ -24,26 +27,21 @@ import { act } from '@testing-library/react';
 const nativeSetTimeout = globalThis.setTimeout;
 
 /*
- * React Testing Library (RTL) ships with its own nested copy of
- * `@testing-library/dom` (v9) and, on import, patches THAT copy's
- * `asyncWrapper` / `eventWrapper` / `unstable_advanceTimersWrapper`
- * so every `userEvent` call is wrapped in `act()`. The project's
- * direct dependency on `@testing-library/user-event` pulls in
- * `@testing-library/dom` v10 at the top of `node_modules`, so the
- * user-event code resolves the OUTER dom package and reads an
- * unpatched `getConfig()`. The result is that none of the
- * `userEvent` APIs are wrapped in `act()`, and every MUI internal
- * state update (`InputBase.checkDirty`, `FormControl.onFilled`,
- * `ButtonBase` mount flag, the `open` reset effect in `ServerDialog`,
- * etc.) surfaces a `Warning: An update to ... was not wrapped in
- * act(...)` message in stderr. See
- * https://github.com/testing-library/react-testing-library/issues/1338
- * for the upstream report.
+ * Override the wrappers that React Testing Library (RTL) installs on
+ * `@testing-library/dom` when it is imported. They are copied from
+ * RTL's own configure block in
+ * `node_modules/@testing-library/react/dist/pure.js`, with one
+ * difference: RTL's `asyncWrapper` drains the task queue with the
+ * global `setTimeout` and only advances fake timers when the `jest`
+ * global exists, so under `vi.useFakeTimers()` that `setTimeout` never
+ * fires and `findBy*` / `waitFor` hang. This copy uses the native
+ * `setTimeout` captured above instead.
  *
- * Re-apply the same wrappers on the outer `@testing-library/dom`
- * instance so `userEvent` sees them and every event dispatch runs
- * inside `act()`. Copied from RTL's own configure block in
- * `node_modules/@testing-library/react/dist/pure.js`.
+ * Before RTL 16 this block also worked around RTL carrying its own
+ * nested copy of `@testing-library/dom`, which left `userEvent` calls
+ * outside `act()` (see
+ * https://github.com/testing-library/react-testing-library/issues/1338);
+ * `@testing-library/dom` is now a single peer dependency.
  */
 function getIsReactActEnvironment(): boolean {
     return (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })

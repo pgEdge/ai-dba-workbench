@@ -50,6 +50,10 @@ type Flags struct {
 	DBPasswordFile string
 	DBSSLMode      string
 
+	// ConnectionSSLCertDir is connection_security.ssl_cert_dir, the
+	// directory monitored connections' SSL files must live in.
+	ConnectionSSLCertDir string
+
 	// dbPasswordFromFile records that ResolvePasswords read DBPassword
 	// from -db-password-file, so that ToCLIFlags applies it over the
 	// configuration file just as it would a -db-password value.
@@ -178,6 +182,10 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.StringVar(&f.DBPassword, "db-password", "", "Database password (prefer -db-password-file for production use)")
 	flag.StringVar(&f.DBPasswordFile, "db-password-file", "", "Path to file containing the database password")
 	flag.StringVar(&f.DBSSLMode, "db-sslmode", "", "Database SSL mode (disable, require, verify-ca, verify-full)")
+
+	// Connection security flags
+	flag.StringVar(&f.ConnectionSSLCertDir, "connection-ssl-cert-dir", "",
+		"Absolute path of the directory monitored connections' SSL certificate and key files must be in")
 
 	// Token management commands
 	flag.BoolVar(&f.AddTokenCmd, "add-token", false, "Add a new service token")
@@ -320,6 +328,9 @@ func (f *Flags) ToCLIFlags() config.CLIFlags {
 		case "trace-file":
 			cliFlags.TraceFileSet = true
 			cliFlags.TraceFile = f.TraceFile
+		case "connection-ssl-cert-dir":
+			cliFlags.ConnectionSSLCertDirSet = true
+			cliFlags.ConnectionSSLCertDir = f.ConnectionSSLCertDir
 		}
 	})
 

@@ -21,6 +21,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/pgedge/ai-workbench/collector/src/coldfront"
 )
@@ -105,6 +106,7 @@ func (*noRows) Scan(...any) error                            { return errors.New
 func (*noRows) Values() ([]any, error)                       { return nil, errors.New("no rows") }
 func (*noRows) RawValues() [][]byte                          { return nil }
 func (*noRows) Conn() *pgx.Conn                              { return nil }
+func (*noRows) TypeMap() *pgtype.Map                         { return nil }
 
 // runMigrationsRecorded runs every migration of sm against a
 // recordingTx and returns what they issued.

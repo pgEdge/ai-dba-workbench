@@ -21,16 +21,22 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
 // NotificationChannelHandler handles REST API requests for notification channel management
 type NotificationChannelHandler struct {
-	datastore       *database.Datastore
-	authStore       *auth.AuthStore
-	rbacChecker     *auth.RBACChecker
-	hostValidator   *HostValidator
+	datastore     *database.Datastore
+	authStore     *auth.AuthStore
+	rbacChecker   *auth.RBACChecker
+	hostValidator *HostValidator
+	// testSender opens every "send test notification" connection,
+	// through a dialer that re-checks each address it connects to
+	// against testSendPolicy(hostValidator); tests replace it to stand
+	// in for DNS.
+	testSender      *notificationTestSender
 	checkPermission func(http.ResponseWriter, *http.Request) bool
 	// allConnectionIDs lists every connection, whose alerts a channel
 	// can serve; tests replace it to make the lookup fail.
@@ -44,11 +50,13 @@ type NotificationChannelHandler struct {
 // NewNotificationChannelHandlerWithSecurity creates a new notification channel handler with custom security settings
 func NewNotificationChannelHandlerWithSecurity(datastore *database.Datastore, authStore *auth.AuthStore,
 	rbacChecker *auth.RBACChecker, allowInternal bool, allowedHosts, blockedHosts []string) *NotificationChannelHandler {
+	validator := NewHostValidator(allowInternal, allowedHosts, blockedHosts)
 	h := &NotificationChannelHandler{
 		datastore:     datastore,
 		authStore:     authStore,
 		rbacChecker:   rbacChecker,
-		hostValidator: NewHostValidator(allowInternal, allowedHosts, blockedHosts),
+		hostValidator: validator,
+		testSender:    newNotificationTestSender(testSendPolicy(validator), nil),
 	}
 	h.allConnectionIDs = datastore.GetAllConnectionIDs
 	h.checkPermission = requireAdminPermission(rbacChecker, &h.denialAuditor, auth.PermManageNotificationChannels)
@@ -987,23 +995,34 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 			return
 		}
 
-		// Validate SMTP host to prevent SSRF attacks
-		if err := h.hostValidator.ValidateHost(*channel.SMTPHost); err != nil {
+		// Validate SMTP host to prevent SSRF attacks. An IPv6 literal
+		// may be saved in one bracket pair, which ValidateHost refuses
+		// as connection-string structure, so the bare form is checked
+		// and sent to, as the alerter delivers to it.
+		smtpHost := hostvalidation.BareHost(*channel.SMTPHost)
+		if err := h.hostValidator.ValidateHost(smtpHost); err != nil {
 			log.Printf("[ERROR] SMTP host validation failed: %v", err)
 			RespondError(w, http.StatusBadRequest, "Invalid SMTP host")
 			return
 		}
 
-		if err := sendTestEmail(
-			*channel.SMTPHost,
-			channel.SMTPPort,
-			derefStr(channel.SMTPUsername),
-			derefStr(channel.SMTPPassword),
-			channel.SMTPUseTLS,
-			*channel.FromAddress,
-			derefStr(channel.FromName),
-			toAddresses,
-		); err != nil {
+		if err := h.testSender.sendTestEmail(r.Context(), testEmail{
+			Host:        smtpHost,
+			Port:        channel.SMTPPort,
+			Username:    derefStr(channel.SMTPUsername),
+			Password:    derefStr(channel.SMTPPassword),
+			UseTLS:      channel.SMTPUseTLS,
+			FromAddress: *channel.FromAddress,
+			FromName:    derefStr(channel.FromName),
+			To:          toAddresses,
+		}); err != nil {
+			if isRefusedTarget(err) {
+				// The SMTP host passed ValidateHost but resolved, when
+				// connected to, only to addresses the policy refuses.
+				log.Printf("[ERROR] SMTP host refused at connect time")
+				RespondError(w, http.StatusBadRequest, "Invalid SMTP host")
+				return
+			}
 			log.Printf("[ERROR] Failed to send test email: %v", err)
 			RespondError(w, http.StatusBadGateway, "Failed to send test email")
 			return
@@ -1030,7 +1049,12 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 			return
 		}
 
-		if err := sendTestWebhook(*channel.WebhookURL, displayType); err != nil {
+		if err := h.testSender.sendTestWebhook(r.Context(), *channel.WebhookURL, displayType); err != nil {
+			if isRefusedTarget(err) {
+				log.Printf("[ERROR] Webhook host refused at connect time")
+				RespondError(w, http.StatusBadRequest, "Invalid webhook host")
+				return
+			}
 			// sendTestWebhook never puts the webhook URL, which is
 			// itself the credential, in its error.
 			log.Printf("[ERROR] Failed to send test webhook: %v", err)
@@ -1052,7 +1076,11 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 		// builds the destination from a constant Bot API host, so there
 		// is no operator-supplied host to validate. See the comment on
 		// sendTestTelegram.
-		if err := sendTestTelegram(*channel.TelegramBotToken, *channel.TelegramChatID); err != nil {
+		if err := h.testSender.sendTestTelegram(r.Context(), *channel.TelegramBotToken, *channel.TelegramChatID); err != nil {
+			// A refusal by the guarded dialer is a 502 like any other
+			// failure here: the host is a constant, so nothing in the
+			// channel's configuration is at fault.
+			//
 			// sendTestTelegram never puts the bot token in its error.
 			log.Printf("[ERROR] Failed to send test Telegram message: %v", err)
 			RespondError(w, http.StatusBadGateway, "Failed to send test Telegram message")
@@ -1076,13 +1104,19 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 			return
 		}
 
-		if err := sendTestGenericWebhook(
+		if err := h.testSender.sendTestGenericWebhook(
+			r.Context(),
 			*channel.EndpointURL,
 			channel.HTTPMethod,
 			channel.Headers,
 			derefStr(channel.AuthType),
 			derefStr(channel.AuthCredentials),
 		); err != nil {
+			if isRefusedTarget(err) {
+				log.Printf("[ERROR] Endpoint host refused at connect time")
+				RespondError(w, http.StatusBadRequest, "Invalid endpoint host")
+				return
+			}
 			// sendTestGenericWebhook never puts the endpoint URL, which
 			// may carry a credential in its path, in its error.
 			log.Printf("[ERROR] Failed to send test webhook: %v", err)

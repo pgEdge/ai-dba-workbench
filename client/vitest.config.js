@@ -25,9 +25,12 @@ export default defineConfig({
             // local `make coverage` runs; 'json' and 'html' feed the
             // browser-viewable report under coverage/.
             reporter: ['text', 'json', 'html', 'lcov'],
+            // Vitest passes these straight to picomatch without the
+            // directory expansion it applies to coverage.include, so a
+            // bare 'src/test/' matches no file: use explicit globs.
             exclude: [
-                'node_modules/',
-                'src/test/',
+                'node_modules/**',
+                'src/test/**',
             ],
             // Coverage gate: the run fails when any total drops below
             // these floors. The project floor is 90% (CLAUDE.md,

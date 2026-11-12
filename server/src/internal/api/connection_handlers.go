@@ -11,6 +11,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pgedge/ai-workbench/pkg/sslpaths"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
@@ -78,6 +80,66 @@ func NewConnectionHandlerWithSecurity(datastore *database.Datastore, authStore *
 		hostValidator: NewHostValidator(allowInternal, allowedHosts, blockedHosts),
 		rbacChecker:   rbacChecker,
 	}
+}
+
+// validateConnectionTarget runs the SSRF checks on a connection's host
+// and hostaddr, either of which may be nil when an update leaves it
+// unchanged. The hostaddr matters as much as the host: the connection
+// string prefers it, so an unchecked hostaddr would let a harmless host
+// name front an internal address, or a crafted one such as
+// "127.0.0.1]:6379,[127.0.0.1" turn into a multi-host list with a port
+// that ValidatePort never saw. An empty hostaddr clears the stored
+// value and needs no check. It responds 400 and returns false when a
+// value is refused.
+func (h *ConnectionHandler) validateConnectionTarget(w http.ResponseWriter, host, hostaddr *string) bool {
+	if host != nil {
+		if err := h.hostValidator.ValidateHost(*host); err != nil {
+			log.Printf("[ERROR] Invalid host validation: %v", err)
+			RespondError(w, http.StatusBadRequest, "Invalid host")
+			return false
+		}
+	}
+	if hostaddr != nil && *hostaddr != "" {
+		if err := h.hostValidator.ValidateHostAddr(*hostaddr); err != nil {
+			log.Printf("[ERROR] Invalid hostaddr validation: %v", err)
+			RespondError(w, http.StatusBadRequest, "Invalid hostaddr")
+			return false
+		}
+	}
+	return true
+}
+
+// validateSSLFilePaths checks the sslcert, sslkey and sslrootcert paths
+// of a create or update request against connection_security.ssl_cert_dir,
+// since the server opens those files itself when it connects. A nil
+// field is left unchanged by an update and an empty one clears it, so
+// neither needs a check. It responds 400 and returns false when a path
+// is refused: with the instruction to configure the directory when none
+// is set, and otherwise with the field and rule, never the path.
+func (h *ConnectionHandler) validateSSLFilePaths(w http.ResponseWriter, sslCert, sslKey, sslRootCert *string) bool {
+	err := sslpaths.ValidateSSLFilePaths(h.datastore.SSLCertDir(), sslpaths.SSLFilePaths{
+		SSLCert:     sslCert,
+		SSLKey:      sslKey,
+		SSLRootCert: sslRootCert,
+	})
+	if err == nil {
+		return true
+	}
+	// Both errors ValidateSSLFilePaths returns, ErrSSLCertDirUnset and
+	// *SSLFilePathError, name a field and a rule but never the path.
+	log.Printf("[ERROR] Invalid SSL file path: %v", err)
+	RespondError(w, http.StatusBadRequest, err.Error())
+	return false
+}
+
+// changedSSLPath returns the SSL path an update request supplies, or nil
+// when the request leaves the field out or repeats the stored value, so
+// that validateSSLFilePaths checks only a path the request changes.
+func changedSSLPath(requested *string, stored sql.NullString) *string {
+	if requested != nil && stored.Valid && *requested == stored.String {
+		return nil
+	}
+	return requested
 }
 
 // ConnectionUpdateRequest is the request body for updating a connection (legacy, name-only)
@@ -299,10 +361,11 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate host to prevent SSRF attacks
-	if err := h.hostValidator.ValidateHost(req.Host); err != nil {
-		log.Printf("[ERROR] Invalid host validation: %v", err)
-		RespondError(w, http.StatusBadRequest, "Invalid host")
+	// Validate host and hostaddr to prevent SSRF attacks
+	if !h.validateConnectionTarget(w, &req.Host, req.HostAddr) {
+		return
+	}
+	if !h.validateSSLFilePaths(w, req.SSLCert, req.SSLKey, req.SSLRootCert) {
 		return
 	}
 
@@ -519,13 +582,21 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate host if being updated (SSRF protection)
-	if req.Host != nil {
-		if err := h.hostValidator.ValidateHost(*req.Host); err != nil {
-			log.Printf("[ERROR] Invalid host validation on update: %v", err)
-			RespondError(w, http.StatusBadRequest, "Invalid host")
-			return
-		}
+	// Validate host and hostaddr if being updated (SSRF protection)
+	if !h.validateConnectionTarget(w, req.Host, req.HostAddr) {
+		return
+	}
+	// The server dialog sends every SSL path back on each save, so only
+	// a path that differs from the stored one is checked: a value stored
+	// before the path rules existed must not block an unrelated edit,
+	// whilst any newly entered path is still held to them. The stored
+	// value is checked again when the server connects
+	// (BuildConnectionString), so leaving it in place grants nothing.
+	if !h.validateSSLFilePaths(w,
+		changedSSLPath(req.SSLCert, conn.SSLCert),
+		changedSSLPath(req.SSLKey, conn.SSLKey),
+		changedSSLPath(req.SSLRootCert, conn.SSLRootCert)) {
+		return
 	}
 
 	// Validate port if being updated

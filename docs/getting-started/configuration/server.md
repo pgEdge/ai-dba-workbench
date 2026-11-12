@@ -99,6 +99,7 @@ connection_security:
   #   - "192.168.1.0/24"
   # blocked_hosts:
   #   - "169.254.169.254"
+  # ssl_cert_dir: "/etc/pgedge/ai-dba-workbench/certs"
 
 #=====================================================
 # DATABASE CONNECTION
@@ -234,6 +235,15 @@ builtins:
 | `-db-password string` | Database password |
 | `-db-password-file string` | Path to DB password file, read at start-up only; overrides the configured password |
 | `-db-sslmode string` | SSL mode |
+
+### Connection Security Options
+
+The following table describes the flag that sets the connection security
+options:
+
+| Flag | Description |
+|------|-------------|
+| `-connection-ssl-cert-dir string` | Absolute path of the directory that monitored connections' SSL certificate, key and root certificate files must be in; sets `connection_security.ssl_cert_dir`, and an empty value clears a directory set in the configuration file |
 
 ### Token Management Options
 
@@ -464,13 +474,154 @@ http:
 ### Connection Security (`connection_security`)
 
 The connection security section controls SSRF
-protection for user-created database connections.
+protection for user-created database connections and for the test
+notifications that the server sends from the Send icon of a notification
+channel.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `allow_internal_networks` | bool | `false` | Allow RFC 1918 addresses |
+| `allow_internal_networks` | bool | `false` | Allow internal network addresses |
 | `allowed_hosts` | list | `[]` | Always-permitted hosts |
 | `blocked_hosts` | list | `[]` | Always-blocked hosts |
+| `ssl_cert_dir` | string | `""` | Directory that holds connection SSL files |
+
+When `allow_internal_networks` is `false`, the server refuses a target in
+an internal network unless `allowed_hosts` permits the target. The
+following table lists the ranges that the server treats as internal:
+
+| Range | Description |
+|-------|-------------|
+| `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | RFC 1918 private networks |
+| `127.0.0.0/8`, `::1/128` | Loopback |
+| `169.254.0.0/16`, `fe80::/10` | Link-local, including cloud metadata services |
+| `0.0.0.0/8`, `::/128` | Unspecified addresses, which reach the local host |
+| `fc00::/7`, `fec0::/10` | IPv6 unique local and deprecated site-local |
+| `::/96` | IPv4-compatible IPv6, which embeds an IPv4 address |
+| `::ffff:0:0:0/96` | SIIT IPv4-translated (RFC 2765), which embeds an IPv4 address |
+| `64:ff9b::/96`, `64:ff9b:1::/48` | NAT64 prefixes (RFC 6052 and RFC 8215) |
+| `2002::/16` | 6to4, which embeds an IPv4 address |
+| `100.64.0.0/10` | Carrier-grade NAT (RFC 6598) |
+| `192.0.0.0/24` | IETF protocol assignments |
+| `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` | Documentation networks (TEST-NET-1 to TEST-NET-3) |
+| `224.0.0.0/4`, `ff00::/8` | Multicast |
+| `240.0.0.0/4` | Reserved |
+
+An IPv4-mapped IPv6 address, such as `::ffff:10.0.0.1`, counts as the IPv4
+address that it carries. Neither `allow_internal_networks` nor `allowed_hosts`
+lets the server connect to an unspecified, link-local or cloud metadata
+address, although a connection that names one can still be saved; see the
+connect-time check below. That refusal also covers an address in `::/96`,
+`::ffff:0:0:0/96`, `64:ff9b::/96` or `2002::/16` that embeds an unspecified,
+link-local or cloud metadata IPv4 address. For an address in the local-use
+NAT64 prefix `64:ff9b:1::/48`, the server reads the IPv4 address at every RFC
+6052 offset that a sub-prefix of the /48 can use (/48, /56, /64 and /96), and
+refuses the address if any reading is in `169.254.0.0/16` or is
+`100.100.100.200`. Zero, private and public readings pass this refusal, so an
+ordinary server such as `64:ff9b:1::c633:6407` still connects wherever
+`allow_internal_networks` or `allowed_hosts` permits it. Reading every offset
+occasionally refuses a legitimate destination: an IPv4 address of the form
+x.169.254.y behind a /48 or /56 translator prefix, or x.y.169.254 behind a /48
+prefix.
+
+The NAT64 prefixes are internal in their entirety, so a deployment on an
+IPv6-only network that reaches IPv4 servers through NAT64 must set
+`allow_internal_networks` to `true` or add the prefix to `allowed_hosts`. By
+default, the alerter refuses to deliver a notification to any of these ranges,
+whatever the server's `connection_security` settings say, so an IPv6-only
+alerter host that reaches IPv4-only notification providers through NAT64 fails
+every such delivery. The alerter's own `notifications.allow_internal_networks`
+option permits these ranges, except the unspecified, link-local and cloud
+metadata addresses; the alerter has no `allowed_hosts` option. See
+[Delivery Address Checks](alerter.md#delivery-address-checks).
+
+A test notification follows these rules rather than the alerter's. The
+server checks every address that a test send connects to, refusing
+unspecified, link-local and cloud metadata addresses first and then
+applying `blocked_hosts`, `allowed_hosts` and `allow_internal_networks`.
+The alerter reads neither `allowed_hosts` nor `blocked_hosts`, so a test
+send can succeed where a real delivery is refused, or the reverse.
+Loosening this section so that a test send reaches an internal host also
+loosens the checks on database connections to that host. See
+[Test Sends](../../admin-guide/notification-channels.md#test-sends).
+
+The server applies the host checks to both the `host` and the `hostaddr`
+of a connection. A `hostaddr` must be a literal IPv4 or IPv6 address,
+and the server checks that address against the same blocklist, allowlist
+and internal network rules as a `host`.
+
+The server checks the target twice. When a user creates or updates a
+connection, the server resolves a host name and checks the addresses
+in turn; an address that `allowed_hosts` covers can permit the whole
+host name, including the name's other addresses. Each time the server
+connects to a monitored database, the server resolves the host name
+again and checks each address on its own, so a host name that later
+resolves to a refused address cannot reach that address; this check
+defeats DNS rebinding. At connect time, the server first refuses
+unspecified, link-local and cloud metadata addresses, whatever
+`allowed_hosts` or `allow_internal_networks` say, and then applies
+`blocked_hosts`, `allowed_hosts` and `allow_internal_networks` to each
+remaining address. An address that `allowed_hosts` covers permits only
+that address, and the server connects only to the permitted addresses.
+Apart from those always-refused addresses, a host name that
+`allowed_hosts` or `blocked_hosts` lists by name is still permitted or
+refused whatever the name resolves to. The save-time check does not
+apply the always-refused addresses first, so a connection to a
+link-local address can be saved under `allow_internal_networks` or an
+`allowed_hosts` entry but never connects. When no resolved address is
+permitted, the
+connection attempt fails with an error that says the host resolves only
+to addresses that connections are not permitted to. The server's own
+connection to the datastore is not checked.
+
+The collector applies a fixed check of its own when the collector
+connects; see
+[Connection Security Options](collector.md#connection-security-options).
+The collector refuses the same unspecified, link-local and cloud
+metadata addresses as the server, so neither component connects to a
+link-local target, even when `allow_internal_networks` is `true`.
+
+The `ssl_cert_dir` option names the absolute directory that the SSL
+certificate, key and root certificate files of user-created connections
+must live in. The server reads these files itself when the server
+connects to a monitored database, so the directory limits which files a
+user who can create a connection can make the server open. The server
+checks each path when a user creates or updates a connection, and again
+before each connection attempt; a path must meet the following rules:
+
+- the path is absolute and contains no `..` element or control
+  character.
+- the path resolves, following symbolic links, to a location inside the
+  `ssl_cert_dir` directory.
+
+The directory, every file and link in it, and every parent directory
+must be writable only by root or the account that runs the server.
+The server resolves a path before the database driver opens the file,
+so an account that can replace a symbolic link in the directory, or
+replace the directory itself through a writable parent, between the
+two steps could still point the driver at a file outside the
+directory.
+
+When `ssl_cert_dir` is empty, which is the default, the server refuses
+every connection that names an SSL file. A root certificate value of
+`system`, which selects the platform trust store, is always allowed.
+The server refuses to start when `ssl_cert_dir` holds a relative path.
+The server reads the option at start-up only, so a change takes effect
+only when the server restarts; a configuration reload does not change
+the directory. The `PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR` environment
+variable and the `-connection-ssl-cert-dir` flag also set the option.
+
+The collector reads the same SSL files when the collector connects, and
+has its own `connection_security.ssl_cert_dir` option with the same
+rules. Set the collector option as well, and keep the files at the same
+paths on the collector host.
+
+In the following example, the server accepts SSL files in the
+`/etc/pgedge/ai-dba-workbench/certs` directory:
+
+```yaml
+connection_security:
+  ssl_cert_dir: "/etc/pgedge/ai-dba-workbench/certs"
+```
 
 ### Database (`database`)
 
@@ -1289,6 +1440,28 @@ export PGEDGE_POSTGRES_CONNECTION_STRING=\
 ai_workbench?sslmode=require"
 ```
 
+The server reads a `+` in a query parameter value as a literal plus
+sign, as libpq does; write a space in a value as `%20`.
+
+### `PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR`
+
+The `PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR` variable sets the
+`connection_security.ssl_cert_dir` option, the absolute directory that
+monitored connections' SSL certificate, key and root certificate files
+must live in. A non-empty value overrides the configuration file, and
+the `-connection-ssl-cert-dir` flag overrides the variable. The server
+reads the variable at start-up only. See
+[Connection Security](#connection-security-connection_security) for the
+rules that the server applies to each path.
+
+In the following example, the variable names the certificate
+directory:
+
+```bash
+export PGEDGE_CONNECTION_SECURITY_SSL_CERT_DIR=\
+/etc/pgedge/ai-dba-workbench/certs
+```
+
 ### `PGEDGE_DB_LOG_LEVEL`
 
 The `PGEDGE_DB_LOG_LEVEL` variable controls the
@@ -1379,3 +1552,8 @@ settings whose change it detects, among them
 the authentication store reads once at start-up, so
 account lockout stays as configured at the last
 restart until the server is restarted again.
+
+The `connection_security.ssl_cert_dir` option also requires a restart;
+a reload keeps the directory the server started with, and does not warn
+about a change to the option. A reload that finds a relative
+`ssl_cert_dir` fails, and the server keeps its current configuration.

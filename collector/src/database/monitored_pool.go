@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"maps"
@@ -21,10 +22,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/sslpaths"
 )
 
 // MonitoredConnectionPoolManager manages connection pools for monitored databases
@@ -38,6 +42,7 @@ type MonitoredConnectionPoolManager struct {
 	connLocks       map[int]*sync.Mutex   // Connection ID -> lock guarding pool creation, acquisition and eviction
 	maxConnections  int                   // Maximum concurrent connections per monitored server
 	maxIdleSeconds  int                   // Maximum idle time (seconds) before closing idle connections
+	sslCertDir      string                // Directory stored SSL file paths must resolve inside; guarded by mu
 	mu              sync.RWMutex
 }
 
@@ -54,6 +59,23 @@ func NewMonitoredConnectionPoolManager(maxConnectionsPerServer int, maxIdleSecon
 		maxConnections:  maxConnectionsPerServer,
 		maxIdleSeconds:  maxIdleSeconds,
 	}
+}
+
+// SetSSLCertDir sets the directory that a monitored connection's
+// sslcert, sslkey and sslrootcert files must live in
+// (connection_security.ssl_cert_dir). With none set, a connection that
+// names any SSL file other than sslrootcert=system is refused.
+func (m *MonitoredConnectionPoolManager) SetSSLCertDir(dir string) {
+	m.mu.Lock()
+	m.sslCertDir = dir
+	m.mu.Unlock()
+}
+
+// SSLCertDir returns the directory set by SetSSLCertDir.
+func (m *MonitoredConnectionPoolManager) SSLCertDir() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.sslCertDir
 }
 
 // DetectAndCacheVersion detects the PostgreSQL major version and caches it
@@ -296,7 +318,7 @@ func (m *MonitoredConnectionPoolManager) acquireWithinCap(ctx context.Context, c
 // the connection's lock, which is what guarantees that no other pool can
 // be created for the same key in the meantime.
 func (m *MonitoredConnectionPoolManager) createPool(ctx context.Context, conn MonitoredConnection, databaseName string, serverSecret string, poolKey int) (*pgxpool.Pool, error) {
-	params, err := buildMonitoredConnectionParams(conn, databaseName, serverSecret)
+	params, err := buildMonitoredConnectionParams(conn, databaseName, serverSecret, m.SSLCertDir())
 	if err != nil {
 		return nil, fmt.Errorf("failed to build connection string: %w", err)
 	}
@@ -524,12 +546,11 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 // connection's pools are built from. Every pool derived from the
 // connection, whichever database it serves, records this same hash, so a
 // per-database pool is not mistaken for a changed one merely because its
-// dbname differs from the connection's default. The parameters are
-// hashed in sorted order because connstring.Build emits them in map
-// iteration order, which differs from one call to the next; hashing its
-// output made every pool look changed on every configuration reload.
-func monitoredConnectionHash(conn MonitoredConnection, serverSecret string) (string, error) {
-	params, err := buildMonitoredConnectionParams(conn, "", serverSecret)
+// dbname differs from the connection's default. The parameter map is
+// hashed directly, in sorted key order, so the hash depends only on the
+// parameters and not on how connstring.Build formats or escapes them.
+func monitoredConnectionHash(conn MonitoredConnection, serverSecret string, sslCertDir string) (string, error) {
+	params, err := buildMonitoredConnectionParams(conn, "", serverSecret, sslCertDir)
 	if err != nil {
 		return "", err
 	}
@@ -561,8 +582,9 @@ func hashConnectionParams(params map[string]string) string {
 func (m *MonitoredConnectionPoolManager) InvalidateChangedPools(connections []MonitoredConnection, serverSecret string) {
 	// Build a map of connection ID -> current connection string hash
 	currentHashes := make(map[int]string)
+	sslCertDir := m.SSLCertDir()
 	for _, conn := range connections {
-		paramsHash, err := monitoredConnectionHash(conn, serverSecret)
+		paramsHash, err := monitoredConnectionHash(conn, serverSecret, sslCertDir)
 		if err != nil {
 			logger.Errorf("Failed to build connection string for pool invalidation check on connection %d: %v", conn.ID, err)
 			continue
@@ -652,12 +674,58 @@ func (m *MonitoredConnectionPoolManager) Close() error {
 	return nil
 }
 
-// createMonitoredPool creates a pgxpool.Pool for a monitored connection
-func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Pool, error) {
-	// Parse connection string
-	config, err := pgxpool.ParseConfig(connStr)
+// ErrInvalidMonitoredConnString is what createMonitoredPool returns when
+// pgx cannot parse a monitored connection's connection string. The pgx
+// error is logged instead of returned because the scheduler stores the
+// error text in the connection's connection_error column, which the
+// server's API shows to users, and that text carries what they must not
+// see: pgx's ParseConfigError quotes the connection string with the
+// password only redacted on a best-effort basis, and pgx reads the
+// sslrootcert, sslcert and sslkey files whilst parsing, so its errors
+// name those paths and reveal whether a file exists or can be read.
+var ErrInvalidMonitoredConnString = errors.New("invalid connection parameters")
+
+// describeParseConfigError returns the text of a pgx ParseConfig error
+// for the collector log, with the quoted connection string replaced, so
+// the log keeps the reason (including any file path) but not the
+// password.
+func describeParseConfigError(err error) string {
+	var pce *pgconn.ParseConfigError
+	if errors.As(err, &pce) {
+		redacted := *pce
+		redacted.ConnString = "<connection string>"
+		return redacted.Error()
+	}
+	return err.Error()
+}
+
+// parseMonitoredConnString parses a monitored connection string into a
+// pool configuration, refusing any key the builder does not emit before
+// pgx acts on it. pgx honors servicefile and service (whose entries
+// supply host, port and sslmode wherever the string omits them) and
+// reads passfile from disk, so a key slipped in by an escaping bug or a
+// future caller must not get that far. pgxpool (v5.12.0) has no
+// ParseConfigWithOptions, so pgconn checks the keys first, which it does
+// before touching the filesystem; every key pgx or pgxpool handle beyond
+// pgconn's is outside the allow-list, so the second parse fails only
+// where the first does.
+func parseMonitoredConnString(connStr string) (*pgxpool.Config, error) {
+	if _, err := pgconn.ParseConfigWithOptions(connStr, pgconn.ParseConfigOptions{
+		ConnStringAllowedKeys: monitoredConnStringKeys,
+	}); err != nil {
+		return nil, err
+	}
+	return pgxpool.ParseConfig(connStr)
+}
+
+// monitoredPoolConfig parses a monitored connection string into the
+// pool configuration createMonitoredPool opens, with the pool limits,
+// the hostaddr handling and the dial guard applied.
+func monitoredPoolConfig(connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Config, error) {
+	config, err := parseMonitoredConnString(connStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse connection string: %w", err)
+		logger.Errorf("Failed to parse monitored connection string: %s", describeParseConfigError(err))
+		return nil, ErrInvalidMonitoredConnString
 	}
 
 	// Set MaxConns to match the per-server connection limit
@@ -667,10 +735,48 @@ func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxI
 	config.MaxConns = int32(maxConns) // #nosec G115 - bounds checked above
 	config.MinConns = 0               // Start with no connections
 
+	// pgx has no hostaddr keyword and would send one to the server as a
+	// startup parameter. Take it out and dial that address for the host
+	// instead, so that sslmode=verify-full still checks the certificate
+	// against the host name (pgx's TLS ServerName) rather than the IP.
+	if raw, ok := config.ConnConfig.RuntimeParams["hostaddr"]; ok {
+		delete(config.ConnConfig.RuntimeParams, "hostaddr")
+		ip, err := hostvalidation.ParseHostAddr(raw)
+		if err != nil {
+			logger.Errorf("Monitored connection string carries a hostaddr that is not an IP address")
+			return nil, ErrInvalidMonitoredConnString
+		}
+		addr := ip.String()
+		config.ConnConfig.LookupFunc = func(context.Context, string) ([]string, error) {
+			return []string{addr}, nil
+		}
+	}
+
+	// Check the addresses pgx actually dials, not only the host name the
+	// server checked when the connection was saved: the name can resolve
+	// to something else by the time the collector connects (DNS
+	// rebinding). The collector has none of the server's
+	// connection_security policy, so it refuses only the ranges no
+	// monitored server can legitimately be in (unspecified, link-local
+	// and cloud metadata addresses), leaving private and loopback
+	// targets, which collectors routinely monitor, to the server's
+	// save-time check.
+	config.ConnConfig.LookupFunc = hostvalidation.GuardedLookup(
+		hostvalidation.CheckAlwaysBlocked, config.ConnConfig.LookupFunc)
+
 	// Set max connection lifetime (use maxIdleSeconds as max conn lifetime)
 	// pgxpool will close connections that have been idle for this duration
 	if maxIdleSeconds > 0 {
 		config.MaxConnIdleTime = time.Duration(maxIdleSeconds) * time.Second
+	}
+	return config, nil
+}
+
+// createMonitoredPool creates a pgxpool.Pool for a monitored connection
+func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Pool, error) {
+	config, err := monitoredPoolConfig(connStr, maxConns, maxIdleSeconds)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create the pool
@@ -679,42 +785,86 @@ func createMonitoredPool(ctx context.Context, connStr string, maxConns int, maxI
 		return nil, fmt.Errorf("failed to create pool: %w", err)
 	}
 
-	// Test the pool with a ping
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("failed to acquire test connection: %w", err)
-	}
-	if err := conn.Ping(ctx); err != nil {
-		conn.Release()
+	// Test the pool: Ping acquires a connection, pings it and releases it.
+	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("failed to ping: %w", err)
 	}
-	conn.Release()
 
 	return pool, nil
 }
 
 // buildMonitoredConnectionStringForDatabase builds a connection string for a monitored connection
 // with an optional database name override
-func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databaseName string, serverSecret string) (string, error) {
-	params, err := buildMonitoredConnectionParams(conn, databaseName, serverSecret)
+func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databaseName string, serverSecret string, sslCertDir string) (string, error) {
+	params, err := buildMonitoredConnectionParams(conn, databaseName, serverSecret, sslCertDir)
 	if err != nil {
 		return "", err
 	}
 	return connstring.Build(params), nil
 }
 
+// monitoredConnStringKeys lists every libpq key that
+// buildMonitoredConnectionParams and addMonitoredSSLParams can emit, and
+// is the allow-list parseMonitoredConnString checks monitored connection
+// strings with. A key added to either builder must be added here too;
+// TestMonitoredConnStringKeysMatchBuilder fails until it is.
+var monitoredConnStringKeys = []string{
+	"host",
+	"hostaddr",
+	"port",
+	"dbname",
+	"user",
+	"password",
+	"sslmode",
+	"sslcert",
+	"sslkey",
+	"sslrootcert",
+	"application_name",
+	"connect_timeout",
+}
+
 // buildMonitoredConnectionParams returns the libpq parameters for a
-// monitored connection, with an optional database name override
-func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName string, serverSecret string) (map[string]string, error) {
+// monitored connection, with an optional database name override.
+// sslCertDir is connection_security.ssl_cert_dir, which every stored SSL
+// file path must resolve inside.
+func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName string, serverSecret string, sslCertDir string) (map[string]string, error) {
 	params := make(map[string]string)
 
-	if conn.HostAddr.Valid && conn.HostAddr.String != "" {
-		params["hostaddr"] = conn.HostAddr.String
-	} else {
-		params["host"] = conn.Host
+	// Refuse a stored host or hostaddr that would turn this connection
+	// into a multi-host list or carry a port, and a hostaddr that is not
+	// a literal IP address. The server validates both on create and
+	// update, but a row written before that check existed, or by any
+	// other route, must not reach libpq. The value itself is left out of
+	// the error, which ends up in connections.connection_error.
+	unsafeTarget := fmt.Errorf("connection %d: stored host or hostaddr is not valid", conn.ID)
+	hostaddr := ""
+	if conn.HostAddr.Valid {
+		hostaddr = conn.HostAddr.String
 	}
+	if err := hostvalidation.CheckStoredTarget(conn.Host, hostaddr); err != nil {
+		return nil, unsafeTarget
+	}
+	// A keyword/value host takes no brackets, so an IPv6 literal stored
+	// as "[2001:db8::1]" goes in bare.
+	host := hostvalidation.BareHost(conn.Host)
+
+	if hostaddr != "" {
+		// As in libpq, hostaddr is the address connected to whilst host stays
+		// the name that TLS verifies and sends as SNI. pgx (v5.12.0) has
+		// no hostaddr keyword, so createMonitoredPool takes it out of the
+		// parsed config and turns it into the pool's address lookup; with
+		// no host, the address stands in for one, as libpq does.
+		ip, err := hostvalidation.ParseHostAddr(hostaddr)
+		if err != nil {
+			return nil, unsafeTarget
+		}
+		params["hostaddr"] = ip.String()
+		if host == "" {
+			host = ip.String()
+		}
+	}
+	params["host"] = host
 
 	params["port"] = fmt.Sprintf("%d", conn.Port)
 
@@ -736,6 +886,9 @@ func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName strin
 		params["password"] = decryptedPassword
 	}
 
+	if err := checkMonitoredSSLPaths(conn, sslCertDir); err != nil {
+		return nil, err
+	}
 	addMonitoredSSLParams(params, conn)
 
 	// Set application name to identify monitoring connections
@@ -745,6 +898,49 @@ func buildMonitoredConnectionParams(conn MonitoredConnection, databaseName strin
 	params["connect_timeout"] = "10"
 
 	return params, nil
+}
+
+// checkMonitoredSSLPaths refuses a monitored connection whose stored
+// sslcert, sslkey or sslrootcert path is not an absolute path that
+// resolves, symbolic links included, inside sslCertDir; with sslCertDir
+// empty, every path other than sslrootcert=system is refused. pgx reads
+// these files as the collector's service account, so without the check
+// anyone able to store a connection could have the collector read any
+// file it can read, and learn from the error whether that file exists.
+// The server applies the same check when a connection is saved; this
+// one covers rows written before that check existed, or by any other
+// route.
+//
+// Only the field name is logged, never the path, and the error returned
+// is ErrInvalidMonitoredConnString, because the scheduler stores it in
+// connections.connection_error, which the API shows to users.
+//
+// The check assumes that ssl_cert_dir and everything in it are writable
+// only by root or the collector's service account: the path is resolved
+// here and opened later by pgx, so anyone who could replace a link or
+// file in the directory between the two could still point pgx elsewhere.
+func checkMonitoredSSLPaths(conn MonitoredConnection, sslCertDir string) error {
+	var paths sslpaths.SSLFilePaths
+	if conn.SSLCert.Valid && conn.SSLCert.String != "" {
+		paths.SSLCert = &conn.SSLCert.String
+	}
+	if conn.SSLKey.Valid && conn.SSLKey.String != "" {
+		paths.SSLKey = &conn.SSLKey.String
+	}
+	if conn.SSLRootCert.Valid && conn.SSLRootCert.String != "" {
+		paths.SSLRootCert = &conn.SSLRootCert.String
+	}
+	err := sslpaths.ValidateSSLFilePaths(sslCertDir, paths)
+	if err == nil {
+		return nil
+	}
+	var pathErr *sslpaths.SSLFilePathError
+	if errors.As(err, &pathErr) {
+		logger.Errorf("Connection %d: refusing stored SSL file path (field %s)", conn.ID, pathErr.Field)
+	} else {
+		logger.Errorf("Connection %d: refusing stored SSL file paths because connection_security.ssl_cert_dir is not set", conn.ID)
+	}
+	return ErrInvalidMonitoredConnString
 }
 
 // addMonitoredSSLParams adds a monitored connection's TLS settings to

@@ -32,8 +32,8 @@ func TestBuildOpenAPISpec(t *testing.T) {
 		t.Errorf("Expected title 'AI DBA Workbench API', got %s", spec.Info.Title)
 	}
 
-	if spec.Info.Version != "1.0.0" {
-		t.Errorf("Expected version 1.0.0, got %s", spec.Info.Version)
+	if spec.Info.Version != "2.0.0-beta1" {
+		t.Errorf("Expected version 2.0.0-beta1, got %s", spec.Info.Version)
 	}
 
 	// Verify we have servers

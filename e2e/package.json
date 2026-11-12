@@ -1,6 +1,6 @@
 {
     "name": "ai-dba-workbench-e2e",
-    "version": "1.0.0",
+    "version": "2.0.0-beta1",
     "description": "End-to-end smoke tests for AI DBA Workbench",
     "private": true,
     "type": "module",
@@ -12,9 +12,9 @@
         "install-browsers": "playwright install --with-deps"
     },
     "devDependencies": {
-        "@playwright/test": "^1.55.0",
-        "@types/node": "^22.0.0",
-        "typescript": "^5.9.3"
+        "@playwright/test": "^1.65.0",
+        "@types/node": "^22.20.5",
+        "typescript": "^6.0.3"
     },
     "license": "PostgreSQL"
 }

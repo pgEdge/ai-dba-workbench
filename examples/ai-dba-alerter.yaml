@@ -636,6 +636,15 @@ notifications:
   # Default: 10
   http_max_idle_conns: 10
 
+  # Permit deliveries (webhook, Slack, Mattermost, Telegram and SMTP)
+  # to private and loopback addresses, for an internal mail relay or a
+  # self-hosted Mattermost. Every address a channel's host resolves to
+  # is checked when the connection is made. Cloud metadata, link-local
+  # and unspecified addresses are refused even when this is enabled.
+  # Outbound proxies (HTTP_PROXY and similar) are not used.
+  # Default: false
+  allow_internal_networks: false
+
 #=========================================================================
 # BLACKOUT AND RETENTION MANAGEMENT
 #=========================================================================

@@ -67,12 +67,13 @@ requirements:
 Before installing the Workbench with binary files or building the project
 from source, install the following software:
 
-- [Go 1.26.10](https://go.dev/doc/install) or a later 1.26 release, or
-  Go 1.27.3 or later, is required for building server-side components.
-- [Node.js 20.19](https://nodejs.org/) or later on the 20.x line,
-  or Node.js 22.12 or later, is required for building the web client.
-- [PostgreSQL 14](https://www.postgresql.org/download/) or later is required
-  for the datastore.
+- [Go 1.26.11](https://go.dev/doc/install) or a later 1.26 release, or
+  Go 1.27.4 or later, is required for building server-side components.
+- [Node.js 22.12](https://nodejs.org/) or later is required for building
+  the web client.
+- [PostgreSQL 15](https://www.postgresql.org/download/) or later is required
+  for the datastore; each monitored server must also run PostgreSQL 15 or
+  later.
 - [Make](https://www.gnu.org/software/make/) is required for build automation.
 - [nginx](https://nginx.org/en/docs/) is required to serve the client.
 

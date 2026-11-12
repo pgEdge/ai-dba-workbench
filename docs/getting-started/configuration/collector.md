@@ -383,6 +383,96 @@ The [Storing Metrics in pgEdge ColdFront](coldfront-metrics.md)
 document describes the prerequisites, the compactor requirement, and
 the behavioural differences of this mode.
 
+## Connection Security Options
+
+The connection security options limit what a stored monitored
+connection can make the collector do. The options are nested under the
+`connection_security:` key in the YAML file. The collector reads them
+at start-up only, so a change takes effect when the collector restarts.
+
+### connection_security.ssl_cert_dir
+
+The `ssl_cert_dir` option names the absolute directory that the SSL
+certificate, key and root certificate files of monitored connections
+must live in. The collector reads these files itself when the collector
+connects to a monitored database, so the directory limits which files a
+user who can create a connection can make the collector open.
+
+- Type: string (directory path)
+- Default: `""` (unset)
+- Required: No
+- Command-line: `-connection-ssl-cert-dir`
+- Example: `ssl_cert_dir: /etc/pgedge/ai-dba-workbench/certs`
+- Note: The option has no environment variable.
+- Note: The collector refuses to start when the option holds a relative
+  path.
+
+The option has the same rules as the server option of the same name.
+Before the collector builds a pool for a connection, the collector
+checks each stored SSL file path against the following rules:
+
+- the path is absolute and contains no `..` element or control
+  character.
+- the path resolves, following symbolic links, to a location inside the
+  `ssl_cert_dir` directory.
+
+When the option is unset, the collector refuses every connection that
+names an SSL file; a root certificate value of `system`, which selects
+the platform trust store, is always allowed. The collector does not
+monitor a refused connection, logs the connection ID and the name of
+the refused field without the path, and records an error ending in
+`invalid connection parameters` against the connection.
+
+Set the option on the collector as well as on the server, and keep the
+certificate files at the same paths on the collector host, because both
+components read the same stored paths. The directory, every file and
+link in it, and every parent directory must be writable only by root
+or the account that runs the collector. The collector resolves a path
+before the database driver opens the file, so an account that can
+replace a symbolic link in the directory, or replace the directory
+itself through a writable parent, between the two steps could still
+point the driver at a file outside the directory.
+
+In the following example, the collector accepts SSL files in the
+`/etc/pgedge/ai-dba-workbench/certs` directory:
+
+```yaml
+connection_security:
+  ssl_cert_dir: /etc/pgedge/ai-dba-workbench/certs
+```
+
+### Connection Address Checks
+
+The collector checks each address that a monitored connection's host
+resolves to each time the collector connects, and connects only to the
+addresses that pass. The check defeats DNS rebinding, in which a host
+name that the server accepted when the connection was saved later
+resolves to another address. The collector has none of the server's
+`connection_security` host settings, so the collector refuses only the
+following fixed set of addresses:
+
+- the unspecified addresses `0.0.0.0/8` and `::`.
+- the link-local unicast ranges `169.254.0.0/16` and `fe80::/10`,
+  which include the `169.254.169.254` cloud metadata address.
+- the IPv4 link-local multicast range `224.0.0.0/24` and every IPv6
+  multicast address of link-local scope, such as `ff02::1`.
+- the cloud metadata addresses `fd00:ec2::254`, `fd00:ec2::23`,
+  `fd20:ce::254` and `100.100.100.200`.
+- an address in `::/96`, `::ffff:0:0:0/96`, `64:ff9b::/96` or
+  `2002::/16` that embeds one of these IPv4 addresses.
+- an address in the local-use NAT64 prefix `64:ff9b:1::/48` whose IPv4
+  address, read at any RFC 6052 offset within the prefix, is in
+  `169.254.0.0/16` or is `100.100.100.200`.
+
+The collector allows loopback and private addresses, because a
+collector routinely monitors servers on the same host or network. The
+server refuses the same set of addresses when the server connects,
+whatever the server's `connection_security` settings say, so neither
+component connects to a link-local target. When no resolved
+address passes, the connection attempt fails with an error that says
+the host resolves only to addresses that connections are not permitted
+to.
+
 ## Security Options
 
 The collector uses a secret file and AES-256-GCM encryption to protect
@@ -449,6 +539,7 @@ The following table lists all available command-line flags.
 | `-pg-sslkey` | Client SSL key | none |
 | `-pg-sslrootcert` | Root SSL certificate | none |
 | `-use-coldfront-for-metrics` | Store metrics tables in pgEdge ColdFront | `false` |
+| `-connection-ssl-cert-dir` | Directory that monitored connections' SSL files must be in | none |
 
 In the following example, the command uses flags to override
 configuration file settings:
@@ -566,6 +657,8 @@ The collector validates the following ranges:
 - `scheduler.max_concurrent_probes_per_connection` must be greater
   than 0.
 - `scheduler.startup_jitter_seconds` must be 0 or greater.
+- `connection_security.ssl_cert_dir` must be an absolute path when
+  set.
 
 ## Tuning Guidelines
 
@@ -675,6 +768,9 @@ scheduler:
   max_concurrent_probes: 8
   max_concurrent_probes_per_connection: 2
   startup_jitter_seconds: 60
+
+connection_security:
+  ssl_cert_dir: /etc/pgedge/ai-dba-workbench/certs
 
 secret_file: /var/secrets/collector.secret
 ```

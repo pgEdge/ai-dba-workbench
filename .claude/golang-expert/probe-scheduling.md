@@ -150,8 +150,9 @@ read as a cap breach (issue #628).
 `InvalidateChangedPools` compares `hashConnectionParams` over the
 sorted parameter map with `dbname` set to the connection's own
 database, so every pool derived from one connection shares a hash.
-Never hash `connstring.Build` output: it iterates a map, so its order
-is random and each reload would re-dial every pool.
+Hash the parameter map, not `connstring.Build` output: `Build` now
+sorts its keys, but hashing its text would tie the hash to its quoting
+and escaping, so a formatting change would re-dial every pool.
 
 ## Config reload: inherited rows and disabled probes
 

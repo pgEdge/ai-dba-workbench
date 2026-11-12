@@ -12,16 +12,16 @@ single host.
 Before building the Workbench, confirm that the following prerequisites
 are in place on a supported operating system and platform:
 
-- [Go 1.26.10](https://go.dev/dl/) or a later 1.26 release, or Go 1.27.3
+- [Go 1.26.11](https://go.dev/dl/) or a later 1.26 release, or Go 1.27.4
   or later, is required to build the server-side components.
 
-- [Node.js 20.19](https://nodejs.org/en/download) or later on the 20.x
-  line, or Node.js 22.12 or later, is required to build the web client.
+- [Node.js 22.12](https://nodejs.org/en/download) or later is required to
+  build the web client.
 
 - [Make](https://www.gnu.org/software/make/) is required to execute the
   Makefile.
 
-- You must have a [PostgreSQL 14](https://www.postgresql.org/download/)
+- You must have a [PostgreSQL 15](https://www.postgresql.org/download/)
   or later database for the Workbench datastore; you must also have the
   credentials for that database.
 
@@ -351,8 +351,9 @@ server configuration file:
 ```yaml
 connection_security:
   # Allow connections to RFC 1918 private addresses (10.x.x.x,
-  # 172.16.x.x, 192.168.x.x), localhost, link-local, and other
-  # internal network ranges.
+  # 172.16.x.x, 192.168.x.x), localhost, and other internal network
+  # ranges. Unspecified, link-local and cloud metadata addresses
+  # stay refused.
   # Default: false
   allow_internal_networks: true
 ```

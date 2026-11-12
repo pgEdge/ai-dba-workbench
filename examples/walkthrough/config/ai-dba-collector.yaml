@@ -10,4 +10,10 @@ pool:
     datastore_max_connections: 25
     max_connections_per_server: 3
 
+# Directory that monitored connections' SSL certificate and key files
+# must live in; when unset, a connection naming one is refused (except
+# ssl_root_cert_path "system"). See examples/ai-dba-collector.yaml.
+# connection_security:
+#   ssl_cert_dir: /etc/pgedge/ai-dba-workbench/certs
+
 secret_file: /etc/pgedge/secret/ai-dba.secret

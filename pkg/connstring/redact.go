@@ -258,7 +258,9 @@ func redactURI(s string) string {
 		if eq < 0 {
 			continue
 		}
-		key := param[:eq]
+		// libpq and pgx skip ASCII spaces around a raw query key before
+		// percent-decoding it, so " password" sets the password too.
+		key := strings.Trim(param[:eq], " ")
 		if decoded, err := url.PathUnescape(key); err == nil {
 			key = decoded
 		}

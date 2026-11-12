@@ -21,6 +21,12 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 )
 
+// SendTimeout is the longest one notification send may take, from
+// connecting to the endpoint to its last reply. processNotification
+// applies it to every send, and the engine bounds a fired alert's
+// notifications with the same value (engine.NotificationTimeout).
+const SendTimeout = 30 * time.Second
+
 // Manager implements NotificationManager
 type Manager struct {
 	datastore    *database.Datastore
@@ -54,46 +60,11 @@ func NewManager(ds *database.Datastore, cfg *config.NotificationsConfig, debug b
 
 	renderer := NewTemplateRenderer()
 
-	httpClient := &http.Client{
-		Timeout: time.Duration(cfg.HTTPTimeoutSeconds) * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:       cfg.HTTPMaxIdleConns,
-			IdleConnTimeout:    30 * time.Second,
-			DisableCompression: true,
-		},
-		// Never follow a redirect. This is set on the one client every
-		// notifier shares, because each channel type it serves has its
-		// own reason to need it:
-		//
-		//   - Telegram: net/http copies the previous request's full
-		//     URL into the Referer header of the redirected request,
-		//     and that URL is
-		//     https://api.telegram.org/bot<token>/sendMessage. A 3xx
-		//     would hand the live bot token to whatever host the
-		//     Location header names.
-		//   - Slack and Mattermost: the whole webhook URL is the
-		//     secret, and it would travel in Referer in exactly the
-		//     same way.
-		//   - The generic webhook: the endpoint host is validated
-		//     before the channel is stored, so following a Location
-		//     header would let a hostile endpoint bounce the request
-		//     at a private or metadata host and bypass that check.
-		//
-		// The cost is that a provider answering a delivery with a 3xx
-		// now fails that delivery instead of following it. That is the
-		// intended trade, and it makes delivery behave like the
-		// test-send path in
-		// server/src/internal/api/webhook_test_sender.go, which has
-		// always refused redirects.
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
-	// Set defaults
-	if httpClient.Timeout == 0 {
-		httpClient.Timeout = 30 * time.Second
-	}
+	// Every delivery, HTTP and SMTP, connects through the same guarded
+	// dialer, so the address policy holds on the address actually
+	// connected to. See dial_guard.go.
+	dial := deliveryDialer(deliveryPolicy(cfg.AllowInternalNetworks), nil)
+	httpClient := newDeliveryHTTPClient(cfg, dial)
 
 	m := &Manager{
 		datastore:    ds,
@@ -111,7 +82,7 @@ func NewManager(ds *database.Datastore, cfg *config.NotificationsConfig, debug b
 	m.notifiers[database.ChannelTypeMattermost] = NewMattermostNotifier(httpClient, renderer)
 	m.notifiers[database.ChannelTypeTelegram] = NewTelegramNotifier(httpClient, renderer)
 	m.notifiers[database.ChannelTypeWebhook] = NewWebhookNotifier(httpClient, renderer)
-	m.notifiers[database.ChannelTypeEmail] = NewEmailNotifier(serverSecret, renderer)
+	m.notifiers[database.ChannelTypeEmail] = newEmailNotifierWithDialer(serverSecret, renderer, dial)
 
 	return m, nil
 }
@@ -352,8 +323,14 @@ func (m *Manager) processNotification(ctx context.Context, history *database.Not
 		channel.Recipients = recipients
 	}
 
-	// Send notification
-	err := notifier.Send(ctx, channel, payload)
+	// Send notification. Each send has its own deadline, whatever ctx
+	// carries: the pending-retry and reminder workers pass a context
+	// with none, and without one a stalled endpoint would hold the
+	// worker indefinitely (the guarded dial would also give each
+	// address its full dial timeout).
+	sendCtx, cancel := context.WithTimeout(ctx, SendTimeout)
+	err := notifier.Send(sendCtx, channel, payload)
+	cancel()
 
 	now := time.Now()
 	if err == nil {

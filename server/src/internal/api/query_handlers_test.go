@@ -1216,7 +1216,11 @@ func TestExecuteQuery_DatabaseOverrideInjectionIsEscaped(t *testing.T) {
 		Username:     "user",
 	}
 
-	cfg, err := pgconn.ParseConfig(ds.BuildConnectionString(conn, "secret", payload))
+	dsn, err := ds.BuildConnectionString(conn, "secret", payload)
+	if err != nil {
+		t.Fatalf("BuildConnectionString() error = %v", err)
+	}
+	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		t.Fatalf("Failed to parse the built connection string: %v", err)
 	}

@@ -10,8 +10,26 @@
 package database
 
 import (
+	"strings"
 	"testing"
 )
+
+// TestLoadMetadataFor_UnknownConnectionHidesConnString checks that the
+// not-found error does not echo the connection string, which carries the
+// password.
+func TestLoadMetadataFor_UnknownConnectionHidesConnString(t *testing.T) {
+	c := NewClient(nil)
+	err := c.LoadMetadataFor("postgres://app:s3cret@db.example.com/x")
+	if err == nil {
+		t.Fatal("expected an error for an unknown connection")
+	}
+	if err.Error() != "connection not found" {
+		t.Errorf("err = %q, want %q", err, "connection not found")
+	}
+	if strings.Contains(err.Error(), "s3cret") || strings.Contains(err.Error(), "example") {
+		t.Errorf("error %q names the connection string", err)
+	}
+}
 
 func TestNewClient(t *testing.T) {
 	client := NewClient(nil)

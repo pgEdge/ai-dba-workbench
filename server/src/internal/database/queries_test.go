@@ -2485,6 +2485,9 @@ func TestDatabaseInfoStruct(t *testing.T) {
 
 func TestBuildConnectionString(t *testing.T) {
 	ds := &Datastore{}
+	// The SSL file cases name paths under /etc/ssl, which must then be
+	// the configured certificate directory.
+	ds.SetSSLCertDir("/etc/ssl")
 
 	tests := []struct {
 		name             string
@@ -2722,7 +2725,8 @@ func TestBuildConnectionString(t *testing.T) {
 			password:         "",
 			databaseOverride: "",
 			wantContains: []string{
-				"sslrootcert=%2Fetc%2Fssl%2Fmy+certs%2Frds+ca.pem",
+				// A space is %20, not '+': pgx reads '+' literally.
+				"sslrootcert=%2Fetc%2Fssl%2Fmy%20certs%2Frds%20ca.pem",
 			},
 			wantNotContains: []string{"my certs", "rds ca.pem"},
 		},
@@ -2765,7 +2769,7 @@ func TestBuildConnectionString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ds.BuildConnectionString(tt.conn, tt.password, tt.databaseOverride)
+			result := mustBuildConnString(t, ds, tt.conn, tt.password, tt.databaseOverride)
 
 			for _, expected := range tt.wantContains {
 				if !strings.Contains(result, expected) {
@@ -2817,7 +2821,7 @@ func TestBuildConnectionStringUserinfoRoundTrip(t *testing.T) {
 				Username:     "weird@user:name",
 			}
 
-			dsn := ds.BuildConnectionString(conn, pw, "")
+			dsn := mustBuildConnString(t, ds, conn, pw, "")
 
 			parsed, err := url.Parse(dsn)
 			if err != nil {
@@ -2845,7 +2849,7 @@ func TestBuildConnectionStringUserinfoRoundTrip(t *testing.T) {
 			DatabaseName: "mydb",
 			Username:     "user",
 		}
-		dsn := ds.BuildConnectionString(conn, "pass word", "")
+		dsn := mustBuildConnString(t, ds, conn, "pass word", "")
 		if !strings.Contains(dsn, "pass%20word") {
 			t.Errorf("expected space-containing password to encode as %%20, got %q", dsn)
 		}
@@ -2870,7 +2874,7 @@ func TestBuildConnectionStringPgconnParse(t *testing.T) {
 		Username:     "user",
 	}
 
-	dsn := ds.BuildConnectionString(conn, specialPassword, "")
+	dsn := mustBuildConnString(t, ds, conn, specialPassword, "")
 
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {

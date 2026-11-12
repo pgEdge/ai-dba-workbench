@@ -283,6 +283,164 @@ func TestSanitizeConnStr(t *testing.T) {
 			input:    "postgres://user:p@ssw0rd!123@localhost:5432/mydb",
 			expected: "postgres://user:***@localhost:5432/mydb",
 		},
+		{
+			name:     "password in URI query",
+			input:    "postgres://user@localhost/mydb?sslmode=require&password=s3cret&connect_timeout=5",
+			expected: "postgres://user@localhost/mydb?sslmode=require&password=***&connect_timeout=5",
+		},
+		{
+			name:     "sslpassword in URI query",
+			input:    "postgres://user:pw@localhost/mydb?sslpassword=keypass",
+			expected: "postgres://user:***@localhost/mydb?sslpassword=***",
+		},
+		{
+			// pgx percent-decodes query keys, so pass%77ord is password.
+			name:     "percent-encoded password key in URI query",
+			input:    "postgres://db.example.com/app?pass%77ord=s3cret",
+			expected: "postgres://db.example.com/app?pass%77ord=***",
+		},
+		{
+			name:     "fully percent-encoded password key in URI query",
+			input:    "postgres://db.example.com/app?sslmode=require&%70%61%73%73%77%6F%72%64=s3cret&x=1",
+			expected: "postgres://db.example.com/app?sslmode=require&%70%61%73%73%77%6F%72%64=***&x=1",
+		},
+		{
+			name:     "percent-encoded sslpassword key in URI query",
+			input:    "postgres://db.example.com/app?ssl%70assword=keypass&sslmode=verify-full",
+			expected: "postgres://db.example.com/app?ssl%70assword=***&sslmode=verify-full",
+		},
+		{
+			name:     "white space and mixed case around an encoded key",
+			input:    "postgres://db.example.com/app? %53SLPASSWORD =keypass",
+			expected: "postgres://db.example.com/app? %53SLPASSWORD =***",
+		},
+		{
+			name:     "malformed percent sequence in a key is left alone",
+			input:    "postgres://db.example.com/app?pass%7word=x&password%zz=y",
+			expected: "postgres://db.example.com/app?pass%7word=x&password%zz=y",
+		},
+		{
+			name:     "decoded key that is not a password",
+			input:    "postgres://db.example.com/app?pass%77=x&?=y&a",
+			expected: "postgres://db.example.com/app?pass%77=x&?=y&a",
+		},
+		{
+			name:     "keyword/value form",
+			input:    "host=localhost user=app password=s3cret dbname=mydb",
+			expected: "host=localhost user=app password=*** dbname=mydb",
+		},
+		{
+			name:     "keyword/value form, quoted value with spaces",
+			input:    "password = 'a b\\'c' host=localhost",
+			expected: "password = *** host=localhost",
+		},
+		{
+			name:     "keyword/value form, leading and mixed case",
+			input:    "PASSWORD=s3cret host=localhost",
+			expected: "PASSWORD=*** host=localhost",
+		},
+		{
+			name:     "keyword/value form without a password",
+			input:    "host=localhost user=app dbname=mydb",
+			expected: "host=localhost user=app dbname=mydb",
+		},
+		{
+			name:     "keyword/value form, ampersand in an unquoted value",
+			input:    "host=localhost password=ab&cd dbname=mydb",
+			expected: "host=localhost password=*** dbname=mydb",
+		},
+		{
+			name:     "keyword/value form, escaped space in an unquoted value",
+			input:    `password=correct\ horse\ battery host=localhost`,
+			expected: "password=*** host=localhost",
+		},
+		{
+			name:     "keyword/value form, escaped backslash ends before a space",
+			input:    `password=ab\\ host=localhost`,
+			expected: "password=*** host=localhost",
+		},
+		{
+			name:     "keyword/value form, quoted value with escapes",
+			input:    `password='it\'s a \\ test&x' host=localhost`,
+			expected: "password=*** host=localhost",
+		},
+		{
+			name:     "keyword/value form, quoted value ending in an escaped backslash",
+			input:    `password='ab\\' host=localhost`,
+			expected: "password=*** host=localhost",
+		},
+		{
+			name:     "keyword/value form, unterminated quoted value",
+			input:    `host=localhost password='ab cd\' dbname=mydb`,
+			expected: "host=localhost password=***",
+		},
+		{
+			name:     "keyword/value form, trailing backslash in an unquoted value",
+			input:    `host=localhost password=ab\`,
+			expected: "host=localhost password=***",
+		},
+		{
+			name:     "keyword/value form, trailing backslash in a quoted value",
+			input:    `host=localhost password='ab\`,
+			expected: "host=localhost password=***",
+		},
+		{
+			name:     "keyword/value form, sslpassword and white space around '='",
+			input:    "host=localhost\tsslpassword =\n'key pass' sslmode=require",
+			expected: "host=localhost\tsslpassword =\n*** sslmode=require",
+		},
+		{
+			// libpq skips the white space after '=', so the word that
+			// follows is the password.
+			name:     "keyword/value form, white space after '=' then a word",
+			input:    "host=localhost password= dbname=mydb",
+			expected: "host=localhost password= ***",
+		},
+		{
+			name:     "keyword/value form, password at the end without a value",
+			input:    "host=localhost password=",
+			expected: "host=localhost password=***",
+		},
+		{
+			name:     "keyword/value form, word without '=' is skipped",
+			input:    "host=localhost stray password=s3cret",
+			expected: "host=localhost stray password=***",
+		},
+		{
+			name:     "keyword/value form, trailing word without '='",
+			input:    "password=s3cret stray",
+			expected: "password=*** stray",
+		},
+		{
+			name:     "keyword/value form, other keyword values keep their quoting",
+			input:    `application_name='my app' password=x options=-c\ a=b`,
+			expected: `application_name='my app' password=*** options=-c\ a=b`,
+		},
+		{
+			name:     "keyword/value form, keyword that only ends in password",
+			input:    "notpassword=visible password=hidden",
+			expected: "notpassword=visible password=***",
+		},
+		{
+			name:     "keyword/value form, URI-like text inside a value",
+			input:    "host=localhost password=a://b@c",
+			expected: "host=localhost password=***",
+		},
+		{
+			name:     "URI with leading white space",
+			input:    "  postgres://user:pw@localhost/mydb",
+			expected: "  postgres://user:***@localhost/mydb",
+		},
+		{
+			name:     "URI query password with a space before '&'",
+			input:    "postgres://localhost/mydb?password=ab cd&sslmode=require",
+			expected: "postgres://localhost/mydb?password=***&sslmode=require",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
 	}
 
 	for _, tt := range tests {

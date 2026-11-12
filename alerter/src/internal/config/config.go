@@ -376,6 +376,15 @@ type NotificationsConfig struct {
 	// HTTPMaxIdleConns is the maximum number of idle HTTP connections
 	// Default: 10
 	HTTPMaxIdleConns int `yaml:"http_max_idle_conns"`
+
+	// AllowInternalNetworks permits notification deliveries (webhook,
+	// Slack, Mattermost, Telegram and SMTP) to private, loopback and
+	// other internal addresses, such as a mail relay or a self-hosted
+	// Mattermost on the local network. Unspecified, link-local and
+	// cloud metadata addresses stay refused either way. The check is
+	// made on every address the alerter actually connects to.
+	// Default: false (internal addresses are refused)
+	AllowInternalNetworks bool `yaml:"allow_internal_networks"`
 }
 
 // ResolveServerSecret loads the server secret used to decrypt

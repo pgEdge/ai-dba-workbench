@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // fakeRows implements pgx.Rows for unit-testing scanAll. Only the methods
@@ -93,6 +94,9 @@ func (f *fakeRows) RawValues() [][]byte {
 }
 func (f *fakeRows) Conn() *pgx.Conn {
 	panic("Conn not implemented by fakeRows")
+}
+func (f *fakeRows) TypeMap() *pgtype.Map {
+	panic("TypeMap not implemented by fakeRows")
 }
 
 type scanRow struct {

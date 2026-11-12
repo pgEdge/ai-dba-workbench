@@ -15,6 +15,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -204,19 +205,43 @@ const managerReminderCountSQL = `SELECT reminder_count FROM notification_reminde
 
 const managerDisableChannelsSQL = `UPDATE notification_channels SET enabled = FALSE`
 
-// recordingNotifier records every payload it is asked to send and fails
-// while err is set.
+// recordingNotifier records every payload it is asked to send, and how
+// long each send's context had left, and fails while err is set.
 type recordingNotifier struct {
 	mu       sync.Mutex
 	err      error
 	payloads []*database.NotificationPayload
+	// timeLeft is the time each send's context had before its
+	// deadline, or a negative duration when it had no deadline.
+	timeLeft []time.Duration
 }
 
-func (r *recordingNotifier) Send(_ context.Context, _ *database.NotificationChannel, p *database.NotificationPayload) error {
+func (r *recordingNotifier) Send(ctx context.Context, _ *database.NotificationChannel, p *database.NotificationPayload) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.payloads = append(r.payloads, p)
+	left := time.Duration(-1)
+	if deadline, ok := ctx.Deadline(); ok {
+		left = time.Until(deadline)
+	}
+	r.timeLeft = append(r.timeLeft, left)
 	return r.err
+}
+
+// checkSendDeadlines fails t unless every send so far had a deadline no
+// more than SendTimeout away, although the caller passed none.
+func (r *recordingNotifier) checkSendDeadlines(t *testing.T) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.timeLeft) == 0 {
+		t.Fatal("nothing was sent")
+	}
+	for i, left := range r.timeLeft {
+		if left <= 0 || left > SendTimeout {
+			t.Errorf("send %d had %v left, want a deadline within %v", i, left, SendTimeout)
+		}
+	}
 }
 
 func (r *recordingNotifier) Type() database.NotificationChannelType {
@@ -356,6 +381,14 @@ func TestManager_SystemAlertNotificationLifecycle(t *testing.T) {
 	if err := pool.QueryRow(ctx, managerReminderCountSQL, alertID).Scan(&count); err != nil || count != 1 {
 		t.Errorf("reminder count = %d, %v", count, err)
 	}
+
+	// The first send, the retry and the reminder were all made with a
+	// context that had no deadline, as the workers' is; each send was
+	// still bounded.
+	if n := len(notifier.timeLeft); n != 3 {
+		t.Errorf("recorded %d sends, want 3", n)
+	}
+	notifier.checkSendDeadlines(t)
 }
 
 // TestManager_ConnectionAlertNotification checks that an alert on a

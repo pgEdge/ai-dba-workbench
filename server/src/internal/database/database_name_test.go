@@ -12,10 +12,13 @@ package database
 import (
 	"database/sql"
 	"maps"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/pgedge/ai-workbench/pkg/connstring"
 )
 
 // TestValidateDatabaseName covers the narrow checks applied to a
@@ -83,7 +86,7 @@ func TestBuildConnectionStringDatabaseNameRoundTrip(t *testing.T) {
 	// here. verify-full gives the baseline no plaintext fallback, so a
 	// smuggled sslmode shows up in the TLS settings and the fallbacks.
 	baseline, err := pgconn.ParseConfig(
-		ds.BuildConnectionString(conn, password, "mydb"))
+		mustBuildConnString(t, ds, conn, password, "mydb"))
 	if err != nil {
 		t.Fatalf("pgconn.ParseConfig(baseline) failed: %v", err)
 	}
@@ -114,7 +117,7 @@ func TestBuildConnectionStringDatabaseNameRoundTrip(t *testing.T) {
 
 	for _, database := range names {
 		t.Run(database, func(t *testing.T) {
-			dsn := ds.BuildConnectionString(conn, password, database)
+			dsn := mustBuildConnString(t, ds, conn, password, database)
 
 			cfg, err := pgconn.ParseConfig(dsn)
 			if err != nil {
@@ -173,7 +176,7 @@ func TestBuildConnectionStringBracketedIPv6Host(t *testing.T) {
 				Username:     "user",
 			}
 
-			dsn := ds.BuildConnectionString(conn, "", "")
+			dsn := mustBuildConnString(t, ds, conn, "", "")
 
 			cfg, err := pgconn.ParseConfig(dsn)
 			if err != nil {
@@ -184,4 +187,59 @@ func TestBuildConnectionStringBracketedIPv6Host(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestEncodeConnQueryRoundTrip confirms that query parameters the
+// server adds reach pgx unchanged. pgx parses URIs as libpq does since
+// v5.12 and reads '+' as a literal plus, so the form encoding that
+// url.Values.Encode applies (a space as '+') would corrupt any value
+// containing a space.
+func TestEncodeConnQueryRoundTrip(t *testing.T) {
+	const appName = "pgEdge AI DBA Workbench"
+
+	t.Run("application_name", func(t *testing.T) {
+		dsn, err := addApplicationName("postgres://user@localhost:5432/mydb?sslmode=disable", appName)
+		if err != nil {
+			t.Fatalf("addApplicationName returned error: %v", err)
+		}
+		cfg, err := pgconn.ParseConfig(dsn)
+		if err != nil {
+			t.Fatalf("pgconn.ParseConfig(%q) failed: %v", dsn, err)
+		}
+		if got := cfg.RuntimeParams["application_name"]; got != appName {
+			t.Errorf("application_name = %q, want %q (dsn %q)", got, appName, dsn)
+		}
+	})
+
+	t.Run("literal plus survives", func(t *testing.T) {
+		got := connstring.EncodeURIQuery(url.Values{"application_name": {"a+b c"}})
+		if want := "application_name=a%2Bb%20c"; got != want {
+			t.Errorf("EncodeURIQuery = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("ssl file paths", func(t *testing.T) {
+		const rootCert = "/etc/ssl/my certs/root+ca.crt"
+		conn := &MonitoredConnection{
+			Host:         "localhost",
+			Port:         5432,
+			DatabaseName: "mydb",
+			Username:     "user",
+			SSLMode:      sql.NullString{String: "verify-full", Valid: true},
+			SSLRootCert:  sql.NullString{String: rootCert, Valid: true},
+		}
+		ds := &Datastore{}
+		ds.SetSSLCertDir("/etc/ssl")
+		dsn := mustBuildConnString(t, ds, conn, "", "")
+		if want := "sslrootcert=%2Fetc%2Fssl%2Fmy%20certs%2Froot%2Bca.crt"; !strings.Contains(dsn, want) {
+			t.Errorf("DSN %q does not carry %q", dsn, want)
+		}
+		// pgx reads the CA file whilst parsing, and the file does not
+		// exist, so the parse fails; the error names the path pgx
+		// decoded, which must be the original one.
+		_, err := pgconn.ParseConfig(dsn)
+		if err == nil || !strings.Contains(err.Error(), "open "+rootCert+":") {
+			t.Errorf("pgconn.ParseConfig(%q) error = %v, want it to open %q", dsn, err, rootCert)
+		}
+	})
 }

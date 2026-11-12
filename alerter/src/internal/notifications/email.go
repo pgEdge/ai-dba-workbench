@@ -12,13 +12,16 @@ package notifications
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/smtp"
+	"strconv"
 	"strings"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // sanitizeHeader strips carriage-return and newline characters from a
@@ -31,13 +34,30 @@ func sanitizeHeader(s string) string {
 type emailNotifier struct {
 	serverSecret string
 	renderer     TemplateRenderer
+	// dial opens the connection to the SMTP server. It is a guarded
+	// dialer (see dial_guard.go), so the delivery policy is applied to
+	// the address actually connected to.
+	dial hostvalidation.DialContextFunc
+	// rootCAs verifies the SMTP server's certificate; nil is the system
+	// pool. Only tests set it.
+	rootCAs *x509.CertPool
 }
 
-// NewEmailNotifier creates a new email notifier
+// NewEmailNotifier creates a new email notifier that refuses SMTP
+// servers at internal addresses, the default delivery policy.
 func NewEmailNotifier(serverSecret string, renderer TemplateRenderer) Notifier {
+	return newEmailNotifierWithDialer(serverSecret, renderer,
+		deliveryDialer(deliveryPolicy(false), nil))
+}
+
+// newEmailNotifierWithDialer creates an email notifier that connects to
+// the SMTP server through dial, which the manager builds from the
+// configured delivery policy.
+func newEmailNotifierWithDialer(serverSecret string, renderer TemplateRenderer, dial hostvalidation.DialContextFunc) Notifier {
 	return &emailNotifier{
 		serverSecret: serverSecret,
 		renderer:     renderer,
+		dial:         dial,
 	}
 }
 
@@ -48,7 +68,7 @@ func (n *emailNotifier) Type() database.NotificationChannelType {
 
 // Validate implements Notifier.Validate
 func (n *emailNotifier) Validate(channel *database.NotificationChannel) error {
-	if channel.SMTPHost == nil || *channel.SMTPHost == "" {
+	if channel.SMTPHost == nil || bareSMTPHost(*channel.SMTPHost) == "" {
 		return fmt.Errorf("email channel requires SMTP host")
 	}
 	if channel.FromAddress == nil || *channel.FromAddress == "" {
@@ -114,12 +134,15 @@ func (n *emailNotifier) Send(ctx context.Context, channel *database.Notification
 	}
 
 	// Build SMTP connection parameters
-	smtpHost := *channel.SMTPHost
+	smtpHost := bareSMTPHost(*channel.SMTPHost)
 	smtpPort := channel.SMTPPort
 	if smtpPort == 0 {
 		smtpPort = 587
 	}
-	addr := fmt.Sprintf("%s:%d", smtpHost, smtpPort)
+	// JoinHostPort brackets an IPv6 literal, which the dialer needs to
+	// split the address again. smtpHost is bare, so a host saved as
+	// "[2001:db8::25]" is not bracketed twice.
+	addr := net.JoinHostPort(smtpHost, strconv.Itoa(smtpPort))
 
 	// Decrypt password if present. If decryption fails, the value is
 	// assumed to be stored in plaintext and is used as-is.
@@ -189,6 +212,31 @@ func (n *emailNotifier) sendEmail(
 	return n.sendWithStartTLS(ctx, addr, auth, from, to, msgBytes, smtpHost)
 }
 
+// dialSMTP connects to addr through the guarded dialer and ties the
+// connection to ctx: its read and write deadline is ctx's deadline, and
+// it is closed as soon as ctx is done, so a server that stops answering
+// part-way through the exchange fails the send instead of blocking the
+// worker. net/smtp has no context support of its own. The caller must
+// call the returned release function when it has finished with the
+// connection. The server's test send (dialSMTP in
+// server/src/internal/api/email_test_sender.go) does the same.
+func (n *emailNotifier) dialSMTP(ctx context.Context, addr string) (net.Conn, func(), error) {
+	conn, err := n.dial(ctx, "tcp", addr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to connect to SMTP server: %w", err)
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			_ = conn.Close() //nolint:errcheck // already failing
+			return nil, nil, fmt.Errorf("failed to connect to SMTP server: %w", err)
+		}
+	}
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.Close() //nolint:errcheck // unblocks a stalled read or write
+	})
+	return conn, func() { stop() }, nil
+}
+
 // sendWithTLS sends email using implicit TLS (port 465)
 func (n *emailNotifier) sendWithTLS(
 	ctx context.Context,
@@ -203,20 +251,20 @@ func (n *emailNotifier) sendWithTLS(
 	tlsConfig := &tls.Config{
 		ServerName: smtpHost,
 		MinVersion: tls.VersionTLS12,
+		RootCAs:    n.rootCAs,
 	}
 
-	// Connect with context-aware dialer, then wrap with TLS
-	dialer := net.Dialer{}
-	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
+	// Connect through the guarded dialer, then wrap with TLS
+	rawConn, release, err := n.dialSMTP(ctx, addr)
 	if err != nil {
-		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+		return err
 	}
+	defer release()
 	conn := tls.Client(rawConn, tlsConfig)
+	defer conn.Close()
 	if err := conn.HandshakeContext(ctx); err != nil {
-		rawConn.Close()
 		return fmt.Errorf("TLS handshake failed: %w", err)
 	}
-	defer conn.Close()
 
 	// Create SMTP client
 	client, err := smtp.NewClient(conn, smtpHost)
@@ -246,12 +294,12 @@ func (n *emailNotifier) sendWithStartTLS(
 	msg []byte,
 	smtpHost string,
 ) error {
-	// Connect to SMTP server with context-aware dialer
-	dialer := net.Dialer{}
-	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
+	// Connect to the SMTP server through the guarded dialer
+	rawConn, release, err := n.dialSMTP(ctx, addr)
 	if err != nil {
-		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+		return err
 	}
+	defer release()
 	client, err := smtp.NewClient(rawConn, smtpHost)
 	if err != nil {
 		rawConn.Close()
@@ -269,6 +317,7 @@ func (n *emailNotifier) sendWithStartTLS(
 		tlsConfig := &tls.Config{
 			ServerName: smtpHost,
 			MinVersion: tls.VersionTLS12,
+			RootCAs:    n.rootCAs,
 		}
 		if err := client.StartTLS(tlsConfig); err != nil {
 			return fmt.Errorf("STARTTLS failed: %w", err)
@@ -322,6 +371,19 @@ func (n *emailNotifier) sendViaSMTPClient(client *smtp.Client, from string, to [
 	}
 
 	return nil
+}
+
+// bareSMTPHost removes one enclosing pair of square brackets from an
+// SMTP host. Version 1.0.0 required an IPv6 literal to be saved in
+// brackets, as in "[2001:db8::25]", and the server still accepts that
+// form, whilst net.JoinHostPort, the TLS ServerName and the SMTP PLAIN
+// auth host all expect the bare address. Any other host is returned
+// unchanged.
+func bareSMTPHost(host string) string {
+	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
+		return host[1 : len(host)-1]
+	}
+	return host
 }
 
 // deref safely dereferences a string pointer, returning empty string if nil

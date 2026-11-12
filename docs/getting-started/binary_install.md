@@ -9,7 +9,7 @@ available from the
 Before you deploy the Workbench, confirm the following prerequisites are in
 place on a supported operating system and platform:
 
-- [PostgreSQL 14](https://www.postgresql.org/download/) or later is installed
+- [PostgreSQL 15](https://www.postgresql.org/download/) or later is installed
   for the Workbench datastore.
 - The database credentials for the datastore database are available.
 - Network access exists between each monitored PostgreSQL server and the
@@ -304,8 +304,9 @@ server configuration file:
 ```yaml
 connection_security:
   # Allow connections to RFC 1918 private addresses (10.x.x.x,
-  # 172.16.x.x, 192.168.x.x), localhost, link-local, and other
-  # internal network ranges.
+  # 172.16.x.x, 192.168.x.x), localhost, and other internal network
+  # ranges. Unspecified, link-local and cloud metadata addresses
+  # stay refused.
   # Default: false
   allow_internal_networks: true
 ```

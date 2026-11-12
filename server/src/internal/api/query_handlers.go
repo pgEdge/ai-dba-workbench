@@ -185,10 +185,17 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 
 	// Build connection string, using optional database override
 	databaseName := req.DatabaseName
-	connStr := h.datastore.BuildConnectionString(conn, password, databaseName)
+	connStr, err := h.datastore.BuildConnectionString(conn, password, databaseName)
+	if err != nil {
+		log.Printf("[ERROR] Refused connection for query (connection=%d): %v", connectionID, err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to connect to database")
+		return
+	}
 
 	// Create a temporary pool for this query
-	pool, err := openQueryPool(ctx, connStr, "pgEdge AI DBA Workbench - Query")
+	pool, err := openQueryPool(ctx, connStr, "pgEdge AI DBA Workbench - Query",
+		h.datastore.GuardMonitoredConnConfig)
 	if err != nil {
 		log.Printf("[ERROR] Failed to connect for query (connection=%d): %v", connectionID, err)
 		RespondError(w, http.StatusInternalServerError,
@@ -1430,9 +1437,16 @@ func (h *ConnectionHandler) validateQuery(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	connStr := h.datastore.BuildConnectionString(conn, password, req.DatabaseName)
+	connStr, err := h.datastore.BuildConnectionString(conn, password, req.DatabaseName)
+	if err != nil {
+		log.Printf("[ERROR] Refused connection for validation (connection=%d): %v",
+			connectionID, err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to connect to database")
+		return
+	}
 	pool, err := openQueryPool(ctx, connStr,
-		"pgEdge AI DBA Workbench - Validate")
+		"pgEdge AI DBA Workbench - Validate", h.datastore.GuardMonitoredConnConfig)
 	if err != nil {
 		log.Printf("[ERROR] Failed to connect for validation (connection=%d): %v",
 			connectionID, err)
@@ -1468,12 +1482,23 @@ func (h *ConnectionHandler) validateQuery(w http.ResponseWriter, r *http.Request
 
 // openQueryPool creates a single-connection pool for one request
 // against a monitored database, tagged with the given application
-// name so the monitored server can attribute the session.
-func openQueryPool(ctx context.Context, connStr, appName string) (*pgxpool.Pool, error) {
+// name so the monitored server can attribute the session. guard
+// restricts the addresses the pool may dial; a nil guard applies the
+// always-blocked floor, so no caller can open a monitored pool
+// unguarded.
+func openQueryPool(ctx context.Context, connStr, appName string, guard database.DialGuard) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
-		return nil, fmt.Errorf("parse connection string: %w", err)
+		// pgx's parse error quotes the connection string (with the
+		// password masked only on a best-effort basis) and can name SSL
+		// file paths, and the callers log what this returns, so report
+		// the fixed sentinel instead.
+		return nil, fmt.Errorf("parse connection string: %w", database.ErrInvalidConnectionString)
 	}
+	if guard == nil {
+		guard = (*database.Datastore)(nil).GuardMonitoredConnConfig
+	}
+	guard(&poolConfig.ConnConfig.Config)
 
 	poolConfig.MaxConns = 1
 	poolConfig.MinConns = 0

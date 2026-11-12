@@ -26,7 +26,7 @@ import (
 )
 
 // Version information
-const Version = "1.0.0"
+const Version = "2.0.0-beta1"
 
 // resolveConfigPathResult describes the outcome of a config-path
 // lookup. Exposed so main() and its unit tests share the same shape.

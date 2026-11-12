@@ -1377,6 +1377,13 @@ project adheres to
 
 ### Fixed
 
+- Deliver a new alert to every notification channel when one channel
+  is slow (#836). The alerter sent to the channels in turn within one
+  30-second limit, and a channel that used up the limit left the
+  channels after it without a delivery record, so they never received
+  the alert. Every channel's record is now created before any send,
+  and a channel that the limit cuts off is delivered by the retry
+  worker.
 - Label chart y-axis ticks distinctly when the value range is small,
   and show tooltip values at a useful precision (#803). Every
   fractional value was rounded to one decimal place, so ticks at a

@@ -26,7 +26,9 @@ func TestHostValidator_ValidateHost_Syntax(t *testing.T) {
 	v := NewHostValidator(true, []string{"db.example.com"}, nil)
 	hostile := []string{
 		"db.example.com,169.254.169.254",
-		"[::1]",
+		"[[::1]]",
+		"[db.example.com]",
+		"[127.0.0.1]",
 		"db.example.com/x",
 		"db.example.com?sslmode=disable",
 		"user@db.example.com",

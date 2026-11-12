@@ -11,6 +11,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log"
 	"net/http"
@@ -129,6 +130,16 @@ func (h *ConnectionHandler) validateSSLFilePaths(w http.ResponseWriter, sslCert,
 	log.Printf("[ERROR] Invalid SSL file path: %v", err)
 	RespondError(w, http.StatusBadRequest, err.Error())
 	return false
+}
+
+// changedSSLPath returns the SSL path an update request supplies, or nil
+// when the request leaves the field out or repeats the stored value, so
+// that validateSSLFilePaths checks only a path the request changes.
+func changedSSLPath(requested *string, stored sql.NullString) *string {
+	if requested != nil && stored.Valid && *requested == stored.String {
+		return nil
+	}
+	return requested
 }
 
 // ConnectionUpdateRequest is the request body for updating a connection (legacy, name-only)
@@ -575,7 +586,16 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 	if !h.validateConnectionTarget(w, req.Host, req.HostAddr) {
 		return
 	}
-	if !h.validateSSLFilePaths(w, req.SSLCert, req.SSLKey, req.SSLRootCert) {
+	// The server dialog sends every SSL path back on each save, so only
+	// a path that differs from the stored one is checked: a value stored
+	// before the path rules existed must not block an unrelated edit,
+	// whilst any newly entered path is still held to them. The stored
+	// value is checked again when the server connects
+	// (BuildConnectionString), so leaving it in place grants nothing.
+	if !h.validateSSLFilePaths(w,
+		changedSSLPath(req.SSLCert, conn.SSLCert),
+		changedSSLPath(req.SSLKey, conn.SSLKey),
+		changedSSLPath(req.SSLRootCert, conn.SSLRootCert)) {
 		return
 	}
 

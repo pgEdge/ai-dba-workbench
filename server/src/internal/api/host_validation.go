@@ -85,10 +85,24 @@ func (v *HostValidator) ValidateHost(host string) error {
 		return fmt.Errorf("host cannot be empty")
 	}
 
+	// An IPv6 literal may be stored with one enclosing pair of
+	// brackets, as written by a route other than this API; the
+	// collector and BuildConnectionString both strip that pair before
+	// use (hostvalidation.BareHost).
+	// The brackets are accepted only around an IPv6 literal, so they can
+	// never wrap a host name or a list, and the checks below then see
+	// the bare address.
+	if bare := hostvalidation.BareHost(host); bare != host {
+		if net.ParseIP(bare) == nil || !strings.Contains(bare, ":") {
+			return fmt.Errorf("host %q: %w", host, hostvalidation.ErrHostSyntax)
+		}
+		host = bare
+	}
+
 	// Refuse a host carrying connection-string structure (a ',' list
-	// separator, IPv6 brackets, '/', '?', '@', '#', '%' or whitespace)
-	// before anything else: such a host could become several targets,
-	// or carry a port, that none of the checks below examined.
+	// separator, any other bracket, '/', '?', '@', '#', '%' or
+	// whitespace) before anything else: such a host could become several
+	// targets, or carry a port, that none of the checks below examined.
 	if err := hostvalidation.CheckHostSyntax(host); err != nil {
 		return fmt.Errorf("host %q: %w", host, err)
 	}

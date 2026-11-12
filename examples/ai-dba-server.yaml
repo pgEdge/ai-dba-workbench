@@ -213,8 +213,9 @@ http:
 #
 connection_security:
   # Allow connections to RFC 1918 private addresses (10.x.x.x,
-  # 172.16.x.x, 192.168.x.x), localhost, link-local, and other
-  # internal network ranges.
+  # 172.16.x.x, 192.168.x.x), localhost, and other internal network
+  # ranges. Unspecified, link-local and cloud metadata addresses
+  # stay refused.
   # Default: false
   allow_internal_networks: false
 

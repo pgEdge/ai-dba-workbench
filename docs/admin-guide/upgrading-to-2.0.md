@@ -270,11 +270,11 @@ target. The server still accepts such a target when a connection is
 saved under `allow_internal_networks` or an `allowed_hosts` entry.
 
 The internal ranges now include the IPv6 unspecified address `::`, the
-IPv4-compatible range `::/96`, the NAT64 prefixes `64:ff9b::/96` and
-`64:ff9b:1::/48`, the 6to4 range `2002::/16` and the site-local range
-`fec0::/10`. A deployment that reaches IPv4 servers through NAT64 must
-set `allow_internal_networks` to `true` or add the NAT64 prefix to
-`allowed_hosts`. See
+IPv4-compatible range `::/96`, the SIIT range `::ffff:0:0:0/96`, the NAT64
+prefixes `64:ff9b::/96` and `64:ff9b:1::/48`, the 6to4 range `2002::/16`
+and the site-local range `fec0::/10`. A deployment that reaches IPv4
+servers through NAT64 must set `allow_internal_networks` to `true` or add
+the NAT64 prefix to `allowed_hosts`. See
 [Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
 for the full list.
 

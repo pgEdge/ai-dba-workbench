@@ -457,8 +457,9 @@ following fixed set of addresses:
 - the IPv4 link-local multicast range `224.0.0.0/24` and every IPv6
   multicast address of link-local scope, such as `ff02::1`.
 - the cloud metadata addresses `fd00:ec2::254` and `100.100.100.200`.
-- an address in `::/96`, `64:ff9b::/96` or `2002::/16` that embeds one
-  of these IPv4 addresses.
+- an address in `::/96`, `::ffff:0:0:0/96`, `64:ff9b::/96`,
+  `64:ff9b:1::/48` or `2002::/16` that embeds one of these IPv4
+  addresses.
 
 The collector allows loopback and private addresses, because a
 collector routinely monitors servers on the same host or network. The

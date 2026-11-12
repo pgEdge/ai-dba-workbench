@@ -497,6 +497,7 @@ following table lists the ranges that the server treats as internal:
 | `0.0.0.0/8`, `::/128` | Unspecified addresses, which reach the local host |
 | `fc00::/7`, `fec0::/10` | IPv6 unique local and deprecated site-local |
 | `::/96` | IPv4-compatible IPv6, which embeds an IPv4 address |
+| `::ffff:0:0:0/96` | SIIT IPv4-translated (RFC 2765), which embeds an IPv4 address |
 | `64:ff9b::/96`, `64:ff9b:1::/48` | NAT64 prefixes (RFC 6052 and RFC 8215) |
 | `2002::/16` | 6to4, which embeds an IPv4 address |
 | `100.64.0.0/10` | Carrier-grade NAT (RFC 6598) |

@@ -510,13 +510,21 @@ An IPv4-mapped IPv6 address, such as `::ffff:10.0.0.1`, counts as the IPv4
 address that it carries. Neither `allow_internal_networks` nor `allowed_hosts`
 lets the server connect to an unspecified, link-local or cloud metadata
 address, although a connection that names one can still be saved; see the
-connect-time check below. The NAT64 prefixes are internal in their entirety, so
-a deployment on an IPv6-only network that reaches IPv4 servers through NAT64
-must set `allow_internal_networks` to `true` or add the prefix to
-`allowed_hosts`. By default, the alerter refuses to deliver a notification to
-any of these ranges, whatever the server's `connection_security` settings say.
-The alerter's own `notifications.allow_internal_networks` option permits them,
-except the unspecified, link-local and cloud metadata addresses. See
+connect-time check below. That refusal also covers an address in `::/96`,
+`::ffff:0:0:0/96`, `64:ff9b::/96` or `2002::/16` that embeds an unspecified,
+link-local or cloud metadata IPv4 address. The refusal does not decode an
+address in the local-use NAT64 prefix `64:ff9b:1::/48`, which follows
+`allow_internal_networks` and `allowed_hosts` like the other internal ranges.
+
+The NAT64 prefixes are internal in their entirety, so a deployment on an
+IPv6-only network that reaches IPv4 servers through NAT64 must set
+`allow_internal_networks` to `true` or add the prefix to `allowed_hosts`. By
+default, the alerter refuses to deliver a notification to any of these ranges,
+whatever the server's `connection_security` settings say, so an IPv6-only
+alerter host that reaches IPv4-only notification providers through NAT64 fails
+every such delivery. The alerter's own `notifications.allow_internal_networks`
+option permits these ranges, except the unspecified, link-local and cloud
+metadata addresses; the alerter has no `allowed_hosts` option. See
 [Delivery Address Checks](alerter.md#delivery-address-checks).
 
 A test notification follows these rules rather than the alerter's. The

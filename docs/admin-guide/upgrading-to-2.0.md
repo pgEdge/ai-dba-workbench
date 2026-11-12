@@ -247,7 +247,21 @@ left out `host`, so the driver connected to its default host (`PGHOST`
 or the local socket); the 2.0.0 collector connects to `hostaddr` when
 one is set, as the server already did. Before you upgrade, check that
 the `hostaddr` of each connection is empty or the correct IP address of
-the `host`.
+the `host`. Neither the web client nor the API shows a connection's
+`hostaddr`, so query the datastore instead. In the following example,
+the query lists the connections in the datastore that have a
+`hostaddr`:
+
+```sql
+SELECT id, name, host, hostaddr
+FROM connections
+WHERE COALESCE(hostaddr, '') <> '';
+```
+
+Run the query before the upgrade; after the upgrade, add
+`AND deleted_at IS NULL` to leave out deleted connections. The
+components treat an empty `hostaddr` as unset, so the query leaves out
+an empty value as well as a null one.
 
 An `allowed_hosts` entry that names a host does not cover the host's
 `hostaddr`, because the server checks the address on its own. When
@@ -277,6 +291,24 @@ servers through NAT64 must set `allow_internal_networks` to `true` or add
 the NAT64 prefix to `allowed_hosts`. See
 [Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
 for the full list.
+
+The refusal of unspecified, link-local and cloud metadata addresses
+that no setting lifts also covers an address in `::/96`,
+`::ffff:0:0:0/96`, `64:ff9b::/96` or `2002::/16` that embeds one of
+those IPv4 addresses. That refusal does not decode an address in the
+local-use NAT64 prefix `64:ff9b:1::/48`, which the server treats as
+internal under `allow_internal_networks` and `allowed_hosts` like the
+other internal ranges; the collector permits internal addresses, so the
+collector connects to such an address.
+
+The alerter also refuses the NAT64 prefixes by default, and has no
+`allowed_hosts` option. On an IPv6-only alerter host that reaches
+IPv4-only notification providers, such as Slack or an SMTP relay,
+through NAT64, deliveries to those providers fail after the upgrade
+until you set the alerter's `notifications.allow_internal_networks`
+option to `true`. The option permits every internal range, not only the
+NAT64 prefixes; see
+[Notification Delivery Addresses](#notification-delivery-addresses).
 
 ### MCP Tool Changes
 

@@ -1044,8 +1044,13 @@ link-local unicast and multicast addresses (including
 `169.254.0.0/16`, which holds most cloud instance
 metadata services, and `fe80::/10`), and the metadata
 addresses `fd00:ec2::254` and `100.100.100.200`. An
-IPv6 address that embeds one of these IPv4 addresses is
-refused in the same way.
+address in `::/96`, `::ffff:0:0:0/96`, `64:ff9b::/96`
+or `2002::/16` that embeds one of these IPv4 addresses
+is refused in the same way. The alerter does not decode
+an address in the local-use NAT64 prefix
+`64:ff9b:1::/48`, which follows
+`allow_internal_networks` like the other internal
+ranges.
 
 A refused delivery fails with a generic error that
 names neither the host nor the address. The error that

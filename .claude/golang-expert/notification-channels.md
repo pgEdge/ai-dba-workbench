@@ -282,7 +282,15 @@ and everything else upgrades with STARTTLS whenever the server
 advertises it, TLS setting or not. When STARTTLS is not advertised the
 exchange stays in plaintext: a message without credentials is sent
 unencrypted even with TLS on, whilst `smtp.PlainAuth` refuses to send
-configured credentials over the unencrypted connection. `sendTestEmail`
+configured credentials over the unencrypted connection unless the SMTP
+host is exactly `localhost`, `127.0.0.1` or `::1` (`isLocalhost` in
+`net/smtp/auth.go`, a plain string match on the name given to
+`smtp.NewClient`, which is the bare host). To such a host the
+credentials go in the clear; neither sender relies on or guards
+against this, and a loopback host is only reachable when the dial
+policy allows internal networks. The SMTP tests therefore use
+`example.com` resolved to the loopback fake, so a refused or succeeding
+PLAIN shows whether the session was upgraded. `sendTestEmail`
 bounds the whole SMTP exchange with `testSendTimeout`, and `dialSMTP`
 sets that as the connection deadline and closes the connection when the
 context ends. The SMTP host is passed through `hostvalidation.BareHost`

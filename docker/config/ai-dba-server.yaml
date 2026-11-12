@@ -11,7 +11,7 @@ connection_security:
   # Absolute directory that connection SSL certificate, key and root
   # certificate files must be in; unset refuses every SSL file path
   # except ssl_root_cert_path "system". Read at start-up only.
-  # ssl_cert_dir: "/etc/pgedge/certs"
+  # ssl_cert_dir: "/etc/pgedge/ai-dba-workbench/certs"
 
 database:
   host: postgres

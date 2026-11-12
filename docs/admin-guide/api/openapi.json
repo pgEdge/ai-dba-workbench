@@ -7892,6 +7892,16 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid request body, channel incompletely configured or of an unsupported type, or the delivery host or a resolved address is refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -7914,6 +7924,26 @@
           },
           "404": {
             "description": "Channel not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to fetch the notification channel",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The test notification could not be delivered",
             "content": {
               "application/json": {
                 "schema": {

@@ -140,11 +140,14 @@ func LogMetadataDetails(connStr string, schemaCount, tableCount, columnCount int
 		sanitized, schemaCount, tableCount, columnCount)
 }
 
-// passwordParamPattern matches a password or sslpassword parameter in a
-// URI query string or a keyword/value connection string, with its value
-// (quoted or not) in the second group.
-var passwordParamPattern = regexp.MustCompile(
-	`(?i)((?:^|[\s?&])(?:ssl)?password\s*=\s*)('(?:[^'\\]|\\.)*'|[^\s&]*)`)
+// uriPasswordParamPattern matches a password or sslpassword parameter in
+// a URI query string. Only '&' ends a value there, since a literal '&'
+// in a value must be percent-encoded, so everything up to it is masked.
+var uriPasswordParamPattern = regexp.MustCompile(`(?i)([?&]\s*(?:ssl)?password\s*=)[^&]*`)
+
+// connStrSpace lists the characters libpq's conninfo parser treats as
+// white space (isspace in the C locale).
+const connStrSpace = " \t\n\v\f\r"
 
 // SanitizeConnStr sanitizes a PostgreSQL connection string by replacing the
 // password with "***". This should be used when displaying connection strings
@@ -152,7 +155,97 @@ var passwordParamPattern = regexp.MustCompile(
 // any password or sslpassword parameter, in either the URI query or the
 // keyword/value form.
 func SanitizeConnStr(connStr string) string {
-	return passwordParamPattern.ReplaceAllString(maskURIUserinfo(connStr), "${1}***")
+	if isURIConnStr(connStr) {
+		return uriPasswordParamPattern.ReplaceAllString(maskURIUserinfo(connStr), "${1}***")
+	}
+	return maskKeywordValuePasswords(connStr)
+}
+
+// isURIConnStr reports whether connStr is in the URI form: a scheme
+// followed by "://" before any '=' or white space, which a keyword/value
+// string always has first.
+func isURIConnStr(connStr string) bool {
+	s := strings.TrimLeft(connStr, connStrSpace)
+	i := strings.Index(s, "://")
+	return i > 0 && !strings.ContainsAny(s[:i], "="+connStrSpace)
+}
+
+// maskKeywordValuePasswords replaces the value of every password and
+// sslpassword keyword in a keyword/value connection string with "***",
+// copying everything else as it is. It reads the string as libpq's
+// conninfo_parse does: a keyword ends at '=' or white space, white space
+// may surround the '=', and a value is either quoted with ' (where \'
+// and \\ are escapes) or runs to the next white space that a backslash
+// does not escape, so a value such as ab&cd or correct\ horse is masked
+// whole. An unterminated quoted value runs to the end of the string. A
+// word with no '=' after it, which libpq would refuse, is copied and
+// scanning carries on after it.
+func maskKeywordValuePasswords(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		start := i
+		i = skipConnStrSpace(s, i)
+		kwStart := i
+		for i < len(s) && s[i] != '=' && !isConnStrSpace(s[i]) {
+			i++
+		}
+		keyword := s[kwStart:i]
+		i = skipConnStrSpace(s, i)
+		if i >= len(s) || s[i] != '=' {
+			b.WriteString(s[start:i])
+			continue
+		}
+		i = skipConnStrSpace(s, i+1)
+		valStart := i
+		i = scanConnStrValue(s, i)
+		b.WriteString(s[start:valStart])
+		if strings.EqualFold(keyword, "password") || strings.EqualFold(keyword, "sslpassword") {
+			b.WriteString("***")
+		} else {
+			b.WriteString(s[valStart:i])
+		}
+	}
+	return b.String()
+}
+
+// isConnStrSpace reports whether c is white space to libpq's parser.
+func isConnStrSpace(c byte) bool {
+	return strings.IndexByte(connStrSpace, c) >= 0
+}
+
+// skipConnStrSpace returns the index of the first byte at or after i
+// that is not white space.
+func skipConnStrSpace(s string, i int) int {
+	for i < len(s) && isConnStrSpace(s[i]) {
+		i++
+	}
+	return i
+}
+
+// scanConnStrValue returns the index just past the keyword/value
+// connection string value that starts at i, following libpq's quoting
+// and backslash escaping.
+func scanConnStrValue(s string, i int) int {
+	if i < len(s) && s[i] == '\'' {
+		for i++; i < len(s); i++ {
+			switch s[i] {
+			case '\\':
+				i++ // the escaped byte, skipped by the loop's i++
+			case '\'':
+				return i + 1
+			}
+		}
+		return len(s)
+	}
+	for i < len(s) && !isConnStrSpace(s[i]) {
+		if s[i] == '\\' {
+			i++
+		}
+		i++
+	}
+	return min(i, len(s))
 }
 
 // maskURIUserinfo replaces the password in a URI's userinfo with "***",

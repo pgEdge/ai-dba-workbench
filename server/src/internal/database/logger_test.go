@@ -313,6 +313,103 @@ func TestSanitizeConnStr(t *testing.T) {
 			input:    "host=localhost user=app dbname=mydb",
 			expected: "host=localhost user=app dbname=mydb",
 		},
+		{
+			name:     "keyword/value form, ampersand in an unquoted value",
+			input:    "host=localhost password=ab&cd dbname=mydb",
+			expected: "host=localhost password=*** dbname=mydb",
+		},
+		{
+			name:     "keyword/value form, escaped space in an unquoted value",
+			input:    `password=correct\ horse\ battery host=localhost`,
+			expected: "password=*** host=localhost",
+		},
+		{
+			name:     "keyword/value form, escaped backslash ends before a space",
+			input:    `password=ab\\ host=localhost`,
+			expected: "password=*** host=localhost",
+		},
+		{
+			name:     "keyword/value form, quoted value with escapes",
+			input:    `password='it\'s a \\ test&x' host=localhost`,
+			expected: "password=*** host=localhost",
+		},
+		{
+			name:     "keyword/value form, quoted value ending in an escaped backslash",
+			input:    `password='ab\\' host=localhost`,
+			expected: "password=*** host=localhost",
+		},
+		{
+			name:     "keyword/value form, unterminated quoted value",
+			input:    `host=localhost password='ab cd\' dbname=mydb`,
+			expected: "host=localhost password=***",
+		},
+		{
+			name:     "keyword/value form, trailing backslash in an unquoted value",
+			input:    `host=localhost password=ab\`,
+			expected: "host=localhost password=***",
+		},
+		{
+			name:     "keyword/value form, trailing backslash in a quoted value",
+			input:    `host=localhost password='ab\`,
+			expected: "host=localhost password=***",
+		},
+		{
+			name:     "keyword/value form, sslpassword and white space around '='",
+			input:    "host=localhost\tsslpassword =\n'key pass' sslmode=require",
+			expected: "host=localhost\tsslpassword =\n*** sslmode=require",
+		},
+		{
+			// libpq skips the white space after '=', so the word that
+			// follows is the password.
+			name:     "keyword/value form, white space after '=' then a word",
+			input:    "host=localhost password= dbname=mydb",
+			expected: "host=localhost password= ***",
+		},
+		{
+			name:     "keyword/value form, password at the end without a value",
+			input:    "host=localhost password=",
+			expected: "host=localhost password=***",
+		},
+		{
+			name:     "keyword/value form, word without '=' is skipped",
+			input:    "host=localhost stray password=s3cret",
+			expected: "host=localhost stray password=***",
+		},
+		{
+			name:     "keyword/value form, trailing word without '='",
+			input:    "password=s3cret stray",
+			expected: "password=*** stray",
+		},
+		{
+			name:     "keyword/value form, other keyword values keep their quoting",
+			input:    `application_name='my app' password=x options=-c\ a=b`,
+			expected: `application_name='my app' password=*** options=-c\ a=b`,
+		},
+		{
+			name:     "keyword/value form, keyword that only ends in password",
+			input:    "notpassword=visible password=hidden",
+			expected: "notpassword=visible password=***",
+		},
+		{
+			name:     "keyword/value form, URI-like text inside a value",
+			input:    "host=localhost password=a://b@c",
+			expected: "host=localhost password=***",
+		},
+		{
+			name:     "URI with leading white space",
+			input:    "  postgres://user:pw@localhost/mydb",
+			expected: "  postgres://user:***@localhost/mydb",
+		},
+		{
+			name:     "URI query password with a space before '&'",
+			input:    "postgres://localhost/mydb?password=ab cd&sslmode=require",
+			expected: "postgres://localhost/mydb?password=***&sslmode=require",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
 	}
 
 	for _, tt := range tests {

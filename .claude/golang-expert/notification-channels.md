@@ -264,9 +264,17 @@ The server's "send test notification" endpoint (`testChannel` in
 `server/src/internal/api/test_send_guard.go`. It holds one
 `hostvalidation.GuardedDialContext`, used as the `DialContext` of the
 HTTP client the Slack, Mattermost, generic webhook and Telegram senders
-share, and as the SMTP dial on the implicit TLS, STARTTLS and plain
-paths. The `ValidateHost` pre-checks in `testChannel` stay, for their
-specific error messages, but the dial is what holds against rebinding.
+share, and as the SMTP dial (`dialSMTP`) on both SMTP paths. The paths
+match the alerter's `sendEmail`: port 465 with TLS on is implicit TLS,
+and everything else upgrades with STARTTLS whenever the server
+advertises it, TLS setting or not; there is no plain path. `sendTestEmail`
+bounds the whole SMTP exchange with `testSendTimeout`, and `dialSMTP`
+sets that as the connection deadline and closes the connection when the
+context ends. The SMTP host is passed through `hostvalidation.BareHost`
+(the alerter's `bareSMTPHost`) before `ValidateHost`, because a stored
+`[2001:db8::25]` is valid. The `ValidateHost` pre-checks in
+`testChannel` stay, for their specific error messages, but the dial is
+what holds against rebinding.
 
 The policy is `testSendPolicy(h.hostValidator)`: the always-blocked
 floor first, then `HostValidator.CheckDialAddr`, so the server's own

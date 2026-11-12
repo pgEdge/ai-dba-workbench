@@ -17,6 +17,8 @@ import (
 	"net/smtp"
 	"strconv"
 	"strings"
+
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // sanitizeSMTPHeader removes CR/LF characters from an SMTP header or
@@ -47,8 +49,17 @@ type testEmail struct {
 // guarded dialer, so the address policy holds on the address actually
 // connected to. When the guard refuses every address the SMTP host
 // resolves to, the error wraps hostvalidation.ErrNoPermittedAddress.
+//
+// The whole exchange is bounded by testSendTimeout: an SMTP server that
+// accepts the connection and then stalls cannot hold the request open.
 func (s *notificationTestSender) sendTestEmail(ctx context.Context, e testEmail) error {
-	smtpHost := e.Host
+	ctx, cancel := context.WithTimeout(ctx, testSendTimeout)
+	defer cancel()
+
+	// An IPv6 literal may be stored with one bracket pair; the TLS
+	// server name and JoinHostPort both need it bare, as the alerter's
+	// bareSMTPHost does.
+	smtpHost := hostvalidation.BareHost(e.Host)
 	fromAddress := e.FromAddress
 	toAddresses := e.To
 
@@ -71,15 +82,36 @@ func (s *notificationTestSender) sendTestEmail(ctx context.Context, e testEmail)
 	// Build the test email message
 	msg := buildTestEmailMessage(fromHeader, toAddresses)
 
-	// Select the sending strategy based on port and TLS setting
-	useTLS := e.UseTLS
-	if e.Port == 465 && useTLS {
+	// As in the alerter, port 465 with TLS on uses implicit TLS, and
+	// every other combination upgrades with STARTTLS when the server
+	// advertises it, whether or not TLS is turned on.
+	if e.Port == 465 && e.UseTLS {
 		return s.sendWithImplicitTLS(ctx, addr, auth, fromAddress, toAddresses, msg, smtpHost)
 	}
-	if useTLS {
-		return s.sendWithSTARTTLS(ctx, addr, auth, fromAddress, toAddresses, msg, smtpHost)
+	return s.sendWithSTARTTLS(ctx, addr, auth, fromAddress, toAddresses, msg, smtpHost)
+}
+
+// dialSMTP connects to addr through the guarded dialer and ties the
+// connection to ctx: its read and write deadline is ctx's deadline, and
+// it is closed as soon as ctx is done, so a server that stops answering
+// part-way through the exchange fails the send instead of blocking it.
+// The caller must call the returned release function when it has
+// finished with the connection.
+func (s *notificationTestSender) dialSMTP(ctx context.Context, addr string) (net.Conn, func(), error) {
+	conn, err := s.dial(ctx, "tcp", addr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
-	return s.sendPlainSMTP(ctx, addr, auth, fromAddress, toAddresses, msg, smtpHost)
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			_ = conn.Close() //nolint:errcheck // already failing
+			return nil, nil, fmt.Errorf("failed to connect to SMTP server: %w", err)
+		}
+	}
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.Close() //nolint:errcheck // unblocks a stalled read or write
+	})
+	return conn, func() { stop() }, nil
 }
 
 // buildTestEmailMessage constructs the MIME headers and HTML body for the
@@ -121,10 +153,11 @@ func (s *notificationTestSender) sendWithImplicitTLS(
 	}
 
 	// Connect through the guarded dialer, then wrap with TLS
-	rawConn, err := s.dial(ctx, "tcp", addr)
+	rawConn, release, err := s.dialSMTP(ctx, addr)
 	if err != nil {
-		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+		return err
 	}
+	defer release()
 	conn := tls.Client(rawConn, tlsConfig)
 	defer conn.Close()
 	if err := conn.HandshakeContext(ctx); err != nil {
@@ -146,7 +179,8 @@ func (s *notificationTestSender) sendWithImplicitTLS(
 	return sendViaSMTPClient(client, from, to, msg)
 }
 
-// sendWithSTARTTLS sends email using STARTTLS (typically port 587 or 25).
+// sendWithSTARTTLS sends email over a plain connection that is upgraded
+// with STARTTLS when the server advertises it (typically port 587 or 25).
 func (s *notificationTestSender) sendWithSTARTTLS(
 	ctx context.Context,
 	addr string,
@@ -157,10 +191,11 @@ func (s *notificationTestSender) sendWithSTARTTLS(
 	smtpHost string,
 ) error {
 	// Connect to the SMTP server through the guarded dialer
-	conn, err := s.dial(ctx, "tcp", addr)
+	conn, release, err := s.dialSMTP(ctx, addr)
 	if err != nil {
-		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+		return err
 	}
+	defer release()
 
 	client, err := smtp.NewClient(conn, smtpHost)
 	if err != nil {
@@ -182,42 +217,6 @@ func (s *notificationTestSender) sendWithSTARTTLS(
 		if err := client.StartTLS(tlsConfig); err != nil {
 			return fmt.Errorf("STARTTLS failed: %w", err)
 		}
-	}
-
-	if auth != nil {
-		if err := client.Auth(auth); err != nil {
-			return fmt.Errorf("SMTP authentication failed: %w", err)
-		}
-	}
-
-	return sendViaSMTPClient(client, from, to, msg)
-}
-
-// sendPlainSMTP sends email over a plain (unencrypted) SMTP connection.
-func (s *notificationTestSender) sendPlainSMTP(
-	ctx context.Context,
-	addr string,
-	auth smtp.Auth,
-	from string,
-	to []string,
-	msg []byte,
-	smtpHost string,
-) error {
-	// Connect to the SMTP server through the guarded dialer
-	conn, err := s.dial(ctx, "tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to connect to SMTP server: %w", err)
-	}
-
-	client, err := smtp.NewClient(conn, smtpHost)
-	if err != nil {
-		conn.Close()
-		return fmt.Errorf("failed to create SMTP client: %w", err)
-	}
-	defer client.Close()
-
-	if err := client.Hello("localhost"); err != nil {
-		return fmt.Errorf("SMTP HELLO failed: %w", err)
 	}
 
 	if auth != nil {

@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
@@ -994,15 +995,19 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 			return
 		}
 
-		// Validate SMTP host to prevent SSRF attacks
-		if err := h.hostValidator.ValidateHost(*channel.SMTPHost); err != nil {
+		// Validate SMTP host to prevent SSRF attacks. An IPv6 literal
+		// may be saved in one bracket pair, which ValidateHost refuses
+		// as connection-string structure, so the bare form is checked
+		// and sent to, as the alerter delivers to it.
+		smtpHost := hostvalidation.BareHost(*channel.SMTPHost)
+		if err := h.hostValidator.ValidateHost(smtpHost); err != nil {
 			log.Printf("[ERROR] SMTP host validation failed: %v", err)
 			RespondError(w, http.StatusBadRequest, "Invalid SMTP host")
 			return
 		}
 
 		if err := h.testSender.sendTestEmail(r.Context(), testEmail{
-			Host:        *channel.SMTPHost,
+			Host:        smtpHost,
 			Port:        channel.SMTPPort,
 			Username:    derefStr(channel.SMTPUsername),
 			Password:    derefStr(channel.SMTPPassword),

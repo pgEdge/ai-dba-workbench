@@ -24,6 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -455,6 +456,10 @@ func TestSendTestEmail_Delivery(t *testing.T) {
 		{"STARTTLS with authentication", smtpFakeBehaviour{startTLS: serverTLS}, 587, true, true},
 		{"STARTTLS not offered", smtpFakeBehaviour{}, 587, true, false},
 		{"plain", smtpFakeBehaviour{}, 25, false, false},
+		// As in the alerter, an advertised STARTTLS is used with TLS
+		// off too; PLAIN authentication succeeding to a host other than
+		// localhost shows the session was upgraded.
+		{"STARTTLS offered with TLS off", smtpFakeBehaviour{startTLS: serverTLS}, 25, false, true},
 		{"a QUIT with no reply still counts as sent", smtpFakeBehaviour{fail: map[string]string{"QUIT": ""}}, 25, false, false},
 	}
 	for _, tt := range tests {
@@ -495,6 +500,7 @@ func TestSendTestEmail_Failures(t *testing.T) {
 		{"plain greeting", smtpFakeBehaviour{greeting: "554 go away"}, 25, false, false, "failed to create SMTP client"},
 		{"plain hello", smtpFakeBehaviour{fail: map[string]string{"EHLO": "500 no", "HELO": "500 no"}}, 25, false, false, "SMTP HELLO failed"},
 		{"plain authentication", smtpFakeBehaviour{}, 25, false, true, "SMTP authentication failed"},
+		{"STARTTLS refused with TLS off", smtpFakeBehaviour{startTLS: serverTLS, fail: map[string]string{"STARTTLS": "454 no"}}, 25, false, false, "STARTTLS failed"},
 		{"mail from", smtpFakeBehaviour{fail: map[string]string{"MAIL": "550 no"}}, 25, false, false, "SMTP MAIL FROM failed"},
 		{"rcpt to", smtpFakeBehaviour{fail: map[string]string{"RCPT": "550 no"}}, 25, false, false, "SMTP RCPT TO failed"},
 		{"data", smtpFakeBehaviour{fail: map[string]string{"DATA": "554 no"}}, 25, false, false, "SMTP DATA failed"},
@@ -554,6 +560,135 @@ func TestSendTestEmail_IPv6LiteralAddress(t *testing.T) {
 	})
 	if got != "[2001:db8::25]:25" {
 		t.Errorf("dial address %q, want %q", got, "[2001:db8::25]:25")
+	}
+
+	// A host stored in one bracket pair is sent to bare, not nested.
+	got = ""
+	_ = s.sendTestEmail(context.Background(), testEmail{ //nolint:errcheck // only the address matters
+		Host: "[2001:db8::25]", Port: 25,
+		FromAddress: "alerts@example.com", To: []string{"jane.doe@example.com"},
+	})
+	if got != "[2001:db8::25]:25" {
+		t.Errorf("bracketed host: dial address %q, want %q", got, "[2001:db8::25]:25")
+	}
+}
+
+// stallingSMTPSender returns a sender whose every connection reaches a
+// loopback listener that accepts and then never says anything, as an
+// SMTP server that has stopped answering would.
+func stallingSMTPSender(t *testing.T) *notificationTestSender {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	var mu sync.Mutex
+	var held []net.Conn
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range held {
+			c.Close()
+		}
+	})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, c)
+			mu.Unlock()
+		}
+	}()
+	return &notificationTestSender{dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", ln.Addr().String())
+	}}
+}
+
+// TestSendTestEmail_StalledServer checks that an SMTP server which
+// accepts the connection and then goes quiet cannot hold a test send
+// open, on the implicit TLS path (the handshake) and the STARTTLS path
+// (the greeting) alike: the connection's deadline is the context's, and
+// cancelling the context closes the connection even before then.
+func TestSendTestEmail_StalledServer(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		port   int
+		useTLS bool
+	}{
+		{"implicit TLS", 465, true},
+		{"STARTTLS", 587, true},
+		{"TLS off", 25, false},
+	} {
+		send := func(ctx context.Context) error {
+			return stallingSMTPSender(t).sendTestEmail(ctx, testEmail{
+				Host: "example.com", Port: tc.port, UseTLS: tc.useTLS,
+				FromAddress: "alerts@example.com", To: []string{"jane.doe@example.com"},
+			})
+		}
+		t.Run(tc.name+" deadline", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			start := time.Now()
+			if err := send(ctx); err == nil {
+				t.Fatal("expected the stalled send to fail")
+			}
+			if elapsed := time.Since(start); elapsed > 5*time.Second {
+				t.Errorf("send took %v, want it bounded by the deadline", elapsed)
+			}
+		})
+		t.Run(tc.name+" cancel", func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			timer := time.AfterFunc(200*time.Millisecond, cancel)
+			defer timer.Stop()
+			start := time.Now()
+			if err := send(ctx); err == nil {
+				t.Fatal("expected the cancelled send to fail")
+			}
+			if elapsed := time.Since(start); elapsed > 5*time.Second {
+				t.Errorf("send took %v, want it ended by the cancellation", elapsed)
+			}
+		})
+	}
+}
+
+// deadlineRefusingConn is a connection whose SetDeadline fails.
+type deadlineRefusingConn struct {
+	net.Conn
+	closed atomic.Bool
+}
+
+func (c *deadlineRefusingConn) SetDeadline(time.Time) error {
+	return errors.New("deadline not supported")
+}
+
+func (c *deadlineRefusingConn) Close() error {
+	c.closed.Store(true)
+	return c.Conn.Close()
+}
+
+// TestDialSMTP_DeadlineFailure checks that a connection whose deadline
+// cannot be set is closed and reported as a connect failure rather than
+// used without a bound.
+func TestDialSMTP_DeadlineFailure(t *testing.T) {
+	client, server := net.Pipe()
+	defer server.Close()
+	conn := &deadlineRefusingConn{Conn: client}
+	s := &notificationTestSender{dial: func(context.Context, string, string) (net.Conn, error) {
+		return conn, nil
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if _, _, err := s.dialSMTP(ctx, "example.com:25"); err == nil ||
+		!strings.Contains(err.Error(), "failed to connect to SMTP server") {
+		t.Fatalf("dialSMTP = %v, want a connect failure", err)
+	}
+	if !conn.closed.Load() {
+		t.Error("connection left open")
 	}
 }
 
@@ -652,5 +787,46 @@ func TestNewNotificationChannelHandler_TestSenderUsesValidator(t *testing.T) {
 	permissive := NewNotificationChannelHandlerWithSecurity(nil, nil, nil, true, nil, nil)
 	if err := permissive.testSender.sendTestWebhook(context.Background(), server.URL+"/hook", "Slack"); err != nil {
 		t.Fatalf("sendTestWebhook = %v, want nil", err)
+	}
+}
+
+// TestTestChannel_BracketedSMTPHost checks that an email channel whose
+// IPv6 literal host was saved in one bracket pair, as version 1.0.0
+// required, passes the host check in its bare form and is sent to that
+// address, instead of being refused as an invalid host.
+func TestTestChannel_BracketedSMTPHost(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	authStore, cleanupAuth := newAuthStoreForChannelTests(t)
+	defer cleanupAuth()
+	userID := setupUserWithPermission(t, authStore, "channel_admin",
+		auth.PermManageNotificationChannels)
+	grantAllConnections(t, authStore, userID)
+
+	handler := NewNotificationChannelHandlerWithSecurity(ds, authStore, auth.NewRBACChecker(authStore),
+		true, nil, nil)
+	var dialled atomic.Value
+	handler.testSender = &notificationTestSender{dial: func(_ context.Context, _, addr string) (net.Conn, error) {
+		dialled.Store(addr)
+		return nil, errors.New("no connection made")
+	}}
+
+	owner := "channel_admin"
+	email := &database.NotificationChannel{
+		OwnerUsername: &owner, Enabled: true, ChannelType: database.ChannelTypeEmail,
+		Name: "bracketed-email", HTTPMethod: "POST", SMTPPort: 25,
+		SMTPHost: ptr("[2001:db8::25]"), FromAddress: ptr("alerts@example.com"),
+	}
+	if err := ds.CreateNotificationChannel(context.Background(), email); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := ds.CreateEmailRecipient(context.Background(),
+		&database.EmailRecipient{ChannelID: email.ID, EmailAddress: "jane.doe@example.com", Enabled: true}); err != nil {
+		t.Fatalf("CreateEmailRecipient: %v", err)
+	}
+
+	assertTestChannelError(t, handler, userID, email.ID, http.StatusBadGateway, "Failed to send test email")
+	if got, _ := dialled.Load().(string); got != "[2001:db8::25]:25" {
+		t.Errorf("dial address %q, want %q", got, "[2001:db8::25]:25")
 	}
 }

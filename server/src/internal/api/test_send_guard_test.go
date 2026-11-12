@@ -433,8 +433,11 @@ func sendSMTPTest(s *notificationTestSender, port int, useTLS, withAuth bool) er
 	if withAuth {
 		user, pass = "Test User", "not-a-real-password"
 	}
-	return s.sendTestEmail(context.Background(), "example.com", port, user, pass, useTLS,
-		"alerts@example.com", "Test User", []string{"jane.doe@example.com"})
+	return s.sendTestEmail(context.Background(), testEmail{
+		Host: "example.com", Port: port, Username: user, Password: pass, UseTLS: useTLS,
+		FromAddress: "alerts@example.com", FromName: "Test User",
+		To: []string{"jane.doe@example.com"},
+	})
 }
 
 // TestSendTestEmail_Delivery drives each send path end to end against
@@ -545,8 +548,10 @@ func TestSendTestEmail_IPv6LiteralAddress(t *testing.T) {
 		got = addr
 		return nil, errors.New("no connection made")
 	}}
-	_ = s.sendTestEmail(context.Background(), "2001:db8::25", 25, "", "", false, //nolint:errcheck // only the address matters
-		"alerts@example.com", "", []string{"jane.doe@example.com"})
+	_ = s.sendTestEmail(context.Background(), testEmail{ //nolint:errcheck // only the address matters
+		Host: "2001:db8::25", Port: 25,
+		FromAddress: "alerts@example.com", To: []string{"jane.doe@example.com"},
+	})
 	if got != "[2001:db8::25]:25" {
 		t.Errorf("dial address %q, want %q", got, "[2001:db8::25]:25")
 	}

@@ -1001,17 +1001,16 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 			return
 		}
 
-		if err := h.testSender.sendTestEmail(
-			r.Context(),
-			*channel.SMTPHost,
-			channel.SMTPPort,
-			derefStr(channel.SMTPUsername),
-			derefStr(channel.SMTPPassword),
-			channel.SMTPUseTLS,
-			*channel.FromAddress,
-			derefStr(channel.FromName),
-			toAddresses,
-		); err != nil {
+		if err := h.testSender.sendTestEmail(r.Context(), testEmail{
+			Host:        *channel.SMTPHost,
+			Port:        channel.SMTPPort,
+			Username:    derefStr(channel.SMTPUsername),
+			Password:    derefStr(channel.SMTPPassword),
+			UseTLS:      channel.SMTPUseTLS,
+			FromAddress: *channel.FromAddress,
+			FromName:    derefStr(channel.FromName),
+			To:          toAddresses,
+		}); err != nil {
 			if isRefusedTarget(err) {
 				// The SMTP host passed ValidateHost but resolved, when
 				// connected to, only to addresses the policy refuses.

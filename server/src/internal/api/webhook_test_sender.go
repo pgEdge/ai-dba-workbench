@@ -33,6 +33,38 @@ import (
 // hostvalidation.ErrNoPermittedAddress itself.
 func (s *notificationTestSender) sendTestGenericWebhook(ctx context.Context, endpointURL, httpMethod string,
 	headers map[string]string, authType, authCredentials string) error {
+	req, err := newGenericWebhookRequest(ctx, endpointURL, httpMethod)
+	if err != nil {
+		return err
+	}
+
+	// Apply custom headers
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	applyWebhookAuth(req, authType, authCredentials)
+
+	resp, err := s.client.Do(req) //nolint:gosec // G704: URL host validated upstream, every address connected to re-checked by the guarded dialer, and redirects refused
+	if err != nil {
+		if isRefusedTarget(err) {
+			return hostvalidation.ErrNoPermittedAddress
+		}
+		return fmt.Errorf("failed to send request: %s", webhookTransportError(err, endpointURL))
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return webhookStatusError(resp, endpointURL)
+	}
+
+	return nil
+}
+
+// newGenericWebhookRequest builds the test request for a generic
+// webhook: the method defaults to POST, anything but GET, POST, PUT or
+// PATCH is refused, and every method but GET carries a JSON body. Its
+// errors borrow nothing from endpointURL.
+func newGenericWebhookRequest(ctx context.Context, endpointURL, httpMethod string) (*http.Request, error) {
 	if httpMethod == "" {
 		httpMethod = http.MethodPost
 	}
@@ -41,7 +73,7 @@ func (s *notificationTestSender) sendTestGenericWebhook(ctx context.Context, end
 		// time, but a row written before that check existed may still
 		// carry one. http.NewRequest would otherwise fail on it and be
 		// reported as a malformed URL.
-		return fmt.Errorf("invalid HTTP method %q: must be GET, POST, PUT or PATCH",
+		return nil, fmt.Errorf("invalid HTTP method %q: must be GET, POST, PUT or PATCH",
 			sanitizeConfigEcho(httpMethod))
 	}
 
@@ -65,57 +97,50 @@ func (s *notificationTestSender) sendTestGenericWebhook(ctx context.Context, end
 		// to anchor on. Report nothing borrowed from it. The handler
 		// parses the URL before calling either sender, so this is
 		// unreachable from it today; the senders do not rely on that.
-		return fmt.Errorf("failed to create request: the URL is malformed")
+		return nil, fmt.Errorf("failed to create request: the URL is malformed")
 	}
 
 	// Set content type for non-GET requests
 	if httpMethod != http.MethodGet {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	return req, nil
+}
 
-	// Apply custom headers
-	for key, value := range headers {
-		req.Header.Set(key, value)
+// applyWebhookAuth sets the credentials of a generic webhook on req.
+// Basic and api_key credentials take the form "name:value"; one without
+// a colon, an unknown type or an empty credential sets nothing.
+func applyWebhookAuth(req *http.Request, authType, authCredentials string) {
+	if authType == "" || authCredentials == "" {
+		return
 	}
-
-	// Apply authentication
-	if authType != "" && authCredentials != "" {
-		switch authType {
-		case "basic":
-			parts := strings.SplitN(authCredentials, ":", 2)
-			if len(parts) == 2 {
-				req.SetBasicAuth(parts[0], parts[1])
-			}
-		case "bearer":
-			req.Header.Set("Authorization", "Bearer "+authCredentials)
-		case "api_key":
-			parts := strings.SplitN(authCredentials, ":", 2)
-			if len(parts) == 2 {
-				req.Header.Set(parts[0], parts[1])
-			}
+	switch authType {
+	case "basic":
+		parts := strings.SplitN(authCredentials, ":", 2)
+		if len(parts) == 2 {
+			req.SetBasicAuth(parts[0], parts[1])
+		}
+	case "bearer":
+		req.Header.Set("Authorization", "Bearer "+authCredentials)
+	case "api_key":
+		parts := strings.SplitN(authCredentials, ":", 2)
+		if len(parts) == 2 {
+			req.Header.Set(parts[0], parts[1])
 		}
 	}
+}
 
-	resp, err := s.client.Do(req) //nolint:gosec // G704: URL host validated upstream, every address connected to re-checked by the guarded dialer, and redirects refused
-	if err != nil {
-		if isRefusedTarget(err) {
-			return hostvalidation.ErrNoPermittedAddress
-		}
-		return fmt.Errorf("failed to send request: %s", webhookTransportError(err, endpointURL))
+// webhookStatusError reports a webhook's unsuccessful response status
+// with up to 1 MiB of its body, passed through sanitizeWebhookEcho so
+// that nothing of endpointURL is echoed back.
+func webhookStatusError(resp *http.Response, endpointURL string) error {
+	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		return fmt.Errorf("webhook returned status %d (failed to read body: %s)",
+			resp.StatusCode, sanitizeWebhookEcho(readErr.Error(), endpointURL))
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		if readErr != nil {
-			return fmt.Errorf("webhook returned status %d (failed to read body: %s)",
-				resp.StatusCode, sanitizeWebhookEcho(readErr.Error(), endpointURL))
-		}
-		return fmt.Errorf("webhook returned status %d: %s",
-			resp.StatusCode, sanitizeWebhookEcho(string(respBody), endpointURL))
-	}
-
-	return nil
+	return fmt.Errorf("webhook returned status %d: %s",
+		resp.StatusCode, sanitizeWebhookEcho(string(respBody), endpointURL))
 }
 
 // sendTestWebhook sends a test message to a Slack or Mattermost webhook URL.
@@ -159,13 +184,7 @@ func (s *notificationTestSender) sendTestWebhook(ctx context.Context, webhookURL
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		if readErr != nil {
-			return fmt.Errorf("webhook returned status %d (failed to read body: %s)",
-				resp.StatusCode, sanitizeWebhookEcho(readErr.Error(), webhookURL))
-		}
-		return fmt.Errorf("webhook returned status %d: %s",
-			resp.StatusCode, sanitizeWebhookEcho(string(respBody), webhookURL))
+		return webhookStatusError(resp, webhookURL)
 	}
 
 	return nil

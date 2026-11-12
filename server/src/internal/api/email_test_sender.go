@@ -27,43 +27,53 @@ func sanitizeSMTPHeader(s string) string {
 	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
 }
 
+// testEmail describes one test email: the SMTP server to send it
+// through, the credentials to authenticate with, and the envelope.
+// Empty Username or Password means no authentication; empty FromName
+// means a bare From address.
+type testEmail struct {
+	Host        string
+	Port        int
+	Username    string
+	Password    string
+	UseTLS      bool
+	FromAddress string
+	FromName    string
+	To          []string
+}
+
 // sendTestEmail sends a test email via SMTP to verify channel configuration.
 // It mirrors the alerter's SMTP logic, including connecting through the
 // guarded dialer, so the address policy holds on the address actually
 // connected to. When the guard refuses every address the SMTP host
 // resolves to, the error wraps hostvalidation.ErrNoPermittedAddress.
-func (s *notificationTestSender) sendTestEmail(
-	ctx context.Context,
-	smtpHost string,
-	smtpPort int,
-	smtpUsername string,
-	smtpPassword string,
-	useTLS bool,
-	fromAddress string,
-	fromName string,
-	toAddresses []string,
-) error {
+func (s *notificationTestSender) sendTestEmail(ctx context.Context, e testEmail) error {
+	smtpHost := e.Host
+	fromAddress := e.FromAddress
+	toAddresses := e.To
+
 	// JoinHostPort brackets an IPv6 literal, which the guarded dialer
 	// needs to split the address again.
-	addr := net.JoinHostPort(smtpHost, strconv.Itoa(smtpPort))
+	addr := net.JoinHostPort(smtpHost, strconv.Itoa(e.Port))
 
 	// Setup authentication if credentials provided
 	var auth smtp.Auth
-	if smtpUsername != "" && smtpPassword != "" {
-		auth = smtp.PlainAuth("", smtpUsername, smtpPassword, smtpHost)
+	if e.Username != "" && e.Password != "" {
+		auth = smtp.PlainAuth("", e.Username, e.Password, smtpHost)
 	}
 
 	// Build From header with optional display name
 	fromHeader := fromAddress
-	if fromName != "" {
-		fromHeader = fmt.Sprintf("%s <%s>", fromName, fromAddress)
+	if e.FromName != "" {
+		fromHeader = fmt.Sprintf("%s <%s>", e.FromName, fromAddress)
 	}
 
 	// Build the test email message
 	msg := buildTestEmailMessage(fromHeader, toAddresses)
 
 	// Select the sending strategy based on port and TLS setting
-	if smtpPort == 465 && useTLS {
+	useTLS := e.UseTLS
+	if e.Port == 465 && useTLS {
 		return s.sendWithImplicitTLS(ctx, addr, auth, fromAddress, toAddresses, msg, smtpHost)
 	}
 	if useTLS {

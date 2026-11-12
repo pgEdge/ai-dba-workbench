@@ -64,8 +64,10 @@ func (e *SSLFilePathError) Error() string {
 // rest of the path appended, so a symbolic link in the directory cannot
 // point outside it whether or not the file has been created. A symbolic
 // link whose target does not exist is refused, since its unresolved name
-// says nothing about where it points. The result
-// must lie strictly inside the resolved baseDir.
+// says nothing about where it points, and so is a path that cannot be
+// resolved for any other reason (a permission error, a component that
+// is not a directory, a symbolic link loop). The result must lie
+// strictly inside the resolved baseDir.
 //
 // An empty path is always accepted, since it names no file. Any other
 // path is refused with ErrSSLCertDirUnset when baseDir is empty.
@@ -126,10 +128,21 @@ func checkPathSyntax(p string) error {
 // a symbolic link whose target does not exist.
 var errDanglingLink = errors.New("must not be a symbolic link to a file that does not exist")
 
+// errUnresolvable is resolvePath's refusal of a path that cannot be
+// resolved for any reason other than part of it not existing: a
+// permission error, a component that is not a directory, or a symbolic
+// link loop. The OS error is not passed on, since the reason reaches API
+// responses.
+var errUnresolvable = errors.New("must be a path whose symbolic links can be resolved")
+
 // resolvePath returns p with every symbolic link resolved. When p does
 // not exist, it resolves the nearest ancestor that does and appends the
 // remainder unchanged; when nothing resolves, it returns p as given,
 // which callers have already cleaned.
+//
+// Any EvalSymlinks error other than os.ErrNotExist is refused with
+// errUnresolvable: the unresolved path would otherwise pass the
+// containment check without anything having said where it leads.
 //
 // A component that exists (os.Lstat finds it) but does not resolve is a
 // symbolic link whose target is missing. Appending its name unresolved
@@ -147,7 +160,7 @@ func resolvePath(p string) (string, error) {
 			return filepath.Join(resolved, rest), nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return p, nil
+			return "", errUnresolvable
 		}
 		if _, lerr := os.Lstat(dir); lerr == nil {
 			return "", errDanglingLink

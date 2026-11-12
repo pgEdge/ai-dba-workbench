@@ -122,19 +122,73 @@ func TestValidateSSLFilePathLinkedBase(t *testing.T) {
 	}
 }
 
-// TestResolvePathUnresolvable covers a path whose ancestors cannot be
-// resolved at all, which resolvePath returns unchanged.
+// TestResolvePathUnresolvable checks that a path EvalSymlinks fails on
+// for a reason other than a missing component is refused rather than
+// returned unchanged, whilst a relative path that merely does not exist
+// is still returned as given.
 func TestResolvePathUnresolvable(t *testing.T) {
 	dir := sslTestDir(t)
 	file := filepath.Join(dir, "file")
 	writeTestFile(t, file, []byte("x"))
 	// A path through a regular file fails with ENOTDIR, not ENOENT.
 	p := filepath.Join(file, "child", "x.crt")
-	if got, err := resolvePath(p); err != nil || got != p {
-		t.Errorf("resolvePath(%q) = %q, %v, want it unchanged", p, got, err)
+	if got, err := resolvePath(p); !errors.Is(err, errUnresolvable) || got != "" {
+		t.Errorf("resolvePath(%q) = %q, %v, want errUnresolvable", p, got, err)
 	}
 	if got, err := resolvePath("relative/x.crt"); err != nil || got != "relative/x.crt" {
 		t.Errorf("resolvePath(relative) = %q, %v, want it unchanged", got, err)
+	}
+}
+
+// TestValidateSSLFilePathUnresolvable checks that ValidateSSLFilePath
+// fails closed on every EvalSymlinks error other than a missing file: a
+// symbolic link loop, a path through a regular file and, unless running
+// as root, a directory that cannot be searched. A plain missing file
+// beside them is still accepted.
+func TestValidateSSLFilePathUnresolvable(t *testing.T) {
+	dir := sslTestDir(t)
+	if err := os.Symlink(filepath.Join(dir, "loop-b"), filepath.Join(dir, "loop-a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "loop-a"), filepath.Join(dir, "loop-b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("self.crt", filepath.Join(dir, "self.crt")); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(dir, "plain"), []byte("x"))
+
+	paths := []string{
+		filepath.Join(dir, "loop-a"),
+		filepath.Join(dir, "loop-a", "x.crt"),
+		filepath.Join(dir, "self.crt"),
+		filepath.Join(dir, "plain", "x.crt"),
+	}
+	if os.Geteuid() != 0 {
+		locked := filepath.Join(dir, "locked")
+		if err := os.Mkdir(locked, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Join(locked, "ca.crt"), []byte("x"))
+		if err := os.Chmod(locked, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+		paths = append(paths, filepath.Join(locked, "ca.crt"))
+	}
+	for _, p := range paths {
+		err := ValidateSSLFilePath(dir, p)
+		if err == nil || err.Error() != errUnresolvable.Error() {
+			t.Errorf("ValidateSSLFilePath(%q) = %v, want %v", p, err, errUnresolvable)
+		}
+	}
+	if err := ValidateSSLFilePath(dir, filepath.Join(dir, "missing", "new.crt")); err != nil {
+		t.Errorf("missing ordinary file: %v, want nil", err)
+	}
+
+	// A configured directory that loops holds nothing either.
+	if err := ValidateSSLFilePath(filepath.Join(dir, "loop-a"), filepath.Join(dir, "loop-a", "ca.crt")); err == nil {
+		t.Error("looping base directory accepted")
 	}
 }
 

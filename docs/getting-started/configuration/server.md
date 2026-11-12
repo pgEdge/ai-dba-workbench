@@ -512,9 +512,16 @@ lets the server connect to an unspecified, link-local or cloud metadata
 address, although a connection that names one can still be saved; see the
 connect-time check below. That refusal also covers an address in `::/96`,
 `::ffff:0:0:0/96`, `64:ff9b::/96` or `2002::/16` that embeds an unspecified,
-link-local or cloud metadata IPv4 address. The refusal does not decode an
-address in the local-use NAT64 prefix `64:ff9b:1::/48`, which follows
-`allow_internal_networks` and `allowed_hosts` like the other internal ranges.
+link-local or cloud metadata IPv4 address. For an address in the local-use
+NAT64 prefix `64:ff9b:1::/48`, the server reads the IPv4 address at every RFC
+6052 offset that a sub-prefix of the /48 can use (/48, /56, /64 and /96), and
+refuses the address if any reading is in `169.254.0.0/16` or is
+`100.100.100.200`. Zero, private and public readings pass this refusal, so an
+ordinary server such as `64:ff9b:1::c633:6407` still connects wherever
+`allow_internal_networks` or `allowed_hosts` permits it. Reading every offset
+occasionally refuses a legitimate destination: an IPv4 address of the form
+x.169.254.y behind a /48 or /56 translator prefix, or x.y.169.254 behind a /48
+prefix.
 
 The NAT64 prefixes are internal in their entirety, so a deployment on an
 IPv6-only network that reaches IPv4 servers through NAT64 must set

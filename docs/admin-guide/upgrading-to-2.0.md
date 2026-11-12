@@ -295,11 +295,13 @@ for the full list.
 The refusal of unspecified, link-local and cloud metadata addresses
 that no setting lifts also covers an address in `::/96`,
 `::ffff:0:0:0/96`, `64:ff9b::/96` or `2002::/16` that embeds one of
-those IPv4 addresses. That refusal does not decode an address in the
-local-use NAT64 prefix `64:ff9b:1::/48`, which the server treats as
-internal under `allow_internal_networks` and `allowed_hosts` like the
-other internal ranges; the collector permits internal addresses, so the
-collector connects to such an address.
+those IPv4 addresses. For the local-use NAT64 prefix `64:ff9b:1::/48`,
+the refusal reads the IPv4 address at every RFC 6052 offset within the
+prefix, and refuses the address only if a reading is in `169.254.0.0/16`
+or is `100.100.100.200`. The server treats the rest of the /48 as
+internal under `allow_internal_networks` and `allowed_hosts`; the
+collector applies only the refusal, so the collector connects to any
+other address in the prefix.
 
 The alerter also refuses the NAT64 prefixes by default, and has no
 `allowed_hosts` option. On an IPv6-only alerter host that reaches

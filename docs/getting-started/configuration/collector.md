@@ -456,9 +456,13 @@ following fixed set of addresses:
   which include the `169.254.169.254` cloud metadata address.
 - the IPv4 link-local multicast range `224.0.0.0/24` and every IPv6
   multicast address of link-local scope, such as `ff02::1`.
-- the cloud metadata addresses `fd00:ec2::254` and `100.100.100.200`.
+- the cloud metadata addresses `fd00:ec2::254`, `fd00:ec2::23`,
+  `fd20:ce::254` and `100.100.100.200`.
 - an address in `::/96`, `::ffff:0:0:0/96`, `64:ff9b::/96` or
   `2002::/16` that embeds one of these IPv4 addresses.
+- an address in the local-use NAT64 prefix `64:ff9b:1::/48` whose IPv4
+  address, read at any RFC 6052 offset within the prefix, is in
+  `169.254.0.0/16` or is `100.100.100.200`.
 
 The collector allows loopback and private addresses, because a
 collector routinely monitors servers on the same host or network. The

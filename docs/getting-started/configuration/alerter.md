@@ -1043,14 +1043,18 @@ says: the unspecified addresses (`0.0.0.0/8` and `::`),
 link-local unicast and multicast addresses (including
 `169.254.0.0/16`, which holds most cloud instance
 metadata services, and `fe80::/10`), and the metadata
-addresses `fd00:ec2::254` and `100.100.100.200`. An
-address in `::/96`, `::ffff:0:0:0/96`, `64:ff9b::/96`
-or `2002::/16` that embeds one of these IPv4 addresses
-is refused in the same way. The alerter does not decode
-an address in the local-use NAT64 prefix
-`64:ff9b:1::/48`, which follows
-`allow_internal_networks` like the other internal
-ranges.
+addresses `fd00:ec2::254`, `fd00:ec2::23`,
+`fd20:ce::254` and `100.100.100.200`. An address in
+`::/96`, `::ffff:0:0:0/96`, `64:ff9b::/96` or
+`2002::/16` that embeds one of these IPv4 addresses is
+refused in the same way. An address in the local-use
+NAT64 prefix `64:ff9b:1::/48` is refused when the IPv4
+address at any RFC 6052 offset within the prefix is in
+`169.254.0.0/16` or is `100.100.100.200`; any other
+address in the prefix follows `allow_internal_networks`
+like the other internal ranges. See
+[Connection Security](server.md#connection-security-connection_security)
+for the offsets read.
 
 A refused delivery fails with a generic error that
 names neither the host nor the address. The error that

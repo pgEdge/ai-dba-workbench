@@ -699,12 +699,30 @@ func describeParseConfigError(err error) string {
 	return err.Error()
 }
 
+// parseMonitoredConnString parses a monitored connection string into a
+// pool configuration, refusing any key the builder does not emit before
+// pgx acts on it. pgx honors servicefile and service (whose entries
+// supply host, port and sslmode wherever the string omits them) and
+// reads passfile from disk, so a key slipped in by an escaping bug or a
+// future caller must not get that far. pgxpool (v5.12.0) has no
+// ParseConfigWithOptions, so pgconn checks the keys first, which it does
+// before touching the filesystem; every key pgx or pgxpool handle beyond
+// pgconn's is outside the allow-list, so the second parse fails only
+// where the first does.
+func parseMonitoredConnString(connStr string) (*pgxpool.Config, error) {
+	if _, err := pgconn.ParseConfigWithOptions(connStr, pgconn.ParseConfigOptions{
+		ConnStringAllowedKeys: monitoredConnStringKeys,
+	}); err != nil {
+		return nil, err
+	}
+	return pgxpool.ParseConfig(connStr)
+}
+
 // monitoredPoolConfig parses a monitored connection string into the
 // pool configuration createMonitoredPool opens, with the pool limits,
 // the hostaddr handling and the dial guard applied.
 func monitoredPoolConfig(connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Config, error) {
-	// Parse connection string
-	config, err := pgxpool.ParseConfig(connStr)
+	config, err := parseMonitoredConnString(connStr)
 	if err != nil {
 		logger.Errorf("Failed to parse monitored connection string: %s", describeParseConfigError(err))
 		return nil, ErrInvalidMonitoredConnString
@@ -784,6 +802,26 @@ func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databas
 		return "", err
 	}
 	return connstring.Build(params), nil
+}
+
+// monitoredConnStringKeys lists every libpq key that
+// buildMonitoredConnectionParams and addMonitoredSSLParams can emit, and
+// is the allow-list parseMonitoredConnString checks monitored connection
+// strings with. A key added to either builder must be added here too;
+// TestMonitoredConnStringKeysMatchBuilder fails until it is.
+var monitoredConnStringKeys = []string{
+	"host",
+	"hostaddr",
+	"port",
+	"dbname",
+	"user",
+	"password",
+	"sslmode",
+	"sslcert",
+	"sslkey",
+	"sslrootcert",
+	"application_name",
+	"connect_timeout",
 }
 
 // buildMonitoredConnectionParams returns the libpq parameters for a

@@ -20,12 +20,12 @@ package scheduler
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/collector/src/database"
@@ -431,6 +431,29 @@ func TestConfigReloadLoop_ReloadFailureKeepsLooping(t *testing.T) {
 	ps.wg.Wait()
 }
 
+// scratchDBName is the database scratchDatastore creates. The
+// statements below spell it literally, so that no SQL is assembled at
+// run time. Database names are shared by every session on the server,
+// so scratchDatastore holds scratchDBLockSQL's advisory lock while the
+// database exists, and a suite running concurrently against the same
+// server waits for it rather than dropping it.
+const scratchDBName = "ai_workbench_sched_branch_scratch"
+
+// scratchDBLockSQL takes the session advisory lock that serialises use
+// of scratchDBName; closing the session releases it.
+const scratchDBLockSQL = `SELECT pg_advisory_lock(hashtext('ai_workbench_sched_branch_scratch'))`
+
+// scratchDBDropSQL removes the scratch database, including a copy a
+// crashed earlier run left behind.
+const scratchDBDropSQL = `DROP DATABASE IF EXISTS ai_workbench_sched_branch_scratch WITH (FORCE)`
+
+// scratchDBCreateSQL creates the scratch database.
+const scratchDBCreateSQL = `CREATE DATABASE ai_workbench_sched_branch_scratch`
+
+// scratchCleanupTimeout bounds each statement the scratch database's
+// cleanup runs, so a server that stops answering cannot hang the suite.
+const scratchCleanupTimeout = 30 * time.Second
+
 // scratchDatastore creates a database of its own for a test that needs
 // to alter the schema, with one monitored connection seeded and no
 // server-level probe configuration, and drops it when the test ends.
@@ -439,23 +462,40 @@ func scratchDatastore(t *testing.T, f *integrationFixture) (*database.Datastore,
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	adminPool, err := pgxpool.New(ctx, fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres pool_max_conns=1",
-		f.host, f.port, f.username, f.rawPassword))
+	adminCfg, err := pgx.ParseConfig("dbname=postgres sslmode=disable")
 	if err != nil {
-		t.Fatalf("admin pool: %v", err)
+		t.Fatalf("admin config: %v", err)
 	}
-	// Registered first so that it runs last, after the drop below.
-	t.Cleanup(adminPool.Close)
+	adminCfg.Host = f.host
+	adminCfg.Port = uint16(f.port) // #nosec G115 -- a test server port
+	adminCfg.User = f.username
+	adminCfg.Password = f.rawPassword
+	admin, err := pgx.ConnectConfig(ctx, adminCfg)
+	if err != nil {
+		t.Fatalf("admin connection: %v", err)
+	}
+	// Registered first so that it runs last, after the drop below, and
+	// releases the advisory lock.
+	t.Cleanup(func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), scratchCleanupTimeout)
+		defer ccancel()
+		_ = admin.Close(cctx) //nolint:errcheck // best-effort close at cleanup
+	})
 
-	dbName := fmt.Sprintf("ai_workbench_sched_branch_%d", time.Now().UnixNano())
-	if _, err := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbName)); err != nil {
-		t.Fatalf("create db: %v", err)
+	if _, err := admin.Exec(ctx, scratchDBLockSQL); err != nil {
+		t.Fatalf("lock %s: %v", scratchDBName, err)
+	}
+	if _, err := admin.Exec(ctx, scratchDBDropSQL); err != nil {
+		t.Fatalf("drop stale %s: %v", scratchDBName, err)
+	}
+	if _, err := admin.Exec(ctx, scratchDBCreateSQL); err != nil {
+		t.Fatalf("create %s: %v", scratchDBName, err)
 	}
 	t.Cleanup(func() {
-		if _, err := adminPool.Exec(context.Background(),
-			fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName)); err != nil {
-			t.Logf("warning: drop %s on cleanup: %v", dbName, err)
+		cctx, ccancel := context.WithTimeout(context.Background(), scratchCleanupTimeout)
+		defer ccancel()
+		if _, err := admin.Exec(cctx, scratchDBDropSQL); err != nil {
+			t.Logf("warning: drop %s on cleanup: %v", scratchDBName, err)
 		}
 	})
 
@@ -466,7 +506,7 @@ func scratchDatastore(t *testing.T, f *integrationFixture) (*database.Datastore,
 		port:           f.port,
 		username:       f.username,
 		password:       f.rawPassword,
-		database:       dbName,
+		database:       scratchDBName,
 		sslMode:        "disable",
 		maxConnections: 4,
 		maxIdleSeconds: 5,
@@ -498,17 +538,16 @@ func scratchDatastore(t *testing.T, f *integrationFixture) (*database.Datastore,
 	return ds, connID
 }
 
-// execScratch runs one statement against a scratch datastore.
-func execScratch(t *testing.T, ds *database.Datastore, query string) {
+// scratchConn takes a connection from a scratch datastore and returns
+// it to the pool when the calling test ends.
+func scratchConn(t *testing.T, ds *database.Datastore) *pgxpool.Conn {
 	t.Helper()
 	conn, err := ds.GetConnection()
 	if err != nil {
 		t.Fatalf("GetConnection: %v", err)
 	}
-	defer ds.ReturnConnection(conn)
-	if _, err := conn.Exec(context.Background(), query); err != nil {
-		t.Fatalf("exec %q: %v", query, err)
-	}
+	t.Cleanup(func() { ds.ReturnConnection(conn) })
+	return conn
 }
 
 // TestSchedulerLoadConfigs_FailurePaths drives two failure branches of
@@ -523,18 +562,19 @@ func TestSchedulerLoadConfigs_FailurePaths(t *testing.T) {
 	t.Cleanup(ps.Stop)
 
 	t.Run("server-level config cannot be created", func(t *testing.T) {
-		execScratch(t, ds, `
+		if _, err := scratchConn(t, ds).Exec(context.Background(), `
 			CREATE FUNCTION reject_server_probe_config() RETURNS trigger
 			LANGUAGE plpgsql AS $$
 			BEGIN
 				RAISE EXCEPTION 'server-level probe configuration rejected by test';
 			END
-			$$`)
-		execScratch(t, ds, `
+			$$;
 			CREATE TRIGGER reject_server_probe_config
 			BEFORE INSERT ON probe_configs
 			FOR EACH ROW WHEN (NEW.scope = 'server')
-			EXECUTE FUNCTION reject_server_probe_config()`)
+			EXECUTE FUNCTION reject_server_probe_config()`); err != nil {
+			t.Fatalf("create rejecting trigger: %v", err)
+		}
 
 		if err := ps.loadConfigs(context.Background()); err != nil {
 			t.Fatalf("loadConfigs should skip a config it cannot create, got: %v", err)
@@ -548,7 +588,10 @@ func TestSchedulerLoadConfigs_FailurePaths(t *testing.T) {
 	})
 
 	t.Run("probe configs cannot be read", func(t *testing.T) {
-		execScratch(t, ds, "ALTER TABLE probe_configs RENAME TO probe_configs_hidden")
+		if _, err := scratchConn(t, ds).Exec(context.Background(),
+			"ALTER TABLE probe_configs RENAME TO probe_configs_hidden"); err != nil {
+			t.Fatalf("hide probe_configs: %v", err)
+		}
 
 		err := ps.loadConfigs(context.Background())
 		if err == nil {

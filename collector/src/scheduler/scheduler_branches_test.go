@@ -13,7 +13,7 @@ package scheduler
 // branches of the scheduler deterministically. Several of these branches
 // were previously reached only when a timer or a goroutine happened to
 // fire at the right moment, so the package's coverage varied between
-// runs of identical code. Nothing here synchronises on a sleep: each
+// runs of identical code. Nothing here waits on a sleep: each
 // branch is reached by arranging state so that exactly one select case
 // can be ready, or by a context that changes state at a known call.
 
@@ -195,7 +195,7 @@ func TestAcquireProbeSlot_ScriptedContextNeverFinishing(t *testing.T) {
 }
 
 // finishesAfterFirstCheckCtx passes the first Err check a caller makes
-// and reads as cancelled from then on. The functions under test check
+// and reads as ended from then on. The functions under test check
 // ctx.Err() once on entry before asking the pool manager for a
 // connection, so this drives the branch where the context ends whilst
 // the caller is waiting for that connection, without relying on a
@@ -229,7 +229,7 @@ func (c *finishesAfterFirstCheckCtx) Err() error {
 }
 
 // unbuildableConn is a monitored connection whose stored host is a
-// multi-host list, which the pool manager refuses before dialling, so
+// multi-host list, which the pool manager refuses before connecting, so
 // asking for a connection to it fails at once without any network I/O
 // and without the context ending.
 func unbuildableConn() database.MonitoredConnection {
@@ -265,7 +265,7 @@ func waitingConn() database.MonitoredConnection {
 // cannot be built. Each is logged and yields no metrics and no extension
 // observation, so the caller moves on to the next database.
 func TestExecuteProbeOnDatabase_ConnectionFailures(t *testing.T) {
-	cancelled, cancel := context.WithCancel(context.Background())
+	endedCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	tests := []struct {
@@ -274,7 +274,7 @@ func TestExecuteProbeOnDatabase_ConnectionFailures(t *testing.T) {
 		ctx      context.Context
 		conn     database.MonitoredConnection
 	}{
-		{"context ends whilst waiting for a slot", 0, cancelled, waitingConn()},
+		{"context ends whilst waiting for a slot", 0, endedCtx, waitingConn()},
 		{"connection cannot be built", 1, context.Background(), unbuildableConn()},
 	}
 
@@ -376,7 +376,7 @@ func handFedTicker() (*time.Ticker, chan time.Time) {
 // so the send completes only once the loop is back in its select, which
 // for every tick after the first proves the previous reload finished and
 // the loop survived it. The timeout is a guard against a hung loop, not
-// a means of synchronisation.
+// a means of ordering the steps.
 func feedTick(t *testing.T, tick chan<- time.Time) {
 	t.Helper()
 	select {
@@ -425,7 +425,7 @@ func TestConfigReloadLoop_ReloadFailureKeepsLooping(t *testing.T) {
 	feedTick(t, tick)
 	feedTick(t, tick)
 
-	// Closing shutdownChan rather than cancelling the context leaves the
+	// Closing shutdownChan rather than ending the context leaves the
 	// reload in progress to finish undisturbed.
 	close(ps.shutdownChan)
 	ps.wg.Wait()

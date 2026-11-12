@@ -938,9 +938,9 @@ func TestSchedulerRecordAvailability_UpsertError(t *testing.T) {
 // TestSchedulerConfigReloadLoop_TickerFires exercises the ticker path
 // of configReloadLoop with a ticker the test feeds by hand. The tick
 // channel is unbuffered, so the second send completes only once the
-// first reload has finished. Shutdown is then signalled through
+// first reload has finished. Shutdown is then sent through
 // shutdownChan alone, leaving the context live until every goroutine has
-// returned, so a reload is never cancelled part way through; that used
+// returned, so a reload is never interrupted part way through; that used
 // to make the reload's error branches covered on some runs only.
 func TestSchedulerConfigReloadLoop_TickerFires(t *testing.T) {
 	f := setupIntegration(t)

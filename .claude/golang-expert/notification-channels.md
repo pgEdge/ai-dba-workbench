@@ -267,7 +267,10 @@ HTTP client the Slack, Mattermost, generic webhook and Telegram senders
 share, and as the SMTP dial (`dialSMTP`) on both SMTP paths. The paths
 match the alerter's `sendEmail`: port 465 with TLS on is implicit TLS,
 and everything else upgrades with STARTTLS whenever the server
-advertises it, TLS setting or not; there is no plain path. `sendTestEmail`
+advertises it, TLS setting or not. When STARTTLS is not advertised the
+exchange stays in plaintext: a message without credentials is sent
+unencrypted even with TLS on, whilst `smtp.PlainAuth` refuses to send
+configured credentials over the unencrypted connection. `sendTestEmail`
 bounds the whole SMTP exchange with `testSendTimeout`, and `dialSMTP`
 sets that as the connection deadline and closes the connection when the
 context ends. The SMTP host is passed through `hostvalidation.BareHost`

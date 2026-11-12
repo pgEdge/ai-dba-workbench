@@ -202,7 +202,8 @@ func TestCreateMonitoredPool_DialsHostAddr(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a dial failure on port 1")
 	}
-	if !strings.Contains(err.Error(), "127.0.0.1") {
-		t.Errorf("err = %v, want a dial failure on 127.0.0.1", err)
+	msg := err.Error()
+	if !strings.Contains(msg, "127.0.0.1:1") || strings.Contains(msg, "lookup") {
+		t.Errorf("err = %v, want a dial failure on 127.0.0.1:1", err)
 	}
 }

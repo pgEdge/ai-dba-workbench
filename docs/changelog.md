@@ -593,9 +593,28 @@ project adheres to
   `fec0::/10` as internal addresses. A deployment that reaches
   monitored servers through NAT64 must set
   `connection_security.allow_internal_networks` to `true` or add the
-  NAT64 prefix to `allowed_hosts`; the alerter refuses to deliver to a
-  webhook in these ranges whatever those settings say. See
+  NAT64 prefix to `allowed_hosts`. The alerter refuses to deliver a
+  notification to these ranges whatever those settings say, unless the
+  alerter's `notifications.allow_internal_networks` option is `true`,
+  which still leaves `::` and any address embedding an unspecified,
+  link-local or metadata IPv4 address refused.
+  See
   [Upgrading to 2.0.0](admin-guide/upgrading-to-2.0.md#connection-host-addresses).
+
+- Breaking: check the address of every alerter notification delivery,
+  for webhook, Slack, Mattermost, Telegram and email (SMTP) channels,
+  and refuse private, loopback and other internal addresses by default.
+  Release 1.0.0 checked only webhook channels. An email channel that
+  uses an internal SMTP relay, or a channel that points at a
+  self-hosted Mattermost or webhook endpoint on the local network,
+  stops delivering until the new
+  `notifications.allow_internal_networks` alerter option is set to
+  `true`. The option defaults to `false`, has no flag or environment
+  variable, and is read at start-up only; unspecified, link-local and
+  cloud metadata addresses stay refused even when the option is `true`.
+  A refused delivery records the generic error "host resolves only to
+  addresses that connections are not permitted to". See
+  [Upgrading to 2.0.0](admin-guide/upgrading-to-2.0.md#notification-delivery-addresses).
 
 - List and serve only the collector's probes from the metrics schema
   (#755). The `list_probes`, `describe_probe`, `query_metrics`,
@@ -969,6 +988,11 @@ project adheres to
   runs, which took about 15 seconds for 2.6 million rows in testing.
 
 ### Fixed
+
+- Bracket an IPv6 literal SMTP host, such as `2001:db8::25`, when the
+  alerter builds the address of an email channel's SMTP server. The
+  alerter previously joined the host and port with a bare colon, so
+  every delivery to such a host failed with a "too many colons" error.
 
 - Connect the collector to a monitored connection's `hostaddr` when one
   is set, as the server already did. The collector previously sent
@@ -2393,13 +2417,18 @@ project adheres to
   IPv4 address, so a connection host, `hostaddr` or webhook URL could
   name them. The connection checks also ran only when a connection was
   saved, so a host name could pass and later resolve to an internal
-  address (DNS rebinding). Release 1.0.0 is affected. The
+  address (DNS rebinding). The alerter likewise checked a webhook
+  channel's host before delivery and then resolved the host again to
+  connect, and checked Slack, Mattermost, Telegram and email (SMTP)
+  channels not at all. Release 1.0.0 is affected. The
   server now applies the `connection_security` rules to every address a
   monitored connection resolves to each time it connects, and connects
   only to the addresses that pass; the collector refuses unspecified,
-  link-local and cloud metadata addresses each time it connects; and
-  the internal ranges now include `::`, `::/96`, `64:ff9b::/96`,
-  `64:ff9b:1::/48`, `2002::/16` and `fec0::/10`.
+  link-local and cloud metadata addresses each time it connects; the
+  alerter resolves the host of every notification delivery, on every
+  channel, and connects only to an address that its delivery policy
+  permits; and the internal ranges now include `::`, `::/96`,
+  `64:ff9b::/96`, `64:ff9b:1::/48`, `2002::/16` and `fec0::/10`.
 
 - <!-- TODO: add the advisory ID, link and severity. -->
   Stop a user who can create a connection making the server open any

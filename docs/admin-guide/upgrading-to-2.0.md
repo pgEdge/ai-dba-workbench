@@ -310,6 +310,47 @@ not a URL that the provider redirects. See
 [Notification Channels](notification-channels.md) for the channel
 settings.
 
+### Notification Delivery Addresses
+
+Release 1.0.0 of the alerter checked the host of a webhook channel
+before sending, but resolved the host again when connecting, and did not
+check Slack, Mattermost, Telegram or email channels at all. Release
+2.0.0 checks every address that the alerter connects to, for every
+channel type, and refuses private, loopback and other internal addresses
+by default. An email channel that uses an internal SMTP relay, or a
+Mattermost channel that points at a self-hosted server on the local
+network, stops delivering notifications after the upgrade; each delivery
+fails with an error containing the following text:
+
+```text
+host resolves only to addresses that connections are not permitted to
+```
+
+A webhook channel whose endpoint is an internal address was already
+refused by release 1.0.0, and gains the same option. To deliver to
+internal addresses, set the new alerter option before you restart the
+alerter, as in the following example:
+
+```yaml
+notifications:
+  allow_internal_networks: true
+```
+
+The option has no command-line flag or environment variable, and the
+alerter reads the option only at start-up. Unspecified, link-local and
+cloud metadata addresses stay refused even when the option is `true`.
+
+An email channel whose SMTP host is an IPv6 address enclosed in square
+brackets, such as `[2001:db8::25]`, also stops delivering, because
+release 2.0.0 adds the brackets itself. Release 1.0.0 could reach an
+IPv6 SMTP host only when the brackets were entered, so edit each such
+channel and remove the brackets from the SMTP host.
+
+As in release 1.0.0, the alerter ignores `HTTP_PROXY`, `HTTPS_PROXY`
+and `NO_PROXY` and connects to each provider directly, so that the
+alerter can check the destination address. See
+[Delivery Address Checks](../getting-started/configuration/alerter.md#delivery-address-checks).
+
 ### Retired Alert Rule
 
 Release 2.0.0 retires the `table_bloat_ratio` alert rule. The upgrade

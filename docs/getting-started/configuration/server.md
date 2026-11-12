@@ -507,9 +507,12 @@ An IPv4-mapped IPv6 address, such as `::ffff:10.0.0.1`, counts as the
 IPv4 address that it carries. The NAT64 prefixes are internal in their
 entirety, so a deployment on an IPv6-only network that reaches IPv4
 servers through NAT64 must set `allow_internal_networks` to `true` or
-add the prefix to `allowed_hosts`. The alerter refuses to deliver a
-notification to a webhook URL whose host resolves to any of these
-ranges; the alerter has no setting that changes this.
+add the prefix to `allowed_hosts`. By default, the alerter refuses to
+deliver a notification to any of these ranges, whatever the server's
+`connection_security` settings say. The alerter's own
+`notifications.allow_internal_networks` option permits them, except the
+unspecified, link-local and cloud metadata addresses. See
+[Delivery Address Checks](alerter.md#delivery-address-checks).
 
 The server applies the host checks to both the `host` and the `hostaddr`
 of a connection. A `hostaddr` must be a literal IPv4 or IPv6 address,

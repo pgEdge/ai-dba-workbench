@@ -95,16 +95,37 @@ Mattermost webhook URLs are themselves secrets, and the
 Telegram URL carries the bot token in its path, so
 following a redirect would disclose the credential to
 whichever host the `Location` header names. A webhook
-channel gains a second protection, because the
-workbench validates the endpoint host when the channel
-is saved, and a redirect could carry the request past
-that check to a private host. The measure is
-preventive; the Send icon has always refused redirects,
-and delivery now behaves in the same way.
+channel gains a second protection, because a
+`Location` header could otherwise send the request to
+a host that the operator never configured. The measure
+is preventive; the Send icon has always refused
+redirects, and delivery now behaves in the same way.
 
 Configure the final URL in the channel when an endpoint
 answers with a redirect. Email channels are unaffected,
 because email is delivered over SMTP rather than HTTP.
+
+### Delivery Addresses
+
+The alerter checks the address of every delivery when
+the alerter connects, for every channel type including
+email. By default, the alerter refuses private,
+loopback and other internal addresses, so a channel
+whose host is an internal SMTP relay or a self-hosted
+Mattermost or webhook endpoint fails until the
+administrator sets the alerter's
+`notifications.allow_internal_networks` option to
+`true`. Unspecified, link-local and cloud metadata
+addresses are refused whatever the option says.
+
+A refused delivery is retried on the schedule above,
+and the recorded error contains the text
+`host resolves only to addresses that connections are not permitted to`,
+which names neither the host nor the address. The
+alerter connects directly and ignores the `HTTP_PROXY`
+and `HTTPS_PROXY` environment variables. See
+[Delivery Address Checks](../getting-started/configuration/alerter.md#delivery-address-checks)
+for the full rules.
 
 ## Email Channels
 
@@ -117,7 +138,7 @@ The following settings configure the SMTP connection:
 
 | Setting | Required | Default | Description |
 |---------|----------|---------|-------------|
-| SMTP Host | Yes | - | The SMTP server hostname. |
+| SMTP Host | Yes | - | The SMTP server hostname or IP address; enter an IPv6 address without square brackets. |
 | SMTP Port | No | 587 | The SMTP server port number. |
 | SMTP Username | No | - | The username for SMTP authentication. |
 | SMTP Password | No | - | The password for SMTP authentication. |

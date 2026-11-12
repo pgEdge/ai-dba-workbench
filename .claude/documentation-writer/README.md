@@ -84,6 +84,19 @@ manually alongside it.
   sections of `docs/admin-guide/upgrading-to-2.0.md` summarise both;
   update all four when `pkg/hostvalidation` or `pkg/sslpaths` changes.
 
+- The alerter's notification delivery address check
+  (`notifications.allow_internal_networks`, implemented in
+  `alerter/src/internal/notifications/dial_guard.go` on top of
+  `pkg/hostvalidation/dial_guard.go`) is documented in the "Delivery
+  Address Checks" section of
+  `docs/getting-started/configuration/alerter.md`, summarised in the
+  "Delivery Addresses" section of `docs/admin-guide/notification-channels.md`,
+  the "Notification Delivery Addresses" section of
+  `docs/admin-guide/upgrading-to-2.0.md` and the internal-range note in
+  `docs/getting-started/configuration/server.md`; keep all four in
+  agreement. The quoted refusal text is
+  `hostvalidation.ErrNoPermittedAddress`.
+
 ## Maintenance
 
 Update this file in the same change whenever the documentation layout,

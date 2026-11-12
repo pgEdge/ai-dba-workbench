@@ -10,6 +10,8 @@ project adheres to
 
 ## [Unreleased]
 
+## [2.0.0-beta1] - 2026-11-12
+
 !!! warning "Breaking changes"
 
     This release contains breaking changes, migrates the datastore and
@@ -589,15 +591,22 @@ project adheres to
 
 - Breaking: treat the IPv6 unspecified address `::`, the
   IPv4-compatible range `::/96`, the NAT64 prefixes `64:ff9b::/96` and
-  `64:ff9b:1::/48`, the 6to4 range `2002::/16` and the site-local range
-  `fec0::/10` as internal addresses. A deployment that reaches
+  `64:ff9b:1::/48`, the 6to4 range `2002::/16`, the SIIT range
+  `::ffff:0:0:0/96` and the site-local range `fec0::/10` as internal
+  addresses. A deployment that reaches
   monitored servers through NAT64 must set
   `connection_security.allow_internal_networks` to `true` or add the
   NAT64 prefix to `allowed_hosts`. The alerter refuses to deliver a
-  notification to these ranges whatever those settings say, unless the
-  alerter's `notifications.allow_internal_networks` option is `true`,
-  which still leaves `::` and any address embedding an unspecified,
-  link-local or metadata IPv4 address refused.
+  notification to these ranges whatever those settings say, so an
+  IPv6-only alerter host that reaches IPv4-only notification providers
+  through NAT64 stops delivering until the alerter's
+  `notifications.allow_internal_networks` option is `true`. That option
+  still leaves `::` refused, along with any address in `::/96`,
+  `::ffff:0:0:0/96`, `64:ff9b::/96` or `2002::/16` that embeds an
+  unspecified, link-local or metadata IPv4 address, and any address in
+  `64:ff9b:1::/48` whose IPv4 reading at any RFC 6052 offset is
+  link-local or `100.100.100.200`; the option permits every other
+  address in `64:ff9b:1::/48`, like the other internal ranges.
   See
   [Upgrading to 2.0.0](admin-guide/upgrading-to-2.0.md#connection-host-addresses).
 
@@ -605,13 +614,15 @@ project adheres to
   for webhook, Slack, Mattermost, Telegram and email (SMTP) channels,
   and refuse private, loopback and other internal addresses by default.
   Release 1.0.0 checked only webhook channels. An email channel that
-  uses an internal SMTP relay, or a channel that points at a
-  self-hosted Mattermost or webhook endpoint on the local network,
-  stops delivering until the new
-  `notifications.allow_internal_networks` alerter option is set to
-  `true`. The option defaults to `false`, has no flag or environment
-  variable, and is read at start-up only; unspecified, link-local and
-  cloud metadata addresses stay refused even when the option is `true`.
+  uses an internal SMTP relay, or a Mattermost channel that points at
+  a self-hosted server on the local network, stops delivering until
+  the new `notifications.allow_internal_networks` alerter option is
+  set to `true`. Release 1.0.0 already refused a webhook channel whose
+  endpoint is an internal address, with no way to permit one; the new
+  option now permits such an endpoint. The option defaults to `false`,
+  has no flag or environment variable, and is read at start-up only;
+  unspecified, link-local and cloud metadata addresses stay refused
+  even when the option is `true`.
   A refused delivery records the generic error "host resolves only to
   addresses that connections are not permitted to". See
   [Upgrading to 2.0.0](admin-guide/upgrading-to-2.0.md#notification-delivery-addresses).
@@ -1002,6 +1013,19 @@ project adheres to
   with a bare colon, so every delivery to such a host failed with a
   "too many colons" error. A host entered in square brackets, such as
   `[2001:db8::25]`, still works.
+
+- Make the server's test send for an email channel behave as the
+  alerter's delivery does. An SMTP server that accepts the connection
+  and then stops answering now fails the test after 30 seconds;
+  release 1.0.0 limited only the connection attempt, so such a server
+  could hold the request open indefinitely. With TLS turned off, the
+  test send now upgrades the connection with STARTTLS whenever the
+  SMTP server advertises the extension, as the alerter does, instead
+  of always sending in plain text, so a test no longer passes or fails
+  differently from a real delivery for that reason. The test send
+  also accepts an SMTP host entered as an IPv6 address in square
+  brackets, such as `[2001:db8::25]`, which it previously refused as
+  an invalid SMTP host.
 
 - Connect the collector to a monitored connection's `hostaddr` when one
   is set, as the server already did. The collector previously sent
@@ -2372,6 +2396,13 @@ project adheres to
   November 2026; PostgreSQL 15 is now the oldest supported version, for
   both monitored servers and the datastore.
 
+- Drop support for building the web client with Node.js 20. The
+  `engines` field in the client's `package.json` now requires Node.js
+  22.12 or later, where release 1.0.0 also accepted Node.js 20.19 or
+  later on the 20.x line, and the Vitest 5 test runner that the client
+  now uses requires Node.js 22.12 or later as well. Continuous
+  integration tests the client on Node.js 22, 24 and 26.
+
 - Remove the hard-coded allow-list of embedding model names, which
   rejected any model the OpenAI, Voyage AI, or Gemini provider had
   not been told about, whether the model was newly published by the
@@ -2400,85 +2431,6 @@ project adheres to
   maintenance. (#409)
 
 ### Security
-
-- <!-- TODO: add the advisory ID, link and severity. -->
-  Stop a connection's `hostaddr` bypassing the host and port checks,
-  which allowed server-side request forgery (SSRF) and disclosure of
-  the connection's stored credentials to an arbitrary target. The
-  connection string prefers `hostaddr` to `host`, but only `host`
-  passed the `connection_security` checks, so a permitted host name
-  could front any internal address, and a crafted `hostaddr` could add
-  a second target and a port that no check examined. Release 1.0.0 is
-  affected. A `hostaddr` must now be a literal IP address and passes
-  the same blocklist, allowlist and internal network checks as `host`,
-  and a `host` containing `,`, `[`, `]`, `/`, `?`, `@`, `#`, `%` or
-  whitespace is refused. The server and the collector also refuse a
-  stored connection with such a `host` or a `hostaddr` that is not an
-  IP address before connecting, and connection string errors returned
-  by the API and the MCP tools are now generic, so they no longer echo
-  SSL file paths or passwords.
-
-- <!-- TODO: add the advisory ID, link and severity. -->
-  Stop a monitored connection or a notification channel reaching an
-  internal address that the `connection_security` checks should have
-  refused. The internal ranges left out the IPv6 unspecified address
-  `::`, which reaches the local host, and the IPv6 ranges that embed an
-  IPv4 address, so a connection host, `hostaddr` or webhook URL could
-  name them. The connection checks also ran only when a connection was
-  saved, so a host name could pass and later resolve to an internal
-  address (DNS rebinding). The alerter likewise checked a webhook
-  channel's host before delivery and then resolved the host again to
-  connect, and checked Slack, Mattermost and email (SMTP) channels not
-  at all. The server's "send test notification" path
-  checked a webhook, Slack, Mattermost or email channel's host and then
-  resolved the host again to connect. Release 1.0.0 is affected. The
-  server now applies the `connection_security` rules to every address a
-  monitored connection resolves to each time it connects, and connects
-  only to the addresses that pass; the collector refuses unspecified,
-  link-local and cloud metadata addresses each time it connects; the
-  alerter resolves the host of every notification delivery, on every
-  channel, and connects only to an address that its delivery policy
-  permits; the server's test send, on every channel, refuses
-  unspecified, link-local and cloud metadata addresses and then applies
-  the server's `connection_security` rules to every address that the
-  send connects to, answering a refusal with a generic 400 error (a 502
-  for Telegram); and the internal ranges now include `::`, `::/96`,
-  `64:ff9b::/96`, `64:ff9b:1::/48`, `2002::/16` and `fec0::/10`. A test
-  send uses the server's `connection_security` settings and a delivery
-  uses the alerter's `notifications.allow_internal_networks` option, so
-  one can succeed where the other is refused; see
-  [Test Sends](admin-guide/notification-channels.md#test-sends).
-
-- <!-- TODO: add the advisory ID, link and severity. -->
-  Stop a user who can create a connection making the server open any
-  file it can read. The server reads a connection's SSL certificate,
-  key and root certificate files when it parses the connection string,
-  even under `sslmode=disable`, and the error revealed whether a file
-  existed. These paths must now be absolute and resolve, following
-  symbolic links, to a location inside the directory named by the new
-  `connection_security.ssl_cert_dir` option; the server checks them
-  when a connection is created or updated and again before connecting.
-  The collector, which also reads these files when it connects, checks
-  each stored connection against its own
-  `connection_security.ssl_cert_dir` option before connecting, and
-  does not monitor a connection that fails the check. A root
-  certificate value of `system` is always allowed. Release 1.0.0 is
-  affected.
-
-- <!-- TODO: add the advisory ID, link and severity. -->
-  Stop the server writing database passwords to its log and returning
-  them in errors. The server masked only the password in the user
-  information of a URI connection string, so a password in a
-  keyword/value connection string, such as one set through
-  `PGEDGE_POSTGRES_CONNECTION_STRING`, or in a `password` or
-  `sslpassword` parameter appeared in the `[DATABASE]` log when
-  `PGEDGE_DB_LOG_LEVEL` was `info` or higher, and in MCP tool output
-  that names the default connection. A metadata load for a connection
-  that the server did not hold also returned the unmasked connection
-  string in its error. Release 1.0.0 is affected. The server now masks `password` and `sslpassword`
-  parameters in both connection string forms, and the metadata load
-  and query connection errors no longer quote the connection string.
-  Rotate any password that may have reached a log.
 
 - [GHSA-q38q-fvcv-jx25](https://github.com/pgEdge/ai-dba-workbench/security/advisories/GHSA-q38q-fvcv-jx25)
   (Critical): stop a database name override redirecting a monitored
@@ -2574,6 +2526,36 @@ project adheres to
   and no longer sees edit or delete actions on a superuser's token.
   (#522, #607; PRs #661, #610)
 
+- [GHSA-w678-xh7h-7gvc](https://github.com/pgEdge/ai-dba-workbench/security/advisories/GHSA-w678-xh7h-7gvc)
+  (High): stop a connection's `hostaddr` bypassing the host and port checks,
+  which allowed server-side request forgery (SSRF) and disclosure of
+  the connection's stored credentials to an arbitrary target. The
+  connection string prefers `hostaddr` to `host`, but only `host`
+  passed the `connection_security` checks, so a permitted host name
+  could front any internal address, and a crafted `hostaddr` could add
+  a second target and a port that no check examined. Release 1.0.0 is
+  affected. A `hostaddr` must now be a literal IP address and passes
+  the same blocklist, allowlist and internal network checks as `host`,
+  and a `host` containing `,`, `/`, `?`, `@`, `#`, `%` or whitespace
+  is refused, as is a `host` with a `[` or `]` that does not enclose a
+  single IPv6 literal. The server and the collector also refuse a
+  stored connection with such a `host` or a `hostaddr` that is not an
+  IP address before connecting, and connection string errors returned
+  by the API and the MCP tools are now generic, so they no longer echo
+  SSL file paths or passwords.
+
+- [GHSA-82cj-f67f-fc5x](https://github.com/pgEdge/ai-dba-workbench/security/advisories/GHSA-82cj-f67f-fc5x)
+  (High): stop a quote in a database name, user name or password
+  injecting settings into the collector's connection strings. The
+  collector escaped a single quote in a connection string value by
+  doubling it, but libpq and pgx expect a backslash, so the quote ended
+  the value early and the rest was read as further settings. A user
+  who can only create a database on a monitored server could name it so
+  that the collector connected to a host of their choosing and sent it
+  the monitoring role's credentials, or read SSL files outside
+  `connection_security.ssl_cert_dir`. Release 1.0.0 is affected.
+  Connection string values are now escaped as libpq specifies.
+
 - Breaking: [GHSA-2h8m-pf3h-xwpf](https://github.com/pgEdge/ai-dba-workbench/security/advisories/GHSA-2h8m-pf3h-xwpf)
   (Medium): limit the `query_datastore` MCP tool to the connections
   the caller can read. The tool ran read-only SQL over the whole
@@ -2660,16 +2642,89 @@ project adheres to
   exactly as for a missing one; a superuser is unaffected. (#710; PR
   #720)
 
-- Update `github.com/jackc/pgx/v5` from 5.9.2 to 5.12.0 (High),
-  fixing two driver vulnerabilities reachable from the code in
-  release 1.0.0.
+- [GHSA-34h3-vcf9-7f7f](https://github.com/pgEdge/ai-dba-workbench/security/advisories/GHSA-34h3-vcf9-7f7f)
+  (Medium): stop a monitored connection or a notification channel reaching an
+  internal address that the `connection_security` checks should have
+  refused. The internal ranges left out the IPv6 unspecified address
+  `::`, which reaches the local host, and the IPv6 ranges that embed an
+  IPv4 address, so a connection host, `hostaddr` or webhook URL could
+  name them. The connection checks also ran only when a connection was
+  saved, so a host name could pass and later resolve to an internal
+  address (DNS rebinding). The alerter likewise checked a webhook
+  channel's host before delivery and then resolved the host again to
+  connect, and checked Slack, Mattermost and email (SMTP) channels not
+  at all. The server's "send test notification" path
+  checked a webhook, Slack, Mattermost or email channel's host and then
+  resolved the host again to connect. Release 1.0.0 is affected. The
+  server now refuses unspecified, link-local and cloud metadata
+  addresses for a monitored connection whatever its
+  `connection_security` settings, applies those settings to every other
+  address the connection resolves to each time it connects, and
+  connects only to the addresses that pass; the collector refuses unspecified,
+  link-local and cloud metadata addresses each time it connects; the
+  alerter resolves the host of every notification delivery, on every
+  channel, and connects only to an address that its delivery policy
+  permits; the server's test send, on every channel, refuses
+  unspecified, link-local and cloud metadata addresses and then applies
+  the server's `connection_security` rules to every address that the
+  send connects to, answering a refusal with a generic 400 error (a 502
+  for Telegram); and the internal ranges now include `::`, `::/96`,
+  `::ffff:0:0:0/96`, `64:ff9b::/96`, `64:ff9b:1::/48`, `2002::/16` and
+  `fec0::/10`. The always-refused cloud metadata addresses are
+  `fd00:ec2::254`, `fd00:ec2::23`, `fd20:ce::254` and
+  `100.100.100.200`, and an address in `64:ff9b:1::/48` is also refused
+  when the IPv4 address at any RFC 6052 offset within the prefix is in
+  `169.254.0.0/16` or is `100.100.100.200`. A test send uses the server's `connection_security` settings and a delivery
+  uses the alerter's `notifications.allow_internal_networks` option, so
+  one can succeed where the other is refused; see
+  [Test Sends](admin-guide/notification-channels.md#test-sends).
+
+- [GHSA-cj7p-8h5w-c4xr](https://github.com/pgEdge/ai-dba-workbench/security/advisories/GHSA-cj7p-8h5w-c4xr)
+  (Medium): stop a user who can create a connection making the server open any
+  file it can read. The server reads a connection's SSL certificate,
+  key and root certificate files when it parses the connection string,
+  even under `sslmode=disable`, and the error revealed whether a file
+  existed. These paths must now be absolute and resolve, following
+  symbolic links, to a location inside the directory named by the new
+  `connection_security.ssl_cert_dir` option; the server checks them
+  when a connection is created or updated and again before connecting.
+  The collector, which also reads these files when it connects, checks
+  each stored connection against its own
+  `connection_security.ssl_cert_dir` option before connecting, and
+  does not monitor a connection that fails the check. A root
+  certificate value of `system` is always allowed. Release 1.0.0 is
+  affected.
+
+- [GHSA-7jmj-836r-3w4r](https://github.com/pgEdge/ai-dba-workbench/security/advisories/GHSA-7jmj-836r-3w4r)
+  (Medium): stop the server writing database passwords to its log and returning
+  them in errors. The server masked only the password in the user
+  information of a URI connection string, so a password in a
+  keyword/value connection string, such as one set through
+  `PGEDGE_POSTGRES_CONNECTION_STRING`, or in a `password` or
+  `sslpassword` parameter appeared in the `[DATABASE]` log when
+  `PGEDGE_DB_LOG_LEVEL` was `info` or higher, and in MCP tool output
+  that names the default connection. A metadata load for a connection
+  that the server did not hold also returned the unmasked connection
+  string in its error. Release 1.0.0 is affected. The server now
+  masks `password` and `sslpassword` parameters in both connection
+  string forms, and the metadata load and query connection errors no
+  longer quote the connection string.
+  Rotate any password that may have reached a log.
+
+- Update `github.com/jackc/pgx/v5` from 5.9.2, as used in release
+  1.0.0, to 5.12.0 (High), fixing two driver vulnerabilities.
   [GHSA-j38q-h3ph-jjpq](https://github.com/advisories/GHSA-j38q-h3ph-jjpq)
   allowed SQL injection in simple-protocol batches when a queued
   query ended in a `--` comment, and
   [GHSA-95fj-3fxw-g62g](https://github.com/advisories/GHSA-95fj-3fxw-g62g)
   skipped the `require_auth` and `channel_binding` checks when a
   server omitted `AuthenticationOk`, so a rogue or
-  man-in-the-middle PostgreSQL server could be accepted.
+  man-in-the-middle PostgreSQL server could be accepted. Neither is
+  reachable from the code in release 1.0.0, which sends no query
+  batches and never sets `require_auth` or `channel_binding`; the
+  second could affect only a connection string that an operator
+  wrote with either option, such as one in
+  `PGEDGE_POSTGRES_CONNECTION_STRING`.
 
 - Update `golang.org/x/text` from 0.33.0, as used in release 1.0.0,
   to 0.44.0, fixing an infinite loop on invalid input
@@ -3079,23 +3134,14 @@ project adheres to
   with `400 Bad Request`; the web client batches its requests to
   stay within the limit. (#520)
 
-- Move the collector, server, and alerter to Go 1.26.8, and update
-  `golang.org/x/text` from v0.33.0 to v0.40.0. `govulncheck` reported
-  advisories reachable from Workbench code in the previous toolchain
-  and dependency set, in the Go standard library's `crypto/tls`,
-  `crypto/x509`, `encoding/asn1`, `encoding/xml`, `net/http`,
-  `net/textproto` and `net/url` packages and in `golang.org/x/text`
-  normalisation; it now reports none, and the published binaries are
-  built with the fixed toolchain.
-
 - Update the web client's ECharts dependency to v6.1.0, which resolves a
   cross-site scripting advisory, and move the `vitest` development
-  dependencies to v4.1.11, which refreshes the transitive `postcss`,
+  dependencies to v5.1.0, which refreshes the transitive `postcss`,
   `js-yaml`, `nanoid`, `brace-expansion`, `fflate`, and `vite` packages.
-  Before this change `npm audit` reported eleven findings (six moderate,
-  five high), of which only the ECharts advisory affected the shipped
-  client bundle; the rest sat in the development dependency tree. After
-  it, `npm audit` reports no known vulnerabilities.
+  Before these changes `npm audit` reported eleven findings (six
+  moderate, five high), of which only the ECharts advisory affected the
+  shipped client bundle; the rest sat in the development dependency
+  tree.
 
 ## [1.0.0] - 2026-06-08
 

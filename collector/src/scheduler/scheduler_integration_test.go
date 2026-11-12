@@ -936,19 +936,27 @@ func TestSchedulerRecordAvailability_UpsertError(t *testing.T) {
 }
 
 // TestSchedulerConfigReloadLoop_TickerFires exercises the ticker path
-// of configReloadLoop. We override configReloader to fire quickly.
+// of configReloadLoop with a ticker the test feeds by hand. The tick
+// channel is unbuffered, so the second send completes only once the
+// first reload has finished. Shutdown is then signalled through
+// shutdownChan alone, leaving the context live until every goroutine has
+// returned, so a reload is never cancelled part way through; that used
+// to make the reload's error branches covered on some runs only.
 func TestSchedulerConfigReloadLoop_TickerFires(t *testing.T) {
 	f := setupIntegration(t)
 	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 
-	// Replace the (nil) reloader with a fast ticker.
-	ps.configReloader = time.NewTicker(50 * time.Millisecond)
+	ticker, tick := handFedTicker()
+	ps.configReloader = ticker
 	ps.wg.Add(1)
 	go ps.configReloadLoop()
 
-	// Let it fire at least twice so loadConfigs runs.
-	time.Sleep(150 * time.Millisecond)
-	ps.Stop()
+	feedTick(t, tick)
+	feedTick(t, tick)
+
+	close(ps.shutdownChan)
+	ps.wg.Wait()
+	ps.cancel()
 }
 
 // TestSchedulerStart_Failure exercises Start() when loadConfigs fails.

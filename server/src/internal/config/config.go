@@ -525,16 +525,12 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 	// url.URL escapes every component for its position: the path keeps
 	// a database name's '?', '#', '%' and spaces inside the path, and pgx
 	// (since v5.12) strips exactly one leading '/' and decodes every %XX
-	// escape, so the name arrives unchanged. JoinHostPort brackets an
-	// IPv6 address, so its colons cannot be read as a port separator.
-	host := cfg.Host
-	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
-		host = host[1 : len(host)-1]
-	}
+	// escape, so the name arrives unchanged. The host list is built by
+	// uriHostList, which gives every host a port.
 	u := url.URL{
 		Scheme: "postgres",
 		User:   userinfo,
-		Host:   net.JoinHostPort(host, strconv.Itoa(cfg.Port)),
+		Host:   uriHostList(cfg.Host, cfg.Port),
 		Path:   "/" + cfg.Database,
 	}
 	if cfg.SSLMode != "" {
@@ -543,6 +539,40 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 	}
 
 	return u.String()
+}
+
+// uriHostList turns database.host, which may be a comma-separated list
+// of hosts as libpq accepts, into the netloc list of a URI with a port
+// on every entry. pgx (since v5.11) pairs URI hosts and ports by
+// position, as libpq does, so "h1,h2:5433" would leave h1 on the default
+// port rather than database.port. An entry that carries its own valid
+// port, as "h1:5434" or "[2001:db8::1]:5434", keeps it; every other entry
+// gets port. JoinHostPort brackets an IPv6 address, so its colons cannot
+// be read as a port separator, and an address already in brackets has
+// them removed first rather than nested.
+func uriHostList(hosts string, port int) string {
+	defaultPort := strconv.Itoa(port)
+	entries := strings.Split(hosts, ",")
+	for i, entry := range entries {
+		if h, p, err := net.SplitHostPort(entry); err == nil {
+			if p == "" {
+				p = defaultPort
+			} else if n, convErr := strconv.Atoi(p); convErr != nil || n < 1 || n > 65535 {
+				// Not a port: leave the whole entry as the host, for
+				// pgx to refuse, rather than drop the text.
+				entries[i] = net.JoinHostPort(entry, defaultPort)
+				continue
+			}
+			entries[i] = net.JoinHostPort(h, p)
+			continue
+		}
+		h := entry
+		if len(h) >= 2 && h[0] == '[' && h[len(h)-1] == ']' {
+			h = h[1 : len(h)-1]
+		}
+		entries[i] = net.JoinHostPort(h, defaultPort)
+	}
+	return strings.Join(entries, ",")
 }
 
 // LoadPassword resolves the database password from PasswordFile when

@@ -546,10 +546,9 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 // connection's pools are built from. Every pool derived from the
 // connection, whichever database it serves, records this same hash, so a
 // per-database pool is not mistaken for a changed one merely because its
-// dbname differs from the connection's default. The parameters are
-// hashed in sorted order because connstring.Build emits them in map
-// iteration order, which differs from one call to the next; hashing its
-// output made every pool look changed on every configuration reload.
+// dbname differs from the connection's default. The parameter map is
+// hashed directly, in sorted key order, so the hash depends only on the
+// parameters and not on how connstring.Build formats or escapes them.
 func monitoredConnectionHash(conn MonitoredConnection, serverSecret string, sslCertDir string) (string, error) {
 	params, err := buildMonitoredConnectionParams(conn, "", serverSecret, sslCertDir)
 	if err != nil {

@@ -14,29 +14,41 @@ package connstring
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 )
 
-// EscapeValue escapes a value for use in a libpq connection string.
-// Per the libpq spec, backslashes must be doubled and single quotes
-// within a value must be escaped by doubling them.
+// EscapeValue escapes a value for use inside a single-quoted value in a
+// libpq keyword/value connection string. libpq, and pgx's
+// pgconn.ParseConfig, treat a backslash as escaping the character after
+// it, so each backslash becomes \\ and each single quote becomes \'.
+// Doubling a quote is SQL literal syntax, not connection string syntax:
+// there the first quote ends the value, and the text after it is parsed
+// as further keywords such as host or sslcert.
 // See: https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
 func EscapeValue(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `'`, `''`)
+	value = strings.ReplaceAll(value, `'`, `\'`)
 	return value
 }
 
 // Build builds a PostgreSQL connection string from a map of parameters.
-// The parameters are formatted as key='value' pairs separated by spaces.
-// Values are properly escaped per the libpq connection string
-// specification.
+// The parameters are formatted as key='value' pairs separated by spaces,
+// in sorted key order so that the output is deterministic. Every value is
+// quoted and escaped with EscapeValue. Keys are written as given, so they
+// must be libpq keywords chosen by the caller, never untrusted input.
 func Build(params map[string]string) string {
-	var parts []string
-	for key, value := range params {
-		parts = append(parts, fmt.Sprintf("%s='%s'", key, EscapeValue(value)))
+	keys := make([]string, 0, len(params))
+	for key := range params {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s='%s'", key, EscapeValue(params[key])))
 	}
 	return strings.Join(parts, " ")
 }

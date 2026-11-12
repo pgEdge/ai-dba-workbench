@@ -989,10 +989,11 @@ project adheres to
 
 ### Fixed
 
-- Bracket an IPv6 literal SMTP host, such as `2001:db8::25`, when the
-  alerter builds the address of an email channel's SMTP server. The
-  alerter previously joined the host and port with a bare colon, so
-  every delivery to such a host failed with a "too many colons" error.
+- Make an unbracketed IPv6 SMTP host, such as `2001:db8::25`, work in
+  an email channel. The alerter previously joined the host and port
+  with a bare colon, so every delivery to such a host failed with a
+  "too many colons" error. A host entered in square brackets, such as
+  `[2001:db8::25]`, still works.
 
 - Connect the collector to a monitored connection's `hostaddr` when one
   is set, as the server already did. The collector previously sent
@@ -3024,10 +3025,10 @@ project adheres to
   previous request's full URL into the `Referer` header of a
   redirected request, so following a redirect handed the credential to
   the host named in the `Location` header. A generic webhook channel
-  gains a second protection: the server validates its endpoint host
-  when the channel is saved, and a redirect could previously bounce
-  the request past that check to a private or metadata host. The change is
-  preventive:
+  gains a second protection: the alerter checked the endpoint host
+  before sending, and a redirect could previously carry the request
+  past that check to a private or metadata host; the alerter now also
+  checks every address that it connects to. The change is preventive:
   reaching the behaviour required a hostile or compromised endpoint
   answering a delivery with a redirect, and no credential is known to
   have been disclosed. The server's test-send path has always refused

@@ -340,12 +340,6 @@ The option has no command-line flag or environment variable, and the
 alerter reads the option only at start-up. Unspecified, link-local and
 cloud metadata addresses stay refused even when the option is `true`.
 
-An email channel whose SMTP host is an IPv6 address enclosed in square
-brackets, such as `[2001:db8::25]`, also stops delivering, because
-release 2.0.0 adds the brackets itself. Release 1.0.0 could reach an
-IPv6 SMTP host only when the brackets were entered, so edit each such
-channel and remove the brackets from the SMTP host.
-
 As in release 1.0.0, the alerter ignores `HTTP_PROXY`, `HTTPS_PROXY`
 and `NO_PROXY` and connects to each provider directly, so that the
 alerter can check the destination address. See

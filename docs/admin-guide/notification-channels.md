@@ -138,7 +138,7 @@ The following settings configure the SMTP connection:
 
 | Setting | Required | Default | Description |
 |---------|----------|---------|-------------|
-| SMTP Host | Yes | - | The SMTP server hostname or IP address; enter an IPv6 address without square brackets. |
+| SMTP Host | Yes | - | The SMTP server hostname or IP address; an IPv6 address works with or without square brackets. |
 | SMTP Port | No | 587 | The SMTP server port number. |
 | SMTP Username | No | - | The username for SMTP authentication. |
 | SMTP Password | No | - | The password for SMTP authentication. |

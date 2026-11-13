@@ -16,6 +16,26 @@ on:
             - 'v*'
     pull_request:
         branches: [main]
+        # The same filter as ci-docker.yml: pull requests that cannot
+        # change an image skip the build. Pushes to main and tags always
+        # build, so the published images never miss a commit.
+        paths:
+            - 'collector/**'
+            - 'server/**'
+            - 'alerter/**'
+            - 'client/**'
+            - 'pkg/**'
+            - 'docker/**'
+            - 'docker-compose.yml'
+            - '**/Dockerfile'
+            - '.dockerignore'
+            - '.github/workflows/docker-publish.yml'
+            # Negations must follow the patterns they narrow, as GitHub
+            # applies the list in order and the last match wins.
+            - '!**/*_test.go'
+            - '!client/src/**/*.test.ts'
+            - '!client/src/**/*.test.tsx'
+            - '!**/__tests__/**'
     workflow_dispatch:
         inputs:
             publish:
@@ -53,7 +73,9 @@ jobs:
             - name: Checkout code
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+            # Pull requests build linux/amd64 only, so need no emulation.
             - name: Set up QEMU
+              if: github.event_name != 'pull_request'
               uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
             - name: Set up Docker Buildx
@@ -86,7 +108,7 @@ jobs:
               with:
                   context: .
                   file: server/Dockerfile
-                  platforms: linux/amd64,linux/arm64
+                  platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
                   push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
                   tags: ${{ steps.meta.outputs.tags }}
                   labels: ${{ steps.meta.outputs.labels }}
@@ -107,7 +129,9 @@ jobs:
             - name: Checkout code
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+            # Pull requests build linux/amd64 only, so need no emulation.
             - name: Set up QEMU
+              if: github.event_name != 'pull_request'
               uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
             - name: Set up Docker Buildx
@@ -140,7 +164,7 @@ jobs:
               with:
                   context: .
                   file: collector/Dockerfile
-                  platforms: linux/amd64,linux/arm64
+                  platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
                   push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
                   tags: ${{ steps.meta.outputs.tags }}
                   labels: ${{ steps.meta.outputs.labels }}
@@ -161,7 +185,9 @@ jobs:
             - name: Checkout code
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+            # Pull requests build linux/amd64 only, so need no emulation.
             - name: Set up QEMU
+              if: github.event_name != 'pull_request'
               uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
             - name: Set up Docker Buildx
@@ -194,7 +220,7 @@ jobs:
               with:
                   context: .
                   file: alerter/Dockerfile
-                  platforms: linux/amd64,linux/arm64
+                  platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
                   push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
                   tags: ${{ steps.meta.outputs.tags }}
                   labels: ${{ steps.meta.outputs.labels }}
@@ -215,7 +241,9 @@ jobs:
             - name: Checkout code
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+            # Pull requests build linux/amd64 only, so need no emulation.
             - name: Set up QEMU
+              if: github.event_name != 'pull_request'
               uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
             - name: Set up Docker Buildx
@@ -248,7 +276,7 @@ jobs:
               with:
                   context: .
                   file: client/Dockerfile
-                  platforms: linux/amd64,linux/arm64
+                  platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
                   push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
                   tags: ${{ steps.meta.outputs.tags }}
                   labels: ${{ steps.meta.outputs.labels }}

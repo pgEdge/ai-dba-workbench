@@ -10,6 +10,13 @@ on:
             - 'e2e/**'
             - '.github/workflows/ci-e2e.yml'
             - '.github/workflows/coverage-finalize.yml'
+            # Test-only changes cannot change what the smoke tests exercise, so
+            # skip them. Negations must follow the patterns they narrow,
+            # as GitHub applies the list in order and the last match wins.
+            - '!**/*_test.go'
+            - '!client/src/**/*.test.ts'
+            - '!client/src/**/*.test.tsx'
+            - '!**/__tests__/**'
     pull_request:
         branches: [ main, master ]
         paths:
@@ -19,6 +26,21 @@ on:
             - 'e2e/**'
             - '.github/workflows/ci-e2e.yml'
             - '.github/workflows/coverage-finalize.yml'
+            # Test-only changes cannot change what the smoke tests exercise, so
+            # skip them. Negations must follow the patterns they narrow,
+            # as GitHub applies the list in order and the last match wins.
+            - '!**/*_test.go'
+            - '!client/src/**/*.test.ts'
+            - '!client/src/**/*.test.tsx'
+            - '!**/__tests__/**'
+
+# Superseded pull request runs are cancelled. Every other run gets a
+# group of its own (the run ID), because GitHub cancels a *pending* run
+# whenever a newer one joins its group, even with cancel-in-progress
+# false, and pushes to main must each run to completion.
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
     e2e:
@@ -146,7 +168,7 @@ jobs:
               working-directory: server/src
               run: |
                   go install github.com/jandelgado/gcov2lcov@v1.1.1
-                  $(go env GOPATH)/bin/gcov2lcov \
+                  "$(go env GOPATH)/bin/gcov2lcov" \
                       -infile="${E2E_RUN_DIR}/server-e2e.out" \
                       -outfile="${E2E_RUN_DIR}/server-e2e.lcov"
 

@@ -39,10 +39,11 @@ jobs:
     finalize:
         name: Finalize Codacy coverage
         runs-on: ubuntu-latest
-        # Only finalize for successful runs on main. PR runs, branch
-        # runs, and failed runs do not contribute partial uploads
-        # (see the gating in each producer workflow), so there is
-        # nothing to finalize for them.
+        # Only finalize for successful push runs on main. PR runs,
+        # branch runs, nightly scheduled and manually dispatched runs,
+        # and failed runs do not contribute partial uploads (see the
+        # gating in each producer workflow), so there is nothing to
+        # finalize for them.
         if: >-
             github.event.workflow_run.conclusion == 'success' &&
             github.event.workflow_run.head_branch == 'main' &&

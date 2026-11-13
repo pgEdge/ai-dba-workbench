@@ -1,0 +1,9 @@
+# actionlint configuration.
+#
+# ubuntu-26.04 is a GitHub-hosted runner image that actionlint's
+# built-in label list (as of v1.7.12) does not know yet; declaring it
+# here stops the false "unknown label" finding. Remove it once
+# actionlint recognises the label.
+self-hosted-runner:
+    labels:
+        - ubuntu-26.04

@@ -11,6 +11,15 @@ on:
         paths:
             - 'client/**'
             - '.github/workflows/ci-client.yml'
+    workflow_dispatch:
+
+# Superseded pull request runs are cancelled. Every other run gets a
+# group of its own (the run ID), because GitHub cancels a *pending* run
+# whenever a newer one joins its group, even with cancel-in-progress
+# false, and pushes to main must each run to completion.
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
     client:
@@ -42,10 +51,8 @@ jobs:
             - name: Type check
               run: npm run typecheck
 
-            - name: Run tests
-              if: matrix.node-version != '22'
-              run: npm test
-
+            # The test suite runs once, on Node.js 22 (with coverage); the
+            # newer Node.js releases only install, type-check and build.
             - name: Run tests with coverage
               if: matrix.node-version == '22'
               run: npm run test:coverage

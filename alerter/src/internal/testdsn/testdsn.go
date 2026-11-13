@@ -53,6 +53,7 @@ var (
 // to. The loopback-only check is the primary safety net.
 var allowedTestHosts = map[string]struct{}{
 	"127.0.0.1": {},
+	"::1":       {},
 	"localhost": {},
 	"":          {}, // unix socket; only reachable on this host
 }
@@ -109,7 +110,7 @@ func Require(t TB, purpose string) string {
 }
 
 // check returns dsn's parsed connection settings, or an error unless dsn
-// parses, names a loopback host and names a database that names matches.
+// parses, names only loopback hosts (primary and fallbacks) and names a database that names matches.
 // It parses with the pool parser, which also accepts the pool_*
 // parameters a plain pgx parse would reject.
 func check(dsn string, names *regexp.Regexp) (*pgx.ConnConfig, error) {
@@ -117,11 +118,19 @@ func check(dsn string, names *regexp.Regexp) (*pgx.ConnConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse test DSN: %w", err)
 	}
-	if _, ok := allowedTestHosts[cfg.ConnConfig.Host]; !ok {
-		return nil, fmt.Errorf("refusing to run destructive integration tests "+
-			"against non-loopback host %q; set "+
-			"TEST_AI_WORKBENCH_SERVER to a "+
-			"postgresql://...@127.0.0.1 DSN", cfg.ConnConfig.Host)
+	// pgx tries the fallback hosts when the primary fails, so each one
+	// must be a loopback host too.
+	hosts := []string{cfg.ConnConfig.Host}
+	for _, fb := range cfg.ConnConfig.Fallbacks {
+		hosts = append(hosts, fb.Host)
+	}
+	for _, host := range hosts {
+		if _, ok := allowedTestHosts[host]; !ok {
+			return nil, fmt.Errorf("refusing to run destructive integration tests "+
+				"against non-loopback host %q; set "+
+				"TEST_AI_WORKBENCH_SERVER to a "+
+				"postgresql://...@127.0.0.1 DSN", host)
+		}
 	}
 	if !names.MatchString(cfg.ConnConfig.Database) {
 		return nil, fmt.Errorf("refusing to run destructive integration tests "+

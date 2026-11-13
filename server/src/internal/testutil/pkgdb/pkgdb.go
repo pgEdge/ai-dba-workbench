@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"regexp"
@@ -75,6 +76,9 @@ type Runner interface {
 // so they skip as they always have; likewise when the server cannot be
 // reached, so the tests' own connection checks decide what happens.
 //
+// It fails the run, without connecting, when the variable names any host
+// other than a loopback one, because it drops and creates databases.
+//
 // A database left behind by an earlier, interrupted run is dropped
 // before the new one is created.
 func Run(m Runner, tag string) int {
@@ -109,6 +113,10 @@ func run(m Runner, tag string, log io.Writer) int {
 	if strings.HasSuffix(cfg.Database, Marker+tag) {
 		return m.Run()
 	}
+	if err := requireLoopback(cfg); err != nil {
+		fmt.Fprintf(log, "pkgdb: %v\n", err)
+		return 1
+	}
 
 	ctx := context.Background()
 	conn, err := pgx.ConnectConfig(ctx, cfg)
@@ -141,6 +149,25 @@ func run(m Runner, tag string, log io.Writer) int {
 	}
 	dropDatabase(ctx, cfg, dropSQL, name, log)
 	return code
+}
+
+// requireLoopback returns an error unless every host cfg may connect to,
+// the primary and each fallback, is a loopback one. The rule matches the
+// one the mcp-server lifecycle tests apply to the same variable:
+// "localhost" or a loopback IP address.
+func requireLoopback(cfg *pgx.ConnConfig) error {
+	hosts := []string{cfg.Host}
+	for _, fb := range cfg.Fallbacks {
+		hosts = append(hosts, fb.Host)
+	}
+	for _, host := range hosts {
+		if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return fmt.Errorf("refusing to create or drop test databases on "+
+				"non-loopback host %q; set %s to a postgresql://...@127.0.0.1 URL",
+				host, EnvVar)
+		}
+	}
+	return nil
 }
 
 // create names the package database, drops any stale copy and creates

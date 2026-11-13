@@ -121,10 +121,10 @@ plain `git push --force`, and never force-push `main` itself.
 
 Understand the requirement, break it into sub-tasks and delegate each to the
 sub-agent above, in parallel where they are independent, then synthesise and
-report. Each implementation sub-agent runs `make test-all` in the
+report. Each implementation sub-agent runs `make test-all` once in the
 sub-project it touched before handing back; the primary agent runs
-`make test-all` from the repository root once they have all finished, and
-rejects any delivery below the coverage floor in the Tests section.
+`make test-changed` from the repository root once they have all finished,
+and rejects any delivery below the coverage floor in the Tests section.
 Security-sensitive changes (auth, input handling, queries) go to
 **security-auditor**, and user-facing changes to **documentation-writer**,
 including `docs/changelog.md`.
@@ -159,20 +159,27 @@ repo-specific points below take precedence where they differ:
   when you touch a file or package below 90%, raise the touched unit to
   90% in the same change.
 
-- Measure coverage per sub-project with `cd <subproject> && make coverage`.
-  Each coverage target fails when the sub-project total drops below a
-  ratchet pinned at the current total (`COVERAGE_MIN` in each Go Makefile,
-  `coverage.thresholds` in `client/vitest.config.js`); raise the ratchet
-  whenever a change lifts the total, and never lower it. Inspect Go results
-  with `go tool cover -func=coverage.out`; the client's Vitest text
-  reporter prints per-file coverage.
+- While developing, run targeted tests only
+  (`go test -race -run <Test> ./internal/<pkg>/...`,
+  `npx vitest related <files>`). The `make test-all` target in each
+  sub-project except `pkg` already runs the coverage gate, so run it once
+  before handing back, without a separate `make coverage`. The gate fails
+  when the total drops below a ratchet pinned at the current total
+  (`COVERAGE_MIN` in each Go Makefile, `coverage.thresholds` in
+  `client/vitest.config.js`); raise the ratchet whenever a change lifts
+  the total, and never lower it. Inspect Go results with
+  `go tool cover -func=coverage.out`; the client's Vitest text reporter
+  prints per-file coverage.
 
 - Run `gofmt` on Go files and the relevant linters after any code change;
   a task is not finished until formatting and linting pass cleanly.
 
-- Run `make test-all` from the repository root before completing a task,
-  checking for errors or warnings hidden by output truncation. A task is
-  complete only when tests, linting and the coverage floor all pass.
+- Before completing a task, run `make test-changed` from the repository
+  root: it runs `test-all` in each sub-project the branch touches
+  (`DRY_RUN=1` previews the selection). Root `make test-all` still runs
+  everything, and CI runs the full matrix on `main`. Check for errors
+  hidden by output truncation; a task is complete only when tests,
+  linting and the coverage floor all pass.
 
 - Modify existing tests only when the tested behaviour changes or to fix a
   bug; clean up temporary test files and retain log files for debugging.

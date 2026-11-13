@@ -10,6 +10,40 @@ project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Add a top-level `make test-changed` target that runs `test-all` only
+  in the sub-projects a branch changes, including those that depend on
+  a changed shared package or collector schema; set `BASE` to choose
+  the comparison reference and `DRY_RUN=1` to preview the selection.
+  (#846)
+
+### Changed
+
+- Run the server and alerter test packages in parallel; each package
+  that uses the database now creates its own `<database>_pkg_<package>`
+  database, and the alerter's test database check accepts those names.
+  (#846)
+
+- Run the client tests once in `make test-all`, which now runs the
+  coverage gate, the type checker, and the linter. The client imports
+  Material UI icons and components by path, and an ESLint rule rejects
+  imports from the package barrels. (#846)
+
+- Speed up the server tests, which no longer hash passwords at the
+  production cost. (#846)
+
+- Run two Go and PostgreSQL combinations for the collector, server, and
+  alerter on pull requests, and the full matrix on pushes to `main`, on
+  a nightly schedule, and on manual runs. The client tests run on
+  Node.js 22 only; Node.js 24 and 26 type-check and build the client.
+  (#846)
+
+- Cancel superseded pull request runs in CI, keep the Go build cache
+  current, install a prebuilt `golangci-lint`, build pull request
+  Docker images for `linux/amd64` only, and skip the Docker and E2E
+  workflows for changes that touch only test files. (#846)
+
 ## [2.0.0-beta1] - 2026-11-12
 
 !!! warning "Breaking changes"

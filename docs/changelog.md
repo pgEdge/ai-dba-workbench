@@ -18,7 +18,9 @@ project adheres to
   never connect fails with an immediate error instead of being saved.
   The check applies whatever `allow_internal_networks` or
   `allowed_hosts` say, and covers host names that resolve to such
-  addresses. (#842)
+  addresses, except a connection host name that `allowed_hosts` lists
+  by name, which is not resolved when saved and is refused only when
+  the server connects. (#842)
 
 ## [2.0.0-beta1] - 2026-11-12
 

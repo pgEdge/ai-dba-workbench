@@ -15,14 +15,15 @@ import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import Skeleton from '@mui/material/Skeleton';
-import { alpha, Paper, Collapse, Tooltip, useTheme } from '@mui/material';
-import {
-    AutoAwesome as SparkleIcon,
-    ExpandMore as ExpandMoreIcon,
-    ExpandLess as ExpandLessIcon,
-    Psychology as PsychologyIcon,
-    Refresh as RefreshIcon,
-} from '@mui/icons-material';
+import Paper from '@mui/material/Paper';
+import Collapse from '@mui/material/Collapse';
+import Tooltip from '@mui/material/Tooltip';
+import { alpha, useTheme } from '@mui/material/styles';
+import SparkleIcon from '@mui/icons-material/AutoAwesome';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { useAuth } from '../../../contexts/useAuth';
 import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { apiFetch } from '../../../utils/apiClient';

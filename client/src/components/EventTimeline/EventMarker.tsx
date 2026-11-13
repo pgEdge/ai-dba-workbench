@@ -9,16 +9,11 @@
  */
 
 import { useMemo, memo } from 'react';
-import {
-    Box,
-    Typography,
-    Tooltip,
-    alpha,
-    useTheme,
-} from '@mui/material';
-import {
-    EventNote as EventNoteIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Tooltip from '@mui/material/Tooltip';
+import { alpha, useTheme } from '@mui/material/styles';
+import EventNoteIcon from '@mui/icons-material/EventNote';
 import { getEventConfig, formatEventTime } from './utils';
 import type { EventMarkerProps } from './types';
 import {

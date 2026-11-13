@@ -15,10 +15,8 @@ import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import Backdrop from '@mui/material/Backdrop';
 import Slide from '@mui/material/Slide';
-import {
-    ArrowBack as ArrowBackIcon,
-    Close as CloseIcon,
-} from '@mui/icons-material';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import CloseIcon from '@mui/icons-material/Close';
 import { alpha, useTheme } from '@mui/material/styles';
 import { useDashboard } from '../../contexts/useDashboard';
 import {

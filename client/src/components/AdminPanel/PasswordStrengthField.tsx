@@ -10,7 +10,10 @@
 
 import { useEffect, useMemo } from 'react';
 import type { JSX } from 'react';
-import { Box, LinearProgress, TextField, Typography } from '@mui/material';
+import Box from '@mui/material/Box';
+import LinearProgress from '@mui/material/LinearProgress';
+import TextField from '@mui/material/TextField';
+import Typography from '@mui/material/Typography';
 import type { TextFieldProps } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { PASSWORD_MAX_LENGTH } from './passwordStrength';

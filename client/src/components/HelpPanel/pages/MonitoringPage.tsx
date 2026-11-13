@@ -9,14 +9,13 @@
  */
 
 import type React from 'react';
-import { Box, Typography } from '@mui/material';
-import {
-    Dashboard as StatusIcon,
-    Storage as ServerIcon,
-    AccountTree as TopologyIcon,
-    Timeline as TimelineIcon,
-    Psychology as AIIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import StatusIcon from '@mui/icons-material/Dashboard';
+import ServerIcon from '@mui/icons-material/Storage';
+import TopologyIcon from '@mui/icons-material/AccountTree';
+import TimelineIcon from '@mui/icons-material/Timeline';
+import AIIcon from '@mui/icons-material/Psychology';
 import { SectionTitle, HelpTip, FeatureItem } from '../components';
 import { styles } from '../helpPanelStyles';
 

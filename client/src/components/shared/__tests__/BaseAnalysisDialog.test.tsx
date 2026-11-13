@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
-import { Psychology as PsychologyIcon } from '@mui/icons-material';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import BaseAnalysisDialog from '../BaseAnalysisDialog';
 import { renderWithTheme } from '../../../test/renderWithTheme';
 

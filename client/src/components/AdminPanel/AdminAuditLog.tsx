@@ -10,7 +10,10 @@
 
 import type React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Box, Typography, CircularProgress, Alert } from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import CircularProgress from '@mui/material/CircularProgress';
+import Alert from '@mui/material/Alert';
 import { apiFetch } from '../../utils/apiClient';
 import { pageHeadingSx, loadingContainerSx } from './styles';
 import { extractErrorMessage } from './_shared';

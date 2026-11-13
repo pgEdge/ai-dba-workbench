@@ -12,7 +12,7 @@ import type React from 'react';
 import { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
-import { Sync as SyncIcon } from '@mui/icons-material';
+import SyncIcon from '@mui/icons-material/Sync';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import type {

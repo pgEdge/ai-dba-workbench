@@ -9,24 +9,19 @@
  */
 
 import { memo } from 'react';
-import {
-    Box,
-    Typography,
-    IconButton,
-    Collapse,
-    alpha,
-    useTheme,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import Collapse from '@mui/material/Collapse';
+import { alpha, useTheme } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 import type { Cluster, Server } from './utils';
-import {
-    ExpandMore as ExpandIcon,
-    ChevronRight as CollapseIcon,
-    FolderOpen as GroupOpenIcon,
-    Folder as GroupIcon,
-    Delete as DeleteIcon,
-    Settings as SettingsIcon,
-} from '@mui/icons-material';
+import ExpandIcon from '@mui/icons-material/ExpandMore';
+import CollapseIcon from '@mui/icons-material/ChevronRight';
+import GroupOpenIcon from '@mui/icons-material/FolderOpen';
+import GroupIcon from '@mui/icons-material/Folder';
+import DeleteIcon from '@mui/icons-material/Delete';
+import SettingsIcon from '@mui/icons-material/Settings';
 import InlineEditText from '../InlineEditText';
 import { getClusterType, countServersRecursive, parseGroupNumericId } from './utils';
 import ClusterContainer from './ClusterContainer';

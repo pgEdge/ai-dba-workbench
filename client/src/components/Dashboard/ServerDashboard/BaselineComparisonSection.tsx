@@ -20,7 +20,7 @@ import Select from '@mui/material/Select';
 import type { SelectChangeEvent } from '@mui/material/Select';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import { Insights as InsightsIcon } from '@mui/icons-material';
+import InsightsIcon from '@mui/icons-material/Insights';
 import {
     useAnomalyComparison,
     useComparisonMetrics,

@@ -10,17 +10,13 @@
 
 import type React from 'react';
 import { useMemo, useState } from 'react';
-import {
-    Box,
-    Typography,
-    IconButton,
-    Tooltip,
-    alpha,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import {
-    InfoOutlined as InfoIcon,
-} from '@mui/icons-material';
+import InfoIcon from '@mui/icons-material/InfoOutlined';
 import {
     SERVER_INFO_WRAPPER_SX,
     SPOCK_DOT_SX,

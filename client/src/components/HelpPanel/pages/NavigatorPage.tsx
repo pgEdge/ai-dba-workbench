@@ -9,14 +9,13 @@
  */
 
 import type React from 'react';
-import { Box, Typography } from '@mui/material';
-import {
-    Folder as GroupIcon,
-    Dns as ClusterIcon,
-    Storage as ServerIcon,
-    Search as SearchIcon,
-    DragIndicator as DragIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import GroupIcon from '@mui/icons-material/Folder';
+import ClusterIcon from '@mui/icons-material/Dns';
+import ServerIcon from '@mui/icons-material/Storage';
+import SearchIcon from '@mui/icons-material/Search';
+import DragIcon from '@mui/icons-material/DragIndicator';
 import { SectionTitle, HelpTip, FeatureItem } from '../components';
 import { styles } from '../helpPanelStyles';
 

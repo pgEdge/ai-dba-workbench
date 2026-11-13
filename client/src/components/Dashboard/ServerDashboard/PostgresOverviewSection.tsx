@@ -12,7 +12,7 @@ import type React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
-import { Storage as StorageIcon } from '@mui/icons-material';
+import StorageIcon from '@mui/icons-material/Storage';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { useServerCacheHit } from '../../../hooks/useServerCacheHit';

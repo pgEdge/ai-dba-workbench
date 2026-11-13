@@ -29,6 +29,24 @@ const apiProxy: Record<string, ProxyOptions> = {
 
 export default defineConfig({
     plugins: [react()],
+    resolve: {
+        alias: [
+            // Icons are imported one per file, for example
+            // '@mui/icons-material/Add'. That path is the package's
+            // CommonJS build, and because the client package is
+            // "type": "module" the bundler applies Node interop and
+            // the default import becomes the whole exports object
+            // (React error #130 at render). Point every per-icon
+            // path at the ES module copy under esm/ instead.
+            // TypeScript still reads the types from the root .d.ts
+            // files, and Vitest uses vitest.config.js, so tests keep
+            // loading the CommonJS files natively.
+            {
+                find: /^@mui\/icons-material\/(?!esm\/)(.+)$/,
+                replacement: '@mui/icons-material/esm/$1',
+            },
+        ],
+    },
     server: {
         host: '127.0.0.1',
         port: 5173,

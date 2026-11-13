@@ -10,12 +10,12 @@
 
 import type React from 'react';
 import { useEffect, useMemo } from 'react';
-import { Box, Typography, useTheme } from '@mui/material';
-import {
-    Psychology as PsychologyIcon,
-    Storage as ServerIcon,
-    Dns as ClusterIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import ServerIcon from '@mui/icons-material/Storage';
+import ClusterIcon from '@mui/icons-material/Dns';
 import {
     useServerAnalysis,
 } from '../hooks/useServerAnalysis';

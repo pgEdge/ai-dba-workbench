@@ -13,7 +13,7 @@
  */
 
 import type { SxProps, Theme } from '@mui/material/styles';
-import { alpha, keyframes } from '@mui/material';
+import { alpha, keyframes } from '@mui/material/styles';
 
 /** Shared spin animation for refresh icons. */
 export const spinKeyframes = keyframes`

@@ -9,8 +9,9 @@
  */
 
 import type React from 'react';
-import { Box, Typography } from '@mui/material';
-import { Palette as ThemeIcon } from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import ThemeIcon from '@mui/icons-material/Palette';
 import { SectionTitle, HelpTip } from '../components';
 import { styles } from '../helpPanelStyles';
 

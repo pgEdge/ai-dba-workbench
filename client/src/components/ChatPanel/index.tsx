@@ -16,20 +16,16 @@ import {
     useCallback,
     useMemo,
 } from 'react';
-import {
-    Box,
-    Typography,
-    IconButton,
-    Tooltip,
-    alpha,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import { alpha } from '@mui/material/styles';
 import { type Theme, useTheme } from '@mui/material/styles';
-import {
-    Close as CloseIcon,
-    Add as NewChatIcon,
-    History as HistoryIcon,
-    Download as DownloadIcon,
-} from '@mui/icons-material';
+import CloseIcon from '@mui/icons-material/Close';
+import NewChatIcon from '@mui/icons-material/Add';
+import HistoryIcon from '@mui/icons-material/History';
+import DownloadIcon from '@mui/icons-material/Download';
 import { useChatContext } from '../../contexts/useChatContext';
 import ChatMessage, { type ChatMessageData, type ContentBlock } from './ChatMessage';
 import ChatInput from './ChatInput';

@@ -12,28 +12,26 @@
 
 import type React from 'react';
 import { useState, useEffect, useRef } from 'react';
-import {
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    TextField,
-    Button,
-    Alert,
-    FormControlLabel,
-    Checkbox,
-    Box,
-    CircularProgress,
-    Typography,
-    Tabs,
-    Tab,
-    AppBar,
-    Toolbar,
-    IconButton,
-    alpha,
-} from '@mui/material';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import TextField from '@mui/material/TextField';
+import Button from '@mui/material/Button';
+import Alert from '@mui/material/Alert';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Checkbox from '@mui/material/Checkbox';
+import Box from '@mui/material/Box';
+import CircularProgress from '@mui/material/CircularProgress';
+import Typography from '@mui/material/Typography';
+import Tabs from '@mui/material/Tabs';
+import Tab from '@mui/material/Tab';
+import AppBar from '@mui/material/AppBar';
+import Toolbar from '@mui/material/Toolbar';
+import IconButton from '@mui/material/IconButton';
+import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
-import { Close as CloseIcon } from '@mui/icons-material';
+import CloseIcon from '@mui/icons-material/Close';
 import AlertOverridesPanel from './AlertOverridesPanel';
 import ProbeOverridesPanel from './ProbeOverridesPanel';
 import ChannelOverridesPanel from './ChannelOverridesPanel';

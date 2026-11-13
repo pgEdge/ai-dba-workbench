@@ -10,9 +10,13 @@
 
 import type React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Box, Typography, Button, CircularProgress, Alert } from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Button from '@mui/material/Button';
+import CircularProgress from '@mui/material/CircularProgress';
+import Alert from '@mui/material/Alert';
 import { useTheme } from '@mui/material/styles';
-import { Add as AddIcon } from '@mui/icons-material';
+import AddIcon from '@mui/icons-material/Add';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import { copyToClipboard } from '../../utils/clipboard';

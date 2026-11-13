@@ -9,9 +9,14 @@
  */
 
 import type React from 'react';
-import { Box, TextField, IconButton, Button, Typography } from '@mui/material';
+import Box from '@mui/material/Box';
+import TextField from '@mui/material/TextField';
+import IconButton from '@mui/material/IconButton';
+import Button from '@mui/material/Button';
+import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
 import type { HeaderEntry } from './webhookTypes';
 import { getContainedButtonSx, getDeleteIconSx } from '../styles';
 

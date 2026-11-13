@@ -10,24 +10,20 @@
 
 import type React from 'react';
 import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
-import {
-    Box,
-    Typography,
-    Paper,
-    Skeleton,
-    Collapse,
-    IconButton,
-    alpha,
-    Tooltip,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Paper from '@mui/material/Paper';
+import Skeleton from '@mui/material/Skeleton';
+import Collapse from '@mui/material/Collapse';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import {
-    AutoAwesome as SparkleIcon,
-    ExpandMore as ExpandMoreIcon,
-    ExpandLess as ExpandLessIcon,
-    Psychology as PsychologyIcon,
-    Refresh as RefreshIcon,
-} from '@mui/icons-material';
+import SparkleIcon from '@mui/icons-material/AutoAwesome';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { apiGet } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { ApiError } from '../../utils/apiClient';

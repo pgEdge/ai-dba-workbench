@@ -10,8 +10,12 @@
 
 import type React from 'react';
 import { useMemo, useState, useCallback } from 'react';
-import { Box, Typography, useTheme, IconButton, Tooltip } from '@mui/material';
-import { Psychology as PsychologyIcon } from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import { useTheme } from '@mui/material/styles';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import { Chart } from '../../Chart/Chart';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import type { ChartAnalysisContext } from '../../Chart/types';

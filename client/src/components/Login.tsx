@@ -12,20 +12,17 @@
 
 import type React from 'react';
 import { useState, useEffect } from 'react';
-import {
-    Box,
-    Card,
-    CardContent,
-    TextField,
-    Button,
-    Typography,
-    Alert,
-    CircularProgress,
-    Container,
-    Divider,
-    keyframes,
-    alpha,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Card from '@mui/material/Card';
+import CardContent from '@mui/material/CardContent';
+import TextField from '@mui/material/TextField';
+import Button from '@mui/material/Button';
+import Typography from '@mui/material/Typography';
+import Alert from '@mui/material/Alert';
+import CircularProgress from '@mui/material/CircularProgress';
+import Container from '@mui/material/Container';
+import Divider from '@mui/material/Divider';
+import { keyframes, alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 import { useAuth } from '../contexts/useAuth';
 import { useAuthCapabilities } from '../contexts/useAuthCapabilities';

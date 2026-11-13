@@ -10,17 +10,13 @@
 
 import type React from 'react';
 import { useMemo } from 'react';
-import {
-    Box,
-    Typography,
-    Paper,
-    alpha,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Paper from '@mui/material/Paper';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import {
-    TrendingUp as TrendingUpIcon,
-    TrendingDown as TrendingDownIcon,
-} from '@mui/icons-material';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import { METRIC_TREND_CONTAINER_SX } from './styles';
 import { METRIC_LABEL_SX, METRIC_VALUE_BASE_SX } from '../../theme';
 import type { MetricCardProps } from './types';

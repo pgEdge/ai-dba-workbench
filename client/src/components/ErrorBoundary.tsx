@@ -9,23 +9,19 @@
  */
 
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import {
-    Alert,
-    AlertTitle,
-    Box,
-    Button,
-    Container,
-    Paper,
-    Typography,
-    Collapse,
-    IconButton,
-} from '@mui/material';
-import {
-    ErrorOutline as ErrorOutlineIcon,
-    Refresh as RefreshIcon,
-    ExpandMore as ExpandMoreIcon,
-    ExpandLess as ExpandLessIcon,
-} from '@mui/icons-material';
+import Alert from '@mui/material/Alert';
+import AlertTitle from '@mui/material/AlertTitle';
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Container from '@mui/material/Container';
+import Paper from '@mui/material/Paper';
+import Typography from '@mui/material/Typography';
+import Collapse from '@mui/material/Collapse';
+import IconButton from '@mui/material/IconButton';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { logger } from '../utils/logger';
 
 interface ErrorBoundaryProps {

@@ -13,7 +13,9 @@
 
 import type React from 'react';
 import { useMemo } from 'react';
-import { Chip, Tooltip, alpha } from '@mui/material';
+import Chip from '@mui/material/Chip';
+import Tooltip from '@mui/material/Tooltip';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
 import { CHIP_LABEL_SX, getAlertTypeColor, getAlertTypeLabel } from './styles';
 import { ALERT_TYPE_CHIP_BASE_SX } from '../../theme';

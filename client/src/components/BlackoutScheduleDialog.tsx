@@ -12,31 +12,27 @@
 
 import type React from 'react';
 import { useState, useEffect, useRef, useMemo } from 'react';
-import {
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    TextField,
-    Button,
-    Box,
-    Typography,
-    Alert,
-    CircularProgress,
-    Chip,
-    RadioGroup,
-    FormControlLabel,
-    Radio,
-    Switch,
-    alpha,
-} from '@mui/material';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import TextField from '@mui/material/TextField';
+import Button from '@mui/material/Button';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Alert from '@mui/material/Alert';
+import CircularProgress from '@mui/material/CircularProgress';
+import Chip from '@mui/material/Chip';
+import RadioGroup from '@mui/material/RadioGroup';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Radio from '@mui/material/Radio';
+import Switch from '@mui/material/Switch';
+import { alpha } from '@mui/material/styles';
 import { useTheme, type Theme } from '@mui/material/styles';
-import {
-    Language as EstateIcon,
-    FolderSpecial as GroupIcon,
-    Dns as ClusterIcon,
-    Storage as ServerIcon,
-} from '@mui/icons-material';
+import EstateIcon from '@mui/icons-material/Language';
+import GroupIcon from '@mui/icons-material/FolderSpecial';
+import ClusterIcon from '@mui/icons-material/Dns';
+import ServerIcon from '@mui/icons-material/Storage';
 import type { SvgIconComponent } from '@mui/icons-material';
 import { useBlackouts } from '../contexts/useBlackouts';
 import type { CreateScheduleRequest } from '../contexts/BlackoutContext';

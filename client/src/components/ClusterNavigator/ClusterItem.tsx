@@ -10,23 +10,18 @@
 
 import type React from 'react';
 import { memo, useMemo } from 'react';
-import {
-    Box,
-    IconButton,
-    Collapse,
-    Chip,
-    alpha,
-    useTheme,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
+import Collapse from '@mui/material/Collapse';
+import Chip from '@mui/material/Chip';
+import { alpha, useTheme } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 import type { Cluster, Server } from './utils';
-import {
-    ExpandMore as ExpandIcon,
-    ChevronRight as CollapseIcon,
-    Dns as ClusterIcon,
-    Settings as SettingsIcon,
-    DeleteOutline as DeleteIcon,
-} from '@mui/icons-material';
+import ExpandIcon from '@mui/icons-material/ExpandMore';
+import CollapseIcon from '@mui/icons-material/ChevronRight';
+import ClusterIcon from '@mui/icons-material/Dns';
+import SettingsIcon from '@mui/icons-material/Settings';
+import DeleteIcon from '@mui/icons-material/DeleteOutline';
 import InlineEditText from '../InlineEditText';
 import { getClusterType, countServersRecursive } from './utils';
 import ClusterContainer from './ClusterContainer';

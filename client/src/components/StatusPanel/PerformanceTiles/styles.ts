@@ -13,7 +13,7 @@
  */
 
 import type { SxProps, Theme } from '@mui/material/styles';
-import { alpha } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 
 export const TILE_GRID_SX: SxProps<Theme> = {
     display: 'grid',

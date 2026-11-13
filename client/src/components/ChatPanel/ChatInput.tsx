@@ -10,15 +10,13 @@
 
 import type React from 'react';
 import { useState, useRef, useCallback, useEffect } from 'react';
-import {
-    Box,
-    TextField,
-    IconButton,
-    Typography,
-    alpha,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import TextField from '@mui/material/TextField';
+import IconButton from '@mui/material/IconButton';
+import Typography from '@mui/material/Typography';
+import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
-import { Send as SendIcon } from '@mui/icons-material';
+import SendIcon from '@mui/icons-material/Send';
 
 // ---------------------------------------------------------------------------
 // Style constants and style-getter functions

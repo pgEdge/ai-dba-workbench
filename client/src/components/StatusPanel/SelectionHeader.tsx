@@ -10,21 +10,17 @@
 
 import type React from 'react';
 import { useMemo } from 'react';
-import {
-    Box,
-    Typography,
-    IconButton,
-    Tooltip,
-    Badge,
-    alpha,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import Badge from '@mui/material/Badge';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import {
-    Storage as ServerIcon,
-    Dns as ClusterIcon,
-    Language as EstateIcon,
-    Info as InfoIcon,
-} from '@mui/icons-material';
+import ServerIcon from '@mui/icons-material/Storage';
+import ClusterIcon from '@mui/icons-material/Dns';
+import EstateIcon from '@mui/icons-material/Language';
+import InfoIcon from '@mui/icons-material/Info';
 import {
     HEADER_CONTAINER_SX,
     HEADER_ICON_BOX_BASE_SX,

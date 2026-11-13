@@ -10,7 +10,7 @@
 
 import type React from 'react';
 import { render, screen, fireEvent, within } from '@testing-library/react';
-import { ThemeProvider } from '@mui/material';
+import { ThemeProvider } from '@mui/material/styles';
 import { describe, it, expect, vi } from 'vitest';
 import AlertItem from '../AlertItem';
 import GroupedAlertItem from '../GroupedAlertItem';

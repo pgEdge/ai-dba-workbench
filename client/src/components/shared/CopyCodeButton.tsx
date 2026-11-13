@@ -11,12 +11,11 @@
 
 import type React from 'react';
 import { useState, useCallback } from 'react';
-import { IconButton, Tooltip } from '@mui/material';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import type { Theme } from '@mui/material/styles';
-import {
-    ContentCopy as ContentCopyIcon,
-    Check as CheckIcon,
-} from '@mui/icons-material';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import CheckIcon from '@mui/icons-material/Check';
 import { getCopyButtonSx } from './markdownStyles';
 import { copyToClipboard } from '../../utils/clipboard';
 import { logger } from '../../utils/logger';

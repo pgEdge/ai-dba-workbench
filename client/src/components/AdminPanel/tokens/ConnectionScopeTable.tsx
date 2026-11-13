@@ -9,18 +9,16 @@
  */
 
 import type React from 'react';
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableRow,
-    TextField,
-    MenuItem,
-    IconButton,
-} from '@mui/material';
+import Table from '@mui/material/Table';
+import TableBody from '@mui/material/TableBody';
+import TableCell from '@mui/material/TableCell';
+import TableHead from '@mui/material/TableHead';
+import TableRow from '@mui/material/TableRow';
+import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
+import IconButton from '@mui/material/IconButton';
 import { useTheme } from '@mui/material/styles';
-import { Delete as DeleteIcon } from '@mui/icons-material';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { tableHeaderCellSx, getDeleteIconSx } from '../styles';
 import { SELECT_FIELD_SX } from '../../shared/formStyles';
 import type { ScopedConnection } from './tokenTypes';

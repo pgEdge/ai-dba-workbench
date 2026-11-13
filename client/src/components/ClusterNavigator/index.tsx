@@ -25,24 +25,19 @@ import {
 } from '@dnd-kit/core';
 import type { Theme } from '@mui/material/styles';
 import type { Cluster, Server } from './utils';
-import {
-    Box,
-    Typography,
-    IconButton,
-    Tooltip,
-    TextField,
-    InputAdornment,
-    Skeleton,
-    alpha,
-    useTheme,
-} from '@mui/material';
-import {
-    Search as SearchIcon,
-    Storage as ServerIcon,
-    Refresh as RefreshIcon,
-    Add as AddIcon,
-    Autorenew as AutorenewIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import TextField from '@mui/material/TextField';
+import InputAdornment from '@mui/material/InputAdornment';
+import Skeleton from '@mui/material/Skeleton';
+import { alpha, useTheme } from '@mui/material/styles';
+import SearchIcon from '@mui/icons-material/Search';
+import ServerIcon from '@mui/icons-material/Storage';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import AddIcon from '@mui/icons-material/Add';
+import AutorenewIcon from '@mui/icons-material/Autorenew';
 import ServerDialog from '../ServerDialog';
 import GroupDialog from '../GroupDialog';
 import ClusterConfigDialog from '../ClusterConfigDialog';

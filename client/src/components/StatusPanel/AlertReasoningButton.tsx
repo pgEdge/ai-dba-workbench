@@ -10,18 +10,16 @@
 
 import type React from 'react';
 import { useId, useMemo, useState } from 'react';
-import {
-    Box,
-    Button,
-    CircularProgress,
-    IconButton,
-    Popover,
-    Tooltip,
-    Typography,
-    alpha,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import CircularProgress from '@mui/material/CircularProgress';
+import IconButton from '@mui/material/IconButton';
+import Popover from '@mui/material/Popover';
+import Tooltip from '@mui/material/Tooltip';
+import Typography from '@mui/material/Typography';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import { HelpOutline as ReasoningIcon } from '@mui/icons-material';
+import ReasoningIcon from '@mui/icons-material/HelpOutline';
 import { ICON_14_SX, ICON_16_SX } from '../../theme';
 import {
     useAlertReasoning,

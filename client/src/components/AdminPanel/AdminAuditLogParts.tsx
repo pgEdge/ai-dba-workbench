@@ -10,31 +10,27 @@
 
 import type React from 'react';
 import { Fragment } from 'react';
-import {
-    Box,
-    Typography,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    TablePagination,
-    Paper,
-    IconButton,
-    Chip,
-    Tooltip,
-    Collapse,
-    TextField,
-    MenuItem,
-    Button,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Table from '@mui/material/Table';
+import TableBody from '@mui/material/TableBody';
+import TableCell from '@mui/material/TableCell';
+import TableContainer from '@mui/material/TableContainer';
+import TableHead from '@mui/material/TableHead';
+import TableRow from '@mui/material/TableRow';
+import TablePagination from '@mui/material/TablePagination';
+import Paper from '@mui/material/Paper';
+import IconButton from '@mui/material/IconButton';
+import Chip from '@mui/material/Chip';
+import Tooltip from '@mui/material/Tooltip';
+import Collapse from '@mui/material/Collapse';
+import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
+import Button from '@mui/material/Button';
 import { alpha, useTheme } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
-import {
-    KeyboardArrowDown as ExpandIcon,
-    KeyboardArrowUp as CollapseIcon,
-} from '@mui/icons-material';
+import ExpandIcon from '@mui/icons-material/KeyboardArrowDown';
+import CollapseIcon from '@mui/icons-material/KeyboardArrowUp';
 import {
     tableHeaderCellSx,
     emptyRowSx,

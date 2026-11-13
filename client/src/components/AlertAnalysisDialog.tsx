@@ -13,14 +13,14 @@
 
 import type React from 'react';
 import { useEffect } from 'react';
-import { Box, Typography, alpha, useTheme } from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import { alpha, useTheme } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
-import {
-    Psychology as PsychologyIcon,
-    Error as ErrorIcon,
-    Warning as WarningIcon,
-    Info as InfoIcon,
-} from '@mui/icons-material';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import ErrorIcon from '@mui/icons-material/Error';
+import WarningIcon from '@mui/icons-material/Warning';
+import InfoIcon from '@mui/icons-material/Info';
 import { useAlertAnalysis } from '../hooks/useAlertAnalysis';
 import type { AlertInput } from '../hooks/useAlertAnalysis';
 import { getIconColorSx, sxMonoFont } from './shared/MarkdownExports';

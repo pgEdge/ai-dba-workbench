@@ -10,12 +10,10 @@
 
 import type React from 'react';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-    Box,
-    Typography,
-    CircularProgress,
-    Alert,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import CircularProgress from '@mui/material/CircularProgress';
+import Alert from '@mui/material/Alert';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
 import TopologyDiagram from './Dashboard/ClusterDashboard/topology/TopologyDiagram';
 import type { ClusterServer } from '../contexts/ClusterDataContext';

@@ -9,13 +9,11 @@
  */
 
 import type React from 'react';
-import {
-    Box,
-    TextField,
-    Switch,
-    Typography,
-    FormControlLabel,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import TextField from '@mui/material/TextField';
+import Switch from '@mui/material/Switch';
+import Typography from '@mui/material/Typography';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import type { EmailFormState } from './emailTypes';
 
 export interface EmailSettingsTabProps {

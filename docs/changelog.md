@@ -10,6 +10,18 @@ project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Refuse unspecified, link-local and cloud metadata addresses when a
+  connection or notification channel is saved, as the server, collector
+  and alerter already did when connecting, so that a target that could
+  never connect fails with an immediate error instead of being saved.
+  The check applies whatever `allow_internal_networks` or
+  `allowed_hosts` say, and covers host names that resolve to such
+  addresses, except a connection host name that `allowed_hosts` lists
+  by name, which is not resolved when saved and is refused only when
+  the server connects. (#842)
+
 ## [2.0.0-beta1] - 2026-11-12
 
 !!! warning "Breaking changes"

@@ -299,6 +299,14 @@ context ends. The SMTP host is passed through `hostvalidation.BareHost`
 `testChannel` stay, for their specific error messages, but the dial is
 what holds against rebinding.
 
+`createChannel` and `updateChannel` make no `ValidateHost` call, because
+deliveries follow the alerter's settings, not the server's
+`connection_security`. They apply only the always-blocked floor, through
+`refuseAlwaysBlockedTargets` and `CheckAlwaysBlockedHost`
+(`api/host_validation.go`), to the `smtp_host`, `webhook_url` and
+`endpoint_url` the request supplies; an unresolvable name or an
+unparseable URL is left alone. Tests stub DNS with `h.lookupHost`.
+
 The policy is `testSendPolicy(h.hostValidator)`: the always-blocked
 floor first, then `HostValidator.CheckDialAddr`, so the server's own
 `connection_security` rules (shared with database connections) apply,

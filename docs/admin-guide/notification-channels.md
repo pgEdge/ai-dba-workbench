@@ -118,6 +118,17 @@ administrator sets the alerter's
 `true`. Unspecified, link-local and cloud metadata
 addresses are refused whatever the option says.
 
+The server refuses those same addresses when a channel
+is created or updated. A request whose `smtp_host`,
+`webhook_url` or `endpoint_url` names such an address,
+or a host name that resolves to one, fails with a 400
+response naming the field, such as
+`Invalid smtp_host: unspecified, link-local and cloud metadata addresses are always blocked`.
+The server checks only the fields that the request
+supplies, does not refuse a host name that it cannot
+resolve, and makes no other address check when a
+channel is saved.
+
 A refused delivery is retried on the schedule above,
 and the recorded error contains the text
 `host resolves only to addresses that connections are not permitted to`,

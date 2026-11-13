@@ -81,10 +81,15 @@ address that the target resolves to at that moment and connects only to
 the addresses that pass, which defeats DNS rebinding. At save time an
 allow-listed address can permit the whole host name; at connect time an
 allow-listed address permits only that address. Before applying those
-rules at connect time, the server refuses unspecified, link-local and
-cloud metadata addresses, whatever `allowed_hosts` or
-`allow_internal_networks` say; a connection to such an address can be
-saved but never connects. The collector has none of the
+rules, the server refuses unspecified, link-local and cloud metadata
+addresses, whatever `allowed_hosts` or `allow_internal_networks` say,
+both at connect time and when a connection is saved. A request to
+create or update a connection whose `host` or `hostaddr` is such an
+address, or whose `host` is a name that resolves to one, fails with a
+400 response stating that these addresses are always blocked. A host
+name that `allowed_hosts` lists is not resolved when the connection is
+saved, so the server applies the check to that name's addresses only at
+connect time. The collector has none of the
 `connection_security` host settings; when the collector connects, the
 collector refuses only the same unspecified, link-local and cloud
 metadata addresses, and allows loopback and private addresses. See

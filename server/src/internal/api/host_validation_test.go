@@ -126,7 +126,7 @@ func TestHostValidator_ValidateHost(t *testing.T) {
 			name:        "link-local blocked",
 			host:        "169.254.1.1",
 			wantErr:     true,
-			errContains: "internal IP",
+			errContains: "always blocked",
 		},
 
 		// Internal IP addresses allowed when enabled

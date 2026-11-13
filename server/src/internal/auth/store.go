@@ -1062,8 +1062,12 @@ func (s *AuthStore) SetBcryptCostForTesting(t interface{ Helper() }, cost int) {
 // path in AuthenticateUser matches the cost of a real comparison
 // rather than paying a cost-12 compare on every call. Only the two
 // test-only routes reach it: SetBcryptCostForTesting and newAuthStore
-// under testBcryptCost.
+// under testBcryptCost. It panics outside a test binary.
 func (s *AuthStore) setBcryptCost(cost int) {
+	// Never lower the cost in a shipped binary, whoever the caller.
+	if !testing.Testing() {
+		panic("bcrypt cost may only be changed in a test binary")
+	}
 	// Fetch outside the store lock; the cost is validated by the
 	// GenerateFromPassword call behind dummyHashAtCost.
 	dummy, err := dummyHashAtCost(cost)

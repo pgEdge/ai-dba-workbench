@@ -12,6 +12,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"testing"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -143,7 +144,7 @@ func openAuthStoreCLI(dataDir string) (*auth.AuthStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	if configureCLIStoreForTesting != nil {
+	if configureCLIStoreForTesting != nil && testing.Testing() {
 		configureCLIStoreForTesting(store)
 	}
 	allowFederated := cliTokenPolicy.allowFederatedAPITokens

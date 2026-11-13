@@ -10,23 +10,19 @@
 
 import type React from 'react';
 import { useState, useMemo } from 'react';
-import {
-    Alert,
-    Box,
-    Typography,
-    Button,
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    TextField,
-    alpha,
-} from '@mui/material';
+import Alert from '@mui/material/Alert';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Button from '@mui/material/Button';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import TextField from '@mui/material/TextField';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import {
-    CheckCircle as HealthyIcon,
-    CheckCircleOutline as AckIcon,
-} from '@mui/icons-material';
+import HealthyIcon from '@mui/icons-material/CheckCircle';
+import AckIcon from '@mui/icons-material/CheckCircleOutline';
 import {
     getFriendlyTitle,
     ACK_DIALOG_TITLE_SX,

@@ -9,13 +9,12 @@
  */
 
 import type React from 'react';
-import { Box, Typography } from '@mui/material';
-import {
-    Settings as SettingsIcon,
-    NotificationsActive as AlertsIcon,
-    Notifications as NotificationsIcon,
-    Psychology as AIIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import SettingsIcon from '@mui/icons-material/Settings';
+import AlertsIcon from '@mui/icons-material/NotificationsActive';
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import AIIcon from '@mui/icons-material/Psychology';
 import { SectionTitle, HelpTip, FeatureItem } from '../components';
 import { styles } from '../helpPanelStyles';
 

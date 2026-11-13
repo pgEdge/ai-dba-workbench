@@ -10,12 +10,12 @@
 
 import type React from 'react';
 import { useState } from 'react';
-import { Box, Typography, Collapse } from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Collapse from '@mui/material/Collapse';
 import { useTheme } from '@mui/material/styles';
-import {
-    ExpandMore as ExpandMoreIcon,
-    ExpandLess as ExpandLessIcon,
-} from '@mui/icons-material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import {
     SECTION_STATE_KEY,
     MONO_FONT,

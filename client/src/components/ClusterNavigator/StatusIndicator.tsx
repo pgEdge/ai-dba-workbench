@@ -9,15 +9,15 @@
  */
 
 import type React from 'react';
-import { Box, Tooltip, useTheme } from '@mui/material';
+import Box from '@mui/material/Box';
+import Tooltip from '@mui/material/Tooltip';
+import { useTheme } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
-import {
-    CheckCircle as HealthyIcon,
-    Warning as WarningIcon,
-    Error as ErrorIcon,
-    HourglassEmpty,
-    PauseCircle as PauseCircleIcon,
-} from '@mui/icons-material';
+import HealthyIcon from '@mui/icons-material/CheckCircle';
+import WarningIcon from '@mui/icons-material/Warning';
+import ErrorIcon from '@mui/icons-material/Error';
+import HourglassEmpty from '@mui/icons-material/HourglassEmpty';
+import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import type { SxProps } from '@mui/material/styles';
 
 // -- Static sx constants --------------------------------------------------

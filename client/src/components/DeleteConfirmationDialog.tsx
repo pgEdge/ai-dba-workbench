@@ -9,16 +9,14 @@
  */
 
 import type React from 'react';
-import {
-    Dialog,
-    DialogContent,
-    DialogActions,
-    Typography,
-    Button,
-    Box,
-    CircularProgress,
-} from '@mui/material';
-import { Warning as WarningIcon } from '@mui/icons-material';
+import Dialog from '@mui/material/Dialog';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import Typography from '@mui/material/Typography';
+import Button from '@mui/material/Button';
+import Box from '@mui/material/Box';
+import CircularProgress from '@mui/material/CircularProgress';
+import WarningIcon from '@mui/icons-material/Warning';
 
 // --- Style constants (Issue 23) ---
 

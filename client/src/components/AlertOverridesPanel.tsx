@@ -18,21 +18,19 @@
 
 import type React from 'react';
 import { useState } from 'react';
-import {
-    Box,
-    Button,
-    Chip,
-    CircularProgress,
-    Dialog,
-    DialogActions,
-    DialogContent,
-    DialogTitle,
-    MenuItem,
-    Switch,
-    TableCell,
-    TextField,
-    Typography,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
+import CircularProgress from '@mui/material/CircularProgress';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
+import MenuItem from '@mui/material/MenuItem';
+import Switch from '@mui/material/Switch';
+import TableCell from '@mui/material/TableCell';
+import TextField from '@mui/material/TextField';
+import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { apiPut } from '../utils/apiClient';
 import {

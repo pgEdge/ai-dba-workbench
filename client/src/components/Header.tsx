@@ -12,30 +12,25 @@
 
 import type React from 'react';
 import { useState } from 'react';
-import {
-    AppBar,
-    Toolbar,
-    Typography,
-    IconButton,
-    Box,
-    Avatar,
-    Menu,
-    MenuItem,
-    ListItemIcon,
-    ListItemText,
-    Divider,
-    Tooltip,
-    alpha,
-    useTheme,
-} from '@mui/material';
+import AppBar from '@mui/material/AppBar';
+import Toolbar from '@mui/material/Toolbar';
+import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import Box from '@mui/material/Box';
+import Avatar from '@mui/material/Avatar';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
+import Divider from '@mui/material/Divider';
+import Tooltip from '@mui/material/Tooltip';
+import { alpha, useTheme } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
-import {
-    DarkMode as DarkModeIcon,
-    LightMode as LightModeIcon,
-    Logout as LogoutIcon,
-    HelpOutline as HelpIcon,
-    Settings as SettingsIcon,
-} from '@mui/icons-material';
+import DarkModeIcon from '@mui/icons-material/DarkMode';
+import LightModeIcon from '@mui/icons-material/LightMode';
+import LogoutIcon from '@mui/icons-material/Logout';
+import HelpIcon from '@mui/icons-material/HelpOutline';
+import SettingsIcon from '@mui/icons-material/Settings';
 import logoLight from '../assets/images/logo-light.png';
 import logoDark from '../assets/images/logo-dark.png';
 import { useAuth } from '../contexts/useAuth';

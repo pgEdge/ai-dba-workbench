@@ -8,16 +8,15 @@
  *-------------------------------------------------------------------------
  */
 
-import { alpha, type Theme } from '@mui/material';
-import {
-    Star as PrimaryIcon,
-    Backup as StandbyIcon,
-    AccountTree as CascadingIcon,
-    Hub as SpockIcon,
-    Publish as PublisherIcon,
-    Download as SubscriberIcon,
-    Storage as StandaloneIcon,
-} from '@mui/icons-material';
+import { alpha } from '@mui/material/styles';
+import type { Theme } from '@mui/material';
+import PrimaryIcon from '@mui/icons-material/Star';
+import StandbyIcon from '@mui/icons-material/Backup';
+import CascadingIcon from '@mui/icons-material/AccountTree';
+import SpockIcon from '@mui/icons-material/Hub';
+import PublisherIcon from '@mui/icons-material/Publish';
+import SubscriberIcon from '@mui/icons-material/Download';
+import StandaloneIcon from '@mui/icons-material/Storage';
 import type { SvgIconComponent } from '@mui/icons-material';
 
 export interface RoleConfig {

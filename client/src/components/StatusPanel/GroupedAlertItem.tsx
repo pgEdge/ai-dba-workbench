@@ -10,29 +10,24 @@
 
 import type React from 'react';
 import { useState, useMemo } from 'react';
-import {
-    Box,
-    Typography,
-    Chip,
-    IconButton,
-    Tooltip,
-    Collapse,
-    alpha,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import Collapse from '@mui/material/Collapse';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import {
-    Warning as WarningIcon,
-    Error as ErrorIcon,
-
-    ExpandMore as ExpandMoreIcon,
-    ExpandLess as ExpandLessIcon,
-    CheckCircleOutline as AckIcon,
-    Undo as UnackIcon,
-    Psychology as AnalyzeIcon,
-    TableChart as TableIcon,
-    Memory as ProviderIcon,
-    TuneRounded,
-} from '@mui/icons-material';
+import WarningIcon from '@mui/icons-material/Warning';
+import ErrorIcon from '@mui/icons-material/Error';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import AckIcon from '@mui/icons-material/CheckCircleOutline';
+import UnackIcon from '@mui/icons-material/Undo';
+import AnalyzeIcon from '@mui/icons-material/Psychology';
+import TableIcon from '@mui/icons-material/TableChart';
+import ProviderIcon from '@mui/icons-material/Memory';
+import TuneRounded from '@mui/icons-material/TuneRounded';
 import {
     getSeverityColors,
     getFriendlyTitle,

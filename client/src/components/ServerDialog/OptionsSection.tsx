@@ -9,12 +9,10 @@
  */
 
 import type React from 'react';
-import {
-    Box,
-    Typography,
-    FormControlLabel,
-    Checkbox,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Checkbox from '@mui/material/Checkbox';
 import type { ServerFormData, FieldChangeHandler } from './ServerDialog.types';
 import {
     optionsSectionLabelSx,

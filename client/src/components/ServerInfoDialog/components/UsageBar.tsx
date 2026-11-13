@@ -9,7 +9,9 @@
  */
 
 import type React from 'react';
-import { Box, Typography, LinearProgress } from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import LinearProgress from '@mui/material/LinearProgress';
 import { useTheme } from '@mui/material/styles';
 import { formatBytes, pct } from '../serverInfoFormatters';
 import { sxMono, getKvLabelSx, getProgressBarSx } from '../serverInfoStyles';

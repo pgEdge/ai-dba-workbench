@@ -11,24 +11,20 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import {
-    Alert,
-    Box,
-    Snackbar,
-    Typography,
-    alpha,
-} from '@mui/material';
+import Alert from '@mui/material/Alert';
+import Box from '@mui/material/Box';
+import Snackbar from '@mui/material/Snackbar';
+import Typography from '@mui/material/Typography';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import {
-    Storage as ServerIcon,
-    Warning as WarningIcon,
-    Error as ErrorIcon,
-    CheckCircle as HealthyIcon,
-    Dns as ClusterIcon,
-    Language as EstateIcon,
-    MonitorHeart as MonitorHeartIcon,
-    AccountTree as AccountTreeIcon,
-} from '@mui/icons-material';
+import ServerIcon from '@mui/icons-material/Storage';
+import WarningIcon from '@mui/icons-material/Warning';
+import ErrorIcon from '@mui/icons-material/Error';
+import HealthyIcon from '@mui/icons-material/CheckCircle';
+import ClusterIcon from '@mui/icons-material/Dns';
+import EstateIcon from '@mui/icons-material/Language';
+import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import { useAuth } from '../../contexts/useAuth';
 import { useAICapabilities } from '../../contexts/useAICapabilities';
 import { useClusterData } from '../../contexts/useClusterData';

@@ -12,21 +12,17 @@
 
 import type React from 'react';
 import { useMemo } from 'react';
-import {
-    Box,
-    Typography,
-    Chip,
-    alpha,
-    Button,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import Button from '@mui/material/Button';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import {
-    Stop as StopIcon,
-    Language as EstateIcon,
-    FolderSpecial as GroupIcon,
-    Dns as ClusterIcon,
-    Storage as ServerIcon,
-} from '@mui/icons-material';
+import StopIcon from '@mui/icons-material/Stop';
+import EstateIcon from '@mui/icons-material/Language';
+import GroupIcon from '@mui/icons-material/FolderSpecial';
+import ClusterIcon from '@mui/icons-material/Dns';
+import ServerIcon from '@mui/icons-material/Storage';
 import { useBlackouts } from '../contexts/useBlackouts';
 import type { Blackout } from '../contexts/BlackoutContext';
 import MoonIcon from './shared/BlackoutIcon';

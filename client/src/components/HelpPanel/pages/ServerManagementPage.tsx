@@ -9,14 +9,13 @@
  */
 
 import type React from 'react';
-import { Box, Typography } from '@mui/material';
-import {
-    Add as AddIcon,
-    Edit as EditIcon,
-    Delete as DeleteIcon,
-    Folder as GroupIcon,
-    Star as PrimaryIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
+import GroupIcon from '@mui/icons-material/Folder';
+import PrimaryIcon from '@mui/icons-material/Star';
 import { SectionTitle, HelpTip, FeatureItem } from '../components';
 import { styles } from '../helpPanelStyles';
 

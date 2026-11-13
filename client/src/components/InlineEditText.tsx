@@ -12,7 +12,11 @@
 
 import type React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { Typography, TextField, CircularProgress, Box, type TypographyProps, type TextFieldProps } from '@mui/material';
+import Typography from '@mui/material/Typography';
+import TextField from '@mui/material/TextField';
+import CircularProgress from '@mui/material/CircularProgress';
+import Box from '@mui/material/Box';
+import type { TypographyProps, TextFieldProps } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
 
 interface InlineEditTextProps {

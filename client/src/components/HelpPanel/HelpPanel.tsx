@@ -10,30 +10,26 @@
 
 import type React from 'react';
 import { useState, useEffect, useRef } from 'react';
-import {
-    Drawer,
-    Box,
-    Typography,
-    IconButton,
-    List,
-    Breadcrumbs,
-    Link,
-} from '@mui/material';
-import {
-    Close as CloseIcon,
-    Home as HomeIcon,
-    AccountTree as NavigatorIcon,
-    Dashboard as StatusIcon,
-    NotificationsActive as AlertsIcon,
-    Storage as ServerIcon,
-    Settings as SettingsIcon,
-    ChevronRight as ChevronIcon,
-    ArrowBack as BackIcon,
-    AdminPanelSettings as AdminIcon,
-    PauseCircle as BlackoutIcon,
-    SmartToyOutlined as ChatBotIcon,
-    MonitorHeart as MonitoringIcon,
-} from '@mui/icons-material';
+import Drawer from '@mui/material/Drawer';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import List from '@mui/material/List';
+import Breadcrumbs from '@mui/material/Breadcrumbs';
+import Link from '@mui/material/Link';
+import CloseIcon from '@mui/icons-material/Close';
+import HomeIcon from '@mui/icons-material/Home';
+import NavigatorIcon from '@mui/icons-material/AccountTree';
+import StatusIcon from '@mui/icons-material/Dashboard';
+import AlertsIcon from '@mui/icons-material/NotificationsActive';
+import ServerIcon from '@mui/icons-material/Storage';
+import SettingsIcon from '@mui/icons-material/Settings';
+import ChevronIcon from '@mui/icons-material/ChevronRight';
+import BackIcon from '@mui/icons-material/ArrowBack';
+import AdminIcon from '@mui/icons-material/AdminPanelSettings';
+import BlackoutIcon from '@mui/icons-material/PauseCircle';
+import ChatBotIcon from '@mui/icons-material/SmartToyOutlined';
+import MonitoringIcon from '@mui/icons-material/MonitorHeart';
 import { useAICapabilities } from '../../contexts/useAICapabilities';
 import { CLIENT_VERSION } from '../../lib/version';
 import { HELP_PAGES, contextToPage } from './helpPanelConstants';

@@ -18,7 +18,7 @@ import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 import type { SelectChangeEvent } from '@mui/material/Select';
 import Typography from '@mui/material/Typography';
-import { Computer as ComputerIcon } from '@mui/icons-material';
+import ComputerIcon from '@mui/icons-material/Computer';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import type { MetricQueryParams } from '../types';

@@ -9,16 +9,14 @@
  */
 
 import type React from 'react';
-import {
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogContentText,
-    DialogActions,
-    Button,
-    Box,
-} from '@mui/material';
-import { LinkOff as LinkOffIcon } from '@mui/icons-material';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
+import DialogActions from '@mui/material/DialogActions';
+import Button from '@mui/material/Button';
+import Box from '@mui/material/Box';
+import LinkOffIcon from '@mui/icons-material/LinkOff';
 import { useConnectionStatus } from '../contexts/useConnectionStatus';
 
 const reasonMessages: Record<string, string> = {

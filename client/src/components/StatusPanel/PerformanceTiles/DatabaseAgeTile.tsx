@@ -10,9 +10,13 @@
 
 import type React from 'react';
 import { useState, useCallback } from 'react';
-import { Box, Typography, LinearProgress, IconButton, Tooltip } from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import LinearProgress from '@mui/material/LinearProgress';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import { useTheme } from '@mui/material/styles';
-import { Psychology as PsychologyIcon } from '@mui/icons-material';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import TileContainer from './TileContainer';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import type { ChartData, ChartAnalysisContext } from '../../Chart/types';

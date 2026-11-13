@@ -10,7 +10,9 @@
  */
 
 import type React from 'react';
-import { Box, Skeleton, useTheme } from '@mui/material';
+import Box from '@mui/material/Box';
+import Skeleton from '@mui/material/Skeleton';
+import { useTheme } from '@mui/material/styles';
 import { getSkeletonBgSx, sxSkeletonContainer, sxSkeletonRow } from './markdownStyles';
 
 const AnalysisSkeleton: React.FC = () => {

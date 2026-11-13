@@ -13,22 +13,17 @@
  */
 
 import type React from 'react';
-import {
-    Box,
-    Typography,
-    Dialog,
-    AppBar,
-    Toolbar,
-    IconButton,
-    alpha,
-    Fade,
-    useTheme,
-} from '@mui/material';
-import {
-    Close as CloseIcon,
-    Download as DownloadIcon,
-    Error as ErrorIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Dialog from '@mui/material/Dialog';
+import AppBar from '@mui/material/AppBar';
+import Toolbar from '@mui/material/Toolbar';
+import IconButton from '@mui/material/IconButton';
+import Fade from '@mui/material/Fade';
+import { alpha, useTheme } from '@mui/material/styles';
+import CloseIcon from '@mui/icons-material/Close';
+import DownloadIcon from '@mui/icons-material/Download';
+import ErrorIcon from '@mui/icons-material/Error';
 import {
     MarkdownContent,
     AnalysisSkeleton,

@@ -8,19 +8,17 @@
  *-------------------------------------------------------------------------
  */
 
-import {
-    Settings as SettingsIcon,
-    Security as SecurityIcon,
-    AccountCircle as AccountCircleIcon,
-    PowerSettingsNew as PowerSettingsNewIcon,
-    Warning as WarningIcon,
-    Error as ErrorIcon,
-    CheckCircle as CheckCircleIcon,
-    CheckCircleOutline as CheckCircleOutlineIcon,
-    Extension as ExtensionIcon,
-    DoNotDisturb as DoNotDisturbIcon,
-    DoNotDisturbOff as DoNotDisturbOffIcon,
-} from '@mui/icons-material';
+import SettingsIcon from '@mui/icons-material/Settings';
+import SecurityIcon from '@mui/icons-material/Security';
+import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
+import WarningIcon from '@mui/icons-material/Warning';
+import ErrorIcon from '@mui/icons-material/Error';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import ExtensionIcon from '@mui/icons-material/Extension';
+import DoNotDisturbIcon from '@mui/icons-material/DoNotDisturb';
+import DoNotDisturbOffIcon from '@mui/icons-material/DoNotDisturbOff';
 import type { EventTypeConfigEntry, FilterChipEntry } from './types';
 import type { TimeRangePreset } from '../../utils/timelineRange';
 

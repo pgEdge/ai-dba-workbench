@@ -10,22 +10,18 @@
 
 import type React from 'react';
 import { memo } from 'react';
-import {
-    Box,
-    IconButton,
-    Collapse,
-    Chip,
-    Tooltip,
-    alpha,
-} from '@mui/material';
-import {
-    ExpandMore as ExpandIcon,
-    ChevronRight as CollapseIcon,
-    Storage as ServerIcon,
-    Settings as SettingsIcon,
-    Delete as DeleteIcon,
-    PanTool as ManualIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
+import Collapse from '@mui/material/Collapse';
+import Chip from '@mui/material/Chip';
+import Tooltip from '@mui/material/Tooltip';
+import { alpha } from '@mui/material/styles';
+import ExpandIcon from '@mui/icons-material/ExpandMore';
+import CollapseIcon from '@mui/icons-material/ChevronRight';
+import ServerIcon from '@mui/icons-material/Storage';
+import SettingsIcon from '@mui/icons-material/Settings';
+import DeleteIcon from '@mui/icons-material/Delete';
+import ManualIcon from '@mui/icons-material/PanTool';
 import { useTheme, type Theme } from '@mui/material/styles';
 import InlineEditText from '../InlineEditText';
 import { getRoleConfigs, isServerRole } from './constants';

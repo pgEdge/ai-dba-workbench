@@ -12,35 +12,31 @@
 
 import type React from 'react';
 import { useState, useMemo } from 'react';
-import {
-    Box,
-    Stack,
-    Typography,
-    Chip,
-    alpha,
-    IconButton,
-    Tooltip,
-    Button,
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Stack from '@mui/material/Stack';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import Button from '@mui/material/Button';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import {
-    PauseCircle as PauseIcon,
-    Delete as DeleteIcon,
-    Stop as StopIcon,
-    Schedule as ClockIcon,
-    Person as PersonIcon,
-    Language as EstateIcon,
-    FolderSpecial as GroupIcon,
-    Dns as ClusterIcon,
-    Storage as ServerIcon,
-    Repeat as RepeatIcon,
-    Close as CloseIcon,
-    Add as AddIcon,
-} from '@mui/icons-material';
+import PauseIcon from '@mui/icons-material/PauseCircle';
+import DeleteIcon from '@mui/icons-material/Delete';
+import StopIcon from '@mui/icons-material/Stop';
+import ClockIcon from '@mui/icons-material/Schedule';
+import PersonIcon from '@mui/icons-material/Person';
+import EstateIcon from '@mui/icons-material/Language';
+import GroupIcon from '@mui/icons-material/FolderSpecial';
+import ClusterIcon from '@mui/icons-material/Dns';
+import ServerIcon from '@mui/icons-material/Storage';
+import RepeatIcon from '@mui/icons-material/Repeat';
+import CloseIcon from '@mui/icons-material/Close';
+import AddIcon from '@mui/icons-material/Add';
 import { useBlackouts } from '../contexts/useBlackouts';
 import MoonIcon from './shared/BlackoutIcon';
 import type { Selection } from '../types/selection';

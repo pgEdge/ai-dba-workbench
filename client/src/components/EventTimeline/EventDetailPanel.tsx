@@ -9,19 +9,14 @@
  */
 
 import { useState, useMemo, memo } from 'react';
-import {
-    Box,
-    Typography,
-    IconButton,
-    Collapse,
-    alpha,
-    useTheme,
-} from '@mui/material';
-import {
-    ExpandMore as ExpandMoreIcon,
-    ExpandLess as ExpandLessIcon,
-    Close as CloseIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import Collapse from '@mui/material/Collapse';
+import { alpha, useTheme } from '@mui/material/styles';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import CloseIcon from '@mui/icons-material/Close';
 import { getEventConfig, formatFullTime } from './utils';
 import { EVENT_TYPE_CONFIG } from './config';
 import { EventDetails } from './EventDetailComponents';

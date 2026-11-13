@@ -10,11 +10,9 @@
 
 import type React from 'react';
 import { useState, useMemo, useCallback, useEffect, memo } from 'react';
-import {
-    Box,
-    Collapse,
-    useTheme,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Collapse from '@mui/material/Collapse';
+import { useTheme } from '@mui/material/styles';
 import { useTimelineEvents } from '../../hooks/useTimelineEvents';
 import { TIME_RANGE_STORAGE_KEY, getInitialTimeRange } from './config';
 import { isCustomTimeRange } from '../../utils/timelineRange';

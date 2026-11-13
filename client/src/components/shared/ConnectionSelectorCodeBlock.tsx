@@ -12,12 +12,10 @@
 
 import type React from 'react';
 import { useState, useCallback, useMemo } from 'react';
-import {
-    Box,
-    Select,
-    MenuItem,
-    FormControl,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Select from '@mui/material/Select';
+import MenuItem from '@mui/material/MenuItem';
+import FormControl from '@mui/material/FormControl';
 import type { Theme } from '@mui/material/styles';
 import type { SelectChangeEvent } from '@mui/material';
 import RunnableCodeBlock from './RunnableCodeBlock';

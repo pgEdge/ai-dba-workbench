@@ -10,11 +10,9 @@
 
 import type React from 'react';
 import { useMemo } from 'react';
-import {
-    Box,
-    Typography,
-    useTheme,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import CopyCodeButton from './CopyCodeButton';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';

@@ -19,7 +19,7 @@
  */
 
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { ThemeProvider } from '@mui/material';
+import { ThemeProvider } from '@mui/material/styles';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createPgedgeTheme } from '../../../theme/pgedgeTheme';
 import SelectionHeader from '../SelectionHeader';

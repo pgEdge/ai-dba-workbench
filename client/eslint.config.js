@@ -57,6 +57,24 @@ export default tseslint.config(
             '@typescript-eslint/prefer-nullish-coalescing': ['off', {
                 ignorePrimitives: { boolean: true, string: true },
             }],
+            // The MUI barrels load every module in the package, which
+            // made each Vitest file spend seconds importing (#846).
+            // Type imports are erased at compile time, so they may
+            // stay (PaletteMode, for one, is only exported there).
+            '@typescript-eslint/no-restricted-imports': ['error', {
+                paths: [
+                    {
+                        name: '@mui/icons-material',
+                        message: "Import each icon from its own path, e.g. import AddIcon from '@mui/icons-material/Add'.",
+                        allowTypeImports: true,
+                    },
+                    {
+                        name: '@mui/material',
+                        message: "Import each component from its own path, e.g. import Button from '@mui/material/Button', and theme helpers from '@mui/material/styles'.",
+                        allowTypeImports: true,
+                    },
+                ],
+            }],
             // General rules
             'no-console': 'error',
             'prefer-const': 'error',

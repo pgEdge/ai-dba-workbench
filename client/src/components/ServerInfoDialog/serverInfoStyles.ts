@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { alpha } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 
 /** Monospace font family for technical values. */

@@ -9,12 +9,11 @@
  */
 
 import type React from 'react';
-import { Box, Typography } from '@mui/material';
-import {
-    PauseCircle as BlackoutIcon,
-    Schedule as ScheduleIcon,
-    Timer as TimerIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import BlackoutIcon from '@mui/icons-material/PauseCircle';
+import ScheduleIcon from '@mui/icons-material/Schedule';
+import TimerIcon from '@mui/icons-material/Timer';
 import { SectionTitle, HelpTip, FeatureItem } from '../components';
 import { styles } from '../helpPanelStyles';
 

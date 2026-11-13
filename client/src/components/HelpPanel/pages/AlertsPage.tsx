@@ -9,15 +9,15 @@
  */
 
 import type React from 'react';
-import { Box, Typography, Chip } from '@mui/material';
-import {
-    Warning as WarningIcon,
-    CheckCircleOutline as AckIcon,
-    Edit as EditIcon,
-    Psychology as AIIcon,
-    PlayArrow as RunIcon,
-    HelpOutline as ReasoningIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import WarningIcon from '@mui/icons-material/Warning';
+import AckIcon from '@mui/icons-material/CheckCircleOutline';
+import EditIcon from '@mui/icons-material/Edit';
+import AIIcon from '@mui/icons-material/Psychology';
+import RunIcon from '@mui/icons-material/PlayArrow';
+import ReasoningIcon from '@mui/icons-material/HelpOutline';
 import { SectionTitle, HelpTip, FeatureItem } from '../components';
 import { styles, getSeverityChipSx } from '../helpPanelStyles';
 

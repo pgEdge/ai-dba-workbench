@@ -9,12 +9,13 @@
  */
 
 import type React from 'react';
-import { Box, Chip, CircularProgress, alpha } from '@mui/material';
+import Box from '@mui/material/Box';
+import Chip from '@mui/material/Chip';
+import CircularProgress from '@mui/material/CircularProgress';
+import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
-import {
-    CheckCircle as CheckIcon,
-    Warning as WarningIcon,
-} from '@mui/icons-material';
+import CheckIcon from '@mui/icons-material/CheckCircle';
+import WarningIcon from '@mui/icons-material/Warning';
 import { getToolDisplayName } from '../../utils/toolDisplayNames';
 
 // ---------------------------------------------------------------------------

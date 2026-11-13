@@ -9,15 +9,15 @@
  */
 
 import type React from 'react';
-import { Box, Typography, Chip } from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
 import { alpha, useTheme } from '@mui/material/styles';
 import type { SvgIconComponent } from '@mui/icons-material';
-import {
-    Storage as ConnectionIcon,
-    AdminPanelSettings as AdminIcon,
-    SmartToy as McpIcon,
-    Group as GroupIcon,
-} from '@mui/icons-material';
+import ConnectionIcon from '@mui/icons-material/Storage';
+import AdminIcon from '@mui/icons-material/AdminPanelSettings';
+import McpIcon from '@mui/icons-material/SmartToy';
+import GroupIcon from '@mui/icons-material/Group';
 import { categoryLabelSx } from './styles';
 
 const ADMIN_PERMISSION_LABELS: Record<string, string> = {

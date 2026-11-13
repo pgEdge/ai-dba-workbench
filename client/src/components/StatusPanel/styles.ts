@@ -19,7 +19,7 @@
  */
 
 import type { Theme } from '@mui/material/styles';
-import { alpha } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { getFriendlyTitle } from '../../utils/friendlyNames';
 import { MONO_CAPTION_SX } from '../../theme';
 import type { TransformedAlert } from './types';

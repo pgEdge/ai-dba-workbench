@@ -10,7 +10,7 @@
 
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Home as HomeIcon } from '@mui/icons-material';
+import HomeIcon from '@mui/icons-material/Home';
 import { renderWithTheme } from '../../../test/renderWithTheme';
 import { Section, KV, UsageBar, LoadingSkeleton } from '../components';
 import { SECTION_STATE_KEY, MONO_FONT } from '../serverInfoStyles';

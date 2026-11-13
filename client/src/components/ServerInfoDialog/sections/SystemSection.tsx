@@ -9,9 +9,11 @@
  */
 
 import type React from 'react';
-import { Box, Typography, LinearProgress } from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import LinearProgress from '@mui/material/LinearProgress';
 import { useTheme } from '@mui/material/styles';
-import { Computer as ComputerIcon } from '@mui/icons-material';
+import ComputerIcon from '@mui/icons-material/Computer';
 import { Section, KV, UsageBar } from '../components';
 import { formatBytes, formatClockSpeed, pct } from '../serverInfoFormatters';
 import {

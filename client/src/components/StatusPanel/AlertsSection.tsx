@@ -10,23 +10,19 @@
 
 import type React from 'react';
 import { useState, useMemo } from 'react';
-import {
-    Box,
-    Typography,
-    Chip,
-    IconButton,
-    Collapse,
-    Skeleton,
-    alpha,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import IconButton from '@mui/material/IconButton';
+import Collapse from '@mui/material/Collapse';
+import Skeleton from '@mui/material/Skeleton';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import {
-    CheckCircle as HealthyIcon,
-    NotificationsActive as AlertIcon,
-    ExpandMore as ExpandMoreIcon,
-    ExpandLess as ExpandLessIcon,
-    CheckCircleOutline as AckIcon,
-} from '@mui/icons-material';
+import HealthyIcon from '@mui/icons-material/CheckCircle';
+import AlertIcon from '@mui/icons-material/NotificationsActive';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import AckIcon from '@mui/icons-material/CheckCircleOutline';
 import AlertItem from './AlertItem';
 import GroupedAlertItem from './GroupedAlertItem';
 import {

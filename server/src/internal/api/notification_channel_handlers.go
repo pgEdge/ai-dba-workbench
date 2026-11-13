@@ -36,7 +36,11 @@ type NotificationChannelHandler struct {
 	// through a dialer that re-checks each address it connects to
 	// against testSendPolicy(hostValidator); tests replace it to stand
 	// in for DNS.
-	testSender      *notificationTestSender
+	testSender *notificationTestSender
+	// lookupHost resolves a host name for the always-blocked check a
+	// create or update makes (refuseAlwaysBlockedTargets); nil is the
+	// system resolver, and tests set it to stand in for DNS.
+	lookupHost      hostvalidation.LookupFunc
 	checkPermission func(http.ResponseWriter, *http.Request) bool
 	// allConnectionIDs lists every connection, whose alerts a channel
 	// can serve; tests replace it to make the lookup fail.
@@ -336,6 +340,10 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 		return
 	}
 
+	if !h.refuseAlwaysBlockedTargets(w, r, &req) {
+		return
+	}
+
 	// Get owner_username from auth context
 	username := auth.GetUsernameFromContext(r.Context())
 	if username == "" {
@@ -540,6 +548,10 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 			RespondError(w, http.StatusBadRequest, msg)
 			return
 		}
+	}
+
+	if !h.refuseAlwaysBlockedTargets(w, r, &req) {
+		return
 	}
 
 	// Merge fields. Each `*string` request field uses three-way
@@ -884,6 +896,52 @@ func isValidWebhookHTTPMethod(method string) bool {
 		return true
 	}
 	return false
+}
+
+// refuseAlwaysBlockedTargets checks the smtp_host, webhook_url and
+// endpoint_url a create or update request supplies against the
+// always-blocked floor (CheckAlwaysBlockedHost). The alerter refuses
+// those addresses on every delivery, and a test send refuses them too,
+// whatever either component's settings say, so a channel aimed at one
+// is refused when it is saved rather than saved and left failing. Only
+// fields the request supplies are checked, so that a stored channel can
+// still be edited or disabled. A URL that does not parse, or has no
+// host, is left alone, as it was before this check. It responds 400 and
+// returns false when a target is refused; the response names the field
+// but never the URL, which can be a credential.
+func (h *NotificationChannelHandler) refuseAlwaysBlockedTargets(w http.ResponseWriter, r *http.Request, req *NotificationChannelCreateRequest) bool {
+	type target struct {
+		field string
+		host  string
+	}
+	var targets []target
+	if req.SMTPHost != nil && *req.SMTPHost != "" {
+		targets = append(targets, target{"smtp_host", *req.SMTPHost})
+	}
+	for _, u := range []struct {
+		field string
+		value *string
+	}{
+		{"webhook_url", req.WebhookURL},
+		{"endpoint_url", req.EndpointURL},
+	} {
+		if u.value == nil || *u.value == "" {
+			continue
+		}
+		parsed, err := url.Parse(*u.value)
+		if err != nil || parsed.Hostname() == "" {
+			continue
+		}
+		targets = append(targets, target{u.field, parsed.Hostname()})
+	}
+	for _, t := range targets {
+		if err := CheckAlwaysBlockedHost(r.Context(), t.host, h.lookupHost); err != nil {
+			log.Printf("[ERROR] Notification channel %s refused: %v", t.field, err)
+			RespondError(w, http.StatusBadRequest, "Invalid "+t.field+": "+err.Error())
+			return false
+		}
+	}
+	return true
 }
 
 // validateTelegramFields checks the effective bot token and chat ID of a

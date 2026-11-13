@@ -564,10 +564,12 @@ remaining address. An address that `allowed_hosts` covers permits only
 that address, and the server connects only to the permitted addresses.
 Apart from those always-refused addresses, a host name that
 `allowed_hosts` or `blocked_hosts` lists by name is still permitted or
-refused whatever the name resolves to. The save-time check does not
-apply the always-refused addresses first, so a connection to a
-link-local address can be saved under `allow_internal_networks` or an
-`allowed_hosts` entry but never connects. When no resolved address is
+refused whatever the name resolves to. The save-time check also
+refuses the always-refused addresses first, whether a `host` or
+`hostaddr` is such an address or a `host` name resolves to one, so a
+connection that could never connect is not saved; a host name that
+`allowed_hosts` lists is not resolved at save time and meets this check
+only when the server connects. When no resolved address is
 permitted, the
 connection attempt fails with an error that says the host resolves only
 to addresses that connections are not permitted to. The server's own

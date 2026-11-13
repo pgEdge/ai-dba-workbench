@@ -58,7 +58,10 @@ the child the rewritten variable, and the helper recognises its own
 suffix and runs the child against the parent's database rather than
 deriving a nested one the child's `os.Exit` would leak. When the variable is
 unset, `SKIP_DB_TESTS` is set or the server is unreachable it runs the
-tests unchanged, so they skip as before. A new database-backed package
+tests unchanged, so they skip as before. Before any DDL both helpers
+refuse a variable whose primary or any fallback host is not loopback:
+`pkgdb` fails the binary outright, whilst `RunPackage` runs the tests
+unchanged and `testdsn.Require` then fails each one. A new database-backed package
 needs the same `TestMain` with a tag no other package uses (lower case
 letters and digits). A fresh database has no extensions, so a test
 needing `vector` must create it itself. The collector instead creates a

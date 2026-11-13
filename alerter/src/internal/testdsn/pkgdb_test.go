@@ -88,6 +88,7 @@ func TestRunPackageLeavesTestsAlone(t *testing.T) {
 		{"variable unset", "", "", ""},
 		{"unparseable", "", "postgresql://user:pass@host:notaport/db", "parse test DSN"},
 		{"remote host", "", "postgresql://postgres@db.example.com:5432/ai_workbench", "non-loopback host"},
+		{"remote fallback host", "", "postgresql://postgres@127.0.0.1:5432,db.example.com:5432/ai_workbench", `non-loopback host "db.example.com"`},
 		{"production-shaped database", "", "postgresql://postgres@127.0.0.1:5432/ai_workbench_prod2", "ai_workbench_prod2"},
 		{"another package's database", "", "postgresql://postgres@127.0.0.1:5432/ai_workbench_pkg_engine", "ai_workbench_pkg_engine"},
 		{"a re-executed child", "", "postgresql://postgres@127.0.0.1:5432/ai_workbench_pkg_unit", ""},

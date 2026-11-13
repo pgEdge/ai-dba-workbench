@@ -119,6 +119,21 @@ func TestRequire(t *testing.T) {
 			wantFail: true,
 		},
 		{
+			name:     "remote fallback host",
+			dsn:      "postgresql://postgres@127.0.0.1:5432,db.example.com:5432/ai_workbench",
+			wantFail: true,
+		},
+		{
+			name:     "remote fallback host, keyword form",
+			dsn:      "host=localhost,192.0.2.1 user=postgres dbname=ai_workbench",
+			wantFail: true,
+		},
+		{
+			name:    "loopback fallback hosts",
+			dsn:     "postgresql://postgres@127.0.0.1:5432,[::1]:5433,localhost:5434/ai_workbench",
+			wantDSN: "postgresql://postgres@127.0.0.1:5432,[::1]:5433,localhost:5434/ai_workbench",
+		},
+		{
 			name:     "production-shaped database",
 			dsn:      "postgresql://postgres@127.0.0.1:5432/ai_workbench_prod2",
 			wantFail: true,

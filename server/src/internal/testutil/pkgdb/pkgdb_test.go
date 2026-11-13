@@ -121,6 +121,68 @@ func TestRunWithoutDatabase(t *testing.T) {
 	}
 }
 
+// TestRunRefusesNonLoopbackHosts checks that Run fails, without
+// connecting or running the tests, unless the primary host and every
+// fallback host are loopback ones.
+func TestRunRefusesNonLoopbackHosts(t *testing.T) {
+	tests := []struct {
+		name string
+		dsn  string
+		host string
+	}{
+		{"remote primary", "postgres://postgres@db.example.com:5432/ai_workbench", "db.example.com"},
+		{"remote address", "postgres://postgres@192.0.2.1:5432/ai_workbench", "192.0.2.1"},
+		{"remote fallback", "postgres://postgres@127.0.0.1:5432,db.example.com:5432/ai_workbench", "db.example.com"},
+		{"remote fallback keyword form", "host=localhost,192.0.2.1 user=postgres dbname=ai_workbench", "192.0.2.1"},
+		{"unix socket", "host=/var/run/postgresql dbname=ai_workbench", "/var/run/postgresql"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SKIP_DB_TESTS", "")
+			t.Setenv(EnvVar, tt.dsn)
+			var log bytes.Buffer
+			m := &fakeM{}
+			if got := run(m, "unit", &log); got != 1 {
+				t.Errorf("run returned %d, want 1", got)
+			}
+			if m.ran {
+				t.Error("the tests ran against a non-loopback host")
+			}
+			if want := "non-loopback host \"" + tt.host + "\""; !strings.Contains(log.String(), want) {
+				t.Errorf("log %q does not mention %q", log.String(), want)
+			}
+		})
+	}
+}
+
+func TestRequireLoopback(t *testing.T) {
+	tests := []struct {
+		name    string
+		dsn     string
+		wantErr bool
+	}{
+		{"ipv4 loopback", "postgres://postgres@127.0.0.1:5432/x", false},
+		{"other 127/8 address", "postgres://postgres@127.0.0.2:5432/x", false},
+		{"ipv6 loopback", "postgres://postgres@[::1]:5432/x", false},
+		{"localhost", "postgres://postgres@localhost:5432/x", false},
+		{"loopback fallbacks", "postgres://postgres@127.0.0.1:5432,[::1]:5433,localhost:5434/x", false},
+		{"remote primary", "postgres://postgres@db.example.com:5432/x", true},
+		{"remote ipv6", "postgres://postgres@[2001:db8::1]:5432/x", true},
+		{"remote fallback", "postgres://postgres@localhost:5432,192.0.2.1:5432/x", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := pgx.ParseConfig(tt.dsn)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := requireLoopback(cfg); (err != nil) != tt.wantErr {
+				t.Errorf("requireLoopback = %v, want an error: %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestRunRejectsBadTag(t *testing.T) {
 	for _, tag := range []string{"", "API", "a-b", "1abc", "a_b"} {
 		var log bytes.Buffer

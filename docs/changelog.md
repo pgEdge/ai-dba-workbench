@@ -145,6 +145,13 @@ project adheres to
   data is stale as a warning rather than online on the cluster cards,
   the server status chart, the status panel and in the AI overview.
   (#835)
+- Refuse unspecified, link-local and cloud metadata addresses when a
+  connection or notification channel is saved, as the server, collector
+  and alerter already did when connecting, so that a target that could
+  never connect fails with an immediate error instead of being saved.
+  The check applies whatever `allow_internal_networks` or
+  `allowed_hosts` say, and covers host names that resolve to such
+  addresses. (#842)
 
 ### Security
 

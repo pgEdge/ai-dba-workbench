@@ -280,8 +280,10 @@ addresses, or a range that holds them, in `allowed_hosts`. The
 server and the collector both refuse unspecified, link-local and cloud
 metadata addresses at connect time, whatever `allowed_hosts` or
 `allow_internal_networks` say, so neither connects to a link-local
-target. The server still accepts such a target when a connection is
-saved under `allow_internal_networks` or an `allowed_hosts` entry.
+target. The server also refuses such a target when a connection or a
+notification channel is saved; an update that supplies such a target is
+refused, and an existing connection that already points at one still
+never connects, so change its host.
 
 The internal ranges now include the IPv6 unspecified address `::`, the
 IPv4-compatible range `::/96`, the SIIT range `::ffff:0:0:0/96`, the NAT64

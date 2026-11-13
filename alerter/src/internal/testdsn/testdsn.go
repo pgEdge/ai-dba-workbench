@@ -16,9 +16,11 @@
 package testdsn
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -34,13 +36,24 @@ import (
 // keeps an obviously production-shaped name such as "ai_workbench_prod"
 // from being wiped by a typo, whilst the loopback host check is
 // what actually confines these destructive tests to this machine.
-var allowedTestDatabase = regexp.MustCompile(
-	`^(ai_workbench(_(pr|issue|sess)[0-9]+)?|postgres)$`)
+//
+// allowedBaseDatabase is the configured name alone. allowedTestDatabase
+// also admits the per-package databases RunPackage derives from an
+// allowed base by appending PackageMarker and a lower-case package tag
+// ("ai_workbench_sess2_pkg_engine", "postgres_pkg_alerterdatabase"), and
+// nothing else: a name ending in any other suffix is still refused.
+var (
+	allowedBaseDatabase = regexp.MustCompile(
+		`^(ai_workbench(_(pr|issue|sess)[0-9]+)?|postgres)$`)
+	allowedTestDatabase = regexp.MustCompile(
+		`^(ai_workbench(_(pr|issue|sess)[0-9]+)?|postgres)(_pkg_[a-z][a-z0-9]*)?$`)
+)
 
 // allowedTestHosts are the only hosts the integration tests may connect
 // to. The loopback-only check is the primary safety net.
 var allowedTestHosts = map[string]struct{}{
 	"127.0.0.1": {},
+	"::1":       {},
 	"localhost": {},
 	"":          {}, // unix socket; only reachable on this host
 }
@@ -89,25 +102,42 @@ func Require(t TB, purpose string) string {
 		return ""
 	}
 
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatalf("parse test DSN: %v", err)
-		return ""
-	}
-	if _, ok := allowedTestHosts[cfg.ConnConfig.Host]; !ok {
-		t.Fatalf("refusing to run destructive integration tests "+
-			"against non-loopback host %q; set "+
-			"TEST_AI_WORKBENCH_SERVER to a "+
-			"postgresql://...@127.0.0.1 DSN", cfg.ConnConfig.Host)
-		return ""
-	}
-	if !allowedTestDatabase.MatchString(cfg.ConnConfig.Database) {
-		t.Fatalf("refusing to run destructive integration tests "+
-			"against database %q; expected ai_workbench, "+
-			"ai_workbench_pr<n>, ai_workbench_issue<n>, "+
-			"ai_workbench_sess<n> or postgres",
-			cfg.ConnConfig.Database)
+	if _, err := check(dsn, allowedTestDatabase); err != nil {
+		t.Fatalf("%v", err)
 		return ""
 	}
 	return dsn
+}
+
+// check returns dsn's parsed connection settings, or an error unless dsn
+// parses, names only loopback hosts (primary and fallbacks) and names a
+// database that matches names. It parses with the pool parser, which
+// also accepts the pool_* parameters a plain pgx parse would reject.
+func check(dsn string, names *regexp.Regexp) (*pgx.ConnConfig, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse test DSN: %w", err)
+	}
+	// pgx tries the fallback hosts when the primary fails, so each one
+	// must be a loopback host too.
+	hosts := []string{cfg.ConnConfig.Host}
+	for _, fb := range cfg.ConnConfig.Fallbacks {
+		hosts = append(hosts, fb.Host)
+	}
+	for _, host := range hosts {
+		if _, ok := allowedTestHosts[host]; !ok {
+			return nil, fmt.Errorf("refusing to run destructive integration tests "+
+				"against non-loopback host %q; set "+
+				"TEST_AI_WORKBENCH_SERVER to a "+
+				"postgresql://...@127.0.0.1 DSN", host)
+		}
+	}
+	if !names.MatchString(cfg.ConnConfig.Database) {
+		return nil, fmt.Errorf("refusing to run destructive integration tests "+
+			"against database %q; expected ai_workbench, "+
+			"ai_workbench_pr<n>, ai_workbench_issue<n>, "+
+			"ai_workbench_sess<n> or postgres, or one of those "+
+			"followed by %s<package>", cfg.ConnConfig.Database, PackageMarker)
+	}
+	return cfg.ConnConfig, nil
 }

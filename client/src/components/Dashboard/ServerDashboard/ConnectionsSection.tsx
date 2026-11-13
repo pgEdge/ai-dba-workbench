@@ -15,7 +15,7 @@ import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
-import { Cable as CableIcon } from '@mui/icons-material';
+import CableIcon from '@mui/icons-material/Cable';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useConnectionGroups } from '../../../hooks/useConnectionGroups';
 import { formatNumber } from '../../../utils/formatters';

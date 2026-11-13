@@ -12,23 +12,19 @@
 
 import type React from 'react';
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import {
-    Box,
-    Typography,
-    Button,
-    IconButton,
-    alpha,
-    CircularProgress,
-    Tooltip,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Button from '@mui/material/Button';
+import IconButton from '@mui/material/IconButton';
+import CircularProgress from '@mui/material/CircularProgress';
+import Tooltip from '@mui/material/Tooltip';
+import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
-import {
-    Close as CloseIcon,
-    Error as ErrorIcon,
-    Warning as WarningIcon,
-    PlayArrow as PlayArrowIcon,
-    InfoOutlined as InfoOutlinedIcon,
-} from '@mui/icons-material';
+import CloseIcon from '@mui/icons-material/Close';
+import ErrorIcon from '@mui/icons-material/Error';
+import WarningIcon from '@mui/icons-material/Warning';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { apiFetch } from '../../utils/apiClient';
 import { useSqlValidation } from '../../hooks/useSqlValidation';

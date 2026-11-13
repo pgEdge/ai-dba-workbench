@@ -10,7 +10,10 @@
 
 import type React from 'react';
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Box, CircularProgress, Typography, alpha } from '@mui/material';
+import Box from '@mui/material/Box';
+import CircularProgress from '@mui/material/CircularProgress';
+import Typography from '@mui/material/Typography';
+import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 
 // ---------------------------------------------------------------------------

@@ -10,18 +10,16 @@
 
 import type React from 'react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import {
-    Box,
-    Typography,
-    Dialog,
-    AppBar,
-    Toolbar,
-    IconButton,
-    alpha,
-    Fade,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Dialog from '@mui/material/Dialog';
+import AppBar from '@mui/material/AppBar';
+import Toolbar from '@mui/material/Toolbar';
+import IconButton from '@mui/material/IconButton';
+import Fade from '@mui/material/Fade';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import { Close as CloseIcon } from '@mui/icons-material';
+import CloseIcon from '@mui/icons-material/Close';
 import { apiGet } from '../../utils/apiClient';
 import SlideTransition from '../shared/SlideTransition';
 import { logger } from '../../utils/logger';

@@ -9,12 +9,13 @@
  */
 
 import type React from 'react';
-import { Box, Typography, Skeleton, alpha } from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Skeleton from '@mui/material/Skeleton';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
-import {
-    Memory as MemoryIcon,
-    AutoAwesome as SparkleIcon,
-} from '@mui/icons-material';
+import MemoryIcon from '@mui/icons-material/Memory';
+import SparkleIcon from '@mui/icons-material/AutoAwesome';
 import { Section } from '../components';
 import { formatBytes } from '../serverInfoFormatters';
 import {

@@ -10,7 +10,9 @@
 
 import type React from 'react';
 import { useState } from 'react';
-import { Autocomplete, TextField, Alert } from '@mui/material';
+import Autocomplete from '@mui/material/Autocomplete';
+import TextField from '@mui/material/TextField';
+import Alert from '@mui/material/Alert';
 import { SELECT_FIELD_SX } from '../../shared/formStyles';
 import ConnectionScopeTable from './ConnectionScopeTable';
 import {

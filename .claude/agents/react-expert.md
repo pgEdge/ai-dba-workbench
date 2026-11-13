@@ -43,9 +43,11 @@ a path the code no longer supports.
    measurably helps.
 
 5. **Include tests**, covering accessibility where relevant and sufficient
-   to meet the coverage floor in the Tests section of `CLAUDE.md`. Verify
-   with `cd client && make coverage`, which fails below the floor, then
-   run `cd client && make test-all` before handing back.
+   to meet the coverage floor in the Tests section of `CLAUDE.md`. While
+   developing, run only the affected tests
+   (`npx vitest related <files>`). Before handing back, run
+   `cd client && make test-all` once; it includes the coverage gate, so
+   do not run `make coverage` separately first.
 
 ## Code Review Protocol
 

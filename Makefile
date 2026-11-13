@@ -7,10 +7,13 @@
 #
 #-------------------------------------------------------------------------
 
-.PHONY: all test coverage lint test-all test-e2e clean killall help
+.PHONY: all test coverage lint test-all test-changed test-e2e clean killall help
 
 # Binary output directory
 BIN_DIR := bin
+
+# Ref that test-changed compares the current branch against
+BASE ?= origin/main
 
 # Default target - build all sub-projects
 all:
@@ -83,6 +86,12 @@ test-all:
 	@cd client && $(MAKE) test-all
 	@echo "All tests passed!"
 
+# Run test-all only in the sub-projects the current branch touches
+# (committed since BASE, plus uncommitted changes); DRY_RUN=1 prints the
+# plan without running anything. See scripts/test-changed.sh.
+test-changed:
+	@BASE="$(BASE)" DRY_RUN="$(DRY_RUN)" MAKE="$(MAKE)" ./scripts/test-changed.sh
+
 # Run E2E smoke tests (requires Docker for Postgres)
 # Intentionally NOT a dependency of test-all: E2E is slow and needs Docker,
 # so it is kept separate from the default per-sub-project test sweep.
@@ -124,6 +133,9 @@ help:
 	@echo "  coverage         - Run coverage for all sub-projects"
 	@echo "  lint             - Run linter for all sub-projects"
 	@echo "  test-all         - Run test-all for all sub-projects"
+	@echo "  test-changed     - Run test-all only in sub-projects changed since"
+	@echo "                     BASE (default origin/main), including uncommitted"
+	@echo "                     changes; DRY_RUN=1 prints the plan only"
 	@echo "  test-e2e         - Run E2E smoke tests (requires Docker)"
 	@echo "  clean            - Clean all sub-projects"
 	@echo "  killall          - SIGTERM every collector, server and alerter process"

@@ -9,12 +9,10 @@
  */
 
 import type React from 'react';
-import {
-    ListItemButton,
-    ListItemIcon,
-    ListItemText,
-} from '@mui/material';
-import { ChevronRight as ChevronIcon } from '@mui/icons-material';
+import ListItemButton from '@mui/material/ListItemButton';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
+import ChevronIcon from '@mui/icons-material/ChevronRight';
 import type { SvgIconComponent } from '@mui/icons-material';
 import {
     styles,

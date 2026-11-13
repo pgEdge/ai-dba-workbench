@@ -10,20 +10,16 @@
 
 import type React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import {
-    Autocomplete,
-    TextField,
-    MenuItem,
-    Button,
-    Alert,
-    Box,
-    Typography,
-    CircularProgress,
-    Chip,
-} from '@mui/material';
-import {
-    Settings as SettingsIcon,
-} from '@mui/icons-material';
+import Autocomplete from '@mui/material/Autocomplete';
+import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
+import Button from '@mui/material/Button';
+import Alert from '@mui/material/Alert';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import CircularProgress from '@mui/material/CircularProgress';
+import Chip from '@mui/material/Chip';
+import SettingsIcon from '@mui/icons-material/Settings';
 import { apiGet } from '../../utils/apiClient';
 import type {
     ClusterSummary,

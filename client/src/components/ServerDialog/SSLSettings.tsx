@@ -9,15 +9,13 @@
  */
 
 import type React from 'react';
-import {
-    Accordion,
-    AccordionSummary,
-    AccordionDetails,
-    Typography,
-    TextField,
-    MenuItem,
-} from '@mui/material';
-import { ExpandMore as ExpandMoreIcon } from '@mui/icons-material';
+import Accordion from '@mui/material/Accordion';
+import AccordionSummary from '@mui/material/AccordionSummary';
+import AccordionDetails from '@mui/material/AccordionDetails';
+import Typography from '@mui/material/Typography';
+import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import {
     type ServerFormData,
     type FieldChangeHandler,

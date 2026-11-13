@@ -880,17 +880,22 @@ vi.mock('../../contexts/useAuth', () => ({
 }));
 ```
 
-## MUI Icon Imports
+## MUI Icon and Component Imports
 
-Always import icons as named exports from the package root, for
-example `import { PauseCircleOutline } from '@mui/icons-material';`,
-never from a deep path such as
-`@mui/icons-material/PauseCircleOutline`. The package has no
-`exports` map, so a deep default import resolves to the CommonJS
-build in the production bundle and the imported value becomes the
-whole exports object; React then throws error #130 when it renders.
-Vitest resolves the deep path natively, so unit tests pass and only
-`npm run build` plus a browser session shows the failure.
+Import each icon as a default import from its own path, for example
+`import AddIcon from '@mui/icons-material/Add';`, never from the
+`@mui/icons-material` barrel, which loads every icon and made each
+Vitest file spend seconds importing (#846); ESLint rejects the barrel
+except for `import type` (such as `SvgIconComponent`). The per-icon
+path is the package's CommonJS build, which the production bundle
+would import as the whole exports object (React error #130), so
+`resolve.alias` in `client/vite.config.ts` points those paths at the
+package's `esm/` copies; keep that alias, since Vitest does not use
+it and unit tests cannot catch its removal. The same lint rule bans
+value imports from the `@mui/material` barrel: import components
+from their own path (`import Button from '@mui/material/Button'`)
+and theme helpers such as `alpha` or `useTheme` from
+`@mui/material/styles`.
 
 ## Bidirectional Isolation for Server-Supplied Names
 

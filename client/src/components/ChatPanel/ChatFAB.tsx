@@ -9,12 +9,12 @@
  */
 
 import type React from 'react';
-import { Fab, Tooltip, keyframes } from '@mui/material';
+import Fab from '@mui/material/Fab';
+import Tooltip from '@mui/material/Tooltip';
+import { keyframes } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
-import {
-    SmartToyOutlined as ChatIcon,
-    Close as CloseIcon,
-} from '@mui/icons-material';
+import ChatIcon from '@mui/icons-material/SmartToyOutlined';
+import CloseIcon from '@mui/icons-material/Close';
 
 // ---------------------------------------------------------------------------
 // Style constants and style-getter functions

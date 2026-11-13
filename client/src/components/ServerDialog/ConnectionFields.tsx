@@ -9,7 +9,9 @@
  */
 
 import type React from 'react';
-import { TextField, Box, Typography } from '@mui/material';
+import TextField from '@mui/material/TextField';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
 import type { ServerFormData, FormErrors, FieldChangeHandler } from './ServerDialog.types';
 import { sectionLabelSx } from './ServerDialog.styles';
 import { getSelectFieldSx } from '../shared/formStyles';

@@ -26,13 +26,11 @@ import type { SelectChangeEvent } from '@mui/material/Select';
 import Switch from '@mui/material/Switch';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
-import {
-    QueryStats as QueryStatsIcon,
-    ChevronLeft as ChevronLeftIcon,
-    ChevronRight as ChevronRightIcon,
-    Clear as ClearIcon,
-    Search as SearchIcon,
-} from '@mui/icons-material';
+import QueryStatsIcon from '@mui/icons-material/QueryStats';
+import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import ClearIcon from '@mui/icons-material/Clear';
+import SearchIcon from '@mui/icons-material/Search';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../../contexts/useAuth';
 import { apiFetch } from '../../utils/apiClient';

@@ -10,7 +10,7 @@
 
 import type React from 'react';
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Chip } from '@mui/material';
+import Chip from '@mui/material/Chip';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {

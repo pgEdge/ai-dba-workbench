@@ -14,6 +14,13 @@ on:
             - '**/Dockerfile'
             - '.dockerignore'
             - '.github/workflows/ci-docker.yml'
+            # Test-only changes cannot alter the images or the stack, so
+            # skip them. Negations must follow the patterns they narrow,
+            # as GitHub applies the list in order and the last match wins.
+            - '!**/*_test.go'
+            - '!client/src/**/*.test.ts'
+            - '!client/src/**/*.test.tsx'
+            - '!**/__tests__/**'
     pull_request:
         branches: [ main, master ]
         paths:
@@ -27,7 +34,22 @@ on:
             - '**/Dockerfile'
             - '.dockerignore'
             - '.github/workflows/ci-docker.yml'
+            # Test-only changes cannot alter the images or the stack, so
+            # skip them. Negations must follow the patterns they narrow,
+            # as GitHub applies the list in order and the last match wins.
+            - '!**/*_test.go'
+            - '!client/src/**/*.test.ts'
+            - '!client/src/**/*.test.tsx'
+            - '!**/__tests__/**'
     workflow_dispatch:
+
+# Superseded pull request runs are cancelled. Every other run gets a
+# group of its own (the run ID), because GitHub cancels a *pending* run
+# whenever a newer one joins its group, even with cancel-in-progress
+# false, and pushes to main must each run to completion.
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
     docker-compose:

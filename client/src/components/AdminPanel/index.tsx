@@ -10,19 +10,17 @@
 
 import React, { useState, useMemo } from 'react';
 
-import {
-    Dialog,
-    AppBar,
-    Toolbar,
-    IconButton,
-    Typography,
-    Box,
-    List,
-    ListItemButton,
-    ListItemText,
-} from '@mui/material';
+import Dialog from '@mui/material/Dialog';
+import AppBar from '@mui/material/AppBar';
+import Toolbar from '@mui/material/Toolbar';
+import IconButton from '@mui/material/IconButton';
+import Typography from '@mui/material/Typography';
+import Box from '@mui/material/Box';
+import List from '@mui/material/List';
+import ListItemButton from '@mui/material/ListItemButton';
+import ListItemText from '@mui/material/ListItemText';
 import { useTheme } from '@mui/material/styles';
-import { Close as CloseIcon } from '@mui/icons-material';
+import CloseIcon from '@mui/icons-material/Close';
 import { useAuth } from '../../contexts/useAuth';
 import { useAICapabilities } from '../../contexts/useAICapabilities';
 import { subsectionLabelSx } from './styles';

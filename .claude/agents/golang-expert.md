@@ -50,9 +50,11 @@ a path the code no longer supports.
    package boundaries.
 
 4. **Include tests**: table-driven where appropriate, and sufficient to
-   meet the coverage floor in the Tests section of `CLAUDE.md`. Verify
-   with the sub-project's `make coverage`, which fails below the floor,
-   then run that sub-project's `make test-all` before handing back.
+   meet the coverage floor in the Tests section of `CLAUDE.md`. While
+   developing, run only the tests you are working on
+   (`go test -race -run <Test> ./internal/<pkg>/...`). Before handing
+   back, run the sub-project's `make test-all` once; it includes the
+   coverage gate, so do not run `make coverage` separately first.
 
 ## Code Review Protocol
 

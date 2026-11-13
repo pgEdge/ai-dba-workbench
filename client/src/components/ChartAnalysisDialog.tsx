@@ -13,8 +13,10 @@
 
 import type React from 'react';
 import { useEffect, useRef } from 'react';
-import { Box, Typography, useTheme } from '@mui/material';
-import { Psychology as PsychologyIcon } from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import {
     useChartAnalysis,
     type ChartAnalysisInput,

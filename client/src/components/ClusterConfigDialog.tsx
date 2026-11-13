@@ -10,22 +10,20 @@
 
 import type React from 'react';
 import { useState, useEffect, useRef } from 'react';
-import {
-    Dialog,
-    AppBar,
-    Toolbar,
-    IconButton,
-    Typography,
-    Box,
-    Tabs,
-    Tab,
-    TextField,
-    Button,
-    CircularProgress,
-    Alert,
-    MenuItem,
-} from '@mui/material';
-import { Close as CloseIcon } from '@mui/icons-material';
+import Dialog from '@mui/material/Dialog';
+import AppBar from '@mui/material/AppBar';
+import Toolbar from '@mui/material/Toolbar';
+import IconButton from '@mui/material/IconButton';
+import Typography from '@mui/material/Typography';
+import Box from '@mui/material/Box';
+import Tabs from '@mui/material/Tabs';
+import Tab from '@mui/material/Tab';
+import TextField from '@mui/material/TextField';
+import Button from '@mui/material/Button';
+import CircularProgress from '@mui/material/CircularProgress';
+import Alert from '@mui/material/Alert';
+import MenuItem from '@mui/material/MenuItem';
+import CloseIcon from '@mui/icons-material/Close';
 import AlertOverridesPanel from './AlertOverridesPanel';
 import ProbeOverridesPanel from './ProbeOverridesPanel';
 import { MAX_FIELD_LENGTH } from '../utils/formLimits';

@@ -10,7 +10,7 @@
 
 import { screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Chip } from '@mui/material';
+import Chip from '@mui/material/Chip';
 import renderWithTheme from '../../../../test/renderWithTheme';
 import { ChannelTable, type ChannelTableProps } from '../ChannelTable';
 import type { BaseChannel, ChannelColumnDef } from '../channelTypes';

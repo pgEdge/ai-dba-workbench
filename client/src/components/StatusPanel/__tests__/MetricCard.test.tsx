@@ -19,9 +19,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { screen } from '@testing-library/react';
-import {
-    Memory as MemoryIcon,
-} from '@mui/icons-material';
+import MemoryIcon from '@mui/icons-material/Memory';
 import MetricCard from '../MetricCard';
 import type { MetricCardProps } from '../types';
 import { renderWithTheme } from '../../../test/renderWithTheme';

@@ -9,11 +9,9 @@
  */
 
 import { useMemo, memo } from 'react';
-import {
-    Box,
-    Typography,
-    useTheme,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
 import { getTimeRangeBounds, generateTimeMarkers, clusterEvents } from './utils';
 import EventMarker from './EventMarker';
 import type { TimelineCanvasProps } from './types';

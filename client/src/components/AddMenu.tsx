@@ -9,8 +9,14 @@
  */
 
 import type React from 'react';
-import { Menu, MenuItem, ListItemIcon, ListItemText, Divider } from '@mui/material';
-import { Storage as StorageIcon, Folder as FolderIcon, Hub as HubIcon } from '@mui/icons-material';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
+import Divider from '@mui/material/Divider';
+import StorageIcon from '@mui/icons-material/Storage';
+import FolderIcon from '@mui/icons-material/Folder';
+import HubIcon from '@mui/icons-material/Hub';
 import { useAuth } from '../contexts/useAuth';
 
 interface AddMenuProps {

@@ -10,23 +10,21 @@
 
 import type React from 'react';
 import { useState, useEffect, useRef } from 'react';
-import {
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    Button,
-    Alert,
-    CircularProgress,
-    Tabs,
-    Tab,
-    AppBar,
-    Toolbar,
-    IconButton,
-    Typography,
-    Box,
-} from '@mui/material';
-import { Close as CloseIcon } from '@mui/icons-material';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import Button from '@mui/material/Button';
+import Alert from '@mui/material/Alert';
+import CircularProgress from '@mui/material/CircularProgress';
+import Tabs from '@mui/material/Tabs';
+import Tab from '@mui/material/Tab';
+import AppBar from '@mui/material/AppBar';
+import Toolbar from '@mui/material/Toolbar';
+import IconButton from '@mui/material/IconButton';
+import Typography from '@mui/material/Typography';
+import Box from '@mui/material/Box';
+import CloseIcon from '@mui/icons-material/Close';
 
 import {
     type ServerFormData,

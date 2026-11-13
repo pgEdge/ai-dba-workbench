@@ -10,21 +10,17 @@
 
 import { useCallback, useMemo, memo, useState } from 'react';
 import type { MouseEvent } from 'react';
-import {
-    Box,
-    Typography,
-    Chip,
-    IconButton,
-    Skeleton,
-    ToggleButton,
-    ToggleButtonGroup,
-    useTheme,
-} from '@mui/material';
-import {
-    ExpandMore as ExpandMoreIcon,
-    ExpandLess as ExpandLessIcon,
-    Timeline as TimelineIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import IconButton from '@mui/material/IconButton';
+import Skeleton from '@mui/material/Skeleton';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
+import { useTheme } from '@mui/material/styles';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import TimelineIcon from '@mui/icons-material/Timeline';
 import { resolveColor } from './utils';
 import { ALL_EVENT_TYPES, FILTER_CHIPS, TIME_RANGE_OPTIONS } from './config';
 import { isCustomTimeRange } from '../../utils/timelineRange';

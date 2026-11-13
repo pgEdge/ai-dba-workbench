@@ -30,7 +30,7 @@ func interleavedAuditStore(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create the auth store: %v", err)
 	}

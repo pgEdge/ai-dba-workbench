@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -51,18 +52,77 @@ const (
 	maxSessionsPerUser = 10
 )
 
-// defaultDummyHash is a pre-computed bcrypt hash used during
-// authentication to prevent timing side-channel attacks that could
-// reveal whether a username exists. When a user lookup returns no
-// rows, the AuthStore compares against this hash so the response
-// time is consistent with a real comparison. Production AuthStores
-// share this package-level hash to avoid recomputing the cost-12
-// hash on every NewAuthStore call. Test AuthStores get a per-store
-// hash at the lowered cost so they do not pay the production
-// timing cost on every "nonexistent user" code path.
+// timingEqualizerInput is the fixed input hashed into every
+// timing-equalizer hash. It is not a secret.
+const timingEqualizerInput = "dummy-timing-equalizer"
+
+// defaultDummyHash returns the bcrypt hash, at DefaultBcryptCost, used
+// during authentication to prevent timing side-channel attacks that
+// could reveal whether a username exists. When a user lookup returns no
+// rows, the AuthStore compares against this hash so the response time
+// is consistent with a real comparison. Production AuthStores share
+// this one hash rather than recomputing it on every NewAuthStore call.
 //
-//nolint:errcheck // bcrypt.GenerateFromPassword with a valid cost never fails
-var defaultDummyHash, _ = bcrypt.GenerateFromPassword([]byte("dummy-timing-equalizer"), DefaultBcryptCost)
+// It is computed on first use rather than at package initialisation,
+// because an initialiser runs in every binary that imports this
+// package, and each server test binary would then pay a cost-12 hash
+// (about five seconds under the race detector) before any test ran.
+// NewAuthStore calls it while opening a production store, so the cost
+// still lands at startup there and never on a login request.
+func defaultDummyHash() []byte {
+	//nolint:errcheck // DefaultBcryptCost is a valid cost, so this never fails
+	hash, _ := dummyHashAtCost(DefaultBcryptCost)
+	return hash
+}
+
+// dummyHashes caches the timing-equalizer hash for each bcrypt cost
+// this process has needed, so that it is generated once per cost
+// rather than once per store. In production the only cost is
+// DefaultBcryptCost; test binaries add the lowered cost.
+var dummyHashes struct {
+	sync.Mutex
+	byCost map[int][]byte
+}
+
+// dummyHashAtCost returns the timing-equalizer hash at the given cost,
+// generating it on first use. An invalid cost returns an error and is
+// not cached. The hash is generated under the lock, so concurrent first
+// callers wait for one generation rather than each paying for their own.
+func dummyHashAtCost(cost int) ([]byte, error) {
+	dummyHashes.Lock()
+	defer dummyHashes.Unlock()
+	if hash, ok := dummyHashes.byCost[cost]; ok {
+		return hash, nil
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(timingEqualizerInput), cost)
+	if err != nil {
+		return nil, err
+	}
+	if dummyHashes.byCost == nil {
+		dummyHashes.byCost = make(map[int][]byte)
+	}
+	dummyHashes.byCost[cost] = hash
+	return hash, nil
+}
+
+// testBcryptCost, when non-zero, is the bcrypt cost NewAuthStore gives
+// each new store in place of DefaultBcryptCost. It exists only so that
+// this package's TestMain can lower the cost for the whole test binary
+// without every test having to call SetBcryptCostForTesting. It is
+// test-only by construction: it is unexported, so no configuration
+// value, flag or environment variable can reach it, nothing outside
+// this package's test files writes it, and newAuthStore honors it only
+// in a test binary (inTestBinary, below); setBcryptCost, which applies
+// it, also panics unless testing.Testing() reports one.
+var testBcryptCost int
+
+// inTestBinary is testing.Testing, held in a variable only so that a
+// test can check what newAuthStore does in the server: there it must
+// compute the shared timing-equalizer hash at start-up. Overriding it
+// can only force that production path. Nothing outside this package's
+// tests changes it, and setBcryptCost's guard calls testing.Testing
+// directly, so it cannot be used to lower the cost.
+var inTestBinary = testing.Testing
 
 const (
 	// DefaultSessionExpiry is the default duration for session tokens
@@ -110,10 +170,11 @@ type AuthStore struct {
 	// hashing work. Reads of this field are guarded by s.mu.
 	bcryptCost int
 	// dummyHash is the timing-equalizer hash this AuthStore compares
-	// against when a user lookup returns no rows. Production stores
-	// share the package-level defaultDummyHash (computed once at
-	// cost DefaultBcryptCost); SetBcryptCostForTesting replaces it
-	// with a cheaper per-store hash so the "nonexistent user" path
+	// against when a user lookup returns no rows; read it through
+	// timingDummyHash. Production stores share the package-level
+	// defaultDummyHash (computed once at cost DefaultBcryptCost), and a
+	// nil value means that shared hash; SetBcryptCostForTesting replaces it
+	// with the cached hash at the lowered cost so the "nonexistent user" path
 	// runs in microseconds rather than the ~250 ms a cost-12 compare
 	// takes under the race detector. Guarded by s.mu.
 	dummyHash []byte
@@ -321,10 +382,18 @@ func newAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int,
 		maxFailedAttempts: maxFailedAttempts,
 		auditKey:          auditKey,
 		bcryptCost:        DefaultBcryptCost,
-		dummyHash:         defaultDummyHash,
 		Created:           !dbExisted,
 
 		allowUnkeyedAuditRows: allowUnkeyedAuditRows,
+	}
+
+	if !inTestBinary() {
+		// Compute the shared timing-equalizer hash now, while the
+		// server starts, so the first failed login for an unknown
+		// user does not take measurably longer than later ones.
+		store.dummyHash = defaultDummyHash()
+	} else if testBcryptCost != 0 {
+		store.setBcryptCost(testBcryptCost)
 	}
 
 	// Defense-in-depth: confirm that the embedded common-password
@@ -994,12 +1063,23 @@ func (s *AuthStore) SetBcryptCostForTesting(t interface{ Helper() }, cost int) {
 			"this hook is test-only and must never run in production")
 	}
 	t.Helper()
-	// Regenerate the timing-equalizer hash at the lowered cost so the
-	// "nonexistent user" code path in AuthenticateUser no longer pays
-	// a cost-12 bcrypt compare on every call. Compute outside the
-	// store lock; the input is a constant string and the cost is
-	// already validated by the GenerateFromPassword call.
-	dummy, err := bcrypt.GenerateFromPassword([]byte("dummy-timing-equalizer"), cost)
+	s.setBcryptCost(cost)
+}
+
+// setBcryptCost sets the store's bcrypt cost and points its
+// timing-equalizer hash at one of that cost, so the "nonexistent user" code
+// path in AuthenticateUser matches the cost of a real comparison
+// rather than paying a cost-12 compare on every call. Only the two
+// test-only routes reach it: SetBcryptCostForTesting and newAuthStore
+// under testBcryptCost. It panics outside a test binary.
+func (s *AuthStore) setBcryptCost(cost int) {
+	// Never lower the cost in a shipped binary, whoever the caller.
+	if !testing.Testing() {
+		panic("bcrypt cost may only be changed in a test binary")
+	}
+	// Fetch outside the store lock; the cost is validated by the
+	// GenerateFromPassword call behind dummyHashAtCost.
+	dummy, err := dummyHashAtCost(cost)
 	if err != nil {
 		// An invalid cost is a programmer error in the test; surface
 		// it loudly rather than silently leaving the production
@@ -1010,6 +1090,16 @@ func (s *AuthStore) SetBcryptCostForTesting(t interface{ Helper() }, cost int) {
 	defer s.mu.Unlock()
 	s.bcryptCost = cost
 	s.dummyHash = dummy
+}
+
+// timingDummyHash returns the hash the timing equalizer compares
+// against: the store's own when a test has lowered its cost, otherwise
+// the shared production-cost hash. s.mu must be held.
+func (s *AuthStore) timingDummyHash() []byte {
+	if s.dummyHash != nil {
+		return s.dummyHash
+	}
+	return defaultDummyHash()
 }
 
 // =============================================================================
@@ -1319,11 +1409,11 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 	if err == sql.ErrNoRows {
 		// Perform a dummy bcrypt comparison to ensure consistent response
 		// timing regardless of whether the username exists, preventing
-		// user enumeration via timing side-channel. s.dummyHash is set
-		// in NewAuthStore (production cost) and may be lowered by
-		// SetBcryptCostForTesting; s.mu is held by AuthenticateUser.
+		// user enumeration via timing side-channel. timingDummyHash is
+		// at production cost unless a test lowered it; s.mu is held by
+		// AuthenticateUser.
 		//nolint:errcheck // Result is intentionally ignored
-		bcrypt.CompareHashAndPassword(s.dummyHash, []byte(password))
+		bcrypt.CompareHashAndPassword(s.timingDummyHash(), []byte(password))
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 	if err != nil {
@@ -1347,7 +1437,7 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 			log.Printf("[AUTH] Authentication failed for user %s: identity is managed by %s", username, user.AuthSource)
 		}
 		//nolint:errcheck // Result is intentionally ignored
-		bcrypt.CompareHashAndPassword(s.dummyHash, []byte(password))
+		bcrypt.CompareHashAndPassword(s.timingDummyHash(), []byte(password))
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 

@@ -10,7 +10,8 @@
 
 import { screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { Home as HomeIcon, Settings as SettingsIcon } from '@mui/icons-material';
+import HomeIcon from '@mui/icons-material/Home';
+import SettingsIcon from '@mui/icons-material/Settings';
 import { renderWithTheme } from '../../../test/renderWithTheme';
 import {
     HelpNavItem,

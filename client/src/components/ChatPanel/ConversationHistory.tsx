@@ -10,33 +10,29 @@
 
 import type React from 'react';
 import { useState } from 'react';
-import {
-    Box,
-    Typography,
-    List,
-    ListItemButton,
-    ListItemText,
-    IconButton,
-    Menu,
-    MenuItem,
-    ListItemIcon,
-    Divider,
-    Tooltip,
-    alpha,
-    TextField,
-    Button,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import List from '@mui/material/List';
+import ListItemButton from '@mui/material/ListItemButton';
+import ListItemText from '@mui/material/ListItemText';
+import IconButton from '@mui/material/IconButton';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import Divider from '@mui/material/Divider';
+import Tooltip from '@mui/material/Tooltip';
+import TextField from '@mui/material/TextField';
+import Button from '@mui/material/Button';
+import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
-import {
-    MoreVert as MoreIcon,
-    Delete as DeleteIcon,
-    Edit as EditIcon,
-    DeleteSweep as ClearAllIcon,
-    Refresh as RefreshIcon,
-    Check as CheckIcon,
-    Close as CancelIcon,
-    Close as CloseIcon,
-} from '@mui/icons-material';
+import MoreIcon from '@mui/icons-material/MoreVert';
+import DeleteIcon from '@mui/icons-material/Delete';
+import EditIcon from '@mui/icons-material/Edit';
+import ClearAllIcon from '@mui/icons-material/DeleteSweep';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import CheckIcon from '@mui/icons-material/Check';
+import CancelIcon from '@mui/icons-material/Close';
+import CloseIcon from '@mui/icons-material/Close';
 
 // ---------------------------------------------------------------------------
 // Types

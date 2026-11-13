@@ -11,6 +11,17 @@ on:
         paths:
             - 'pkg/**'
             - '.github/workflows/ci-pkg.yml'
+    # No nightly schedule: pull requests already run the whole (Go-only)
+    # matrix, so a scheduled run would repeat them.
+    workflow_dispatch:
+
+# Superseded pull request runs are cancelled. Every other run gets a
+# group of its own (the run ID), because GitHub cancels a *pending* run
+# whenever a newer one joins its group, even with cancel-in-progress
+# false, and pushes to main must each run to completion.
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
     pkg:
@@ -31,14 +42,20 @@ jobs:
                   go-version: ${{ matrix.go-version }}
                   cache: false
 
-            - name: Cache Go modules
-              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+            # The key ends in the commit SHA so that the build cache is
+            # saved afresh after each run on main; an exact key hit is never
+            # saved again, so a go.sum-only key froze the cache at the first
+            # build for a given go.sum. Pull requests restore the newest
+            # entry from main but never save, which keeps cache churn down.
+            - name: Restore Go cache
+              uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               with:
                   path: |
                       ~/go/pkg/mod
                       ~/.cache/go-build
-                  key: ${{ runner.os }}-go-${{ matrix.go-version }}-pkg-${{ hashFiles('pkg/go.sum') }}
+                  key: ${{ runner.os }}-go-${{ matrix.go-version }}-pkg-${{ hashFiles('pkg/go.sum') }}-${{ github.sha }}
                   restore-keys: |
+                      ${{ runner.os }}-go-${{ matrix.go-version }}-pkg-${{ hashFiles('pkg/go.sum') }}-
                       ${{ runner.os }}-go-${{ matrix.go-version }}-pkg-
 
             - name: Verify dependencies
@@ -49,12 +66,18 @@ jobs:
               working-directory: pkg
               run: go mod download
 
+            # A prebuilt binary of the latest release: CI deliberately
+            # tracks the latest golangci-lint, and //nolint placement
+            # depends on matching it.
+            - name: Install golangci-lint
+              uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+              with:
+                  version: latest
+                  install-only: true
+
             - name: Lint shared package code
               working-directory: pkg
-              run: |
-                  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-                  echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-                  make lint
+              run: make lint
 
             - name: Run go vet
               working-directory: pkg
@@ -73,3 +96,12 @@ jobs:
             - name: Run tests
               working-directory: pkg
               run: make test
+
+            - name: Save Go cache
+              if: github.event_name != 'pull_request'
+              uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: |
+                      ~/go/pkg/mod
+                      ~/.cache/go-build
+                  key: ${{ runner.os }}-go-${{ matrix.go-version }}-pkg-${{ hashFiles('pkg/go.sum') }}-${{ github.sha }}

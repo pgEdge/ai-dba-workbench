@@ -42,7 +42,7 @@ func liveOIDCServer(t *testing.T) (*http.ServeMux, *atomic.Pointer[config.Config
 		t.Fatalf("oidc.NewProvider: %v", err)
 	}
 
-	store, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("auth.NewAuthStore: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestLiveOIDCGroupMapFollowsTheLiveConfiguration(t *testing.T) {
 // create a group that only a reload has mapped. Wiring the start-up
 // snapshot instead lets the create through.
 func TestRBACRoutesFollowAReloadedGroupMap(t *testing.T) {
-	store, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("auth.NewAuthStore: %v", err)
 	}

@@ -57,6 +57,47 @@ export default tseslint.config(
             '@typescript-eslint/prefer-nullish-coalescing': ['off', {
                 ignorePrimitives: { boolean: true, string: true },
             }],
+            // The MUI barrels load every module in the package, which
+            // made each Vitest file spend seconds importing (#846).
+            // Type imports are erased at compile time, so they may
+            // stay (PaletteMode, for one, is only exported there).
+            '@typescript-eslint/no-restricted-imports': ['error', {
+                paths: [
+                    {
+                        name: '@mui/icons-material',
+                        message: "Import each icon from its own path, e.g. import AddIcon from '@mui/icons-material/Add'.",
+                        allowTypeImports: true,
+                    },
+                    {
+                        name: '@mui/material',
+                        message: "Import each component from its own path, e.g. import Button from '@mui/material/Button', and theme helpers from '@mui/material/styles'.",
+                        allowTypeImports: true,
+                    },
+                ],
+            }],
+            // no-restricted-imports only sees import and export
+            // declarations, so the barrels are also banned in a dynamic
+            // import() (quoted or as a plain template literal),
+            // require(), and Vitest's mock and importActual calls, each
+            // of which would load or stand in for the whole package.
+            'no-restricted-syntax': ['error',
+                {
+                    selector: "ImportExpression[source.value=/^@mui\\/(material|icons-material)$/]",
+                    message: 'Import Material UI per path, not from the barrel (#846).',
+                },
+                {
+                    selector: "ImportExpression > TemplateLiteral.source[quasis.0.value.cooked=/^@mui\\/(material|icons-material)$/]",
+                    message: 'Import Material UI per path, not from the barrel (#846).',
+                },
+                {
+                    selector: "CallExpression[callee.name='require'][arguments.0.value=/^@mui\\/(material|icons-material)$/]",
+                    message: 'Import Material UI per path, not from the barrel (#846).',
+                },
+                {
+                    selector: "CallExpression[callee.property.name=/^(importActual|importMock|mock|doMock)$/][arguments.0.value=/^@mui\\/(material|icons-material)$/]",
+                    message: 'Import Material UI per path, not from the barrel (#846).',
+                },
+            ],
             // General rules
             'no-console': 'error',
             'prefer-const': 'error',

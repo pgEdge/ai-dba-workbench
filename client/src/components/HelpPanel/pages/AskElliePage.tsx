@@ -9,12 +9,11 @@
  */
 
 import type React from 'react';
-import { Box, Typography } from '@mui/material';
-import {
-    SmartToyOutlined as ChatBotIcon,
-    History as HistoryIcon,
-    AutoAwesome as AutoAwesomeIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import ChatBotIcon from '@mui/icons-material/SmartToyOutlined';
+import HistoryIcon from '@mui/icons-material/History';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { SectionTitle, HelpTip, FeatureItem } from '../components';
 import { styles } from '../helpPanelStyles';
 

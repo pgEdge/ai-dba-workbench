@@ -19,7 +19,7 @@
 import type React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { ThemeProvider } from '@mui/material';
+import { ThemeProvider } from '@mui/material/styles';
 import AlertAnalysisDialog, {
     ANALYSIS_UNAVAILABLE_MESSAGE,
     type AlertAnalysisAlert,

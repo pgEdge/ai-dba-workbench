@@ -37,7 +37,7 @@ func unkeyedAuditStore(t *testing.T, rows int, breakAt int64) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("Failed to create the auth store: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestRechainAuditLogCommandAbortsWithoutConfirmation(t *testing.T) {
 
 			// The store still refuses to open, which it would not do
 			// had anything been re-chained.
-			store, err := auth.NewAuthStore(dir, 0, 0,
+			store, err := newTestAuthStore(dir, 0, 0,
 				auth.AuditKeyForTesting())
 			if err == nil {
 				store.Close()
@@ -201,7 +201,7 @@ func TestRechainAuditLogCommandRefusesABrokenChainUnattended(t *testing.T) {
 
 	// Nothing was signed: the log is still the unkeyed one, so an
 	// ordinary open still refuses it.
-	store, openErr := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
+	store, openErr := newTestAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
 	if openErr == nil {
 		store.Close()
 		t.Fatal("Expected the unkeyed log to be left in place")

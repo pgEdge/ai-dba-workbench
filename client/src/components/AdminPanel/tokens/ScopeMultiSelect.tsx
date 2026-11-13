@@ -9,7 +9,8 @@
  */
 
 import React, { useCallback } from 'react';
-import { Autocomplete, TextField } from '@mui/material';
+import Autocomplete from '@mui/material/Autocomplete';
+import TextField from '@mui/material/TextField';
 import { SELECT_FIELD_SX } from '../../shared/formStyles';
 
 /**

@@ -9,16 +9,12 @@
  */
 
 import { useState, useMemo, memo } from 'react';
-import {
-    Box,
-    Typography,
-    Chip,
-    useTheme,
-} from '@mui/material';
-import {
-    ExpandMore as ExpandMoreIcon,
-    ExpandLess as ExpandLessIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import { useTheme } from '@mui/material/styles';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { formatFullTime } from './utils';
 import type {
     AlertDetailsProps,

@@ -22,6 +22,9 @@ func TestAllowedTestDatabase(t *testing.T) {
 	allowed := []string{
 		"ai_workbench", "ai_workbench_pr407", "ai_workbench_issue407",
 		"ai_workbench_sess2", "postgres",
+		// Per-package databases derived by RunPackage.
+		"ai_workbench_pkg_engine", "ai_workbench_sess2_pkg_database",
+		"ai_workbench_pr407_pkg_notifications", "postgres_pkg_engine",
 	}
 	refused := []string{
 		"ai_workbench_prod", "ai_workbench_live", "ai_workbench_staging",
@@ -31,6 +34,12 @@ func TestAllowedTestDatabase(t *testing.T) {
 		// "any tag holding a digit" rule admitted.
 		"ai_workbench_prod2", "ai_workbench_live1", "ai_workbench_v2",
 		"ai_workbench_demo9",
+		// Only the package marker and a lower-case tag may follow an
+		// allowed base.
+		"ai_workbench_prod_pkg_engine", "ai_workbench_pkg_",
+		"ai_workbench_pkg_Engine", "ai_workbench_pkg_a-b",
+		"ai_workbench_pkg_a_pkg_b", "ai_workbench_pkg_1a",
+		"ai_workbench_engine", "prod_pkg_engine",
 	}
 	for _, name := range allowed {
 		if !allowedTestDatabase.MatchString(name) {
@@ -110,8 +119,33 @@ func TestRequire(t *testing.T) {
 			wantFail: true,
 		},
 		{
+			name:     "remote fallback host",
+			dsn:      "postgresql://postgres@127.0.0.1:5432,db.example.com:5432/ai_workbench",
+			wantFail: true,
+		},
+		{
+			name:     "remote fallback host, keyword form",
+			dsn:      "host=localhost,192.0.2.1 user=postgres dbname=ai_workbench",
+			wantFail: true,
+		},
+		{
+			name:    "loopback fallback hosts",
+			dsn:     "postgresql://postgres@127.0.0.1:5432,[::1]:5433,localhost:5434/ai_workbench",
+			wantDSN: "postgresql://postgres@127.0.0.1:5432,[::1]:5433,localhost:5434/ai_workbench",
+		},
+		{
 			name:     "production-shaped database",
 			dsn:      "postgresql://postgres@127.0.0.1:5432/ai_workbench_prod2",
+			wantFail: true,
+		},
+		{
+			name:    "a per-package database",
+			dsn:     "postgresql://postgres@127.0.0.1:5432/ai_workbench_pr407_pkg_engine",
+			wantDSN: "postgresql://postgres@127.0.0.1:5432/ai_workbench_pr407_pkg_engine",
+		},
+		{
+			name:     "a derived name on a remote host",
+			dsn:      "postgresql://postgres@db.example.com:5432/ai_workbench_pkg_engine",
 			wantFail: true,
 		},
 		{

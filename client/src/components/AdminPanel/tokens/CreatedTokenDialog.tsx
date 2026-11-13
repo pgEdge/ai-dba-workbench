@@ -9,22 +9,18 @@
  */
 
 import { forwardRef } from 'react';
-import {
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    Button,
-    Box,
-    IconButton,
-    Alert,
-    Tooltip,
-} from '@mui/material';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import Button from '@mui/material/Button';
+import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
+import Alert from '@mui/material/Alert';
+import Tooltip from '@mui/material/Tooltip';
 import { alpha, useTheme } from '@mui/material/styles';
-import {
-    ContentCopy as CopyIcon,
-    Check as CheckIcon,
-} from '@mui/icons-material';
+import CopyIcon from '@mui/icons-material/ContentCopy';
+import CheckIcon from '@mui/icons-material/Check';
 import { dialogTitleSx, dialogActionsSx } from '../styles';
 
 export interface CreatedTokenDialogProps {

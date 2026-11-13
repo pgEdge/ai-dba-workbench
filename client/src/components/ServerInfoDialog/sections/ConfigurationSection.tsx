@@ -9,9 +9,10 @@
  */
 
 import type React from 'react';
-import { Box, Typography } from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import { Tune as TuneIcon } from '@mui/icons-material';
+import TuneIcon from '@mui/icons-material/Tune';
 import { Section } from '../components';
 import { formatPgSetting } from '../../../utils/formatters';
 import { sxMono, getSectionIconSx, getSettingRowSx } from '../serverInfoStyles';

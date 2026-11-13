@@ -46,16 +46,16 @@ openapi:
 	cd src && go run ./cmd/mcp-server -openapi ../../docs/admin-guide/api/openapi.json
 
 # Run tests
-# Use -p=1 to serialize per-package test binaries. Integration tests in
-# internal/database, internal/api, and internal/tools share Postgres schema
-# (DROP/CREATE the same tables), so running their test binaries concurrently
-# races.
+# Package test binaries run in parallel. Each database-backed package's
+# TestMain (internal/testutil/pkgdb) gives it a database of its own, named
+# after the one in TEST_AI_WORKBENCH_SERVER plus "_pkg_<package>", so
+# packages that DROP/CREATE the same tables no longer collide.
 # -race enables the data-race detector; CI runs the same target.
 # -timeout 20m: internal/api alone takes up to ~8 minutes under -race on
 # CI, too close to go test's 10-minute default per-binary timeout.
 test:
 	@echo "Running tests..."
-	cd src && go test -race -p=1 -timeout 20m -v ./...
+	cd src && go test -race -timeout 20m -v ./...
 
 # Run linting
 lint:
@@ -78,13 +78,13 @@ fmt-check:
 	@test -z "$$(cd src && gofmt -l .)" || (echo "Files not formatted:"; cd src && gofmt -l .; exit 1)
 
 # Run tests with coverage
-# Use -p=1 to serialize per-package test binaries (see note on the test target).
+# Package test binaries run in parallel (see note on the test target).
 # -race enables the data-race detector; CI runs the same target.
 # -v emits per-test output so this single invocation can replace the
 # separate `test` target inside `test-all` and halve total test time.
 coverage:
 	@echo "Running tests with coverage..."
-	cd src && go test -race -p=1 -timeout 20m -v -coverprofile=coverage.out ./...
+	cd src && go test -race -timeout 20m -v -coverprofile=coverage.out ./...
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
 	@cd src && total=$$(go tool cover -func=coverage.out | tail -1 | awk '{gsub(/%/, "", $$3); print $$3}'); \

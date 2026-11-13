@@ -10,13 +10,14 @@
 
 import type React from 'react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
-import { Box, Typography, Chip, alpha, useTheme } from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import { alpha, useTheme } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 import type { Cluster } from './utils';
-import {
-    DragIndicator as DragIcon,
-    Dns as ClusterIcon,
-} from '@mui/icons-material';
+import DragIcon from '@mui/icons-material/DragIndicator';
+import ClusterIcon from '@mui/icons-material/Dns';
 import { countServersRecursive } from './utils';
 
 // -- Static sx constants --------------------------------------------------

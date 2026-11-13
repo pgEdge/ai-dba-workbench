@@ -15,7 +15,7 @@ import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import { Hub as HubIcon } from '@mui/icons-material';
+import HubIcon from '@mui/icons-material/Hub';
 import { useClusterData } from '../../../contexts/useClusterData';
 import { useReplicationSlots } from '../../../hooks/useReplicationSlots';
 import { formatBytes } from '../../../utils/formatters';

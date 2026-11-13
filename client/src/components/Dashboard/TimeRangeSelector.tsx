@@ -14,7 +14,7 @@ import Box from '@mui/material/Box';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Tooltip from '@mui/material/Tooltip';
-import { PauseCircleOutline as PauseCircleOutlineIcon } from '@mui/icons-material';
+import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline';
 import dayjs from 'dayjs';
 import { useDashboard } from '../../contexts/useDashboard';
 import type { TimeRange } from './types';

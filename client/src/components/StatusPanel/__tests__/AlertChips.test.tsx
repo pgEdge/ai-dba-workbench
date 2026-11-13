@@ -11,7 +11,7 @@
 import type React from 'react';
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { ThemeProvider } from '@mui/material';
+import { ThemeProvider } from '@mui/material/styles';
 import { AlertSourceChip, AlertTypeChip } from '../AlertChips';
 import { getAlertTypeLabel } from '../styles';
 import { createPgedgeTheme } from '../../../theme/pgedgeTheme';

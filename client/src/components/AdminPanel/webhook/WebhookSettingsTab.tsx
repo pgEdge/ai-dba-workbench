@@ -9,14 +9,12 @@
  */
 
 import type React from 'react';
-import {
-    Box,
-    TextField,
-    Switch,
-    FormControlLabel,
-    MenuItem,
-    Typography,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import TextField from '@mui/material/TextField';
+import Switch from '@mui/material/Switch';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import MenuItem from '@mui/material/MenuItem';
+import Typography from '@mui/material/Typography';
 import { SELECT_FIELD_SX } from '../../shared/formStyles';
 import type { WebhookFormState } from './webhookTypes';
 import { HTTP_METHODS } from './webhookHelpers';

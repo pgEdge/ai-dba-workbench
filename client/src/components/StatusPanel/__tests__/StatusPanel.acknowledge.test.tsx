@@ -16,7 +16,7 @@
 
 import type React from 'react';
 import { render, screen, act } from '@testing-library/react';
-import { ThemeProvider } from '@mui/material';
+import { ThemeProvider } from '@mui/material/styles';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createPgedgeTheme } from '../../../theme/pgedgeTheme';
 import { DEFAULT_RETRY_BASE_DELAY_MS } from '../../../hooks/useRetryingFetch';

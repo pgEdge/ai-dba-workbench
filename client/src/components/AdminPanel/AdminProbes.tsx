@@ -10,31 +10,27 @@
 
 import type React from 'react';
 import { useState, useEffect, useCallback } from 'react';
-import {
-    Box,
-    Typography,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    Paper,
-    Button,
-    IconButton,
-    Switch,
-    TextField,
-    CircularProgress,
-    Alert,
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Table from '@mui/material/Table';
+import TableBody from '@mui/material/TableBody';
+import TableCell from '@mui/material/TableCell';
+import TableContainer from '@mui/material/TableContainer';
+import TableHead from '@mui/material/TableHead';
+import TableRow from '@mui/material/TableRow';
+import Paper from '@mui/material/Paper';
+import Button from '@mui/material/Button';
+import IconButton from '@mui/material/IconButton';
+import Switch from '@mui/material/Switch';
+import TextField from '@mui/material/TextField';
+import CircularProgress from '@mui/material/CircularProgress';
+import Alert from '@mui/material/Alert';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
 import { useTheme } from '@mui/material/styles';
-import {
-    Edit as EditIcon,
-} from '@mui/icons-material';
+import EditIcon from '@mui/icons-material/Edit';
 import { SELECT_FIELD_SX } from '../shared/formStyles';
 import { apiGet, apiPut } from '../../utils/apiClient';
 import { getFriendlyProbeName } from '../../utils/friendlyNames';

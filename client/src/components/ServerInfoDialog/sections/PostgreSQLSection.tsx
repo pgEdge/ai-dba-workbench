@@ -9,9 +9,9 @@
  */
 
 import type React from 'react';
-import { Box } from '@mui/material';
+import Box from '@mui/material/Box';
 import { useTheme } from '@mui/material/styles';
-import { Dns as DnsIcon } from '@mui/icons-material';
+import DnsIcon from '@mui/icons-material/Dns';
 import { Section, KV } from '../components';
 import { getSectionIconSx, getKvGridSx } from '../serverInfoStyles';
 import type { PostgreSQLInfo } from '../serverInfoTypes';

@@ -22,8 +22,8 @@ test:
 	@echo "Running tests..."
 	npm run test
 
-# Run all tests (test + typecheck + lint)
-test-all: test typecheck lint
+# Run all tests with the coverage gate, type check and lint
+test-all: coverage typecheck lint
 
 # Run tests with coverage
 coverage:
@@ -59,7 +59,7 @@ help:
 	@echo "  all              - Build the client (default)"
 	@echo "  build            - Build the client"
 	@echo "  test             - Run tests"
-	@echo "  test-all         - Run all tests, type check and lint"
+	@echo "  test-all         - Run tests with coverage gate, type check and lint"
 	@echo "  coverage         - Run tests with coverage"
 	@echo "  lint             - Run ESLint"
 	@echo "  typecheck        - Type check with tsc --noEmit"

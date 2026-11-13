@@ -9,26 +9,22 @@
  */
 
 import type React from 'react';
-import {
-    Box,
-    Typography,
-    Button,
-    CircularProgress,
-    Autocomplete,
-    TextField,
-    MenuItem,
-    IconButton,
-    Divider,
-    List,
-    ListItem,
-    ListItemText,
-    ListItemSecondaryAction,
-    Chip,
-} from '@mui/material';
-import {
-    Add as AddIcon,
-    Delete as DeleteIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Button from '@mui/material/Button';
+import CircularProgress from '@mui/material/CircularProgress';
+import Autocomplete from '@mui/material/Autocomplete';
+import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
+import IconButton from '@mui/material/IconButton';
+import Divider from '@mui/material/Divider';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemText from '@mui/material/ListItemText';
+import ListItemSecondaryAction from '@mui/material/ListItemSecondaryAction';
+import Chip from '@mui/material/Chip';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { SELECT_FIELD_DEFAULT_BG_SX } from '../shared/formStyles';
 import type { ClusterServerInfo } from '../ServerDialog/ServerDialog.types';
 import type { UnassignedConnection, RoleOption } from './topologyHelpers';

@@ -9,7 +9,9 @@
  */
 
 import type React from 'react';
-import { Box, TextField, MenuItem } from '@mui/material';
+import Box from '@mui/material/Box';
+import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
 import { SELECT_FIELD_SX } from '../../shared/formStyles';
 import { AUTH_TYPES } from './webhookHelpers';
 

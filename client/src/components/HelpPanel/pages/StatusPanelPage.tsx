@@ -9,13 +9,12 @@
  */
 
 import type React from 'react';
-import { Box, Typography } from '@mui/material';
-import {
-    Storage as ServerIcon,
-    Dns as ClusterIcon,
-    AutoAwesome as AutoAwesomeIcon,
-    Psychology as AIIcon,
-} from '@mui/icons-material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import ServerIcon from '@mui/icons-material/Storage';
+import ClusterIcon from '@mui/icons-material/Dns';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import AIIcon from '@mui/icons-material/Psychology';
 import { SectionTitle, HelpTip, FeatureItem } from '../components';
 import { styles } from '../helpPanelStyles';
 

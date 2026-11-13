@@ -9,7 +9,8 @@
  */
 
 import type React from 'react';
-import { Chip, alpha } from '@mui/material';
+import Chip from '@mui/material/Chip';
+import { alpha } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
 import { getRoleConfigs, ROLE_ICONS, type ServerRole } from './constants';
 

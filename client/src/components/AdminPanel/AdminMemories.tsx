@@ -10,25 +10,23 @@
 
 import type React from 'react';
 import { useState, useEffect, useCallback } from 'react';
-import {
-    Box,
-    Typography,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    Paper,
-    IconButton,
-    CircularProgress,
-    Alert,
-    Switch,
-    Chip,
-    Tooltip,
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Table from '@mui/material/Table';
+import TableBody from '@mui/material/TableBody';
+import TableCell from '@mui/material/TableCell';
+import TableContainer from '@mui/material/TableContainer';
+import TableHead from '@mui/material/TableHead';
+import TableRow from '@mui/material/TableRow';
+import Paper from '@mui/material/Paper';
+import IconButton from '@mui/material/IconButton';
+import CircularProgress from '@mui/material/CircularProgress';
+import Alert from '@mui/material/Alert';
+import Switch from '@mui/material/Switch';
+import Chip from '@mui/material/Chip';
+import Tooltip from '@mui/material/Tooltip';
 import { alpha, useTheme } from '@mui/material/styles';
-import { Delete as DeleteIcon } from '@mui/icons-material';
+import DeleteIcon from '@mui/icons-material/Delete';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiGet, apiDelete, apiPatch } from '../../utils/apiClient';
 import {

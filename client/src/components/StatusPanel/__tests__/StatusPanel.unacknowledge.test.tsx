@@ -22,7 +22,7 @@
 
 import type React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { ThemeProvider } from '@mui/material';
+import { ThemeProvider } from '@mui/material/styles';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createPgedgeTheme } from '../../../theme/pgedgeTheme';
 import type { Selection } from '../../../types/selection';

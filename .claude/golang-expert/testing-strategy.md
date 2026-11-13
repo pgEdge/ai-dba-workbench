@@ -39,12 +39,36 @@ run every sub-project (including the client) in turn.
   of `test` or `coverage` (issue #445): the test suites spawn no
   processes, so there is nothing for it to clean up.
 
-The server and alerter pass `-p=1` to `go test` on both `test` and
-`coverage`. Their integration tests in `internal/database`,
-`internal/api` and `internal/tools` (server) share Postgres tables and
-drop and recreate them, so concurrent per-package test binaries race.
-The collector does not pass `-p=1`; each of its integration packages
-creates its own uniquely named database instead.
+None of the three passes `-p=1`: package test binaries run in parallel
+(issue #846). Integration tests in several packages drop and recreate
+the same tables, so every database-backed package works in a database
+of its own, created by its `TestMain` and named after the database in
+`TEST_AI_WORKBENCH_SERVER` plus `_pkg_<tag>` (for example
+`ai_workbench_sess12_pkg_api`, or `postgres_pkg_api` in CI). The server
+packages call `pkgdb.Run(m, "<tag>")` from
+`server/src/internal/testutil/pkgdb` in a `pkgdb_main_test.go` (in
+`cmd/mcp-server` the call sits in the existing `main_test.go`); the
+alerter packages call `testdsn.RunPackage(m, "<tag>")`. The helper
+drops any stale copy, creates the database, rewrites the variable for
+the rest of the binary, and drops the database afterwards unless
+`TEST_AI_WORKBENCH_KEEP_DB` is set; a panicking or timed-out binary
+leaves it behind, and the next run drops it first. A test that
+re-executes its own binary (`runMainChild` in `cmd/mcp-server`) hands
+the child the rewritten variable, and the helper recognises its own
+suffix and runs the child against the parent's database rather than
+deriving a nested one the child's `os.Exit` would leak. When the variable is
+unset, `SKIP_DB_TESTS` is set or the server is unreachable it runs the
+tests unchanged, so they skip as before. Before any DDL both helpers
+refuse a variable whose primary or any fallback host is not loopback:
+`pkgdb` fails the binary outright, whilst `RunPackage` runs the tests
+unchanged and `testdsn.Require` then fails each one. A new
+database-backed package needs the same `TestMain` with a tag (lower
+case letters and digits) that no other server or alerter package uses,
+since both can run against one configured database: the alerter's
+`internal/database` uses `alerterdatabase` because the server's uses
+`database`. A fresh database has no extensions, so a test needing
+`vector` must create it itself. The collector instead creates a
+uniquely named database per run (below).
 
 Read the numeric coverage breakdown with
 `cd <subproject>/src && go tool cover -func=coverage.out`.
@@ -81,8 +105,14 @@ connecting, on a non-loopback host and on a database name outside
 `ai_workbench`, `ai_workbench_pr<n>`, `ai_workbench_issue<n>`,
 `ai_workbench_sess<n>` (the per-task databases that concurrent local
 sessions use so their schema resets do not collide) and `postgres` (the
-CI default). The loopback check is the real safety net and the name
-check a convenience, so do not read more into the tag rule than that.
+CI default), each optionally followed by `_pkg_<tag>` (the per-package
+databases above). `testdsn.RunPackage` applies the same host check, and
+only creates a package database from a base name without that suffix;
+given an already-suffixed name it leaves the variable alone, and
+`Require`, which accepts that name, lets the tests run against that
+database with no package database of their own. The loopback check is
+the real safety net and the name check a convenience, so do not read
+more into the tag rule than that.
 `Require` takes a small `TB` interface rather than `*testing.T`, which
 is what lets `TestRequire` drive every skip and refusal through a
 recorder; `TestAllowedTestDatabase` pins the name rule in both
@@ -114,7 +144,8 @@ are editing.
   `server/src/internal/testutil/scratchdb` (#775):
   `scratchdb.NewCollectorSchema(t, suffix, maxConns)` creates a scratch
   database named after the test database plus the suffix (for example
-  `ai_workbench_pr652_catalog_schema`), migrates it with the collector's
+  `ai_workbench_pr652_pkg_tools_catalog_schema`, the test database being
+  the package's own by then), migrates it with the collector's
   `SchemaManager` and drops it when the test ends, and
   `scratchdb.AttachDefaultPartitions` gives the named metrics tables a
   DEFAULT partition so fixture rows with any timestamp land. Use it
@@ -142,8 +173,8 @@ are editing.
   integration schema with `DROP`/`CREATE` statements and therefore take
   their URL from `requireLocalTestDSN`.
 
-`t.Parallel()` is not used in database-backed tests; the shared tables
-make it unsafe.
+`t.Parallel()` is not used in database-backed tests; the tests within a
+package share their package database's tables, which makes it unsafe.
 
 The alerter engine's `captureStderr` holds a package mutex until the
 test's cleanup runs, so a second call within the same test or subtest
@@ -152,10 +183,13 @@ deadlocks until the test timeout; give each captured call its own
 
 ## Collector Tests and max_connections
 
-The collector does not pass `-p=1`, so its packages share the server's
+No Go sub-project passes `-p=1`, so packages share the server's
 `max_connections` (100 by default) with each other and with any other
-suite running on the host (issue #486). The rules that keep it under
-that limit:
+suite running on the host (issues #486 and #846). The rules below were
+written for the collector; server and alerter tests should likewise
+open a single connection for `CREATE`/`DROP DATABASE` (as `pkgdb` and
+`testdsn.RunPackage` do) and keep fixture pools small. The collector's
+rules:
 
 - In `collector/src/database`, only `TestMain` calls
   `setupTestDatabase`; it reassigns `testDBName`, so any other caller
@@ -207,6 +241,16 @@ with `auth.NewAuthStore` and must:
   the ten-minute package timeout under `-race`. The helper also
   regenerates the store's timing-equaliser dummy hash at the lowered
   cost, so "user not found" paths stop costing a second each.
+  Within `internal/auth` this is automatic: its `TestMain`
+  (`bcrypt_cost_test.go`) sets the unexported `testBcryptCost`, which
+  `NewAuthStore` honours only under `testing.Testing()`; a test that
+  needs the production cost resets it for its own scope. In
+  `cmd/mcp-server`, `TestMain` sets `configureCLIStoreForTesting`, which
+  `openAuthStoreCLI` applies to every store the commands open; it is nil
+  in the server. Timing-equaliser dummy hashes are generated on first
+  use and cached once per cost (`dummyHashAtCost`), not at package init
+  or per store, so importing `internal/auth` no longer costs every test
+  binary a cost-12 hash.
 - Pair `NewAuthStore` with `store.Close()`, which stops the session
   cleanup goroutine as well as closing the database.
 - Stop every `auth.NewRateLimiter` with `Stop()` (idempotent), or close
@@ -332,37 +376,44 @@ Codacy's re-analysis cleared both findings it had raised in
 `database/connection_purge.go` and `metrics/probe_interval.go` after
 commit 3b2c710d did so (see `metrics-queries.md`).
 
-CI installs the linter with `go install
-github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`, so the
-version is unpinned and moves with upstream releases. A locally
-installed older build can pass code that CI rejects: gosec's G7xx taint
-rules, G704 (SSRF) among them, are absent from the gosec v2.22.8 that
-golangci-lint v2.5.0 bundles and present in the gosec v2.28.0 that
-v2.13.2 bundles. Match the CI version before trusting a clean local
-`make lint` on new network or SQL code.
+CI installs the latest golangci-lint release as a prebuilt binary
+(`golangci/golangci-lint-action` with `install-only: true` and
+`version: latest`), so the version is unpinned and moves with upstream
+releases. A locally installed older build can pass code that CI
+rejects: gosec's G7xx taint rules, G704 (SSRF) among them, are absent
+from the gosec v2.22.8 that golangci-lint v2.5.0 bundles and present in
+the gosec v2.28.0 that v2.13.2 bundles. Match the CI version before
+trusting a clean local `make lint` on new network or SQL code.
 
 ## Continuous Integration
 
 `ci-collector.yml`, `ci-server.yml` and `ci-alerter.yml` run the
-sub-project's `make build`, `make coverage` and `make lint` on a single
-Go version against a matrix of Postgres 15 to 18 service containers
-built from the `pgvector/pgvector` image, with
-`TEST_AI_WORKBENCH_SERVER` pointed at the service. Coverage is
-converted to lcov and uploaded to Codacy as a partial report per
-sub-project; `coverage-finalize.yml` closes the set. `ci-client.yml`
-runs `npm test`, `npm run test:coverage` and `npm run build`. The
+sub-project's `make build`, `make coverage` and `make lint` against
+Postgres service containers built from the `pgvector/pgvector` image,
+with `TEST_AI_WORKBENCH_SERVER` pointed at the service. Pushes to
+`main`, the nightly schedule and manual runs cover both supported Go
+versions against Postgres 15 to 18; pull requests run two cells only,
+the older Go against Postgres 18 (the cell that also lints and uploads
+coverage) and the newer Go against Postgres 15. Coverage is converted
+to lcov and uploaded to Codacy as a partial report per sub-project on
+pushes to `main`; `coverage-finalize.yml` closes the set. `ci-pkg.yml`
+runs `make lint`, `go vet`, the `gofmt` check and `make test` for `pkg`
+on both Go versions, with no database, on every run. `ci-client.yml`
+type-checks and builds on every Node.js version in its matrix and runs
+`npm run lint` and `npm run test:coverage` on Node.js 22 only. The
 remaining workflows (`ci-e2e.yml`, `ci-docker.yml`, `ci-docs.yml`,
 `ci-walkthrough.yml`, `docker-publish.yml`, `release.yml`) do not run
-the Go unit suites. Check the workflow file for the current Go version
-rather than recording it here.
+the Go unit suites. Check the workflow file for the current Go versions
+rather than recording them here.
 
 Because `make coverage` runs once per Postgres version, the ratchet must
 pass on the version that measures lowest (for the server, 15, which
 skips the `GENERIC_PLAN` tests), not on the local dev host's 18:
 probes that branch on version or on whether a view exists only reach
 their other branches on other versions. Set `COVERAGE_MIN` from the
-lowest per-version total in the CI log (`gh run view <id>
---log`, "Total coverage" lines). To reach version branches from any
+lowest per-version total in the CI log of a push to `main` or a nightly
+run (`gh run view <id> --log`, "Total coverage" lines); a pull
+request's log shows Postgres 15 and 18 only. To reach version branches from any
 version, `collector/src/probes/version_branch_test.go` shadows system
 views with temporary views (an unqualified name resolves to `pg_temp`
 before `pg_catalog`) and seeds `featureCache` entries;

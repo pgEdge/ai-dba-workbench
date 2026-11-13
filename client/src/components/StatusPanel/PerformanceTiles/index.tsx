@@ -9,7 +9,7 @@
  */
 
 import type React from 'react';
-import { Box } from '@mui/material';
+import Box from '@mui/material/Box';
 import { usePerformanceSummary } from './usePerformanceSummary';
 import { useDatabaseCacheHit } from './useDatabaseCacheHit';
 import type { PerformanceTilesProps } from './types';

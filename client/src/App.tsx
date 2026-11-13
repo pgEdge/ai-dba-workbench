@@ -10,7 +10,10 @@
 import type React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { ThemeProvider } from '@mui/material/styles';
-import { Box, CircularProgress, CssBaseline, type PaletteMode } from '@mui/material';
+import Box from '@mui/material/Box';
+import CircularProgress from '@mui/material/CircularProgress';
+import CssBaseline from '@mui/material/CssBaseline';
+import type { PaletteMode } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import { AuthProvider } from './contexts/AuthContext';

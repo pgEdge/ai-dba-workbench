@@ -12,6 +12,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"testing"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -120,6 +121,16 @@ func loadCLITokenPolicy(configPath string) error {
 	return nil
 }
 
+// configureCLIStoreForTesting, when non-nil, is applied to every store
+// openAuthStoreCLI opens. It is nil in the server and only this
+// package's TestMain sets it, so that the command tests can lower the
+// bcrypt cost with AuthStore.SetBcryptCostForTesting rather than pay a
+// production-cost hash (seconds each under the race detector) for every
+// user and token they create. It is unexported and no configuration
+// value, flag or environment variable reaches it, so production
+// password hashing always runs at auth.DefaultBcryptCost.
+var configureCLIStoreForTesting func(*auth.AuthStore)
+
 // openAuthStoreCLI opens the auth store and prints its path to stderr.
 // This helps users diagnose issues where CLI commands and the server
 // use different auth.db paths.
@@ -132,6 +143,9 @@ func openAuthStoreCLI(dataDir string) (*auth.AuthStore, error) {
 	store, err := auth.NewAuthStore(dataDir, 0, 0, auditKey)
 	if err != nil {
 		return nil, err
+	}
+	if configureCLIStoreForTesting != nil && testing.Testing() {
+		configureCLIStoreForTesting(store)
 	}
 	allowFederated := cliTokenPolicy.allowFederatedAPITokens
 	store.SetFederatedAPITokenPolicy(func() bool { return allowFederated })

@@ -166,6 +166,16 @@ func TestRunPackageCreatesAndDropsDatabase(t *testing.T) {
 	}
 }
 
+// encodingBaseStatementsQuery returns the statements that drop and
+// create a base database with the given name and encoding. The server
+// quotes both with format, so the SQL text sent from Go stays constant.
+const encodingBaseStatementsQuery = `
+        SELECT format('DROP DATABASE IF EXISTS %I WITH (FORCE)', $1::text),
+            format('CREATE DATABASE %I TEMPLATE template0 ENCODING %L '
+                || 'LC_COLLATE ''C'' LC_CTYPE ''C'' LOCALE_PROVIDER libc',
+                $1::text, $2::text)
+    `
+
 // TestCreatePackageDatabaseCopiesTheBaseEncoding checks that the package
 // database takes the configured database's encoding, not template1's: a
 // SQL_ASCII package database under a UTF8 test database broke
@@ -184,19 +194,20 @@ func TestCreatePackageDatabaseCopiesTheBaseEncoding(t *testing.T) {
 
 	for _, enc := range []string{"SQL_ASCII", "UTF8"} {
 		t.Run(enc, func(t *testing.T) {
-			encBase := currentDatabase(t, base) + "_enc" +
-				strings.ToLower(strings.ReplaceAll(enc, "_", ""))
+			encBase := strings.Join([]string{currentDatabase(t, base), "enc",
+				strings.ToLower(strings.ReplaceAll(enc, "_", ""))}, "_")
 			drop := func(sql string) {
 				if _, err := admin.Exec(ctx, sql); err != nil {
 					t.Errorf("%s: %v", sql, err)
 				}
 			}
-			dropBase := "DROP DATABASE IF EXISTS " +
-				pgx.Identifier{encBase}.Sanitize() + " WITH (FORCE)"
+			var dropBase, createBase string
+			if err := admin.QueryRow(ctx, encodingBaseStatementsQuery, encBase, enc).
+				Scan(&dropBase, &createBase); err != nil {
+				t.Fatalf("build the statements for %s: %v", encBase, err)
+			}
 			drop(dropBase)
-			if _, err := admin.Exec(ctx, "CREATE DATABASE "+
-				pgx.Identifier{encBase}.Sanitize()+" TEMPLATE template0 ENCODING '"+
-				enc+"' LC_COLLATE 'C' LC_CTYPE 'C' LOCALE_PROVIDER libc"); err != nil {
+			if _, err := admin.Exec(ctx, createBase); err != nil {
 				t.Fatalf("create %s: %v", encBase, err)
 			}
 			defer drop(dropBase)
@@ -216,8 +227,9 @@ func TestCreatePackageDatabaseCopiesTheBaseEncoding(t *testing.T) {
 			defer drop(dropSQL)
 
 			var got string
-			if err := admin.QueryRow(ctx, "SELECT pg_encoding_to_char(encoding) "+
-				"FROM pg_database WHERE datname = $1", name).Scan(&got); err != nil {
+			if err := admin.QueryRow(ctx,
+				`SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = $1`,
+				name).Scan(&got); err != nil {
 				t.Fatalf("look up the encoding of %s: %v", name, err)
 			}
 			if got != enc {

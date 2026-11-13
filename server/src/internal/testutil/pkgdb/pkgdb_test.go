@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // fakeM records whether the tests ran, and what the test database
@@ -40,7 +41,10 @@ func (f *fakeM) Run() int {
 }
 
 // requireTestDatabase skips the test unless a test database is
-// configured, and returns its URL.
+// configured, and returns its URL. Like Run, it fails the test, before
+// anything connects, unless every host the URL names is a loopback one:
+// these tests create and drop databases themselves, some of them before
+// they call run.
 func requireTestDatabase(t *testing.T) string {
 	t.Helper()
 	if os.Getenv("SKIP_DB_TESTS") != "" {
@@ -49,6 +53,13 @@ func requireTestDatabase(t *testing.T) string {
 	dsn := os.Getenv(EnvVar)
 	if dsn == "" {
 		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping database test")
+	}
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse %s: %v", EnvVar, err)
+	}
+	if err := requireLoopback(cfg.ConnConfig); err != nil {
+		t.Fatalf("%v", err)
 	}
 	return dsn
 }
@@ -243,6 +254,16 @@ func databaseEncoding(t *testing.T, dsn string) string {
 	return enc
 }
 
+// encodingBaseStatementsQuery returns the statements that drop and
+// create a base database with the given name and encoding. The server
+// quotes both with format, so the SQL text sent from Go stays constant.
+const encodingBaseStatementsQuery = `
+        SELECT format('DROP DATABASE IF EXISTS %I WITH (FORCE)', $1::text),
+            format('CREATE DATABASE %I TEMPLATE template0 ENCODING %L '
+                || 'LC_COLLATE ''C'' LC_CTYPE ''C'' LOCALE_PROVIDER libc',
+                $1::text, $2::text)
+    `
+
 // TestRunCopiesTheBaseEncoding checks that the package database takes
 // the configured database's encoding, not template1's: a SQL_ASCII
 // package database under a UTF8 test database broke simple-protocol
@@ -263,18 +284,20 @@ func TestRunCopiesTheBaseEncoding(t *testing.T) {
 
 	for _, enc := range []string{"SQL_ASCII", "UTF8"} {
 		t.Run(enc, func(t *testing.T) {
-			encBase := currentDatabase(t, base) + "_enc" +
-				strings.ToLower(strings.ReplaceAll(enc, "_", ""))
+			encBase := strings.Join([]string{currentDatabase(t, base), "enc",
+				strings.ToLower(strings.ReplaceAll(enc, "_", ""))}, "_")
+			var dropSQL, createSQL string
+			if err := admin.QueryRow(ctx, encodingBaseStatementsQuery, encBase, enc).
+				Scan(&dropSQL, &createSQL); err != nil {
+				t.Fatalf("build the statements for %s: %v", encBase, err)
+			}
 			drop := func() {
-				if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+
-					pgx.Identifier{encBase}.Sanitize()+" WITH (FORCE)"); err != nil {
+				if _, err := admin.Exec(ctx, dropSQL); err != nil {
 					t.Errorf("drop %s: %v", encBase, err)
 				}
 			}
 			drop()
-			if _, err := admin.Exec(ctx, "CREATE DATABASE "+
-				pgx.Identifier{encBase}.Sanitize()+" TEMPLATE template0 ENCODING '"+
-				enc+"' LC_COLLATE 'C' LC_CTYPE 'C' LOCALE_PROVIDER libc"); err != nil {
+			if _, err := admin.Exec(ctx, createSQL); err != nil {
 				t.Fatalf("create %s: %v", encBase, err)
 			}
 			defer drop()

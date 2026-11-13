@@ -95,18 +95,30 @@ func (h *ConnectionHandler) validateConnectionTarget(w http.ResponseWriter, host
 	if host != nil {
 		if err := h.hostValidator.ValidateHost(*host); err != nil {
 			log.Printf("[ERROR] Invalid host validation: %v", err)
-			RespondError(w, http.StatusBadRequest, "Invalid host")
+			RespondError(w, http.StatusBadRequest, targetRefusalMessage("Invalid host", err))
 			return false
 		}
 	}
 	if hostaddr != nil && *hostaddr != "" {
 		if err := h.hostValidator.ValidateHostAddr(*hostaddr); err != nil {
 			log.Printf("[ERROR] Invalid hostaddr validation: %v", err)
-			RespondError(w, http.StatusBadRequest, "Invalid hostaddr")
+			RespondError(w, http.StatusBadRequest, targetRefusalMessage("Invalid hostaddr", err))
 			return false
 		}
 	}
 	return true
+}
+
+// targetRefusalMessage is the response to a host or hostaddr that
+// validation refused: prefix alone, or, for an always-blocked address,
+// prefix followed by ErrAlwaysBlockedHost's message, which names
+// neither the host nor the address but tells the user that no
+// configuration change will make the target usable.
+func targetRefusalMessage(prefix string, err error) string {
+	if errors.Is(err, ErrAlwaysBlockedHost) {
+		return prefix + ": " + ErrAlwaysBlockedHost.Error()
+	}
+	return prefix
 }
 
 // validateSSLFilePaths checks the sslcert, sslkey and sslrootcert paths

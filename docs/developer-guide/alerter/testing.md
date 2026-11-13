@@ -458,7 +458,8 @@ verify the following behaviors:
 To run database tests, set `TEST_AI_WORKBENCH_SERVER` to a
 connection string for a local PostgreSQL server; the tests skip when
 the variable is unset. The tests drop and recreate tables, so they
-refuse any host other than `127.0.0.1` or `localhost`. The tests also
+refuse any host other than `127.0.0.1`, `::1` or `localhost`, and
+they check every fallback host as well as the first. The tests also
 refuse a Unix socket directory such as `host=/var/run/postgresql`, and
 a connection string that omits the host, because the pgx driver then
 substitutes a standard socket directory if one exists on the machine.

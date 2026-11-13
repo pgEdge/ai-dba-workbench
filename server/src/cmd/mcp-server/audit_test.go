@@ -31,7 +31,7 @@ import (
 func lastAuditEvent(t *testing.T, dataDir string) auth.AuditEvent {
 	t.Helper()
 
-	store, err := auth.NewAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to reopen auth store: %v", err)
 	}
@@ -52,7 +52,7 @@ func lastAuditEvent(t *testing.T, dataDir string) auth.AuditEvent {
 func seedAuditEvents(t *testing.T, dataDir string) {
 	t.Helper()
 
-	store, err := auth.NewAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to create auth store: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestDescribeAuditVerifyFailure(t *testing.T) {
 func TestVerifyAuditLogCommandReportsKeyMismatch(t *testing.T) {
 	dataDir := t.TempDir()
 
-	store, err := auth.NewAuthStore(dataDir, 0, 0,
+	store, err := newTestAuthStore(dataDir, 0, 0,
 		auth.DeriveAuditKey("the secret these rows were written under"))
 	if err != nil {
 		t.Fatalf("failed to create auth store: %v", err)

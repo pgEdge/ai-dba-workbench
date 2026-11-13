@@ -30,7 +30,7 @@ func rotatedSecretAuditStore(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 0,
+	store, err := newTestAuthStore(dir, 0, 0,
 		auth.DeriveAuditKey(olderServerSecret))
 	if err != nil {
 		t.Fatalf("failed to create the auth store: %v", err)
@@ -52,7 +52,7 @@ func tamperedAuditStore(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to create the auth store: %v", err)
 	}
@@ -94,7 +94,7 @@ func writeSecretFile(t *testing.T, secret string) string {
 func addCurrentKeyEvents(t *testing.T, dir string, names ...string) {
 	t.Helper()
 
-	store, err := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to open the auth store: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestPrintAuditReanchorPlanWithoutHistory(t *testing.T) {
 // on in the log, which the re-anchor would otherwise take in as history.
 func TestReanchorCommandRefusesARotationWithLaterTampering(t *testing.T) {
 	dir := rotatedSecretAuditStore(t)
-	store, err := auth.NewAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(dir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to open the auth store: %v", err)
 	}
@@ -730,7 +730,7 @@ func openAuthDB(t *testing.T, dir string) *sql.DB {
 // reason the old secret does not prove the history.
 func TestReanchorCommandRefusesADecoyStartedAnchor(t *testing.T) {
 	dir := rotatedSecretAuditStore(t)
-	store, err := auth.NewAuthStore(dir, 0, 0,
+	store, err := newTestAuthStore(dir, 0, 0,
 		auth.DeriveAuditKey(olderServerSecret))
 	if err != nil {
 		t.Fatalf("failed to open the auth store: %v", err)
@@ -771,7 +771,7 @@ func TestReanchorCommandRefusesADecoyStartedAnchor(t *testing.T) {
         event_hash = (SELECT hash FROM audit_events WHERE id = ?),
         mac = 'x' WHERE id = 1`, decoy, kept))
 
-	store, err = auth.NewAuthStore(dir, 0, 0,
+	store, err = newTestAuthStore(dir, 0, 0,
 		auth.DeriveAuditKey(olderServerSecret))
 	if err != nil {
 		t.Fatalf("failed to open the auth store: %v", err)

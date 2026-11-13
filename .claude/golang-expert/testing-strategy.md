@@ -233,6 +233,16 @@ with `auth.NewAuthStore` and must:
   the ten-minute package timeout under `-race`. The helper also
   regenerates the store's timing-equaliser dummy hash at the lowered
   cost, so "user not found" paths stop costing a second each.
+  Within `internal/auth` this is automatic: its `TestMain`
+  (`bcrypt_cost_test.go`) sets the unexported `testBcryptCost`, which
+  `NewAuthStore` honours only under `testing.Testing()`; a test that
+  needs the production cost resets it for its own scope. In
+  `cmd/mcp-server`, `TestMain` sets `configureCLIStoreForTesting`, which
+  `openAuthStoreCLI` applies to every store the commands open; it is nil
+  in the server. Timing-equaliser dummy hashes are generated on first
+  use and cached once per cost (`dummyHashAtCost`), not at package init
+  or per store, so importing `internal/auth` no longer costs every test
+  binary a cost-12 hash.
 - Pair `NewAuthStore` with `store.Close()`, which stops the session
   cleanup goroutine as well as closing the database.
 - Stop every `auth.NewRateLimiter` with `Stop()` (idempotent), or close

@@ -216,7 +216,7 @@ func TestSetupHandlersRegistersTheOIDCEndpoints(t *testing.T) {
 		t.Fatalf("oidc.NewProvider: %v", err)
 	}
 
-	store, err := auth.NewAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(t.TempDir(), 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("auth.NewAuthStore: %v", err)
 	}

@@ -14,6 +14,8 @@ import (
 	"os"
 	"testing"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
@@ -33,6 +35,34 @@ func TestMain(m *testing.M) {
 	// The tests answer the re-anchor's question from a string, not a
 	// terminal; TestAuditInputIsTerminal checks the real test.
 	auditInputIsTerminal = func(io.Reader) bool { return true }
+	// Every store a command opens hashes at bcrypt.MinCost; at the
+	// production cost a single hash takes seconds under -race, and the
+	// command tests create many users and tokens. No test here asserts
+	// on the cost itself; internal/auth covers that.
+	configureCLIStoreForTesting = func(store *auth.AuthStore) {
+		store.SetBcryptCostForTesting(testMainHelper{}, bcrypt.MinCost)
+	}
 
 	os.Exit(m.Run())
 }
+
+// newTestAuthStore is auth.NewAuthStore for the tests' own seeding and
+// inspection, applying the same lowered bcrypt cost as the stores the
+// commands open, so seeding users and tokens is cheap too.
+func newTestAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int,
+	auditKey []byte) (*auth.AuthStore, error) {
+
+	store, err := auth.NewAuthStore(dataDir, maxUserTokenDays,
+		maxFailedAttempts, auditKey)
+	if err != nil {
+		return nil, err
+	}
+	configureCLIStoreForTesting(store)
+	return store, nil
+}
+
+// testMainHelper satisfies SetBcryptCostForTesting's non-nil test
+// handle where TestMain has no *testing.T to pass.
+type testMainHelper struct{}
+
+func (testMainHelper) Helper() {}

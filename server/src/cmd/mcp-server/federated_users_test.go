@@ -43,7 +43,7 @@ func seedLinkTestUser(t *testing.T, username string) string {
 func reopenStore(t *testing.T, dataDir string) *auth.AuthStore {
 	t.Helper()
 
-	store, err := auth.NewAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to reopen auth store: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestUnlinkOIDCUserCommand(t *testing.T) {
 // attributed to the operator who ran the commands.
 func TestOIDCLinkingCommandsRecordTheCLIActor(t *testing.T) {
 	dataDir := seedLinkTestUser(t, "alice")
-	seed, err := auth.NewAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
+	seed, err := newTestAuthStore(dataDir, 0, 0, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to reopen auth store: %v", err)
 	}

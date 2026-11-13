@@ -340,7 +340,7 @@ func countAuditEvents(t *testing.T, store *auth.AuthStore) int {
 
 func TestPurgeAuditEventsZeroDaysKeepsForever(t *testing.T) {
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to create auth store: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestPurgeAuditEventsZeroDaysKeepsForever(t *testing.T) {
 
 func TestPurgeAuditEventsRemovesOldEvents(t *testing.T) {
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to create auth store: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestPurgeAuditEventsNoAuthStore(t *testing.T) {
 
 func TestPurgeAuditEventsLogsError(t *testing.T) {
 	dir := t.TempDir()
-	store, err := auth.NewAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
+	store, err := newTestAuthStore(dir, 0, 10, auth.AuditKeyForTesting())
 	if err != nil {
 		t.Fatalf("failed to create auth store: %v", err)
 	}

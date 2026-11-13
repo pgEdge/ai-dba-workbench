@@ -10,6 +10,8 @@
 package database
 
 import (
+	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // TestBuildConnectionString tests that connstring.BuildFromConfig produces
@@ -234,6 +237,73 @@ func TestNewDatastoreSuccess(t *testing.T) {
 		t.Fatalf("NewDatastore: %v", err)
 	}
 	defer ds.Close()
+}
+
+// TestNewDatastoreHostAddr connects with the hostaddr set to the local
+// test server and the host set to a name. With localhost, which
+// resolves, the connection fails with FATAL if hostaddr reaches the
+// server as a startup parameter (issue #841); with a name that cannot
+// resolve (RFC 2606 reserves .invalid), it succeeds only if the alerter
+// dials hostaddr.
+func TestNewDatastoreHostAddr(t *testing.T) {
+	connStr := requireLocalTestDSN(t, "the NewDatastore hostaddr test")
+
+	testHost, port, db, user, pw := parseTestConnString(connStr)
+	if testHost != "127.0.0.1" {
+		t.Skipf("test server host %q is not 127.0.0.1", testHost)
+	}
+	for _, host := range []string{"localhost", "datastore.invalid"} {
+		t.Run(host, func(t *testing.T) {
+			cfg := &config.Config{
+				Datastore: datastoreconfig.DatastoreConfig{
+					Host:     host,
+					HostAddr: "127.0.0.1",
+					Port:     port,
+					Database: db,
+					Username: user,
+					Password: pw,
+					SSLMode:  "disable",
+				},
+				Pool: config.PoolConfig{
+					MaxConnections: 2,
+					MaxIdleSeconds: 30,
+				},
+			}
+			ds, err := NewDatastore(cfg)
+			if err != nil {
+				t.Fatalf("NewDatastore with hostaddr: %v", err)
+			}
+			defer ds.Close()
+
+			var addr string
+			if err := ds.pool.QueryRow(context.Background(),
+				"SELECT host(inet_server_addr())").Scan(&addr); err != nil {
+				t.Fatalf("query server address: %v", err)
+			}
+			if addr != "127.0.0.1" {
+				t.Errorf("connected to %q, want 127.0.0.1", addr)
+			}
+		})
+	}
+}
+
+// TestNewDatastoreHostAddrNotIP checks that a hostaddr that is not a
+// literal IP address is refused before any connection is attempted.
+func TestNewDatastoreHostAddrNotIP(t *testing.T) {
+	cfg := &config.Config{
+		Datastore: datastoreconfig.DatastoreConfig{
+			Host:     "datastore.invalid",
+			HostAddr: "datastore.example.com",
+			Port:     5432,
+			Database: "x",
+			Username: "x",
+			SSLMode:  "disable",
+		},
+	}
+	_, err := NewDatastore(cfg)
+	if !errors.Is(err, hostvalidation.ErrHostAddrNotIP) {
+		t.Fatalf("NewDatastore error = %v, want ErrHostAddrNotIP", err)
+	}
 }
 
 // TestNewDatastoreInvalidConfig exercises the parse-failure branch of

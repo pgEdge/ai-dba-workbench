@@ -86,7 +86,7 @@ All datastore options are nested under the `datastore:` key in the YAML file.
 | Option | Type | Default | Required | Command-line Flag | Example | Description | Notes |
 |--------|------|---------|----------|--------------------|---------|-------------|-------|
 | `host` | string | `localhost` | No | `-pg-host` | `host: db.example.com` | PostgreSQL server hostname or IP address | |
-| `hostaddr` | string | none | No | `-pg-hostaddr` | `hostaddr: 192.168.1.100` | PostgreSQL server IP address | Not currently usable: the collector's PostgreSQL driver does not recognize `hostaddr` and passes it to the server as a setting, so the connection fails. Set `host` to the IP address instead. |
+| `hostaddr` | string | none | No | `-pg-hostaddr` | `hostaddr: 192.168.1.100` | PostgreSQL server IP address | The collector connects to this address instead of looking up `host`, but still verifies the server's SSL certificate against `host`; `hostaddr` must be a literal IPv4 or IPv6 address. |
 | `database` | string | `ai_workbench` | Yes | `-pg-database` | `database: metrics` | Database name for the datastore | |
 | `username` | string | `postgres` | Yes | `-pg-username` | `username: ai_workbench` | Username for the datastore connection | |
 | `password_file` | string (file path) | none | No | `-pg-password-file` | `password_file: /etc/ai-workbench/collector/pw.txt` | Path to a file containing the datastore password | Plain text, password only. An inline `password` setting takes precedence, and the collector then does not read this file. |

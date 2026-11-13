@@ -57,12 +57,28 @@ var tagPattern = regexp.MustCompile(`^[a-z][a-z0-9]*$`)
 
 // statementsQuery returns the package database's name and the statements
 // that drop and create it. The server quotes the name with %I, so the SQL
-// text sent from Go stays constant.
+// text sent from Go stays constant. The package database copies the
+// configured database's encoding, locale and locale provider from
+// template0 rather than taking template1's: on a cluster whose template1
+// is SQL_ASCII, as on the pgEdge image, a UTF8 test database would
+// otherwise get SQL_ASCII package databases, where pgx refuses
+// simple-protocol queries. to_jsonb reads the provider columns by name,
+// as daticulocale (PostgreSQL 15 and 16) became datlocale in 17.
 const statementsQuery = `
         SELECT n,
             format('DROP DATABASE IF EXISTS %I WITH (FORCE)', n),
-            format('CREATE DATABASE %I', n)
+            format('CREATE DATABASE %I TEMPLATE template0 ENCODING %L '
+                || 'LC_COLLATE %L LC_CTYPE %L',
+                n, pg_encoding_to_char(d.encoding), d.datcollate, d.datctype)
+            || CASE to_jsonb(d)->>'datlocprovider'
+                WHEN 'i' THEN format(' LOCALE_PROVIDER icu ICU_LOCALE %L',
+                    coalesce(to_jsonb(d)->>'datlocale', to_jsonb(d)->>'daticulocale'))
+                WHEN 'b' THEN format(' LOCALE_PROVIDER builtin BUILTIN_LOCALE %L',
+                    to_jsonb(d)->>'datlocale')
+                WHEN 'c' THEN ' LOCALE_PROVIDER libc'
+                ELSE '' END
         FROM (SELECT current_database() || $1 AS n) s
+        JOIN pg_database d ON d.datname = current_database()
     `
 
 // Runner is the part of *testing.M that Run needs.

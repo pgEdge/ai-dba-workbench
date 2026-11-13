@@ -75,6 +75,29 @@ export default tseslint.config(
                     },
                 ],
             }],
+            // no-restricted-imports only sees import and export
+            // declarations, so the barrels are also banned in a dynamic
+            // import() (quoted or as a plain template literal),
+            // require(), and Vitest's mock and importActual calls, each
+            // of which would load or stand in for the whole package.
+            'no-restricted-syntax': ['error',
+                {
+                    selector: "ImportExpression[source.value=/^@mui\\/(material|icons-material)$/]",
+                    message: 'Import Material UI per path, not from the barrel (#846).',
+                },
+                {
+                    selector: "ImportExpression > TemplateLiteral.source[quasis.0.value.cooked=/^@mui\\/(material|icons-material)$/]",
+                    message: 'Import Material UI per path, not from the barrel (#846).',
+                },
+                {
+                    selector: "CallExpression[callee.name='require'][arguments.0.value=/^@mui\\/(material|icons-material)$/]",
+                    message: 'Import Material UI per path, not from the barrel (#846).',
+                },
+                {
+                    selector: "CallExpression[callee.property.name=/^(importActual|importMock|mock|doMock)$/][arguments.0.value=/^@mui\\/(material|icons-material)$/]",
+                    message: 'Import Material UI per path, not from the barrel (#846).',
+                },
+            ],
             // General rules
             'no-console': 'error',
             'prefer-const': 'error',

@@ -112,8 +112,17 @@ func dummyHashAtCost(cost int) ([]byte, error) {
 // test-only by construction: it is unexported, so no configuration
 // value, flag or environment variable can reach it, nothing outside
 // this package's test files writes it, and newAuthStore honors it only
-// when testing.Testing() reports a test binary.
+// in a test binary (inTestBinary, below); setBcryptCost, which applies
+// it, also panics unless testing.Testing() reports one.
 var testBcryptCost int
+
+// inTestBinary is testing.Testing, held in a variable only so that a
+// test can check what newAuthStore does in the server: there it must
+// compute the shared timing-equalizer hash at start-up. Overriding it
+// can only force that production path. Nothing outside this package's
+// tests changes it, and setBcryptCost's guard calls testing.Testing
+// directly, so it cannot be used to lower the cost.
+var inTestBinary = testing.Testing
 
 const (
 	// DefaultSessionExpiry is the default duration for session tokens
@@ -378,7 +387,7 @@ func newAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int,
 		allowUnkeyedAuditRows: allowUnkeyedAuditRows,
 	}
 
-	if !testing.Testing() {
+	if !inTestBinary() {
 		// Compute the shared timing-equalizer hash now, while the
 		// server starts, so the first failed login for an unknown
 		// user does not take measurably longer than later ones.

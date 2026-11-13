@@ -124,13 +124,15 @@ A change to some paths also tests the sub-projects that
 depend on them. The following table shows which
 sub-projects each change selects:
 
-| Changed path                                  | Sub-projects tested                       |
-|-----------------------------------------------|-------------------------------------------|
-| `pkg/`                                        | pkg, collector, server, and alerter       |
-| `collector/go.mod`, `collector/src/database/` | collector and server                      |
-| Any other path under `collector/`             | collector                                 |
-| `server/`, `alerter/`, or `client/`           | That sub-project only                     |
-| `e2e/`                                        | None; prints a reminder to run test-e2e   |
+| Changed path                                   | Sub-projects tested                     |
+|------------------------------------------------|-----------------------------------------|
+| `pkg/`                                         | pkg, collector, server, and alerter     |
+| `collector/src/database/`                      | collector, server, and alerter          |
+| `collector/go.mod`, `collector/src/coldfront/` | collector and server                    |
+| Any other path under `collector/`              | collector                               |
+| `examples/` or `docker/config/`                | alerter                                 |
+| `server/`, `alerter/`, or `client/`            | That sub-project only                   |
+| `e2e/`                                         | None; prints a reminder to run test-e2e |
 
 Run the target from the repository root:
 
@@ -196,9 +198,22 @@ export TEST_AI_WORKBENCH_SERVER=\
 The server and alerter test packages run in parallel. Each
 package that uses the database creates a database of its own,
 named after the database in `TEST_AI_WORKBENCH_SERVER` with
-`_pkg_` and the package name appended (for example,
-`ai_workbench_pkg_api`). The package drops the database when
-its tests finish.
+`_pkg_` and a tag appended; the tag is normally the package
+name (for example, `ai_workbench_pkg_api`), but the alerter's
+`internal/database` uses `alerterdatabase` because the
+server's `internal/database` already uses `database`. The
+package drops the database when its tests finish. The
+package database takes the encoding, locale and locale
+provider of the configured database.
+
+Because these packages create and drop databases, every host
+in the connection string, including any fallback host, must
+be `localhost`, `127.0.0.1`, or `::1`. A Unix-socket
+directory such as `host=/tmp` is refused, and so is a
+connection string that names no host unless `PGHOST` names
+one of those hosts, because the pgx driver otherwise
+substitutes a socket directory. Use a URL such as
+`postgres://user:pass@127.0.0.1/postgres`.
 
 The test database drops automatically after tests
 complete. Set the keep flag to preserve the database for

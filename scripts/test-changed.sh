@@ -22,8 +22,13 @@
 #
 # Dependency map (a change on the left tests everything on the right):
 #   pkg/                               pkg, collector, server, alerter
+#   collector/src/database/            collector, server, alerter (the
+#                                      alerter's tests read schema.go)
 #   collector/go.mod,
-#   collector/src/database/            collector, server
+#   collector/src/coldfront/           collector, server (the server
+#                                      builds them through the schema)
+#   examples/, docker/config/          alerter (its tests parse the
+#                                      alerter configs there)
 #   collector/, server/, alerter/,
 #   client/                            that sub-project only
 #   e2e/                               nothing; prints a reminder that
@@ -92,9 +97,17 @@ while IFS= read -r -d '' file; do
                 add_reason "$project" "pkg/ changed"
             done
             ;;
-        collector/go.mod | collector/src/database/*)
+        collector/src/database/*)
             add_reason collector "collector/ changed"
-            add_reason server "collector schema or go.mod changed"
+            add_reason server "collector schema changed"
+            add_reason alerter "collector schema changed"
+            ;;
+        collector/go.mod | collector/src/coldfront/*)
+            add_reason collector "collector/ changed"
+            add_reason server "collector go.mod or coldfront changed"
+            ;;
+        examples/* | docker/config/*)
+            add_reason alerter "example or docker config changed"
             ;;
         collector/*) add_reason collector "collector/ changed" ;;
         server/*) add_reason server "server/ changed" ;;

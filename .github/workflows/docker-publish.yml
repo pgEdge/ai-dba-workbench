@@ -17,8 +17,10 @@ on:
     pull_request:
         branches: [main]
         # The same filter as ci-docker.yml: pull requests that cannot
-        # change an image skip the build. Pushes to main and tags always
-        # build, so the published images never miss a commit.
+        # change an image skip the build. Pushes to main and tags have no
+        # path filter and always build; a newer push to main cancels an
+        # older build still in progress (see concurrency below), so the
+        # published images follow the latest commit.
         paths:
             - 'collector/**'
             - 'server/**'

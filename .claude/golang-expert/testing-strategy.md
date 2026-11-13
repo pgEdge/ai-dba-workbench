@@ -61,10 +61,13 @@ unset, `SKIP_DB_TESTS` is set or the server is unreachable it runs the
 tests unchanged, so they skip as before. Before any DDL both helpers
 refuse a variable whose primary or any fallback host is not loopback:
 `pkgdb` fails the binary outright, whilst `RunPackage` runs the tests
-unchanged and `testdsn.Require` then fails each one. A new database-backed package
-needs the same `TestMain` with a tag no other package uses (lower case
-letters and digits). A fresh database has no extensions, so a test
-needing `vector` must create it itself. The collector instead creates a
+unchanged and `testdsn.Require` then fails each one. A new
+database-backed package needs the same `TestMain` with a tag (lower
+case letters and digits) that no other server or alerter package uses,
+since both can run against one configured database: the alerter's
+`internal/database` uses `alerterdatabase` because the server's uses
+`database`. A fresh database has no extensions, so a test needing
+`vector` must create it itself. The collector instead creates a
 uniquely named database per run (below).
 
 Read the numeric coverage breakdown with
@@ -105,9 +108,11 @@ sessions use so their schema resets do not collide) and `postgres` (the
 CI default), each optionally followed by `_pkg_<tag>` (the per-package
 databases above). `testdsn.RunPackage` applies the same host check, and
 only creates a package database from a base name without that suffix;
-otherwise it leaves the variable alone and `Require` refuses each test
-as before. The loopback check is the real safety net and the name
-check a convenience, so do not read more into the tag rule than that.
+given an already-suffixed name it leaves the variable alone, and
+`Require`, which accepts that name, lets the tests run against that
+database with no package database of their own. The loopback check is
+the real safety net and the name check a convenience, so do not read
+more into the tag rule than that.
 `Require` takes a small `TB` interface rather than `*testing.T`, which
 is what lets `TestRequire` drive every skip and refusal through a
 recorder; `TestAllowedTestDatabase` pins the name rule in both
@@ -371,37 +376,44 @@ Codacy's re-analysis cleared both findings it had raised in
 `database/connection_purge.go` and `metrics/probe_interval.go` after
 commit 3b2c710d did so (see `metrics-queries.md`).
 
-CI installs the linter with `go install
-github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`, so the
-version is unpinned and moves with upstream releases. A locally
-installed older build can pass code that CI rejects: gosec's G7xx taint
-rules, G704 (SSRF) among them, are absent from the gosec v2.22.8 that
-golangci-lint v2.5.0 bundles and present in the gosec v2.28.0 that
-v2.13.2 bundles. Match the CI version before trusting a clean local
-`make lint` on new network or SQL code.
+CI installs the latest golangci-lint release as a prebuilt binary
+(`golangci/golangci-lint-action` with `install-only: true` and
+`version: latest`), so the version is unpinned and moves with upstream
+releases. A locally installed older build can pass code that CI
+rejects: gosec's G7xx taint rules, G704 (SSRF) among them, are absent
+from the gosec v2.22.8 that golangci-lint v2.5.0 bundles and present in
+the gosec v2.28.0 that v2.13.2 bundles. Match the CI version before
+trusting a clean local `make lint` on new network or SQL code.
 
 ## Continuous Integration
 
 `ci-collector.yml`, `ci-server.yml` and `ci-alerter.yml` run the
-sub-project's `make build`, `make coverage` and `make lint` on a single
-Go version against a matrix of Postgres 15 to 18 service containers
-built from the `pgvector/pgvector` image, with
-`TEST_AI_WORKBENCH_SERVER` pointed at the service. Coverage is
-converted to lcov and uploaded to Codacy as a partial report per
-sub-project; `coverage-finalize.yml` closes the set. `ci-client.yml`
-runs `npm test`, `npm run test:coverage` and `npm run build`. The
+sub-project's `make build`, `make coverage` and `make lint` against
+Postgres service containers built from the `pgvector/pgvector` image,
+with `TEST_AI_WORKBENCH_SERVER` pointed at the service. Pushes to
+`main`, the nightly schedule and manual runs cover both supported Go
+versions against Postgres 15 to 18; pull requests run two cells only,
+the older Go against Postgres 18 (the cell that also lints and uploads
+coverage) and the newer Go against Postgres 15. Coverage is converted
+to lcov and uploaded to Codacy as a partial report per sub-project on
+pushes to `main`; `coverage-finalize.yml` closes the set. `ci-pkg.yml`
+runs `make lint`, `go vet`, the `gofmt` check and `make test` for `pkg`
+on both Go versions, with no database, on every run. `ci-client.yml`
+type-checks and builds on every Node.js version in its matrix and runs
+`npm run lint` and `npm run test:coverage` on Node.js 22 only. The
 remaining workflows (`ci-e2e.yml`, `ci-docker.yml`, `ci-docs.yml`,
 `ci-walkthrough.yml`, `docker-publish.yml`, `release.yml`) do not run
-the Go unit suites. Check the workflow file for the current Go version
-rather than recording it here.
+the Go unit suites. Check the workflow file for the current Go versions
+rather than recording them here.
 
 Because `make coverage` runs once per Postgres version, the ratchet must
 pass on the version that measures lowest (for the server, 15, which
 skips the `GENERIC_PLAN` tests), not on the local dev host's 18:
 probes that branch on version or on whether a view exists only reach
 their other branches on other versions. Set `COVERAGE_MIN` from the
-lowest per-version total in the CI log (`gh run view <id>
---log`, "Total coverage" lines). To reach version branches from any
+lowest per-version total in the CI log of a push to `main` or a nightly
+run (`gh run view <id> --log`, "Total coverage" lines); a pull
+request's log shows Postgres 15 and 18 only. To reach version branches from any
 version, `collector/src/probes/version_branch_test.go` shadows system
 views with temporary views (an unqualified name resolves to `pg_temp`
 before `pg_catalog`) and seeds `featureCache` entries;

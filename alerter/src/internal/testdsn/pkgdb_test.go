@@ -166,6 +166,67 @@ func TestRunPackageCreatesAndDropsDatabase(t *testing.T) {
 	}
 }
 
+// TestCreatePackageDatabaseCopiesTheBaseEncoding checks that the package
+// database takes the configured database's encoding, not template1's: a
+// SQL_ASCII package database under a UTF8 test database broke
+// simple-protocol queries on clusters whose template1 is SQL_ASCII. It
+// runs once with a SQL_ASCII base and once with a UTF8 one, so whichever
+// encoding template1 has, one case differs from it and catches a
+// regression (CI's template1 is UTF8, the pgEdge image's SQL_ASCII). The
+// bases use the libc provider, which SQL_ASCII needs on ICU and builtin
+// clusters. It calls createPackageDatabase directly, so the bases need
+// not pass allowedBaseDatabase and can keep a fixed name that the next
+// run drops if this one is cut short; runPackage has its own tests.
+func TestCreatePackageDatabaseCopiesTheBaseEncoding(t *testing.T) {
+	base := Require(t, "the package database encoding test")
+	ctx := context.Background()
+	admin := connect(t, base)
+
+	for _, enc := range []string{"SQL_ASCII", "UTF8"} {
+		t.Run(enc, func(t *testing.T) {
+			encBase := currentDatabase(t, base) + "_enc" +
+				strings.ToLower(strings.ReplaceAll(enc, "_", ""))
+			drop := func(sql string) {
+				if _, err := admin.Exec(ctx, sql); err != nil {
+					t.Errorf("%s: %v", sql, err)
+				}
+			}
+			dropBase := "DROP DATABASE IF EXISTS " +
+				pgx.Identifier{encBase}.Sanitize() + " WITH (FORCE)"
+			drop(dropBase)
+			if _, err := admin.Exec(ctx, "CREATE DATABASE "+
+				pgx.Identifier{encBase}.Sanitize()+" TEMPLATE template0 ENCODING '"+
+				enc+"' LC_COLLATE 'C' LC_CTYPE 'C' LOCALE_PROVIDER libc"); err != nil {
+				t.Fatalf("create %s: %v", encBase, err)
+			}
+			defer drop(dropBase)
+
+			cfg := admin.Config().Copy()
+			cfg.Database = encBase
+			conn, err := pgx.ConnectConfig(ctx, cfg)
+			if err != nil {
+				t.Fatalf("connect to %s: %v", encBase, err)
+			}
+			defer func() { _ = conn.Close(ctx) }()
+
+			name, dropSQL, err := createPackageDatabase(ctx, conn, "testdsnenc")
+			if err != nil {
+				t.Fatalf("createPackageDatabase: %v", err)
+			}
+			defer drop(dropSQL)
+
+			var got string
+			if err := admin.QueryRow(ctx, "SELECT pg_encoding_to_char(encoding) "+
+				"FROM pg_database WHERE datname = $1", name).Scan(&got); err != nil {
+				t.Fatalf("look up the encoding of %s: %v", name, err)
+			}
+			if got != enc {
+				t.Errorf("package database encoding is %s, want the base's %s", got, enc)
+			}
+		})
+	}
+}
+
 func TestRunPackageReplacesStaleDatabaseAndKeeps(t *testing.T) {
 	base := Require(t, "the per-package database test")
 	t.Setenv("TEST_AI_WORKBENCH_KEEP_DB", "true")

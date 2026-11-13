@@ -113,7 +113,7 @@ engines:
   #     (no catastrophic backtracking risk).
   # Excluding these specific files preserves ESLint coverage of every
   # other production source file. The project's local ESLint runs
-  # against all of these paths in CI via `make lint`.
+  # against all of these paths in CI via `npm run lint` (ci-client.yml).
   #
   # Two unused-vars patterns also need to be disabled in the Codacy UI
   # (Code patterns page) because Codacy's ESLint8 ignores the project's

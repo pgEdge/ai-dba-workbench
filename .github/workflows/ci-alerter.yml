@@ -6,12 +6,22 @@ on:
         paths:
             - 'alerter/**'
             - 'pkg/**'
+            # The alerter tests read the collector's probe seed in
+            # schema.go and parse the example and Docker configs.
+            - 'collector/src/database/**'
+            - 'examples/**'
+            - 'docker/config/**'
             - '.github/workflows/ci-alerter.yml'
     pull_request:
         branches: [ main, master ]
         paths:
             - 'alerter/**'
             - 'pkg/**'
+            # The alerter tests read the collector's probe seed in
+            # schema.go and parse the example and Docker configs.
+            - 'collector/src/database/**'
+            - 'examples/**'
+            - 'docker/config/**'
             - '.github/workflows/ci-alerter.yml'
     schedule:
         # Nightly full-matrix run (UTC).

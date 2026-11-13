@@ -14,8 +14,9 @@ project adheres to
 
 - Add a top-level `make test-changed` target that runs `test-all` only
   in the sub-projects a branch changes, including those that depend on
-  a changed shared package or collector schema; set `BASE` to choose
-  the comparison reference and `DRY_RUN=1` to preview the selection.
+  a changed shared package, collector schema, or example
+  configuration; set `BASE` to choose the comparison reference and
+  `DRY_RUN=1` to preview the selection.
   (#846)
 
 ### Changed
@@ -35,9 +36,9 @@ project adheres to
 
 - Run two Go and PostgreSQL combinations for the collector, server, and
   alerter on pull requests, and the full matrix on pushes to `main`, on
-  a nightly schedule, and on manual runs. The client tests run on
-  Node.js 22 only; Node.js 24 and 26 type-check and build the client.
-  (#846)
+  a nightly schedule, and on manual runs. The client tests and ESLint
+  run on Node.js 22 only; Node.js 24 and 26 type-check and build the
+  client. (#846)
 
 - Cancel superseded pull request runs in CI, keep the Go build cache
   current, install a prebuilt `golangci-lint`, build pull request

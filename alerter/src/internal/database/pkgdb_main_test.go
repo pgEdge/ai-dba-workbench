@@ -18,8 +18,11 @@ import (
 )
 
 // TestMain runs the package's tests against a database of its own, named
-// after the configured test database plus "_pkg_database", so that they can
-// run alongside other packages' tests; see testdsn.RunPackage.
+// after the configured test database plus "_pkg_alerterdatabase", so that
+// they can run alongside other packages' tests; see testdsn.RunPackage.
+// The tag is not "database" because the server's internal/database uses
+// that one: with the same base database, a server run and an alerter run
+// at the same time would drop each other's package database.
 func TestMain(m *testing.M) {
-	os.Exit(testdsn.RunPackage(m, "database"))
+	os.Exit(testdsn.RunPackage(m, "alerterdatabase"))
 }

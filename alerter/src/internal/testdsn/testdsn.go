@@ -40,7 +40,7 @@ import (
 // allowedBaseDatabase is the configured name alone. allowedTestDatabase
 // also admits the per-package databases RunPackage derives from an
 // allowed base by appending PackageMarker and a lower-case package tag
-// ("ai_workbench_sess2_pkg_engine", "postgres_pkg_database"), and
+// ("ai_workbench_sess2_pkg_engine", "postgres_pkg_alerterdatabase"), and
 // nothing else: a name ending in any other suffix is still refused.
 var (
 	allowedBaseDatabase = regexp.MustCompile(
@@ -110,9 +110,9 @@ func Require(t TB, purpose string) string {
 }
 
 // check returns dsn's parsed connection settings, or an error unless dsn
-// parses, names only loopback hosts (primary and fallbacks) and names a database that names matches.
-// It parses with the pool parser, which also accepts the pool_*
-// parameters a plain pgx parse would reject.
+// parses, names only loopback hosts (primary and fallbacks) and names a
+// database that matches names. It parses with the pool parser, which
+// also accepts the pool_* parameters a plain pgx parse would reject.
 func check(dsn string, names *regexp.Regexp) (*pgx.ConnConfig, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {

@@ -41,11 +41,24 @@ const MaxIdentifierLength = 63
 
 // statementsQuery returns the scratch database's name and the statements
 // that drop and create it.
+// Like pkgdb's, the database copies the configured database's encoding,
+// locale and locale provider from template0, not template1's, which is
+// SQL_ASCII on the pgEdge image.
 const statementsQuery = `
         SELECT n,
             format('DROP DATABASE IF EXISTS %I WITH (FORCE)', n),
-            format('CREATE DATABASE %I', n)
+            format('CREATE DATABASE %I TEMPLATE template0 ENCODING %L '
+                || 'LC_COLLATE %L LC_CTYPE %L',
+                n, pg_encoding_to_char(d.encoding), d.datcollate, d.datctype)
+            || CASE to_jsonb(d)->>'datlocprovider'
+                WHEN 'i' THEN format(' LOCALE_PROVIDER icu ICU_LOCALE %L',
+                    coalesce(to_jsonb(d)->>'datlocale', to_jsonb(d)->>'daticulocale'))
+                WHEN 'b' THEN format(' LOCALE_PROVIDER builtin BUILTIN_LOCALE %L',
+                    to_jsonb(d)->>'datlocale')
+                WHEN 'c' THEN ' LOCALE_PROVIDER libc'
+                ELSE '' END
         FROM (SELECT current_database() || $1 AS n) s
+        JOIN pg_database d ON d.datname = current_database()
     `
 
 // defaultPartitionsQuery returns, for each named table that is a

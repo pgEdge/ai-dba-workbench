@@ -13,6 +13,7 @@ package pkgdb
 import (
 	"bytes"
 	"context"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -224,6 +225,78 @@ func TestRunCreatesAndDropsPackageDatabase(t *testing.T) {
 	}
 }
 
+// databaseEncoding returns the encoding of the database dsn connects to.
+func databaseEncoding(t *testing.T, dsn string) string {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var enc string
+	if err := conn.QueryRow(ctx,
+		"SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = current_database()").
+		Scan(&enc); err != nil {
+		t.Fatalf("look up the encoding: %v", err)
+	}
+	return enc
+}
+
+// TestRunCopiesTheBaseEncoding checks that the package database takes
+// the configured database's encoding, not template1's: a SQL_ASCII
+// package database under a UTF8 test database broke simple-protocol
+// queries on clusters whose template1 is SQL_ASCII. It runs once with a
+// SQL_ASCII base and once with a UTF8 one, so whichever encoding
+// template1 has, one case differs from it and catches a regression (CI's
+// template1 is UTF8, the pgEdge image's SQL_ASCII). The bases use the
+// libc provider, which SQL_ASCII needs on ICU and builtin clusters.
+func TestRunCopiesTheBaseEncoding(t *testing.T) {
+	base := requireTestDatabase(t)
+	t.Setenv("TEST_AI_WORKBENCH_KEEP_DB", "")
+	ctx := context.Background()
+	admin, err := pgx.Connect(ctx, base)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = admin.Close(ctx) }()
+
+	for _, enc := range []string{"SQL_ASCII", "UTF8"} {
+		t.Run(enc, func(t *testing.T) {
+			encBase := currentDatabase(t, base) + "_enc" +
+				strings.ToLower(strings.ReplaceAll(enc, "_", ""))
+			drop := func() {
+				if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+
+					pgx.Identifier{encBase}.Sanitize()+" WITH (FORCE)"); err != nil {
+					t.Errorf("drop %s: %v", encBase, err)
+				}
+			}
+			drop()
+			if _, err := admin.Exec(ctx, "CREATE DATABASE "+
+				pgx.Identifier{encBase}.Sanitize()+" TEMPLATE template0 ENCODING '"+
+				enc+"' LC_COLLATE 'C' LC_CTYPE 'C' LOCALE_PROVIDER libc"); err != nil {
+				t.Fatalf("create %s: %v", encBase, err)
+			}
+			defer drop()
+
+			dsn, err := withDatabase(base, encBase)
+			if err != nil {
+				t.Fatalf("withDatabase: %v", err)
+			}
+			t.Setenv(EnvVar, dsn)
+			var log bytes.Buffer
+			m := &fakeM{fn: func(dsn string) {
+				if got := databaseEncoding(t, dsn); got != enc {
+					t.Errorf("package database encoding is %s, want the base's %s", got, enc)
+				}
+			}}
+			if got := run(m, "pkgdbenc", &log); got != 0 || !m.ran {
+				t.Fatalf("run returned %d (ran %v): %s", got, m.ran, log.String())
+			}
+		})
+	}
+}
+
 func TestRunReplacesStaleDatabaseAndKeeps(t *testing.T) {
 	base := requireTestDatabase(t)
 	t.Setenv("TEST_AI_WORKBENCH_KEEP_DB", "true")
@@ -315,9 +388,20 @@ func TestRunDropsDbnameParameter(t *testing.T) {
 	if strings.Contains(base, "?") {
 		sep = "&"
 	}
-	t.Setenv(EnvVar, base+sep+"dbname=")
+	// The parameter names the configured database itself: an empty one
+	// would make pgx connect to the role's own database, so the package
+	// database would be named after that (postgres_pkg_pkgdburl for
+	// every session on the cluster), or the run would fail where the
+	// role has no database of its own name.
+	baseName := currentDatabase(t, base)
+	want := baseName + Marker + "pkgdburl"
+	t.Setenv(EnvVar, base+sep+"dbname="+url.QueryEscape(baseName))
 	var log bytes.Buffer
-	m := &fakeM{}
+	m := &fakeM{fn: func(dsn string) {
+		if got := currentDatabase(t, dsn); got != want {
+			t.Errorf("tests connected to %q, want %q", got, want)
+		}
+	}}
 	got := run(m, "pkgdburl", &log)
 	if got != 0 || !m.ran {
 		t.Fatalf("run returned %d (ran %v): %s", got, m.ran, log.String())

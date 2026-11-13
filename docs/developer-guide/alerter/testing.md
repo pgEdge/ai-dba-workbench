@@ -458,8 +458,11 @@ verify the following behaviors:
 To run database tests, set `TEST_AI_WORKBENCH_SERVER` to a
 connection string for a local PostgreSQL server; the tests skip when
 the variable is unset. The tests drop and recreate tables, so they
-refuse any host other than `127.0.0.1`, `localhost`, or a Unix
-socket. The tests also refuse any database name other than
+refuse any host other than `127.0.0.1` or `localhost`. The tests also
+refuse a Unix socket directory such as `host=/var/run/postgresql`, and
+a connection string that omits the host, because the pgx driver then
+substitutes a standard socket directory if one exists on the machine.
+In addition, the tests refuse any database name other than
 `ai_workbench`, `ai_workbench_pr<n>`, `ai_workbench_issue<n>`,
 `ai_workbench_sess<n>`, or `postgres`.
 
@@ -469,6 +472,12 @@ with `_pkg_` and the package name appended (for example,
 `ai_workbench_pkg_engine`), and drops the database when its tests
 finish. Set `TEST_AI_WORKBENCH_KEEP_DB=1` to keep the package
 databases for inspection.
+
+When the test binary cannot connect to the configured database to
+create the package database, the binary writes a message to `stderr`
+and runs the package's tests against the configured database unchanged.
+If the connection succeeds but creating the package database fails,
+the package's test run fails instead.
 
 ## Mocking
 

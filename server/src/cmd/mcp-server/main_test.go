@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/testutil/pkgdb"
 )
 
 // TestMain substitutes a fixed audit chain key for the whole test
@@ -34,5 +35,7 @@ func TestMain(m *testing.M) {
 	// terminal; TestAuditInputIsTerminal checks the real test.
 	auditInputIsTerminal = func(io.Reader) bool { return true }
 
-	os.Exit(m.Run())
+	// The package's database tests run in a database of their own; see
+	// pkgdb.
+	os.Exit(pkgdb.Run(m, "mcpserver"))
 }

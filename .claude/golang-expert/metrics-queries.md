@@ -2821,7 +2821,7 @@ explicitly, and return a genuine scan error (a type mismatch).
 
 The `internal/api` package's database-backed tests share one Postgres
 database and each install and drop their own trimmed `metrics.*`
-fixture. Running the whole package under `go test -race -p=1` fails
+fixture. Running the whole package under `go test -race` fails
 intermittently, with a varying set of unrelated tests reporting
 `relation "connections" does not exist` or `commit failed: connection
 reset`. This predates the connection-groups work and reproduces with

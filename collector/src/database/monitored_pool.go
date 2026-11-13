@@ -739,17 +739,12 @@ func monitoredPoolConfig(connStr string, maxConns int, maxIdleSeconds int) (*pgx
 	// startup parameter. Take it out and dial that address for the host
 	// instead, so that sslmode=verify-full still checks the certificate
 	// against the host name (pgx's TLS ServerName) rather than the IP.
-	if raw, ok := config.ConnConfig.RuntimeParams["hostaddr"]; ok {
-		delete(config.ConnConfig.RuntimeParams, "hostaddr")
-		ip, err := hostvalidation.ParseHostAddr(raw)
+	if lookup, ok, err := hostvalidation.TakeHostAddr(config.ConnConfig.RuntimeParams); ok {
 		if err != nil {
 			logger.Errorf("Monitored connection string carries a hostaddr that is not an IP address")
 			return nil, ErrInvalidMonitoredConnString
 		}
-		addr := ip.String()
-		config.ConnConfig.LookupFunc = func(context.Context, string) ([]string, error) {
-			return []string{addr}, nil
-		}
+		config.ConnConfig.LookupFunc = lookup
 	}
 
 	// Check the addresses pgx actually dials, not only the host name the

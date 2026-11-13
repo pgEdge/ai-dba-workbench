@@ -2549,8 +2549,8 @@ func TestBuildConnectionString(t *testing.T) {
 			},
 			password:         "",
 			databaseOverride: "",
-			wantContains:     []string{"192.168.1.10:5432"},
-			wantNotContains:  []string{"db.example.com"},
+			wantContains:     []string{"@db.example.com:5432/", "hostaddr=192.168.1.10"},
+			wantNotContains:  []string{"192.168.1.10:5432"},
 		},
 		{
 			name: "with invalid hostaddr falls back to host",

@@ -16,6 +16,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // TestBuildConnectionStringRefusesUnsafeTarget checks the connect-time
@@ -67,7 +69,9 @@ func TestBuildConnectionStringRefusesUnsafeTarget(t *testing.T) {
 }
 
 // TestBuildConnectionStringHostAddrPreferred checks that a valid
-// hostaddr, bracketed or not, is the single address pgx dials.
+// hostaddr, bracketed or not, is the single address pgx dials, whilst
+// the host stays the name pgx connects as (its TLS ServerName), and
+// that hostaddr never reaches the server as a startup parameter.
 func TestBuildConnectionStringHostAddrPreferred(t *testing.T) {
 	for _, hostaddr := range []string{"192.0.2.10", "2001:db8::1", "[2001:db8::1]"} {
 		t.Run(hostaddr, func(t *testing.T) {
@@ -84,12 +88,60 @@ func TestBuildConnectionStringHostAddrPreferred(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseConfig failed: %v", err)
 			}
+			if cfg.Host != "db.example.com" || len(cfg.Fallbacks) != 0 {
+				t.Errorf("host = %q with %d fallbacks, want db.example.com alone",
+					cfg.Host, len(cfg.Fallbacks))
+			}
+
+			(&Datastore{}).GuardMonitoredConnConfig(cfg)
+			if v, ok := cfg.RuntimeParams["hostaddr"]; ok {
+				t.Errorf("hostaddr = %q left in the startup parameters", v)
+			}
+			addrs, err := cfg.LookupFunc(context.Background(), cfg.Host)
 			want := trimOneBracketPairForTest(hostaddr)
-			if cfg.Host != want || len(cfg.Fallbacks) != 0 {
-				t.Errorf("host = %q with %d fallbacks, want %q alone",
-					cfg.Host, len(cfg.Fallbacks), want)
+			if err != nil || len(addrs) != 1 || addrs[0] != want {
+				t.Errorf("lookup = %v, %v; want [%s]", addrs, err, want)
 			}
 		})
+	}
+}
+
+// TestBuildConnectionStringHostAddrOnly checks that a connection with a
+// hostaddr and no host connects to the address, as libpq does.
+func TestBuildConnectionStringHostAddrOnly(t *testing.T) {
+	conn := &MonitoredConnection{
+		HostAddr:     sql.NullString{String: "[2001:db8::1]", Valid: true},
+		SSLMode:      sql.NullString{String: "disable", Valid: true},
+		Port:         5432,
+		DatabaseName: "mydb",
+		Username:     "user",
+	}
+	cfg, err := pgconn.ParseConfig(mustBuildConnString(t, &Datastore{}, conn, "", ""))
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+	if cfg.Host != "2001:db8::1" {
+		t.Errorf("host = %q, want 2001:db8::1", cfg.Host)
+	}
+}
+
+// TestGuardConnConfigBadHostAddr checks that a hostaddr that is not an
+// IP address, which BuildConnectionString never emits, fails the
+// connection rather than resolving the host, and is still kept out of
+// the startup parameters.
+func TestGuardConnConfigBadHostAddr(t *testing.T) {
+	cfg, err := pgconn.ParseConfig(
+		"postgres://user@db.example.com:5432/mydb?sslmode=disable&hostaddr=evil.example.com")
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+	GuardConnConfig(cfg, nil)
+	if _, ok := cfg.RuntimeParams["hostaddr"]; ok {
+		t.Error("hostaddr left in the startup parameters")
+	}
+	addrs, err := cfg.LookupFunc(context.Background(), cfg.Host)
+	if !errors.Is(err, hostvalidation.ErrHostAddrNotIP) || addrs != nil {
+		t.Errorf("lookup = %v, %v; want ErrHostAddrNotIP", addrs, err)
 	}
 }
 

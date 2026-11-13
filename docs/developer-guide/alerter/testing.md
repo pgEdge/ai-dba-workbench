@@ -455,8 +455,20 @@ verify the following behaviors:
 - Transaction handling.
 - Error handling for database failures.
 
-To run database tests, ensure the test database is configured and
-provide the connection details through a configuration file.
+To run database tests, set `TEST_AI_WORKBENCH_SERVER` to a
+connection string for a local PostgreSQL server; the tests skip when
+the variable is unset. The tests drop and recreate tables, so they
+refuse any host other than `127.0.0.1`, `localhost`, or a Unix
+socket. The tests also refuse any database name other than
+`ai_workbench`, `ai_workbench_pr<n>`, `ai_workbench_issue<n>`,
+`ai_workbench_sess<n>`, or `postgres`.
+
+The package test binaries run in parallel. Each package that uses the
+database creates its own database, named after the configured one
+with `_pkg_` and the package name appended (for example,
+`ai_workbench_pkg_engine`), and drops the database when its tests
+finish. Set `TEST_AI_WORKBENCH_KEEP_DB=1` to keep the package
+databases for inspection.
 
 ## Mocking
 

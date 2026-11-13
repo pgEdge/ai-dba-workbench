@@ -80,9 +80,15 @@ components. Run all tests from the top-level directory:
 make test-all
 ```
 
-The `test-all` target runs tests, coverage analysis, and
-linting for all Go components. Run individual test
-targets as needed:
+The `test-all` target runs the `test-all` target of each
+sub-project in turn: `pkg`, `collector`, `server`, `alerter`,
+and `client`. The collector, server, and alerter targets
+check formatting, run the tests once with the coverage gate,
+and run the linter. The client target runs the tests with the
+coverage gate, the type checker, and the linter. The `pkg`
+target checks formatting and runs the tests and the linter
+without a coverage gate. Run individual test targets as
+needed:
 
 ```bash
 # Run tests only
@@ -95,6 +101,87 @@ make coverage
 make lint
 ```
 
+While you develop, run only the tests that cover your change;
+for example, the following commands run one Go test and the
+Vitest tests related to the named client files:
+
+```bash
+cd server/src && go test -race -run TestName ./internal/api/...
+cd client && npx vitest related src/components/Login.tsx
+```
+
+### Testing Only Changed Sub-Projects
+
+The `test-changed` target runs `test-all` only in the
+sub-projects that the current branch touches. The target
+compares the branch with the point at which the branch
+forked from `origin/main`, and also includes staged,
+unstaged, and untracked changes in the working tree. The
+selected sub-projects run in the same order as `test-all`,
+and the first failure stops the run.
+
+A change to some paths also tests the sub-projects that
+depend on them. The following table shows which
+sub-projects each change selects:
+
+| Changed path                                  | Sub-projects tested                       |
+|-----------------------------------------------|-------------------------------------------|
+| `pkg/`                                        | pkg, collector, server, and alerter       |
+| `collector/go.mod`, `collector/src/database/` | collector and server                      |
+| Any other path under `collector/`             | collector                                 |
+| `server/`, `alerter/`, or `client/`           | That sub-project only                     |
+| `e2e/`                                        | None; prints a reminder to run test-e2e   |
+
+Run the target from the repository root:
+
+```bash
+make test-changed
+```
+
+Set `BASE` to compare against a different reference, and set
+`DRY_RUN=1` to print the selection without running any tests.
+In the following example, a dry run on a branch that changes
+the server, alerter, and client prints the plan:
+
+```bash
+DRY_RUN=1 make test-changed
+```
+
+The command produces output similar to the following:
+
+```text
+test-changed: comparing against origin/main (merge base e6bb269828c9) plus uncommitted changes
+test-changed: selected sub-projects:
+  server     server/ changed
+  alerter    alerter/ changed
+  client     client/ changed
+test-changed: DRY_RUN set; not running any tests.
+```
+
+The full `make test-all` remains available, and CI runs the
+complete test matrix on every push to `main`.
+
+### Continuous Integration
+
+The GitHub Actions workflows run a reduced matrix on pull
+requests and the full matrix on `main`. In the workflows:
+
+- pull requests run the collector, server, and alerter test
+  suites on two combinations: Go 1.26.11 with PostgreSQL 18,
+  and Go 1.27.4 with PostgreSQL 15.
+- pushes to `main`, a nightly schedule, and manual runs test
+  both Go releases against PostgreSQL 15, 16, 17, and 18.
+- the shared `pkg` module needs no database, so every run
+  tests the module with both Go releases.
+- the client test suite runs on Node.js 22 only; Node.js 24
+  and 26 type-check and build the client.
+- a newer push to a pull request cancels the earlier run.
+- the Docker and E2E workflows skip changes that touch only
+  test files.
+- the Docker Publish workflow builds pull request images for
+  `linux/amd64` only, and skips pull requests that cannot
+  change an image.
+
 ### Test Database
 
 Tests that require a database create a temporary database
@@ -105,6 +192,13 @@ using an environment variable:
 export TEST_AI_WORKBENCH_SERVER=\
   "postgres://user:pass@localhost/postgres"
 ```
+
+The server and alerter test packages run in parallel. Each
+package that uses the database creates a database of its own,
+named after the database in `TEST_AI_WORKBENCH_SERVER` with
+`_pkg_` and the package name appended (for example,
+`ai_workbench_pkg_api`). The package drops the database when
+its tests finish.
 
 The test database drops automatically after tests
 complete. Set the keep flag to preserve the database for
@@ -237,11 +331,14 @@ update documentation as needed.
 
 ### 3. Run Quality Checks
 
-Run the full test suite before committing:
+Run the tests for the sub-projects your branch changes
+before committing:
 
 ```bash
-make test-all
+make test-changed
 ```
+
+Run `make test-all` instead to test every sub-project.
 
 The test suite must pass without errors or warnings
 before you submit a pull request.

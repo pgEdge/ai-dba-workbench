@@ -10,7 +10,7 @@ and Vitest's jsdom environment.
 ## Overview
 
 The suite lives under the top-level `e2e/` directory and runs on
-every pull request through the `CI - E2E` workflow. Playwright
+pull requests through the `CI - E2E` workflow. Playwright
 drives Chromium, Firefox, and WebKit against a `vite preview`
 serving the production client bundle; the preview proxies API
 traffic to a real `ai-dba-server` binary that talks to a real
@@ -99,8 +99,12 @@ to tear the stack down manually.
 ## Running in CI
 
 The [`.github/workflows/ci-e2e.yml`][ci-e2e-yml] workflow
-runs the suite on every pull request against `main` and on
-every push to `main`.
+runs the suite on pull requests against `main` and on pushes
+to `main` that change the server, collector, client, or E2E
+sources. Changes that touch only test files, such as
+`*_test.go` files and client `*.test.ts` files, skip the
+workflow, and a newer push to a pull request cancels the
+earlier run.
 
 [ci-e2e-yml]: https://github.com/pgEdge/ai-dba-workbench/blob/main/.github/workflows/ci-e2e.yml
 The workflow uses a Postgres service container and a three-way

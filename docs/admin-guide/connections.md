@@ -67,7 +67,9 @@ The `host` and `hostaddr` fields name the monitored server:
   `]`, `/`, `?`, `@`, `#`, `%` or whitespace.
 - `hostaddr` is optional and must be a literal IPv4 or IPv6 address,
   optionally in one pair of square brackets; the server connects to the
-  address in place of resolving `host`.
+  address in place of resolving `host`. As in libpq, `host` remains the
+  name that `sslmode=verify-full` checks the server certificate
+  against and that the server sends as the TLS server name.
 
 The server checks both `host` and `hostaddr` against the
 `connection_security` blocklist, allowlist and internal network rules,

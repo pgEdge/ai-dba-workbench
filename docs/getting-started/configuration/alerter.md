@@ -105,6 +105,11 @@ the AI DBA Workbench PostgreSQL datastore.
 | `sslkey` | string | None | Client private key path |
 | `sslrootcert` | string | None | CA certificate path |
 
+When `hostaddr` is set, the alerter connects to that address instead of
+looking up `host`, but still verifies the server's SSL certificate
+against `host`. The `hostaddr` value must be a literal IPv4 or IPv6
+address.
+
 The `sslmode` option accepts the following values:
 
 - `disable` disables SSL encryption.

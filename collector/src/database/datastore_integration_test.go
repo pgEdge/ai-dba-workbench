@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // integrationConfig is a fully populated Config implementation used by the
@@ -555,6 +557,62 @@ func TestConnect_ClampsMaxConns(t *testing.T) {
 		t.Fatalf("connect with huge maxConnections: %v", err)
 	}
 	defer ds.Close()
+}
+
+// TestConnect_HostAddr connects with the hostaddr set to the local test
+// server and the host set to a name. With localhost, which resolves, the
+// connection fails with FATAL if hostaddr reaches the server as a startup
+// parameter (issue #841); with a name that cannot resolve (RFC 2606
+// reserves .invalid), it succeeds only if the datastore dials hostaddr.
+func TestConnect_HostAddr(t *testing.T) {
+	requireSchema(t)
+
+	for _, host := range []string{"localhost", "datastore.invalid"} {
+		t.Run(host, func(t *testing.T) {
+			cfg := parseTestServerURL(t)
+			if cfg.host != "127.0.0.1" {
+				t.Skipf("test server host %q is not 127.0.0.1", cfg.host)
+			}
+			cfg.database = testDBName
+			cfg.host = host
+			cfg.hostAddr = "127.0.0.1"
+
+			ds := &Datastore{config: cfg}
+			if err := ds.connect(); err != nil {
+				t.Fatalf("connect with hostaddr: %v", err)
+			}
+			defer ds.Close()
+
+			var addr string
+			if err := ds.pool.QueryRow(context.Background(),
+				"SELECT host(inet_server_addr())").Scan(&addr); err != nil {
+				t.Fatalf("query server address: %v", err)
+			}
+			if addr != "127.0.0.1" {
+				t.Errorf("connected to %q, want 127.0.0.1", addr)
+			}
+		})
+	}
+}
+
+// TestConnect_HostAddrNotIP checks that a hostaddr that is not a literal
+// IP address is refused before any connection is attempted.
+func TestConnect_HostAddrNotIP(t *testing.T) {
+	cfg := &integrationConfig{
+		host:           "datastore.invalid",
+		hostAddr:       "datastore.example.com",
+		database:       "x",
+		username:       "x",
+		port:           5432,
+		sslMode:        "disable",
+		maxConnections: 1,
+		maxIdleSeconds: 1,
+	}
+	ds := &Datastore{config: cfg}
+	err := ds.connect()
+	if !errors.Is(err, hostvalidation.ErrHostAddrNotIP) {
+		t.Fatalf("connect error = %v, want ErrHostAddrNotIP", err)
+	}
 }
 
 // TestGetMonitoredConnections_AfterClose exercises the failure paths in

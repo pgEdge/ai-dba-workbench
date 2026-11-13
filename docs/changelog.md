@@ -20,6 +20,13 @@ project adheres to
   tools and the MCP tools failed against a certificate that names only
   the host. (#840)
 
+- Make the collector and alerter connect to their datastore when a
+  datastore `hostaddr` is configured; previously PostgreSQL refused the
+  connection with `unrecognized configuration parameter "hostaddr"`, so
+  neither service could start. Both now connect to the `hostaddr`
+  address and use `host` for SSL certificate verification, as libpq
+  does. (#841)
+
 ## [2.0.0-beta1] - 2026-11-12
 
 !!! warning "Breaking changes"

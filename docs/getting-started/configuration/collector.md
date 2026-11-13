@@ -89,8 +89,9 @@ bypasses DNS lookup.
 - Required: No
 - Command-line: `-pg-hostaddr`
 - Example: `hostaddr: 192.168.1.100`
-- Note: The collector uses this address instead of `host` when both
-  are set.
+- Note: The collector connects to this address instead of looking up
+  `host`, but still verifies the server's SSL certificate against
+  `host`; `hostaddr` must be a literal IPv4 or IPv6 address.
 
 ### datastore.database
 

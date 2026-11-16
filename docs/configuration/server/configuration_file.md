@@ -215,7 +215,7 @@ table lists the ranges that the server treats as internal:
 An IPv4-mapped IPv6 address, such as `::ffff:10.0.0.1`, counts as the IPv4
 address that it carries. Neither `allow_internal_networks` nor `allowed_hosts`
 lets the server connect to an unspecified, link-local or cloud metadata
-address, although a connection that names one can still be saved; see
+address, and a connection that names one is refused when it is saved; see
 [Checking Addresses at Connect Time](#checking-addresses-at-connect-time).
 That refusal also covers an address in `::/96`, `::ffff:0:0:0/96`,
 `64:ff9b::/96` or `2002::/16` that embeds an unspecified, link-local or cloud

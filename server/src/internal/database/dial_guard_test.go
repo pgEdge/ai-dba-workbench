@@ -74,7 +74,7 @@ func TestGuardMonitoredConnConfig(t *testing.T) {
 // and that the error names no address.
 func TestClientConnectTo_DialGuard(t *testing.T) {
 	cm := NewClientManager(nil)
-	_, err := cm.GetOrCreateClientWithConnString("k",
+	_, err := cm.GetOrCreateClientWithConnString(context.Background(), "k",
 		"postgres://u@169.254.169.254:5432/x?sslmode=disable&connect_timeout=1")
 	if !errors.Is(err, hostvalidation.ErrNoPermittedAddress) {
 		t.Fatalf("err = %v, want ErrNoPermittedAddress", err)
@@ -89,7 +89,7 @@ func TestClientConnectTo_DialGuard(t *testing.T) {
 		called = true
 		GuardConnConfig(cfg, func(string, net.IP) error { return errors.New("no") })
 	})
-	_, err = cm.GetOrCreateClientWithConnString("k",
+	_, err = cm.GetOrCreateClientWithConnString(context.Background(), "k",
 		"postgres://u@127.0.0.1:1/x?sslmode=disable&connect_timeout=1")
 	if !called || !errors.Is(err, hostvalidation.ErrNoPermittedAddress) {
 		t.Fatalf("called = %v, err = %v; want the manager's guard to refuse", called, err)

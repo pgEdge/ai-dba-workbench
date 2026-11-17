@@ -73,6 +73,11 @@ func NewClientWithConnectionString(connStr string, dbConfig *config.DatabaseConf
 
 // Connect establishes a connection to the default PostgreSQL database
 func (c *Client) Connect() error {
+	return c.connect(context.Background())
+}
+
+// connect is Connect with the first connection opened under ctx.
+func (c *Client) connect(ctx context.Context) error {
 	// If a connection string was already set (e.g., via NewClientWithConnectionString),
 	// use that instead of reading from the environment
 	c.mu.RLock()
@@ -104,11 +109,17 @@ func (c *Client) Connect() error {
 		c.mu.Unlock()
 	}
 
-	return c.ConnectTo(connStr)
+	return c.connectTo(ctx, connStr)
 }
 
 // ConnectTo establishes a connection to a specific PostgreSQL database
 func (c *Client) ConnectTo(connStr string) error {
+	return c.connectTo(context.Background(), connStr)
+}
+
+// connectTo is ConnectTo with the first connection opened under ctx, so
+// that a caller can bound how long connecting may take.
+func (c *Client) connectTo(ctx context.Context, connStr string) error {
 	startTime := time.Now()
 
 	c.mu.Lock()
@@ -198,7 +209,7 @@ func (c *Client) ConnectTo(connStr string) error {
 		return fmt.Errorf("unable to create connection pool: %w", err)
 	}
 
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		duration := time.Since(startTime)
 		LogConnection(connStr, duration, err)

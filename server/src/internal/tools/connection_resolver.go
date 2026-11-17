@@ -278,7 +278,7 @@ func (r *ConnectionResolver) resolveExplicit(
 		DatabaseName: dbNamePtr,
 	}
 
-	client, err := r.clientManager.GetClientForSession(sessionInfo, connStr)
+	client, err := r.clientManager.GetClientForSession(ctx, sessionInfo, connStr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: connection_resolver: failed to connect to connection %d: %v\n", ca.ConnectionID, err)
 		resp := mcp.ToolResponse{

@@ -78,6 +78,14 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+### Security
+
+- Bound the connect to a monitored server at 10 seconds on the query,
+  query validation and database list endpoints and in the MCP tools,
+  and hold any failed connect until the 10 seconds have passed, so
+  that a refused port and a filtered port take the same time to
+  report and the reply time no longer serves as a port scan. A wrong
+  host or port therefore takes 10 seconds to report. (#850)
 
 ## [2.0.0-beta1] - 2026-11-12
 

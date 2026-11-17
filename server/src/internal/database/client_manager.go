@@ -10,6 +10,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -262,8 +263,11 @@ type SessionInfo struct {
 }
 
 // GetClientForSession returns a database client for a connection session
-// This is a helper that builds the appropriate client key and connection string
-func (cm *ClientManager) GetClientForSession(session *SessionInfo, connStr string) (*Client, error) {
+// This is a helper that builds the appropriate client key and connection string.
+// A new client connects under ConnectMonitored, so a failed connect takes
+// the same time to report whatever its cause (issue #850); the hold runs
+// after the client manager's lock is released.
+func (cm *ClientManager) GetClientForSession(ctx context.Context, session *SessionInfo, connStr string) (*Client, error) {
 	if session == nil {
 		return nil, fmt.Errorf("session info is required")
 	}
@@ -277,12 +281,22 @@ func (cm *ClientManager) GetClientForSession(session *SessionInfo, connStr strin
 		clientKey = fmt.Sprintf("%s:db:%s", clientKey, *session.DatabaseName)
 	}
 
-	return cm.GetOrCreateClientWithConnString(clientKey, connStr)
+	var client *Client
+	err := ConnectMonitored(ctx, func(connectCtx context.Context) error {
+		var err error
+		client, err = cm.GetOrCreateClientWithConnString(connectCtx, clientKey, connStr)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
 
 // GetOrCreateClientWithConnString returns a database client for the given key
-// Creates a client using the provided connection string if one doesn't exist
-func (cm *ClientManager) GetOrCreateClientWithConnString(key string, connStr string) (*Client, error) {
+// Creates a client using the provided connection string if one doesn't exist,
+// opening its first connection under ctx
+func (cm *ClientManager) GetOrCreateClientWithConnString(ctx context.Context, key string, connStr string) (*Client, error) {
 	if key == "" {
 		return nil, fmt.Errorf("key is required")
 	}
@@ -326,7 +340,7 @@ func (cm *ClientManager) GetOrCreateClientWithConnString(key string, connStr str
 	if client.dialGuard == nil {
 		client.dialGuard = (*Datastore)(nil).GuardMonitoredConnConfig
 	}
-	if err := client.Connect(); err != nil {
+	if err := client.connect(ctx); err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 

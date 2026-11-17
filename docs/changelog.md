@@ -45,6 +45,16 @@ project adheres to
   Docker images for `linux/amd64` only, and skip the Docker and E2E
   workflows for changes that touch only test files. (#846)
 
+### Fixed
+
+- Apply the documented datastore defaults to a `database` section in
+  the server configuration file. A section that omitted `host`, `port`,
+  `database`, or `sslmode` previously left that field empty, so an
+  omitted `port` produced a connection to port `0` and the server
+  failed to start; the omitted fields now default to `localhost`,
+  `5432`, `postgres`, and `prefer`, as they already did when the
+  datastore was configured only through the `-db-*` flags. (#860)
+
 ## [2.0.0-beta1] - 2026-11-12
 
 !!! warning "Breaking changes"

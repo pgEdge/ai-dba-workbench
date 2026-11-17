@@ -639,6 +639,10 @@ connection_security:
 | `pool_max_conn_idle_time` | string | `30m` | Max idle time |
 | `statement_timeout` | string | `30s` | Server-side statement timeout |
 
+The server applies the defaults above to any option that neither the
+`database` section nor a `-db-*` command-line flag sets; a flag
+overrides the value in the section.
+
 The `statement_timeout` option bounds how long a single statement may
 run on a datastore pool connection before PostgreSQL cancels it. The
 server already cancels its own queries once the request that asked for

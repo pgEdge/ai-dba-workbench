@@ -950,6 +950,10 @@ func LoadConfig(configPath string, cliFlags CLIFlags) (*Config, error) {
 	// Override with command line flags (highest priority)
 	applyCLIFlags(cfg, cliFlags)
 
+	// Fill in the documented defaults for any connection field that
+	// neither the file nor the flags set
+	applyDatabaseDefaults(cfg.Database)
+
 	// Validate final configuration
 	if err := validateConfig(cfg); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
@@ -1690,6 +1694,32 @@ func applyCLIFlags(cfg *Config, flags CLIFlags) {
 	// Connection security
 	if flags.ConnectionSSLCertDirSet {
 		cfg.ConnectionSecurity.SSLCertDir = flags.ConnectionSSLCertDir
+	}
+}
+
+// applyDatabaseDefaults gives each unset host, port, database and
+// sslmode field of a datastore configuration its documented default, so
+// that a database section in the configuration file that omits one of
+// them behaves as the -db-* flags do (issue #860). It runs after the file
+// and the flags are merged, so either one still overrides the defaults.
+// A nil db (no datastore configured) is left alone. The pool idle time
+// and statement timeout need no default here: the datastore connection
+// code already treats an empty value as its default.
+func applyDatabaseDefaults(db *DatabaseConfig) {
+	if db == nil {
+		return
+	}
+	if db.Host == "" {
+		db.Host = "localhost"
+	}
+	if db.Port == 0 {
+		db.Port = 5432
+	}
+	if db.Database == "" {
+		db.Database = "postgres"
+	}
+	if db.SSLMode == "" {
+		db.SSLMode = "prefer"
 	}
 }
 

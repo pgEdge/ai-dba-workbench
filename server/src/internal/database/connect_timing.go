@@ -99,8 +99,8 @@ func ConnectMonitored(ctx context.Context, connect func(context.Context) error) 
 
 // boundedConnect runs connect under the connect deadline and returns
 // how long it took. It is the first half of ConnectMonitored, for a
-// caller whose hold runs elsewhere (ClientManager, through
-// failedConnectError).
+// caller whose hold runs elsewhere (ClientManager, whose callers are
+// held by GetClientForSession).
 func boundedConnect(ctx context.Context, connect func(context.Context) error) (time.Duration, error) {
 	timing := connectTiming.Load()
 	start := timing.Now()
@@ -120,12 +120,11 @@ func holdFailedConnect(ctx context.Context, elapsed time.Duration) {
 	}
 }
 
-// failedConnectError carries a failed connect's duration from where it
-// ran, in ClientManager, to GetClientForSession, which holds the
-// failure. Its text is the cause's.
+// failedConnectError marks a failure as the connect's own, as opposed to
+// a metadata load or argument error, so that GetClientForSession holds
+// it. Its text is the cause's.
 type failedConnectError struct {
-	err     error
-	elapsed time.Duration
+	err error
 }
 
 func (e *failedConnectError) Error() string { return e.err.Error() }

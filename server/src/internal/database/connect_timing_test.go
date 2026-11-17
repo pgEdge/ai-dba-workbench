@@ -168,32 +168,42 @@ func TestGetClientForSessionHoldsFailedConnect(t *testing.T) {
 	}
 }
 
-// TestGetClientForSessionLockWaitNotCounted checks that time spent
-// waiting for the client manager's lock counts neither against the
-// connect deadline nor towards the hold: the hold is measured from when
-// the connect starts, after the lock is taken.
-func TestGetClientForSessionLockWaitNotCounted(t *testing.T) {
+// TestGetClientForSessionHoldCountsFromRequest checks that each
+// caller's hold is measured from when that caller asked, so that the
+// whole request takes the floor (issue #850): a caller who joins
+// another's connect late is held for the rest of its own floor rather
+// than being released when the shared connect fails.
+func TestGetClientForSessionHoldCountsFromRequest(t *testing.T) {
+	session := &SessionInfo{TokenHash: "t", ConnectionID: 1}
+	connStr := "postgres://u@127.0.0.1:1/x?sslmode=disable"
 	clock := installFakeConnectClock(t)
 	cm := NewClientManager(nil)
-	cm.SetMonitoredDialGuard(func(*pgconn.Config) {})
+	g := newBlockingDialGuard()
+	cm.SetMonitoredDialGuard(g.guard)
 
-	cm.mu.Lock()
-	done := make(chan error, 1)
-	go func() {
-		_, err := cm.GetClientForSession(context.Background(),
-			&SessionInfo{TokenHash: "t", ConnectionID: 1},
-			"postgres://u@127.0.0.1:1/x?sslmode=disable")
-		done <- err
-	}()
-	// Another session's connect holds the lock for 5 seconds.
-	clock.advance(5 * time.Second)
-	cm.mu.Unlock()
-
-	if err := <-done; err == nil {
-		t.Fatal("expected the connect to fail")
+	results := make(chan error, 2)
+	ask := func() {
+		_, err := cm.GetClientForSession(context.Background(), session, connStr)
+		results <- err
 	}
-	if got := clock.sleeps(); len(got) != 1 || got[0] != MonitoredConnectTimeout {
-		t.Errorf("slept %v, want one hold of %v from the connect's start", got, MonitoredConnectTimeout)
+	go ask()
+	<-g.started
+	clock.advance(9 * time.Second)
+	go ask()
+	waitForWaiters(t, cm, "t:conn:1\x00"+connStr, 1)
+	// The shared connect fails at its deadline, 1 second after the
+	// second caller joined.
+	clock.advance(time.Second)
+	close(g.release)
+
+	for range 2 {
+		if err := <-results; !errors.Is(err, errBlockedDial) {
+			t.Errorf("error = %v, want the blocked dial's", err)
+		}
+	}
+	want := MonitoredConnectTimeout - time.Second
+	if got := clock.sleeps(); len(got) != 1 || got[0] != want {
+		t.Errorf("slept %v, want one hold of %v for the late caller only", got, want)
 	}
 }
 

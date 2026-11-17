@@ -112,6 +112,42 @@ func TestGetOrCreateClientConnectOutsideLock(t *testing.T) {
 	}
 }
 
+// TestGetOrCreateClientInitiatorCancelDoesNotFailWaiters checks that
+// the caller who started a shared connect giving up neither cancels the
+// connect nor fails the callers still waiting on it.
+func TestGetOrCreateClientInitiatorCancelDoesNotFailWaiters(t *testing.T) {
+	installFakeConnectClock(t)
+	cm := NewClientManager(nil)
+	g := newBlockingDialGuard()
+	cm.SetMonitoredDialGuard(g.guard)
+	connStr := "postgres://u@127.0.0.1:1/x?sslmode=disable"
+
+	initCtx, cancel := context.WithCancel(context.Background())
+	initiator := make(chan error, 1)
+	go func() {
+		_, err := cm.GetOrCreateClientWithConnString(initCtx, "k", connStr)
+		initiator <- err
+	}()
+	<-g.started
+
+	waiter := make(chan error, 1)
+	go func() {
+		_, err := cm.GetOrCreateClientWithConnString(context.Background(), "k", connStr)
+		waiter <- err
+	}()
+	waitForWaiters(t, cm, "k\x00"+connStr, 1)
+
+	cancel()
+	if err := <-initiator; !errors.Is(err, context.Canceled) {
+		t.Errorf("initiator error = %v, want context.Canceled", err)
+	}
+	close(g.release)
+	err := <-waiter
+	if !errors.Is(err, errBlockedDial) || errors.Is(err, context.Canceled) {
+		t.Errorf("waiter error = %v, want the dial's own failure", err)
+	}
+}
+
 // waitForWaiters polls until the connect in flight under flightKey has
 // n callers waiting on it.
 func waitForWaiters(t *testing.T, cm *ClientManager, flightKey string, n int) {

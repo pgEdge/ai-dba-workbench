@@ -13,10 +13,9 @@ The server searches for its configuration file in the following order:
 3. The system-wide file at `/etc/pgedge/ai-dba-server.yaml`.
 
 If `-config` is set and the file is missing, the server exits with an error at
-startup. The management commands, such as `-add-user` and `-add-token`, do not
-make this check: with a missing `-config` file, they run against the default
-data directory and the secret file that the default search finds, so check the
-path before you run one. If `-config` is not set and none of the default
+startup; so do `-check-config` and the user, group, token, privilege, and audit
+commands, such as `-add-user` and `-add-token`, which never fall back to the
+default locations. If `-config` is not set and none of the default
 locations contain a configuration file, the server uses built-in defaults
 silently. The server does not search the binary directory or the current
 working directory.

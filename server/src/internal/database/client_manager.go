@@ -30,6 +30,19 @@ type ClientManager struct {
 	// monitored connections (GetOrCreateClientWithConnString) may dial.
 	// Nil selects the always-blocked floor; see SetMonitoredDialGuard.
 	monitoredGuard DialGuard
+
+	// inflight holds the monitored-client connects under way, by key
+	// and connection string; see GetOrCreateClientWithConnString.
+	inflight map[string]*clientCall
+}
+
+// clientCall is one monitored-client connect in flight. done closes
+// once client and err are set; waiters counts the callers sharing it.
+type clientCall struct {
+	done    chan struct{}
+	client  *Client
+	err     error
+	waiters int
 }
 
 // NewClientManager creates a new client manager with database configuration
@@ -37,6 +50,7 @@ func NewClientManager(dbConfig *config.DatabaseConfig) *ClientManager {
 	return &ClientManager{
 		clients:  make(map[string]*Client),
 		dbConfig: dbConfig,
+		inflight: make(map[string]*clientCall),
 	}
 }
 
@@ -266,10 +280,9 @@ type SessionInfo struct {
 // GetClientForSession returns a database client for a connection session
 // This is a helper that builds the appropriate client key and connection string.
 // A failed connect is held to the floor, so that it takes the same time
-// to report whatever its cause (issue #850). The connect deadline and
-// the time it is held against start once the client manager's lock is
-// held, so that waiting for the lock neither shortens the connect nor
-// shows in the reply time, and the hold runs after the lock is released.
+// to report whatever its cause (issue #850). The hold is measured from
+// when the connect started, and no lock is held during the connect or
+// the hold; see GetOrCreateClientWithConnString.
 func (cm *ClientManager) GetClientForSession(ctx context.Context, session *SessionInfo, connStr string) (*Client, error) {
 	if session == nil {
 		return nil, fmt.Errorf("session info is required")
@@ -297,7 +310,14 @@ func (cm *ClientManager) GetClientForSession(ctx context.Context, session *Sessi
 
 // GetOrCreateClientWithConnString returns a database client for the given key
 // Creates a client using the provided connection string if one doesn't exist,
-// opening its first connection under ctx
+// opening its first connection under ctx.
+//
+// The connect and metadata load run without cm.mu held, so that a request
+// for another key, or a cached client, never waits on this connect: if it
+// did, its latency would follow this connect's raw outcome and give away
+// what the floor hides (issue #850). Callers for the same key and
+// connection string while a connect is in flight wait for it and share
+// its result rather than connecting again.
 func (cm *ClientManager) GetOrCreateClientWithConnString(ctx context.Context, key string, connStr string) (*Client, error) {
 	if key == "" {
 		return nil, fmt.Errorf("key is required")
@@ -306,44 +326,57 @@ func (cm *ClientManager) GetOrCreateClientWithConnString(ctx context.Context, ke
 		return nil, fmt.Errorf("connection string is required")
 	}
 
-	// Try to get existing client (read lock)
-	cm.mu.RLock()
-	if client, exists := cm.clients[key]; exists {
-		// Check if it's connected to the same connection string
-		if client.GetDefaultConnection() == connStr {
-			cm.mu.RUnlock()
-			return client, nil
-		}
-		// Different connection string - need to replace the client
-		cm.mu.RUnlock()
-	} else {
-		cm.mu.RUnlock()
-	}
-
-	// Create new client (write lock)
+	flightKey := key + "\x00" + connStr
 	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	// Close existing client if it exists and has different connection
-	if existingClient, exists := cm.clients[key]; exists {
-		if existingClient.GetDefaultConnection() == connStr {
-			return existingClient, nil
-		}
-		existingClient.Close()
-		delete(cm.clients, key)
+	if client, exists := cm.clients[key]; exists && client.GetDefaultConnection() == connStr {
+		cm.mu.Unlock()
+		return client, nil
 	}
+	if call, inFlight := cm.inflight[flightKey]; inFlight {
+		call.waiters++
+		cm.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.client, call.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	call := &clientCall{done: make(chan struct{})}
+	cm.inflight[flightKey] = call
+	guard := cm.monitoredGuard
+	cm.mu.Unlock()
 
-	// Create and initialize new client with connection string
+	call.client, call.err = cm.connectMonitoredClient(ctx, connStr, guard)
+
+	cm.mu.Lock()
+	delete(cm.inflight, flightKey)
+	if call.err == nil {
+		// A client for another connection string under this key is
+		// replaced only once its successor is ready.
+		if existing, exists := cm.clients[key]; exists && existing != call.client {
+			existing.Close()
+		}
+		cm.clients[key] = call.client
+	}
+	cm.mu.Unlock()
+	close(call.done)
+	return call.client, call.err
+}
+
+// connectMonitoredClient makes, connects and loads the metadata of a
+// client for a monitored connection. The connect runs under the connect
+// deadline, and a failure carries its duration in failedConnectError
+// for GetClientForSession's hold.
+func (cm *ClientManager) connectMonitoredClient(ctx context.Context, connStr string, guard DialGuard) (*Client, error) {
 	// Every connection string reaching here was built from a stored
 	// monitored connection (see GetClientForSession), so the addresses it
 	// connects to are checked.
 	client := NewClientWithConnectionString(connStr, cm.dbConfig)
-	client.dialGuard = cm.monitoredGuard
+	client.dialGuard = guard
 	if client.dialGuard == nil {
 		client.dialGuard = (*Datastore)(nil).GuardMonitoredConnConfig
 	}
-	// The deadline starts here, under the lock, so that time spent
-	// waiting for the lock does not count against it.
 	if elapsed, err := boundedConnect(ctx, client.connect); err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w",
 			&failedConnectError{err: err, elapsed: elapsed})
@@ -353,7 +386,5 @@ func (cm *ClientManager) GetOrCreateClientWithConnString(ctx context.Context, ke
 		client.Close()
 		return nil, fmt.Errorf("failed to load metadata: %w", err)
 	}
-
-	cm.clients[key] = client
 	return client, nil
 }

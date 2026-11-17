@@ -78,6 +78,12 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+### Security
+
+- Make a failed login for a disabled account, including one locked out
+  after too many failed attempts, take as long as any other failed
+  login, so that response timing no longer reveals that the account
+  exists but is disabled. (#851)
 
 ## [2.0.0-beta1] - 2026-11-12
 

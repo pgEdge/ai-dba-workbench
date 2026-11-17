@@ -137,14 +137,21 @@ const extractClusterCards = (selection: EstateSelection): ClusterCardData[] => {
             const roles: Record<string, number> = {};
 
             allServers.forEach(s => {
-                const status = s.status as string;
-                const alerts = s.active_alert_count as number | undefined;
+                const status = s.status;
+                const rawAlerts = s.active_alert_count;
+                const alerts = typeof rawAlerts === 'number' && rawAlerts > 0
+                    ? rawAlerts
+                    : 0;
+
+                // Every server's alerts count towards the badge, offline
+                // ones included, and a 'warning' status (role data 6 to
+                // 12 minutes old) marks a stale server (issue #835).
+                alertCount += alerts;
 
                 if (status === 'offline') {
                     offline += 1;
-                } else if (alerts && alerts > 0) {
+                } else if (status === 'warning' || alerts > 0) {
                     warning += 1;
-                    alertCount += alerts;
                 } else {
                     online += 1;
                 }
@@ -233,6 +240,7 @@ const ClusterCardsSection: React.FC<ClusterCardsSectionProps> = ({ selection }) 
                         {card.alertCount > 0 && (
                             <Chip
                                 label={card.alertCount}
+                                aria-label={`${card.alertCount} active alert${card.alertCount !== 1 ? 's' : ''}`}
                                 size="small"
                                 color="warning"
                                 sx={{

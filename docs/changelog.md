@@ -140,6 +140,9 @@ project adheres to
   between the servers' values. Commits per second and checkpoint write
   and sync times are summed for each point in time, and the rollback
   percentage is weighted by each server's commit rate. (#837)
+- Include active alerts on offline servers in the alert count on the
+  estate dashboard's cluster cards, and count a server whose collected
+  data is stale as a warning rather than online. (#835)
 
 ### Security
 

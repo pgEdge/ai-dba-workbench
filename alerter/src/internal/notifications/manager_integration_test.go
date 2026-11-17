@@ -13,6 +13,8 @@ package notifications
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -542,5 +544,249 @@ func TestManager_MissingRowsAreSkipped(t *testing.T) {
 	}
 	if len(notifier.payloads) != 1 {
 		t.Errorf("sent %d, want no reminder without a history row", len(notifier.payloads))
+	}
+}
+
+const managerNextRetrySQL = `
+SELECT next_retry_at FROM notification_history
+WHERE alert_id = $1 AND channel_id = $2`
+
+const managerChannelHistorySQL = `
+SELECT status, attempt_count FROM notification_history
+WHERE alert_id = $1 AND channel_id = $2`
+
+// stallingNotifier delivers to every channel except the one named stall,
+// whose send does not finish until its context ends, as a webhook that
+// accepts the connection and never answers does.
+type stallingNotifier struct {
+	stall string
+	// whileStalled, when set, runs inside the stalled send before it
+	// waits.
+	whileStalled func(ctx context.Context)
+
+	mu        sync.Mutex
+	delivered map[string]int
+	// others is closed when a channel other than stall is delivered.
+	others chan struct{}
+	// sawOthers records whether the stalled send saw another channel
+	// delivered before its own context ended.
+	sawOthers bool
+}
+
+func newStallingNotifier(stall string) *stallingNotifier {
+	return &stallingNotifier{stall: stall, delivered: map[string]int{}, others: make(chan struct{})}
+}
+
+func (s *stallingNotifier) Send(ctx context.Context, ch *database.NotificationChannel, _ *database.NotificationPayload) error {
+	if ch.Name != s.stall {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.delivered[ch.Name] == 0 && len(s.delivered) == 0 {
+			close(s.others)
+		}
+		s.delivered[ch.Name]++
+		return nil
+	}
+	if s.whileStalled != nil {
+		s.whileStalled(ctx)
+	}
+	select {
+	case <-s.others:
+		s.mu.Lock()
+		s.sawOthers = true
+		s.mu.Unlock()
+	case <-ctx.Done():
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (s *stallingNotifier) count(name string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.delivered[name]
+}
+
+func (s *stallingNotifier) Type() database.NotificationChannelType {
+	return database.ChannelTypeSlack
+}
+
+func (s *stallingNotifier) Validate(*database.NotificationChannel) error { return nil }
+
+// TestManager_SlowChannelDoesNotStarveOthers sends a fired alert to two
+// channels, the first of which does not answer before the caller's
+// deadline, as one unresponsive endpoint used to use up the engine's
+// whole notification budget (issue #836). The other channel must still
+// be delivered to, without waiting for the slow one; the slow channel's
+// timed-out send must be recorded as a failed attempt for the retry
+// worker; and the retry worker must leave both rows alone while the
+// immediate send still owns them.
+func TestManager_SlowChannelDoesNotStarveOthers(t *testing.T) {
+	m, _, pool := managerTestEnv(t)
+	ctx := context.Background()
+	m.config.MaxRetryAttempts = 3
+
+	// Channels are read in name order, so the slow one is sent first.
+	var slowID, fastID int64
+	if err := pool.QueryRow(ctx, managerInsertChannelSQL, "slack", "a-slow").Scan(&slowID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, managerInsertChannelSQL, "slack", "b-fast").Scan(&fastID); err != nil {
+		t.Fatal(err)
+	}
+	alertID := insertManagerAlert(t, pool, database.AlertTypeSystem, nil)
+	alert, err := m.datastore.GetAlert(ctx, alertID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	notifier := newStallingNotifier("a-slow")
+	var duringErr error
+	duringPending := -1
+	var duringNextRetry *time.Time
+	notifier.whileStalled = func(context.Context) {
+		// The retry worker runs on its own schedule; while the
+		// immediate send is under way it must not see this alert's
+		// rows, or it would send them a second time.
+		pending, err := m.datastore.GetPendingNotifications(ctx)
+		if err != nil {
+			duringErr = err
+			return
+		}
+		duringPending = 0
+		for _, h := range pending {
+			if h.AlertID != nil && *h.AlertID == alertID {
+				duringPending++
+			}
+		}
+		duringErr = pool.QueryRow(ctx, managerNextRetrySQL, alertID, slowID).Scan(&duringNextRetry)
+	}
+	m.notifiers[database.ChannelTypeSlack] = notifier
+
+	// The caller's deadline stands in for the engine's notification
+	// budget, which the slow channel uses up.
+	budget, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := m.SendAlertNotification(budget, alert, database.NotificationTypeAlertFire); err != nil {
+		t.Fatalf("SendAlertNotification: %v", err)
+	}
+
+	if n := notifier.count("b-fast"); n != 1 {
+		t.Errorf("fast channel delivered %d times, want 1", n)
+	}
+	if !notifier.sawOthers {
+		t.Error("the fast channel was not delivered while the slow channel was still sending")
+	}
+	if duringErr != nil {
+		t.Fatalf("checking the rows during the send: %v", duringErr)
+	}
+	if duringPending != 0 {
+		t.Errorf("the retry worker could see %d of the alert's rows during the immediate send, want 0", duringPending)
+	}
+	if duringNextRetry == nil || !duringNextRetry.After(start) ||
+		duringNextRetry.After(start.Add(DeliveryTimeout+time.Second)) {
+		t.Errorf("slow row's next_retry_at during the send = %v, want after %v and within %v",
+			duringNextRetry, start, DeliveryTimeout)
+	}
+
+	// Both channels have their row; the fast one is sent, and the slow
+	// one's timed-out send is recorded, although the caller's context
+	// had ended, as a failed first attempt awaiting a retry.
+	var status string
+	var attempts int
+	if err := pool.QueryRow(ctx, managerChannelHistorySQL, alertID, fastID).Scan(&status, &attempts); err != nil {
+		t.Fatalf("fast channel history: %v", err)
+	}
+	if status != string(database.NotificationStatusSent) || attempts != 1 {
+		t.Errorf("fast channel history = %s after %d attempts, want sent after 1", status, attempts)
+	}
+	if err := pool.QueryRow(ctx, managerChannelHistorySQL, alertID, slowID).Scan(&status, &attempts); err != nil {
+		t.Fatalf("slow channel history: %v", err)
+	}
+	if status != string(database.NotificationStatusRetrying) || attempts != 1 {
+		t.Errorf("slow channel history = %s after %d attempts, want retrying after 1", status, attempts)
+	}
+
+	// Nothing is sent again before the retry is due.
+	if err := m.ProcessPendingNotifications(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := notifier.count("b-fast"); n != 1 {
+		t.Errorf("fast channel delivered %d times after the retry pass, want 1", n)
+	}
+
+	// When it is due, the retry worker delivers the slow channel.
+	if _, err := pool.Exec(ctx, managerRetryNowSQL); err != nil {
+		t.Fatal(err)
+	}
+	notifier.stall = ""
+	if err := m.ProcessPendingNotifications(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := notifier.count("a-slow"); n != 1 {
+		t.Errorf("slow channel delivered %d times by the retry worker, want 1", n)
+	}
+	if n := notifier.count("b-fast"); n != 1 {
+		t.Errorf("fast channel delivered %d times in all, want 1", n)
+	}
+	if err := pool.QueryRow(ctx, managerChannelHistorySQL, alertID, slowID).Scan(&status, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if status != string(database.NotificationStatusSent) || attempts != 2 {
+		t.Errorf("slow channel history after the retry = %s after %d attempts, want sent after 2", status, attempts)
+	}
+}
+
+// TestManager_RecordOutcome checks that a send's outcome is written
+// although the caller's context has ended, and that a failed write is
+// logged.
+func TestManager_RecordOutcome(t *testing.T) {
+	m, _, pool := managerTestEnv(t)
+	ctx := context.Background()
+
+	var channelID int64
+	if err := pool.QueryRow(ctx, managerInsertChannelSQL, "slack", "estate").Scan(&channelID); err != nil {
+		t.Fatal(err)
+	}
+	alertID := insertManagerAlert(t, pool, database.AlertTypeSystem, nil)
+	cid := channelID
+	history := &database.NotificationHistory{
+		AlertID:          &alertID,
+		ChannelID:        &cid,
+		NotificationType: database.NotificationTypeAlertFire,
+		Status:           database.NotificationStatusPending,
+		MaxAttempts:      3,
+		CreatedAt:        time.Now(),
+	}
+	if err := m.datastore.CreateNotificationHistory(ctx, history); err != nil {
+		t.Fatal(err)
+	}
+
+	ended, cancel := context.WithCancel(ctx)
+	cancel()
+	history.Status = database.NotificationStatusRetrying
+	history.AttemptCount = 1
+	m.recordOutcome(ended, history)
+	var status string
+	var attempts int
+	if err := pool.QueryRow(ctx, managerChannelHistorySQL, alertID, channelID).Scan(&status, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if status != string(database.NotificationStatusRetrying) || attempts != 1 {
+		t.Errorf("history after recording on an ended context = %s after %d attempts, want retrying after 1", status, attempts)
+	}
+
+	closed, err := pgxpool.New(ctx, testdsn.Require(t, "the notification manager integration test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed.Close()
+	m.datastore = database.NewTestDatastore(closed)
+	var logged []string
+	m.log = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	m.recordOutcome(ctx, history)
+	if len(logged) != 1 || !strings.Contains(logged[0], "Failed to update notification history") {
+		t.Errorf("logged %q, want the failed update", logged)
 	}
 }

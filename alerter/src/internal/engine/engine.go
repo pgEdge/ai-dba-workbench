@@ -38,10 +38,11 @@ const NotificationWorkerPoolSize = 10
 // These provide readable names for hardcoded durations and make tuning easier.
 const (
 	// NotificationTimeout is the maximum time allowed for sending a
-	// fired alert's notifications. Each single send within it, and
-	// each send by the pending-retry and reminder workers, is bounded
-	// by notifications.SendTimeout, which this is defined as.
-	NotificationTimeout = notifications.SendTimeout
+	// fired alert's notifications. The manager sends to every channel
+	// at once, each send bounded by notifications.SendTimeout, and
+	// records each outcome; this is the time it owns those
+	// notifications for (notifications.DeliveryTimeout).
+	NotificationTimeout = notifications.DeliveryTimeout
 
 	// BlackoutCheckInterval is how often the scheduler checks for scheduled blackouts.
 	BlackoutCheckInterval = 1 * time.Minute

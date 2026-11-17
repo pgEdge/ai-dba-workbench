@@ -250,9 +250,25 @@ webhook, Telegram) and the email notifier, whose `sendWithTLS` and
 context's deadline on the connection and closes it when the context
 ends (`net/smtp` has no context support). Every send is bounded:
 `processNotification` wraps each `Send` in
-`context.WithTimeout(ctx, SendTimeout)` (30s, also
-`engine.NotificationTimeout`), because the pending-retry and reminder
-workers pass a context with no deadline. Because the dialer holds the
+`context.WithTimeout(ctx, SendTimeout)` (30s), because the
+pending-retry and reminder workers pass a context with no deadline.
+
+`SendAlertNotification` never shares one budget across channels
+(issue #836). It creates every channel's `notification_history` row
+first, each with `next_retry_at` set to now plus `DeliveryTimeout`
+(`SendTimeout` + `recordTimeout`, also `engine.NotificationTimeout`),
+then sends to all channels concurrently. That `next_retry_at` keeps
+the pending-retry worker off rows the immediate send still owns, so a
+row is never sent twice; a row whose outcome is never recorded (the
+alerter stopped mid-send) becomes due when it passes. `recordOutcome`
+writes each outcome on `context.WithoutCancel(ctx)` bounded by
+`recordTimeout`, so a send that used up the caller's deadline is
+recorded as a failed attempt instead of being left `pending`. Do not
+go back to creating a row and sending in one sequential loop under the
+caller's context: one stalled endpoint then left every later channel
+without a row, and so without the alert.
+
+Because the dialer holds the
 policy, `webhook.go` carries no
 host check of its own; do not add one back, since a pre-check is the
 rebinding gap this replaced.

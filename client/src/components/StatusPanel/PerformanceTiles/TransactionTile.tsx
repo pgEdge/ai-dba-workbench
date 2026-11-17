@@ -19,7 +19,8 @@ import { Chart } from '../../Chart/Chart';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import type { ChartAnalysisContext } from '../../Chart/types';
 import TileContainer from './TileContainer';
-import type { ConnectionPerformance, TransactionTimeSeries } from './types';
+import type { ConnectionPerformance } from './types';
+import { combineTimeSeries, combineTransactionPoints } from './combineTimeSeries';
 import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 import { CHART_AXIS_LABEL_FONTSIZE } from '../../../theme';
@@ -32,7 +33,9 @@ interface TransactionTileProps {
 /**
  * TransactionTile shows a dual-axis chart with commits per second
  * as an area chart on the left y-axis and rollback percentage as
- * a dashed line on the right y-axis.
+ * a dashed line on the right y-axis. With several servers, commits
+ * per second are summed per time bucket and the rollback percentage is
+ * weighted by each server's commit rate.
  */
 const TransactionTile: React.FC<TransactionTileProps> = ({
     connections,
@@ -42,19 +45,16 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
     const { aiEnabled } = useAICapabilities();
 
     const { chartData, hasData, dualAxisOptions } = useMemo(() => {
-        const allPoints: TransactionTimeSeries[] = [];
-
-        connections.forEach(conn => {
-            if (conn.transactions?.time_series?.length) {
-                allPoints.push(...conn.transactions.time_series);
-            }
-        });
+        // One point per time bucket: with several servers selected the
+        // samples for each bucket are combined into an estate total.
+        const allPoints = combineTimeSeries(
+            connections.map(conn => conn.transactions?.time_series),
+            combineTransactionPoints,
+        );
 
         if (!allPoints.length) {
             return { chartData: null, hasData: false, dualAxisOptions: {} };
         }
-
-        allPoints.sort((a, b) => a.time.localeCompare(b.time));
 
         const data = {
             categories: allPoints.map(p => p.time),

@@ -25,7 +25,7 @@ vi.mock('../../../Chart/Chart', () => ({
         smooth,
         echartsOptions,
     }: {
-        data: { series: Array<{ name: string }> };
+        data: { categories?: string[]; series: Array<{ name: string; data?: number[] }> };
         showLegend?: boolean;
         stacked?: boolean;
         areaFill?: boolean;
@@ -36,6 +36,7 @@ vi.mock('../../../Chart/Chart', () => ({
             {data.series.map(s => (
                 <span key={s.name} data-testid={`series-${s.name}`}>{s.name}</span>
             ))}
+            <span data-testid="chart-data">{JSON.stringify(data)}</span>
             <span data-testid="show-legend">{String(showLegend)}</span>
             <span data-testid="stacked">{String(stacked)}</span>
             <span data-testid="area-fill">{String(areaFill)}</span>
@@ -300,16 +301,24 @@ describe('CheckpointTile', () => {
                 />
             );
 
-            // The chart should render with sorted data
-            expect(screen.getByTestId('mock-chart')).toBeInTheDocument();
+            const data = JSON.parse(screen.getByTestId('chart-data').textContent || '{}');
+            expect(data.categories).toEqual([
+                '2024-01-01T10:00:00Z',
+                '2024-01-01T11:00:00Z',
+                '2024-01-01T12:00:00Z',
+            ]);
+            expect(data.series[0].data).toEqual([50, 60, 45]);
+            expect(data.series[1].data).toEqual([20, 25, 18]);
         });
 
-        it('combines data from multiple connections', () => {
+        it('sums write and sync times per time bucket across connections', () => {
             const conn1 = createConnectionPerformance(1, 'Server 1', [
                 { time: '2024-01-01T10:00:00Z', write_time_ms: 50, sync_time_ms: 20 },
+                { time: '2024-01-01T11:00:00Z', write_time_ms: 40, sync_time_ms: 10 },
             ]);
             const conn2 = createConnectionPerformance(2, 'Server 2', [
-                { time: '2024-01-01T11:00:00Z', write_time_ms: 60, sync_time_ms: 25 },
+                { time: '2024-01-01T10:00:00Z', write_time_ms: 60, sync_time_ms: 25 },
+                { time: '2024-01-01T11:00:00Z', write_time_ms: 5, sync_time_ms: 1 },
             ]);
 
             renderWithTheme(
@@ -319,7 +328,13 @@ describe('CheckpointTile', () => {
                 />
             );
 
-            expect(screen.getByTestId('mock-chart')).toBeInTheDocument();
+            const data = JSON.parse(screen.getByTestId('chart-data').textContent || '{}');
+            expect(data.categories).toEqual([
+                '2024-01-01T10:00:00Z',
+                '2024-01-01T11:00:00Z',
+            ]);
+            expect(data.series[0].data).toEqual([110, 45]);
+            expect(data.series[1].data).toEqual([45, 11]);
         });
     });
 

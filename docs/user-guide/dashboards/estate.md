@@ -120,19 +120,19 @@ The pane includes the following tiles:
 
 - The `TOTAL SERVERS` tile shows the total number of monitored servers across
   the estate.
-- The `TOTAL CONNECTIONS` tile shows the number of monitored connections in
-  the estate, one for each server, rather than the number of PostgreSQL client
-  sessions.
+- The `TOTAL CONNECTIONS` tile shows the number of client connections to each
+  server at its most recent collection in the selected time range, summed
+  across the estate.
 - The `TRANSACTION RATE` tile shows the commit rate in transactions per second
   (tx/s), summed across every server in the estate; each server contributes
   its rate in the most recent interval of the selected time range, not its
   average across the range.
-- The `ACTIVE ALERTS` tile shows the number of alerts that have not cleared,
-  including acknowledged alerts, that your account can see; the tile counts at
-  most 200 alerts, so a larger number of open alerts still displays `200`.
+- The `ACTIVE ALERTS` tile shows the number of active alerts on the estate's
+  servers, which excludes acknowledged alerts and system alerts, and matches
+  the alert counts on the cluster tiles.
 
-Only the `TRANSACTION RATE` tile follows the dashboard time range selector. The
-`TOTAL SERVERS`, `TOTAL CONNECTIONS`, and `ACTIVE ALERTS` tiles report the
+The `TRANSACTION RATE` and `TOTAL CONNECTIONS` tiles follow the dashboard time
+range selector. The `TOTAL SERVERS` and `ACTIVE ALERTS` tiles report the
 current state of the estate regardless of the selected time range.
 
 ![Reviewing the key performance indicators](../../images/estate_key_performance.png)

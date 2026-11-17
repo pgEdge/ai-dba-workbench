@@ -601,7 +601,12 @@ partial result. The merge drops the response's top-level `aggregate`,
 whose weighted cache hit average cannot be recomputed from the response
 fields, so a consumer needing it must read an unbatched response.
 `/api/v1/alerts` and `/api/v1/overview` also take `connection_ids` but
-are not capped, and are sent whole.
+are not capped, and are usually sent whole; `KpiTilesSection` reuses its
+performance batches for the alert count and sums each response's
+`total`. Count alerts from `total` with `status=active` and the scope's
+`connection_ids` (which also excludes system alerts), never from the
+length of one page, so the figure matches the cluster cards'
+`active_alert_count`.
 
 ## Sortable and Searchable Dashboard Tables
 

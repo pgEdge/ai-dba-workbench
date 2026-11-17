@@ -58,9 +58,9 @@ const ERROR_SX = {
 
 /**
  * KpiTilesSection shows fleet-wide KPI tiles for the estate:
- * total servers, total connections, transaction rate, and
- * alert count. Fetches aggregate data from the performance
- * summary and alerts endpoints.
+ * total servers, total client connections (backends), transaction
+ * rate, and active alert count. Fetches aggregate data from the
+ * performance summary and alerts endpoints.
  */
 const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds }) => {
     const { user } = useAuth();
@@ -109,15 +109,29 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
 
         // The estate can hold more servers than one request may name,
         // so the ID list is batched to the server's cap and the
-        // per-connection results concatenated. The alerts endpoint is
-        // not capped and is fetched whole, as before.
-        const perfUrls = chunkConnectionIds(serverIds).map(batch => {
+        // per-connection results concatenated. The alerts count uses
+        // the same batches; they are disjoint, so their totals sum.
+        const batches = chunkConnectionIds(serverIds);
+        const perfUrls = batches.map(batch => {
             const perfParams = new URLSearchParams({
                 connection_ids: batch.join(','),
             });
             appendTimeRangeParams(perfParams, selectedWindow);
             return '/api/v1/metrics/performance-summary'
                 + `?${perfParams.toString()}`;
+        });
+        // Only the response's total is read, so one row per page is
+        // enough. Naming the estate's servers keeps system alerts and
+        // servers outside the estate out of the count, and
+        // status=active leaves out acknowledged and cleared alerts,
+        // which is the definition the cluster cards use.
+        const alertUrls = batches.map(batch => {
+            const alertParams = new URLSearchParams({
+                connection_ids: batch.join(','),
+                status: 'active',
+                limit: '1',
+            });
+            return `/api/v1/alerts?${alertParams.toString()}`;
         });
 
         if (!initialLoadDoneRef.current) {
@@ -130,11 +144,9 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
         const isCurrent = beginRequest();
 
         try {
-            const [perfResponses, alertsResponse] = await Promise.all([
+            const [perfResponses, alertResponses] = await Promise.all([
                 Promise.all(perfUrls.map(url => apiFetch(url))),
-                apiFetch(
-                    '/api/v1/alerts?exclude_cleared=true&limit=200',
-                ),
+                Promise.all(alertUrls.map(url => apiFetch(url))),
             ]);
 
             // A superseded or unmounted attempt is not a failure, so
@@ -145,7 +157,10 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
             // retry controller reschedules the fetch instead of silently
             // rendering zero/partial KPI data as if the load succeeded.
             // One failed batch fails the whole load for the same reason.
-            if (perfResponses.some(r => !r.ok) || !alertsResponse.ok) {
+            if (
+                perfResponses.some(r => !r.ok)
+                || alertResponses.some(r => !r.ok)
+            ) {
                 if (isCurrent()) {
                     setError('Failed to fetch KPI data');
                 }
@@ -155,7 +170,9 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
             const perfData = await Promise.all(
                 perfResponses.map(r => r.json()),
             );
-            const alertsData = await alertsResponse.json();
+            const alertsData: { total?: unknown }[] = await Promise.all(
+                alertResponses.map(r => r.json()),
+            );
 
             let totalConnections = 0;
             let transactionRate = 0;
@@ -165,14 +182,23 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
             );
 
             connections.forEach((conn: Record<string, unknown>) => {
-                totalConnections += 1;
+                // Backends on the server at its newest collection in the
+                // selected window.
+                if (typeof conn.active_connections === 'number') {
+                    totalConnections += conn.active_connections;
+                }
                 const txns = conn.transactions as Record<string, unknown> | undefined;
                 if (txns && typeof txns.commits_per_sec === 'number') {
                     transactionRate += txns.commits_per_sec;
                 }
             });
 
-            const alertCount = (alertsData.alerts || []).length;
+            // The response's total counts every matching alert, not
+            // just the single row returned.
+            const alertCount = alertsData.reduce(
+                (sum, d) => sum + (typeof d.total === 'number' ? d.total : 0),
+                0,
+            );
 
             // A late resolution after unmount, or after a newer window
             // was selected, must not touch state; neither is a failure,

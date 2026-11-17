@@ -49,6 +49,7 @@ type Client struct {
 	initialConnStr string                     // original connection string from env
 	dbConfig       *config.DatabaseConfig     // database configuration for pool settings
 	dialGuard      DialGuard                  // applied to every pool this client opens; nil for the datastore
+	flightGen      uint64                     // ClientManager connect that made it; 0 if none
 	mu             sync.RWMutex
 }
 
@@ -319,6 +320,34 @@ var errClientConnectionNotFound = errors.New("connection not found")
 
 // LoadMetadataFor loads table and column metadata for a specific connection
 func (c *Client) LoadMetadataFor(connStr string) error {
+	return c.LoadMetadataForContext(context.Background(), connStr)
+}
+
+// metadataLoadFailed logs a failed metadata load and returns err.
+func metadataLoadFailed(connStr string, startTime time.Time, err error) error {
+	LogMetadataLoad(connStr, 0, time.Since(startTime), err)
+	return err
+}
+
+// vectorColumnInfo reports whether a column is a pgvector "vector" and,
+// when its formatted type carries one (e.g. "vector(1536)"), its
+// dimension count.
+func vectorColumnInfo(typeName sql.NullString, dataType string) (isVector bool, dimensions int) {
+	if !typeName.Valid || typeName.String != "vector" {
+		return false, 0
+	}
+	if matches := reVectorDimensions.FindStringSubmatch(dataType); len(matches) > 1 {
+		if dim, err := strconv.Atoi(matches[1]); err == nil {
+			dimensions = dim
+		}
+	}
+	return true, dimensions
+}
+
+// LoadMetadataForContext loads table and column metadata for a specific
+// connection under ctx, so that a caller can bound how long a monitored
+// server may take to answer.
+func (c *Client) LoadMetadataForContext(ctx context.Context, connStr string) error {
 	startTime := time.Now()
 
 	c.mu.RLock()
@@ -330,8 +359,6 @@ func (c *Client) LoadMetadataFor(connStr string) error {
 		// appear in an error that can reach a caller or a log.
 		return errClientConnectionNotFound
 	}
-
-	ctx := context.Background()
 
 	query := `
 		WITH table_comments AS (
@@ -464,9 +491,7 @@ func (c *Client) LoadMetadataFor(connStr string) error {
 
 	rows, err := conn.Pool.Query(ctx, query)
 	if err != nil {
-		duration := time.Since(startTime)
-		LogMetadataLoad(connStr, 0, duration, err)
-		return fmt.Errorf("failed to query metadata: %w", err)
+		return metadataLoadFailed(connStr, startTime, fmt.Errorf("failed to query metadata: %w", err))
 	}
 	defer rows.Close()
 
@@ -483,9 +508,7 @@ func (c *Client) LoadMetadataFor(connStr string) error {
 
 		err := rows.Scan(&schemaName, &tableName, &tableType, &tableDesc, &columnName, &dataType, &isNullable, &columnDesc, &typeName, &typeModifier, &isPrimaryKey, &isUnique, &fkReference, &isIndexed, &identityType, &defaultValue)
 		if err != nil {
-			duration := time.Since(startTime)
-			LogMetadataLoad(connStr, 0, duration, err)
-			return fmt.Errorf("failed to scan row: %w", err)
+			return metadataLoadFailed(connStr, startTime, fmt.Errorf("failed to scan row: %w", err))
 		}
 
 		key := schemaName + "." + tableName
@@ -504,17 +527,7 @@ func (c *Client) LoadMetadataFor(connStr string) error {
 
 		if columnName != "" {
 			// Detect vector columns and extract dimensions
-			isVector := false
-			dimensions := 0
-			if typeName.Valid && typeName.String == "vector" {
-				isVector = true
-				// Parse dimensions from data_type (e.g., "vector(1536)")
-				if matches := reVectorDimensions.FindStringSubmatch(dataType); len(matches) > 1 {
-					if dim, err := strconv.Atoi(matches[1]); err == nil {
-						dimensions = dim
-					}
-				}
-			}
+			isVector, dimensions := vectorColumnInfo(typeName, dataType)
 
 			table.Columns = append(table.Columns, ColumnInfo{
 				ColumnName:       columnName,
@@ -537,9 +550,7 @@ func (c *Client) LoadMetadataFor(connStr string) error {
 	}
 
 	if err := rows.Err(); err != nil {
-		duration := time.Since(startTime)
-		LogMetadataLoad(connStr, 0, duration, err)
-		return err
+		return metadataLoadFailed(connStr, startTime, err)
 	}
 
 	// Update metadata atomically

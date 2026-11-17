@@ -148,6 +148,103 @@ func TestGetOrCreateClientInitiatorCancelDoesNotFailWaiters(t *testing.T) {
 	}
 }
 
+// TestFinishClientCall checks how a finished connect's client is
+// installed: the most recently started connect for a key wins whatever
+// order they finish in, and a connect finishing after CloseAll closes
+// its client rather than storing it.
+func TestFinishClientCall(t *testing.T) {
+	// A client counts as open whilst it holds the connection entry
+	// added here; Close empties it.
+	newOpenClient := func(connStr string) *Client {
+		c := NewClientWithConnectionString(connStr, nil)
+		c.connections[connStr] = &ConnectionInfo{}
+		return c
+	}
+	isOpen := func(c *Client) bool {
+		c.mu.RLock()
+		defer c.mu.RUnlock()
+		return len(c.connections) > 0
+	}
+	// start registers a connect for key the way
+	// GetOrCreateClientWithConnString does.
+	start := func(cm *ClientManager, key, connStr string) (*clientCall, string) {
+		cm.mu.Lock()
+		defer cm.mu.Unlock()
+		cm.lastFlightGen++
+		call := &clientCall{done: make(chan struct{}), gen: cm.lastFlightGen, closeGen: cm.closeGen}
+		flightKey := key + "\x00" + connStr
+		cm.inflight[flightKey] = call
+		return call, flightKey
+	}
+
+	t.Run("newer connect finishing first is kept", func(t *testing.T) {
+		cm := NewClientManager(nil)
+		older, olderKey := start(cm, "k", "old")
+		newer, newerKey := start(cm, "k", "new")
+		newClient, oldClient := newOpenClient("new"), newOpenClient("old")
+
+		cm.finishClientCall(newer, newerKey, "k", newClient, nil)
+		cm.finishClientCall(older, olderKey, "k", oldClient, nil)
+
+		if older.client != newClient || older.err != nil {
+			t.Errorf("older callers got %p, %v; want the newer client", older.client, older.err)
+		}
+		if got, _ := cm.GetClient("k"); got != newClient {
+			t.Errorf("cached client = %p, want the newer one", got)
+		}
+		if !isOpen(newClient) || isOpen(oldClient) {
+			t.Errorf("open: newer %v, older %v; want only the newer", isOpen(newClient), isOpen(oldClient))
+		}
+		if len(cm.inflight) != 0 {
+			t.Errorf("inflight = %v, want empty", cm.inflight)
+		}
+	})
+
+	t.Run("newer connect finishing last replaces the older", func(t *testing.T) {
+		cm := NewClientManager(nil)
+		older, olderKey := start(cm, "k", "old")
+		newer, newerKey := start(cm, "k", "new")
+		newClient, oldClient := newOpenClient("new"), newOpenClient("old")
+
+		cm.finishClientCall(older, olderKey, "k", oldClient, nil)
+		cm.finishClientCall(newer, newerKey, "k", newClient, nil)
+
+		if got, _ := cm.GetClient("k"); got != newClient {
+			t.Errorf("cached client = %p, want the newer one", got)
+		}
+		if isOpen(oldClient) {
+			t.Error("the replaced older client is still open")
+		}
+	})
+
+	t.Run("connect finishing after CloseAll is closed", func(t *testing.T) {
+		cm := NewClientManager(nil)
+		call, flightKey := start(cm, "k", "c")
+		if err := cm.CloseAll(); err != nil {
+			t.Fatalf("CloseAll: %v", err)
+		}
+		client := newOpenClient("c")
+
+		cm.finishClientCall(call, flightKey, "k", client, nil)
+
+		if call.client != nil || !errors.Is(call.err, errClientManagerClosed) {
+			t.Errorf("callers got %p, %v; want errClientManagerClosed", call.client, call.err)
+		}
+		if isOpen(client) || cm.GetClientCount() != 0 {
+			t.Errorf("client open %v, count %d; want closed and not stored", isOpen(client), cm.GetClientCount())
+		}
+	})
+
+	t.Run("failed connect stores nothing", func(t *testing.T) {
+		cm := NewClientManager(nil)
+		call, flightKey := start(cm, "k", "c")
+		cm.finishClientCall(call, flightKey, "k", nil, errBlockedDial)
+		if !errors.Is(call.err, errBlockedDial) || cm.GetClientCount() != 0 {
+			t.Errorf("err %v, count %d; want the failure and nothing stored", call.err, cm.GetClientCount())
+		}
+	})
+}
+
 // waitForWaiters polls until the connect in flight under flightKey has
 // n callers waiting on it.
 func waitForWaiters(t *testing.T, cm *ClientManager, flightKey string, n int) {

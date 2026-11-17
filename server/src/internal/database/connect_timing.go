@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 )
@@ -88,13 +89,15 @@ func SetConnectTiming(t ConnectTiming) (restore func()) {
 // that a refused port, a filtered one and a host that is not PostgreSQL
 // all take the same time to report; see MonitoredConnectTimeout. The
 // hold ends early if ctx ends, since the caller is then no longer
-// waiting for the answer. connect's error is returned unchanged.
+// waiting for the answer. A failure is returned with connect's error as
+// its text and cause, and also matches ErrConnectFailed.
 func ConnectMonitored(ctx context.Context, connect func(context.Context) error) error {
 	elapsed, err := boundedConnect(ctx, connect)
 	if err != nil {
 		holdFailedConnect(ctx, elapsed)
+		return &failedConnectError{err: err}
 	}
-	return err
+	return nil
 }
 
 // boundedConnect runs connect under the connect deadline and returns
@@ -120,15 +123,39 @@ func holdFailedConnect(ctx context.Context, elapsed time.Duration) {
 	}
 }
 
+// LoadMonitoredMetadata loads client's metadata for connStr under the
+// same deadline as the connect, so that a monitored server which
+// accepts the connection but never answers cannot hold the caller, or a
+// connect shared with other callers, indefinitely.
+func LoadMonitoredMetadata(ctx context.Context, client *Client, connStr string) error {
+	loadCtx, cancel := context.WithTimeout(ctx, connectTiming.Load().Timeout)
+	defer cancel()
+	return client.LoadMetadataForContext(loadCtx, connStr)
+}
+
+// ErrConnectFailed matches, with errors.Is, every error from a failed
+// connect to a monitored server made through ConnectMonitored or the
+// ClientManager. The cause's text differs between a refused port, a
+// filtered one and a host that is not PostgreSQL, so a reply to the
+// caller must use fixed text in its place and leave the cause to the
+// log (issue #850).
+var ErrConnectFailed = errors.New("failed to establish database connection")
+
+// FailedConnectText is the fixed reply text for an error matching
+// ErrConnectFailed.
+const FailedConnectText = "Failed to establish database connection"
+
 // failedConnectError marks a failure as the connect's own, as opposed to
 // a metadata load or argument error, so that GetClientForSession holds
-// it. Its text is the cause's.
+// it and replies can match ErrConnectFailed. Its text is the cause's,
+// and it unwraps to the cause.
 type failedConnectError struct {
 	err error
 }
 
-func (e *failedConnectError) Error() string { return e.err.Error() }
-func (e *failedConnectError) Unwrap() error { return e.err }
+func (e *failedConnectError) Error() string        { return e.err.Error() }
+func (e *failedConnectError) Unwrap() error        { return e.err }
+func (e *failedConnectError) Is(target error) bool { return target == ErrConnectFailed }
 
 // sleepContext waits for d, or until ctx ends if that is sooner.
 func sleepContext(ctx context.Context, d time.Duration) {

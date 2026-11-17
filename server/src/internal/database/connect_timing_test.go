@@ -98,6 +98,9 @@ func TestConnectMonitored(t *testing.T) {
 			if !errors.Is(err, tc.err) || (tc.err == nil && err != nil) {
 				t.Fatalf("err = %v, want %v", err, tc.err)
 			}
+			if failed := errors.Is(err, ErrConnectFailed); failed != (tc.err != nil) {
+				t.Errorf("errors.Is(err, ErrConnectFailed) = %v, want %v", failed, tc.err != nil)
+			}
 			if !hasDeadline {
 				t.Fatal("connect ran without a deadline")
 			}
@@ -165,6 +168,9 @@ func TestGetClientForSessionHoldsFailedConnect(t *testing.T) {
 	var connectErr *pgconn.ConnectError
 	if !errors.As(err, &connectErr) {
 		t.Errorf("error %v does not unwrap to a *pgconn.ConnectError", err)
+	}
+	if !errors.Is(err, ErrConnectFailed) {
+		t.Errorf("error %v does not match ErrConnectFailed", err)
 	}
 }
 

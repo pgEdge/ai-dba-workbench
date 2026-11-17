@@ -84,8 +84,11 @@ project adheres to
   query validation and database list endpoints and in the MCP tools,
   and hold any failed connect until the 10 seconds have passed, so
   that a refused port and a filtered port take the same time to
-  report and the reply time no longer serves as a port scan. A wrong
-  host or port therefore takes 10 seconds to report. (#850)
+  report and the reply time no longer serves as a port scan. The MCP
+  tools and resources now report every failed connect to the selected
+  connection with the same fixed message, which no longer names the
+  cause. A wrong host or port therefore takes 10 seconds to report.
+  (#850)
 
 ## [2.0.0-beta1] - 2026-11-12
 

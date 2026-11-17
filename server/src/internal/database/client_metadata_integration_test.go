@@ -11,12 +11,14 @@ package database
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -226,6 +228,34 @@ func TestClientManager_MetadataLoadFailure(t *testing.T) {
 	}
 	if n := cm.GetClientCount(); n != 0 {
 		t.Errorf("client count = %d, want 0", n)
+	}
+}
+
+// TestLoadMonitoredMetadataIsBounded checks that the metadata load for
+// a monitored connection runs under the connect deadline, so that a
+// server which accepts the connection but never answers cannot hold the
+// load indefinitely. A deadline too short for any query stands in for
+// that server.
+func TestLoadMonitoredMetadataIsBounded(t *testing.T) {
+	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if connStr == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping client metadata integration test")
+	}
+	client := NewClientWithConnectionString(connStr, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(client.Close)
+
+	restore := SetConnectTiming(ConnectTiming{Timeout: time.Nanosecond})
+	err := LoadMonitoredMetadata(context.Background(), client, connStr)
+	restore()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
+	}
+
+	if err := LoadMonitoredMetadata(context.Background(), client, connStr); err != nil {
+		t.Fatalf("load under the default deadline: %v", err)
 	}
 }
 

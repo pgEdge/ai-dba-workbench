@@ -90,21 +90,46 @@ func SetConnectTiming(t ConnectTiming) (restore func()) {
 // hold ends early if ctx ends, since the caller is then no longer
 // waiting for the answer. connect's error is returned unchanged.
 func ConnectMonitored(ctx context.Context, connect func(context.Context) error) error {
+	elapsed, err := boundedConnect(ctx, connect)
+	if err != nil {
+		holdFailedConnect(ctx, elapsed)
+	}
+	return err
+}
+
+// boundedConnect runs connect under the connect deadline and returns
+// how long it took. It is the first half of ConnectMonitored, for a
+// caller that must start the deadline under a lock and hold a failure
+// only once the lock is released.
+func boundedConnect(ctx context.Context, connect func(context.Context) error) (time.Duration, error) {
 	timing := connectTiming.Load()
 	start := timing.Now()
 
 	connectCtx, cancel := context.WithTimeout(ctx, timing.Timeout)
 	err := connect(connectCtx)
 	cancel()
-	if err == nil {
-		return nil
-	}
+	return timing.Now().Sub(start), err
+}
 
-	if remaining := timing.Floor - timing.Now().Sub(start); remaining > 0 {
+// holdFailedConnect waits out the rest of the floor after a failed
+// connect that took elapsed, ending early if ctx ends.
+func holdFailedConnect(ctx context.Context, elapsed time.Duration) {
+	timing := connectTiming.Load()
+	if remaining := timing.Floor - elapsed; remaining > 0 {
 		timing.Sleep(ctx, remaining)
 	}
-	return err
 }
+
+// failedConnectError carries a failed connect's duration from where it
+// ran, under ClientManager's lock, to GetClientForSession, which holds
+// the failure once the lock is released. Its text is the cause's.
+type failedConnectError struct {
+	err     error
+	elapsed time.Duration
+}
+
+func (e *failedConnectError) Error() string { return e.err.Error() }
+func (e *failedConnectError) Unwrap() error { return e.err }
 
 // sleepContext waits for d, or until ctx ends if that is sooner.
 func sleepContext(ctx context.Context, d time.Duration) {

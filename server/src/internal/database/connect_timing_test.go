@@ -161,6 +161,40 @@ func TestGetClientForSessionHoldsFailedConnect(t *testing.T) {
 	if got := clock.sleeps(); len(got) != 1 || got[0] != MonitoredConnectTimeout {
 		t.Errorf("slept %v, want one hold of %v", got, MonitoredConnectTimeout)
 	}
+	// The hold's wrapper keeps the cause reachable.
+	var connectErr *pgconn.ConnectError
+	if !errors.As(err, &connectErr) {
+		t.Errorf("error %v does not unwrap to a *pgconn.ConnectError", err)
+	}
+}
+
+// TestGetClientForSessionLockWaitNotCounted checks that time spent
+// waiting for the client manager's lock counts neither against the
+// connect deadline nor towards the hold: the hold is measured from when
+// the connect starts, after the lock is taken.
+func TestGetClientForSessionLockWaitNotCounted(t *testing.T) {
+	clock := installFakeConnectClock(t)
+	cm := NewClientManager(nil)
+	cm.SetMonitoredDialGuard(func(*pgconn.Config) {})
+
+	cm.mu.Lock()
+	done := make(chan error, 1)
+	go func() {
+		_, err := cm.GetClientForSession(context.Background(),
+			&SessionInfo{TokenHash: "t", ConnectionID: 1},
+			"postgres://u@127.0.0.1:1/x?sslmode=disable")
+		done <- err
+	}()
+	// Another session's connect holds the lock for 5 seconds.
+	clock.advance(5 * time.Second)
+	cm.mu.Unlock()
+
+	if err := <-done; err == nil {
+		t.Fatal("expected the connect to fail")
+	}
+	if got := clock.sleeps(); len(got) != 1 || got[0] != MonitoredConnectTimeout {
+		t.Errorf("slept %v, want one hold of %v from the connect's start", got, MonitoredConnectTimeout)
+	}
 }
 
 func TestSetConnectTimingDefaultsAndRestore(t *testing.T) {

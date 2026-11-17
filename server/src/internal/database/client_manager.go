@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -264,9 +265,11 @@ type SessionInfo struct {
 
 // GetClientForSession returns a database client for a connection session
 // This is a helper that builds the appropriate client key and connection string.
-// A new client connects under ConnectMonitored, so a failed connect takes
-// the same time to report whatever its cause (issue #850); the hold runs
-// after the client manager's lock is released.
+// A failed connect is held to the floor, so that it takes the same time
+// to report whatever its cause (issue #850). The connect deadline and
+// the time it is held against start once the client manager's lock is
+// held, so that waiting for the lock neither shortens the connect nor
+// shows in the reply time, and the hold runs after the lock is released.
 func (cm *ClientManager) GetClientForSession(ctx context.Context, session *SessionInfo, connStr string) (*Client, error) {
 	if session == nil {
 		return nil, fmt.Errorf("session info is required")
@@ -281,12 +284,11 @@ func (cm *ClientManager) GetClientForSession(ctx context.Context, session *Sessi
 		clientKey = fmt.Sprintf("%s:db:%s", clientKey, *session.DatabaseName)
 	}
 
-	var client *Client
-	err := ConnectMonitored(ctx, func(connectCtx context.Context) error {
-		var err error
-		client, err = cm.GetOrCreateClientWithConnString(connectCtx, clientKey, connStr)
-		return err
-	})
+	client, err := cm.GetOrCreateClientWithConnString(ctx, clientKey, connStr)
+	var failed *failedConnectError
+	if errors.As(err, &failed) {
+		holdFailedConnect(ctx, failed.elapsed)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -340,8 +342,11 @@ func (cm *ClientManager) GetOrCreateClientWithConnString(ctx context.Context, ke
 	if client.dialGuard == nil {
 		client.dialGuard = (*Datastore)(nil).GuardMonitoredConnConfig
 	}
-	if err := client.connect(ctx); err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	// The deadline starts here, under the lock, so that time spent
+	// waiting for the lock does not count against it.
+	if elapsed, err := boundedConnect(ctx, client.connect); err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w",
+			&failedConnectError{err: err, elapsed: elapsed})
 	}
 
 	if err := client.LoadMetadata(); err != nil {

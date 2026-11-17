@@ -42,6 +42,7 @@ func TestMainCLICommandConfigFile(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+		t.Setenv("AppData", home)
 		fileutil.SetSystemConfigDirForTest(t, filepath.Join(home, "absent-etc-pgedge"))
 
 		args := []string{"ai-dba-server"}

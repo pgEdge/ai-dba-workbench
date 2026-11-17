@@ -278,7 +278,33 @@ describe('TransactionTile', () => {
                 />
             );
 
-            expect(screen.getByTestId('mock-chart')).toBeInTheDocument();
+            const options = JSON.parse(screen.getByTestId('echarts-options').textContent || '{}');
+            expect(options.series[0].data).toEqual([100, 200]);
+            expect(options.series[1].data).toEqual([0.5, 1]);
+        });
+
+        it('sums commits and weights rollback % per time bucket across connections', () => {
+            const conn1 = createConnectionPerformance(1, 'Server 1', [
+                { time: '2024-01-01T10:00:00Z', commits_per_sec: 300, rollback_percent: 1 },
+                { time: '2024-01-01T11:00:00Z', commits_per_sec: 50, rollback_percent: 2 },
+            ]);
+            const conn2 = createConnectionPerformance(2, 'Server 2', [
+                { time: '2024-01-01T10:00:00Z', commits_per_sec: 100, rollback_percent: 5 },
+                { time: '2024-01-01T11:00:00Z', commits_per_sec: 150, rollback_percent: 6 },
+            ]);
+
+            renderWithTheme(
+                <TransactionTile
+                    connections={[conn1, conn2]}
+                    loading={false}
+                />
+            );
+
+            const options = JSON.parse(screen.getByTestId('echarts-options').textContent || '{}');
+            // Two buckets, not four interleaved samples.
+            expect(options.series[0].data).toEqual([400, 200]);
+            // (300 * 1 + 100 * 5) / 400 = 2; (50 * 2 + 150 * 6) / 200 = 5.
+            expect(options.series[1].data).toEqual([2, 5]);
         });
     });
 

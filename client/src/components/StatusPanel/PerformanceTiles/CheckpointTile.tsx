@@ -19,7 +19,8 @@ import { Chart } from '../../Chart/Chart';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import type { ChartAnalysisContext } from '../../Chart/types';
 import TileContainer from './TileContainer';
-import type { ConnectionPerformance, CheckpointTimeSeries } from './types';
+import type { ConnectionPerformance } from './types';
+import { combineTimeSeries, combineCheckpointPoints } from './combineTimeSeries';
 import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 import { CHART_AXIS_LABEL_FONTSIZE } from '../../../theme';
@@ -31,7 +32,8 @@ interface CheckpointTileProps {
 
 /**
  * CheckpointTile shows a stacked area chart of checkpoint write
- * time and sync time over time.
+ * time and sync time over time, summed across servers per time bucket
+ * when several are selected.
  */
 const CheckpointTile: React.FC<CheckpointTileProps> = ({
     connections,
@@ -41,19 +43,16 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
     const { aiEnabled } = useAICapabilities();
 
     const { chartData, hasData } = useMemo(() => {
-        const allPoints: CheckpointTimeSeries[] = [];
-
-        connections.forEach(conn => {
-            if (conn.checkpoints?.time_series?.length) {
-                allPoints.push(...conn.checkpoints.time_series);
-            }
-        });
+        // One point per time bucket: with several servers selected the
+        // write and sync times for each bucket are summed.
+        const allPoints = combineTimeSeries(
+            connections.map(conn => conn.checkpoints?.time_series),
+            combineCheckpointPoints,
+        );
 
         if (!allPoints.length) {
             return { chartData: null, hasData: false };
         }
-
-        allPoints.sort((a, b) => a.time.localeCompare(b.time));
 
         const data = {
             categories: allPoints.map(p => p.time),

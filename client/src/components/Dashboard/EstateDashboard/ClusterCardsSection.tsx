@@ -9,7 +9,7 @@
  */
 
 import type React from 'react';
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useId } from 'react';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
@@ -91,6 +91,22 @@ const SERVER_COUNT_SX = {
     fontSize: '0.75rem',
     fontWeight: 600,
     color: 'text.secondary',
+};
+
+/**
+ * Hide text visually whilst keeping it available to assistive
+ * technology.
+ */
+const VISUALLY_HIDDEN_SX = {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    p: 0,
+    m: '-1px',
+    overflow: 'hidden',
+    clip: 'rect(0 0 0 0)',
+    whiteSpace: 'nowrap',
+    border: 0,
 };
 
 const EMPTY_SX = {
@@ -189,6 +205,7 @@ const extractClusterCards = (selection: EstateSelection): ClusterCardData[] => {
  */
 const ClusterCardsSection: React.FC<ClusterCardsSectionProps> = ({ selection }) => {
     const theme = useTheme();
+    const idPrefix = useId();
     const { selectCluster } = useClusterSelection();
 
     const clusterCards = useMemo(() => extractClusterCards(selection), [selection]);
@@ -212,7 +229,12 @@ const ClusterCardsSection: React.FC<ClusterCardsSectionProps> = ({ selection }) 
 
     return (
         <Box sx={CARDS_GRID_SX}>
-            {clusterCards.map(card => (
+            {clusterCards.map((card, index) => {
+                // The card's aria-label replaces its content as its
+                // accessible name, so link the alert badge as its
+                // description to keep the count audible.
+                const alertsId = `${idPrefix}-alerts-${index}`;
+                return (
                 <Paper
                     key={card.cluster.id}
                     elevation={0}
@@ -221,6 +243,7 @@ const ClusterCardsSection: React.FC<ClusterCardsSectionProps> = ({ selection }) 
                     role="button"
                     tabIndex={0}
                     aria-label={`Select cluster ${card.name}`}
+                    aria-describedby={card.alertCount > 0 ? alertsId : undefined}
                     onKeyDown={(e: React.KeyboardEvent) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
@@ -238,17 +261,22 @@ const ClusterCardsSection: React.FC<ClusterCardsSectionProps> = ({ selection }) 
                             </Typography>
                         </Box>
                         {card.alertCount > 0 && (
-                            <Chip
-                                label={card.alertCount}
-                                aria-label={`${card.alertCount} active alert${card.alertCount !== 1 ? 's' : ''}`}
-                                size="small"
-                                color="warning"
-                                sx={{
-                                    height: 22,
-                                    fontSize: '0.75rem',
-                                    fontWeight: 700,
-                                }}
-                            />
+                            <>
+                                <Chip
+                                    label={card.alertCount}
+                                    aria-hidden="true"
+                                    size="small"
+                                    color="warning"
+                                    sx={{
+                                        height: 22,
+                                        fontSize: '0.75rem',
+                                        fontWeight: 700,
+                                    }}
+                                />
+                                <Box component="span" id={alertsId} sx={VISUALLY_HIDDEN_SX}>
+                                    {card.alertCount} active alert{card.alertCount !== 1 ? 's' : ''}
+                                </Box>
+                            </>
                         )}
                     </Box>
 
@@ -310,7 +338,8 @@ const ClusterCardsSection: React.FC<ClusterCardsSectionProps> = ({ selection }) 
                         </Box>
                     )}
                 </Paper>
-            ))}
+                );
+            })}
         </Box>
     );
 };

@@ -113,7 +113,8 @@ describe('ClusterCardsSection', () => {
 
         // Alerts on the offline server stay in the badge alongside the
         // stale server's alert.
-        expect(screen.getByLabelText('3 active alerts')).toHaveTextContent('3');
+        expect(screen.getByRole('button', { name: 'Select cluster Mixed' }))
+            .toHaveAccessibleDescription('3 active alerts');
         expect(screen.getByText('1 online')).toBeInTheDocument();
         expect(screen.getByText('2 warning')).toBeInTheDocument();
         expect(screen.getByText('1 offline')).toBeInTheDocument();
@@ -128,7 +129,15 @@ describe('ClusterCardsSection', () => {
 
         renderSection(makeSelection([oneAlert]));
 
-        expect(screen.getByLabelText('1 active alert')).toHaveTextContent('1');
+        expect(screen.getByRole('button', { name: 'Select cluster One Alert' }))
+            .toHaveAccessibleDescription('1 active alert');
+    });
+
+    it('gives a card without alerts no description', () => {
+        renderSection(makeSelection([singleCluster]));
+
+        const card = screen.getByRole('button', { name: 'Select cluster Single' });
+        expect(card).not.toHaveAttribute('aria-describedby');
     });
 
     it('selects the topology entry itself on click, keeping db_cluster_id', () => {

@@ -95,19 +95,16 @@ following categories:
 - The `Warning` category appears in orange.
 - The `Offline` category appears in red.
 
-The right tile displays an `Alert Distribution` chart that breaks down alerts
-by severity. The chart counts up to 200 uncleared alerts, including
-acknowledged alerts, so it is not a complete count of active alerts, and it can
-still appear when every uncleared alert is acknowledged. When there are no
-uncleared alerts, the panel displays `No active alerts`; the panel also
-displays that message when the first request for the counts fails, so the
-message does not prove that no alerts exist. The chart fetches its
-counts when the dashboard opens and when the signed-in user changes, so an
-alert raised later does not appear until the counts are fetched again, for
-example when you reopen the dashboard. The
-brain icon in the top-right corner of the tile opens an
-[AI chart analysis](../ai/index.md#in-depth-object-analysis) of the displayed
-data.
+The right tile displays an `Alert Distribution` chart that breaks down the
+active alerts on the estate's servers by severity. The count excludes
+acknowledged, cleared, and system alerts, and has no upper limit. The chart
+refreshes with the rest of the estate dashboard. When there are no active
+alerts, the panel displays `No active alerts`; the panel also displays that
+message while it retries a first request for the counts that failed, so the
+message does not prove that no alerts exist. When a later refresh fails, the
+chart keeps the last counts it fetched and retries. The brain icon in the
+top-right corner of the tile opens an [AI chart
+analysis](../ai/index.md#in-depth-object-analysis) of the displayed data.
 
 ![Reviewing the health of the estate](../../images/estate_health_overview.png)
 

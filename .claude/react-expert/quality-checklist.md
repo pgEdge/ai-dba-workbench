@@ -512,6 +512,11 @@ should be written; it is deliberately separate from
   state, so a panel that wraps its fetch in `run()` still needs
   `useRequestSequence` inside the fetch itself. `KpiTilesSection`
   is the worked example.
+  `HealthOverviewSection` follows it for the Alert Distribution
+  chart, which has no time window but refetches on every
+  `lastRefresh`; it counts each severity from the `total` of a
+  `status=active`, `limit=1` request per `connection_ids` batch,
+  never from the length of one page.
 
 - Where the view is paged, treat the window as a filter that changes
   the size of the result set and reset the offset when it moves, or

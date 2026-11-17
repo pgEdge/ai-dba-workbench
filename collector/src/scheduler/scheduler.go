@@ -844,11 +844,17 @@ func isClosedPoolError(err error) bool {
 // executeProbeForAllDatabases executes a database-scoped probe for all
 // databases and returns all collected metrics, the database list, whether
 // the connection failed along with the message describing it, and what the
-// run learned about the probe's required extension.
+// run learned about the probe's required extension. A probe that reads a
+// server-wide view (probes.ServerWideViewProbe) is executed only until one
+// database reports its extension present, default database first.
 func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]any, []string, bool, string, extensionStatus) {
 	config := probe.GetConfig()
 	var allMetrics []map[string]any
 	extStatus := extensionUnknown
+	// A probe reading a server-wide view needs only one database that
+	// has its extension, so the visit ends at the first one that does
+	// and returns successfully (GitHub issue #762).
+	serverWideView := probes.ReadsServerWideView(probe)
 
 	// Acquire a connection to the monitored server, detect its PostgreSQL
 	// version and list the databases the probe should visit.
@@ -863,7 +869,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		ctx, probe, conn, monitoredDB, databases, pgVersion)
 	extStatus = extStatus.merge(defaultStatus)
 	allMetrics = append(allMetrics, defaultMetrics...)
-	if !ok {
+	if !ok || (serverWideView && defaultStatus == extensionPresent) {
 		return allMetrics, databases, false, "", extStatus
 	}
 
@@ -883,6 +889,9 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		metrics, status := ps.executeProbeOnDatabase(ctx, probe, conn, dbName, pgVersion)
 		extStatus = extStatus.merge(status)
 		allMetrics = append(allMetrics, metrics...)
+		if serverWideView && status == extensionPresent {
+			break
+		}
 	}
 
 	return allMetrics, databases, false, "", extStatus

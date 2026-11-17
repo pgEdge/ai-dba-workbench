@@ -218,6 +218,13 @@ project adheres to
   servers, and never refreshed; the chart now refreshes with the rest
   of the dashboard. (#864)
 
+- Store the `pg_stat_statements` statement list once per collection.
+  The collector read the server-wide view in every database that has
+  the extension installed and stored each statement once for each such
+  database, which multiplied the probe's write volume and datastore
+  size by the number of those databases; it now reads the view in the
+  first database that has the extension. (#762)
+
 ### Security
 
 - Send SMTP credentials without TLS only when the address the alerter

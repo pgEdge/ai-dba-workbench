@@ -142,6 +142,26 @@ type ExtensionProbe interface {
 	GetExtensionName() string
 }
 
+// ServerWideViewProbe is implemented by a database-scoped probe whose
+// query reads a view that returns the same server-wide rows whichever
+// database it is read from, such as pg_stat_statements. The probe stays
+// database-scoped because the extension behind the view is installed per
+// database and may be missing from the database the collector connects to
+// first, but the scheduler stops at the first database where Execute
+// finds the extension and succeeds, so the rows are stored once per
+// collection rather than once for each database that has the extension
+// (GitHub issue #762).
+type ServerWideViewProbe interface {
+	ReadsServerWideView() bool
+}
+
+// ReadsServerWideView reports whether probe reads a server-wide view, as
+// ServerWideViewProbe describes.
+func ReadsServerWideView(probe MetricsProbe) bool {
+	p, ok := probe.(ServerWideViewProbe)
+	return ok && p.ReadsServerWideView()
+}
+
 // ErrExtensionNotInstalled is returned by an extension probe's Execute
 // when the required extension is not installed in the database being
 // probed. It is not a failure: the scheduler treats it as the verdict

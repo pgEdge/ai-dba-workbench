@@ -1806,14 +1806,18 @@ func buildTopQueriesSQL(
 	// the summed delta stays positive, the guard in totals never fires, and
 	// the pre-reset total is silently subtracted from the post-reset one.
 	//
-	// database_name is deliberately not part of that identity. The probe
-	// runs in every database that has the extension installed, and each run
-	// reads the same cluster-wide view, so one counter lands in the table
-	// once per such database at the same collected_at, differing only in
-	// the database_name the probe connected through. Those copies are the
-	// same counter, not sibling identities: partitioning on database_name
-	// as well would difference each copy separately and the sums would then
-	// count every call once per database with the extension. readings
+	// database_name is deliberately not part of that identity. It names
+	// the database the probe read the cluster-wide view through, not the
+	// statement's database. Collectors before GitHub issue #762 read the
+	// view in every database that has the extension installed, so one
+	// counter can be stored once per such database at the same
+	// collected_at, differing only in that name, and a current collector
+	// reads it in the first such database, which can change between
+	// collections. Those copies are the same counter, not sibling
+	// identities: partitioning on database_name as well would difference
+	// each copy separately, count every call once per database with the
+	// extension, and break the series wherever the probing database
+	// changed. readings
 	// keeps one copy per (queryid, userid, dbid, toplevel, collected_at),
 	// choosing the lowest database_name so that the choice is stable, and
 	// the LAG runs over that, in deltas. readings deliberately does not
@@ -2381,9 +2385,9 @@ const nameLookupWindowSQL = "1 hour"
 //
 // The database_name column recorded on a pg_stat_statements row is the
 // database the probe connected through, not the statement's database: the
-// probe runs in every database with the extension and reads the same
-// cluster-wide view each time, so a counter lands once per probing
-// database. The statement's own database is its dbid, which db_names maps
+// view is cluster-wide, and collectors before GitHub issue #762 read it in
+// every database with the extension, so a counter can be stored once per
+// probing database. The statement's own database is its dbid, which db_names maps
 // to a name from two sources. metrics.pg_stat_database is the primary one:
 // the collector records it in every database it monitors at every
 // collection, so it knows the OID of every monitored database whether or
@@ -2493,7 +2497,7 @@ func respondTopQueriesError(w http.ResponseWriter, connID int, err error) {
 // in this period".
 //
 // The probing database_name is not part of the identity, for the reason
-// given at statementDatabaseLookupSQL: one counter is stored once per
+// given at statementDatabaseLookupSQL: one counter can be stored once per
 // database the probe ran in, and differencing each copy separately would
 // count every call once per such database. readings therefore keeps one
 // copy per identity and collection, as buildTopQueriesSQL does, and without

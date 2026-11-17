@@ -38,6 +38,14 @@ func TestPgStatStatementsProbe_Surface(t *testing.T) {
 	if !p.IsDatabaseScoped() {
 		t.Error("pg_stat_statements is database-scoped")
 	}
+	// The view is server-wide, so the scheduler reads it in one database
+	// only (#762); an ordinary database-scoped probe is read in each.
+	if !ReadsServerWideView(p) {
+		t.Error("pg_stat_statements reads a server-wide view")
+	}
+	if ReadsServerWideView(NewPgStatDatabaseConflictsProbe(&ProbeConfig{})) {
+		t.Error("pg_stat_database_conflicts does not read a server-wide view")
+	}
 	if p.GetExtensionName() != "pg_stat_statements" {
 		t.Errorf("GetExtensionName() = %v", p.GetExtensionName())
 	}

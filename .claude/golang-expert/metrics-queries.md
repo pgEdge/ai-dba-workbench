@@ -1677,8 +1677,9 @@ that follow from that, most learned the hard way in #406 and #407:
   0 rather than vanishing. Since #640 it is server-wide (`scanBasic`,
   historical rows with a NULL database): a `samples` CTE first keeps one
   copy of each counter per `collected_at` with `DISTINCT ON` (lowest
-  probing `database_name` wins, as in `buildTopQueriesSQL`), because the
-  probe stores the cluster-wide view once per database it probes, and
+  probing `database_name` wins, as in `buildTopQueriesSQL`), because
+  collectors before #762 stored the cluster-wide view once per database
+  they probed (those rows stay in retention), and
   grouping by that probing name reported the whole server's count in
   every database. A `dbid` filter in the probe was rejected: the probe
   only runs where the extension is installed and the role may connect,
@@ -2456,7 +2457,8 @@ is added to the INCLUDE list, which is why it is not there.
 ## Cumulative Counter Deltas per Identity (server)
 
 `pg_stat_statements` keeps one row per `(userid, dbid, toplevel)` for a
-queryid, which the collector stores once per probing `database_name`,
+queryid, which collectors before #762 stored once per probing
+`database_name` (see "One pg_stat_statements read per server" below),
 and each row is an independent cumulative counter that
 `pg_stat_reset()` or a restart can zero on its own. Any
 query that turns those counters into per-period deltas must difference
@@ -2473,10 +2475,12 @@ same shape.
 
 Since issue #387 `buildTopQueriesSQL` applies the same pattern to every
 `queryid` at once, with one refinement that the review of PR #481
-forced. `database_name` is **not** part of the identity there: the probe
-runs in every database with the extension and each run reads the same
-cluster-wide view, so one counter lands once per such database at the
-same `collected_at`, differing only in the probing `database_name`. Its
+forced. `database_name` is **not** part of the identity there: the view
+is cluster-wide, collectors before #762 read it in every database with
+the extension, so one counter can land once per such database at the
+same `collected_at`, differing only in the probing `database_name`, and
+the current collector's probing database can change between
+collections. Its
 `readings` CTE therefore keeps one copy per
 `(queryid, userid, dbid, toplevel, collected_at)` with `DISTINCT ON`
 (lowest `database_name` wins, for a stable choice) and carries that
@@ -2889,6 +2893,21 @@ those tests skipped entirely; do not treat it as a regression in
 whichever change happens to be in flight, and prefer verifying a
 specific change with a targeted `-run` before interpreting a full-package
 run.
+
+## One pg_stat_statements Read per Server (collector)
+
+`pg_stat_statements` returns every database's statements whichever
+database it is read from, so since #762 the probe implements
+`probes.ServerWideViewProbe` and `executeProbeForAllDatabases` stops at
+the first database (default first, then the sorted list) whose
+`Execute` reports the extension present; absent or failing databases do
+not stop the walk. The rows keep that database as `database_name`.
+`TestExecuteProbeForAllDatabases_ServerWideViewReadOnce` pins this.
+Readers must still not treat `database_name` as part of a statement's
+identity or filter on it: rows from older collectors hold one copy per
+probing database, and the first database with the extension can change
+between collections. Resolve the statement's database from `dbid`, and
+keep the `DISTINCT ON` that picks one copy per collection.
 
 ## Related Issues
 

@@ -78,6 +78,12 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+- Store the `pg_stat_statements` statement list once per collection.
+  The collector read the server-wide view in every database that has
+  the extension installed and stored each statement once for each such
+  database, which multiplied the probe's write volume and datastore
+  size by the number of those databases; it now reads the view in the
+  first database that has the extension. (#762)
 
 ## [2.0.0-beta1] - 2026-11-12
 

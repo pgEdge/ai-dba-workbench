@@ -31,6 +31,17 @@ func NewPgStatStatementsProbe(config *ProbeConfig) *PgStatStatementsProbe {
 	}
 }
 
+// ReadsServerWideView reports that pg_stat_statements returns the
+// statements of every database on the server, with each statement's own
+// database in dbid, whichever database it is read from. The scheduler
+// therefore reads it from the first database that has the extension and
+// stores those rows once per collection, with that database in
+// database_name; reading it in every such database stored the server's
+// statement list once per database (GitHub issue #762).
+func (p *PgStatStatementsProbe) ReadsServerWideView() bool {
+	return true
+}
+
 // GetExtensionName returns the required extension name
 func (p *PgStatStatementsProbe) GetExtensionName() string {
 	return "pg_stat_statements"

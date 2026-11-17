@@ -380,6 +380,12 @@ func (cm *ClientManager) GetOrCreateClientWithConnString(ctx context.Context, ke
 // finished after CloseAll; the client it made is closed, not stored.
 var errClientManagerClosed = errors.New("client manager is closed")
 
+// errConnectSuperseded is returned to the callers of a connect that
+// finished after a newer connect for the same key (under a different
+// connection string) was stored; the newer client cannot serve their
+// connection string, so they are asked to retry.
+var errConnectSuperseded = errors.New("connection changed while connecting; retry the request")
+
 // runClientCall performs the shared connect for call, stores the client
 // on success and then releases the callers waiting on call.done.
 //
@@ -388,7 +394,7 @@ var errClientManagerClosed = errors.New("client manager is closed")
 // order. The client from the most recently started connect wins: an
 // older connect finishing last neither replaces nor closes the newer
 // client, which its callers may already be using, and its own callers
-// are given that newer client instead.
+// get errConnectSuperseded.
 func (cm *ClientManager) runClientCall(
 	ctx context.Context,
 	call *clientCall,
@@ -401,24 +407,27 @@ func (cm *ClientManager) runClientCall(
 }
 
 // finishClientCall installs the outcome of call's connect, by the rules
-// in runClientCall, and releases its callers.
+// in runClientCall, and releases its callers. Any client it discards is
+// closed after cm.mu is released, because closing a pool waits for its
+// checked-out connections and must not stall unrelated lookups.
 func (cm *ClientManager) finishClientCall(call *clientCall, flightKey, key string, client *Client, err error) {
+	var discard *Client
 	cm.mu.Lock()
 	delete(cm.inflight, flightKey)
 	if err == nil {
 		existing, exists := cm.clients[key]
 		switch {
 		case cm.closeGen != call.closeGen:
-			client.Close()
+			discard = client
 			client, err = nil, errClientManagerClosed
 		case exists && existing.flightGen > call.gen:
-			client.Close()
-			client = existing
+			discard = client
+			client, err = nil, errConnectSuperseded
 		default:
 			// A client for another connection string under this key is
 			// replaced only once its successor is ready.
 			if exists {
-				existing.Close()
+				discard = existing
 			}
 			client.flightGen = call.gen
 			cm.clients[key] = client
@@ -427,6 +436,9 @@ func (cm *ClientManager) finishClientCall(call *clientCall, flightKey, key strin
 	call.client, call.err = client, err
 	cm.mu.Unlock()
 	close(call.done)
+	if discard != nil {
+		discard.Close()
+	}
 }
 
 // connectMonitoredClient makes, connects and loads the metadata of a

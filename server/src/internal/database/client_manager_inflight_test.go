@@ -150,8 +150,9 @@ func TestGetOrCreateClientInitiatorCancelDoesNotFailWaiters(t *testing.T) {
 
 // TestFinishClientCall checks how a finished connect's client is
 // installed: the most recently started connect for a key wins whatever
-// order they finish in, and a connect finishing after CloseAll closes
-// its client rather than storing it.
+// order they finish in, a connect finishing after CloseAll closes its
+// client rather than storing it, and a displaced client is closed
+// without holding the manager lock.
 func TestFinishClientCall(t *testing.T) {
 	// A client counts as open whilst it holds the connection entry
 	// added here; Close empties it.
@@ -186,8 +187,8 @@ func TestFinishClientCall(t *testing.T) {
 		cm.finishClientCall(newer, newerKey, "k", newClient, nil)
 		cm.finishClientCall(older, olderKey, "k", oldClient, nil)
 
-		if older.client != newClient || older.err != nil {
-			t.Errorf("older callers got %p, %v; want the newer client", older.client, older.err)
+		if older.client != nil || !errors.Is(older.err, errConnectSuperseded) {
+			t.Errorf("older callers got %p, %v; want errConnectSuperseded", older.client, older.err)
 		}
 		if got, _ := cm.GetClient("k"); got != newClient {
 			t.Errorf("cached client = %p, want the newer one", got)
@@ -214,6 +215,34 @@ func TestFinishClientCall(t *testing.T) {
 		}
 		if isOpen(oldClient) {
 			t.Error("the replaced older client is still open")
+		}
+	})
+
+	t.Run("displaced client is closed outside the manager lock", func(t *testing.T) {
+		cm := NewClientManager(nil)
+		oldClient := newOpenClient("old")
+		cm.clients["k"] = oldClient
+		call, flightKey := start(cm, "k", "new")
+		newClient := newOpenClient("new")
+
+		// Holding the old client's lock makes its Close block, as a
+		// pool closing with a checked-out connection does.
+		oldClient.mu.Lock()
+		finished := make(chan struct{})
+		go func() {
+			cm.finishClientCall(call, flightKey, "k", newClient, nil)
+			close(finished)
+		}()
+		// The callers are released, and the manager stays usable,
+		// whilst the close is still blocked.
+		<-call.done
+		if got, _ := cm.GetClient("k"); got != newClient {
+			t.Errorf("cached client = %p, want the newer one", got)
+		}
+		oldClient.mu.Unlock()
+		<-finished
+		if isOpen(oldClient) {
+			t.Error("the displaced client is still open")
 		}
 	})
 

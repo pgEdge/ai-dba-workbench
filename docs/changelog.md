@@ -70,6 +70,14 @@ project adheres to
   previously ran with the default data directory and server secret,
   so a command could write to an `auth.db` the configured server never
   reads. (#861)
+- Deliver a new alert to every notification channel when one channel
+  is slow. The alerter sent to the channels in turn within one shared
+  30-second limit, so a channel that used up the limit left the
+  channels after it without a delivery record, and they never received
+  the alert. The alerter now sends to all of the channels at the same
+  time, each attempt with its own 30-second limit, and records an
+  attempt that runs out of time as a failed attempt for the retry
+  worker. (#836)
 
 ## [2.0.0-beta1] - 2026-11-12
 

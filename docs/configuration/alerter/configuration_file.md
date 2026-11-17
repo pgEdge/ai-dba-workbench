@@ -152,7 +152,7 @@ console, such as `Email Channels` and `Slack Channels`; see
 | `reminder_check_interval_minutes` | integer | `60` | Reminder check interval |
 | `max_retry_attempts` | integer | `3` | Max retry attempts |
 | `retry_backoff_minutes` | list | `[5, 15, 60]` | Retry backoff schedule |
-| `http_timeout_seconds` | integer | `30` | HTTP request timeout; the first delivery of each alert also has a 30-second limit shared by all of its channels |
+| `http_timeout_seconds` | integer | `30` | HTTP request timeout |
 | `http_max_idle_conns` | integer | `10` | Max idle HTTP connections |
 | `allow_internal_networks` | boolean | `false` | Allow deliveries to internal addresses |
 
@@ -176,10 +176,16 @@ notifications:
   allow_internal_networks: true
 ```
 
-The first delivery of each alert must finish within 30 seconds across all of
-its channels, whatever the `http_timeout_seconds` value. A slow channel can
-use up that limit, which cancels its request; the channels after it then get
-no delivery record, so they are not notified of that alert.
+### Delivery Timing and Retries
+
+The alerter sends a new alert to all of the alert's channels at the same time,
+so a slow or unresponsive channel does not delay or prevent delivery to the
+other channels. Each delivery attempt is limited to 30 seconds; for webhook,
+Slack, Mattermost and Telegram channels, a smaller `http_timeout_seconds` value
+sets a lower limit. The alerter records an attempt that runs out of time as a
+failed attempt and retries the delivery on the `retry_backoff_minutes`
+schedule. The alerter marks the notification `failed` once the
+`max_retry_attempts` attempts run out.
 
 ### Delivery Address Checks
 

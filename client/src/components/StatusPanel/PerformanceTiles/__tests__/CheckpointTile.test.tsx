@@ -15,6 +15,12 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CheckpointTile from '../CheckpointTile';
 import type { ConnectionPerformance } from '../types';
 
+// The options object as last passed to Chart, functions included,
+// so that the axis label formatters can be exercised directly.
+const capturedChart = vi.hoisted(() => ({
+    options: undefined as Record<string, unknown> | undefined,
+}));
+
 // Mock the Chart component to avoid ECharts complexity in tests
 vi.mock('../../../Chart/Chart', () => ({
     Chart: ({
@@ -31,23 +37,26 @@ vi.mock('../../../Chart/Chart', () => ({
         areaFill?: boolean;
         smooth?: boolean;
         echartsOptions?: Record<string, unknown>;
-    }) => (
-        <div data-testid="mock-chart">
-            {data.series.map(s => (
-                <span key={s.name} data-testid={`series-${s.name}`}>{s.name}</span>
-            ))}
-            <span data-testid="chart-data">{JSON.stringify(data)}</span>
-            <span data-testid="show-legend">{String(showLegend)}</span>
-            <span data-testid="stacked">{String(stacked)}</span>
-            <span data-testid="area-fill">{String(areaFill)}</span>
-            <span data-testid="smooth">{String(smooth)}</span>
-            {echartsOptions && (
-                <span data-testid="echarts-options">
-                    {JSON.stringify(echartsOptions)}
-                </span>
-            )}
-        </div>
-    ),
+    }) => {
+        capturedChart.options = echartsOptions;
+        return (
+            <div data-testid="mock-chart">
+                {data.series.map(s => (
+                    <span key={s.name} data-testid={`series-${s.name}`}>{s.name}</span>
+                ))}
+                <span data-testid="chart-data">{JSON.stringify(data)}</span>
+                <span data-testid="show-legend">{String(showLegend)}</span>
+                <span data-testid="stacked">{String(stacked)}</span>
+                <span data-testid="area-fill">{String(areaFill)}</span>
+                <span data-testid="smooth">{String(smooth)}</span>
+                {echartsOptions && (
+                    <span data-testid="echarts-options">
+                        {JSON.stringify(echartsOptions)}
+                    </span>
+                )}
+            </div>
+        );
+    },
 }));
 
 // Mock ChartAnalysisDialog
@@ -469,6 +478,27 @@ describe('CheckpointTile', () => {
             const options = JSON.parse(optionsElement.textContent || '{}');
 
             expect(options.yAxis.splitNumber).toBe(3);
+        });
+    });
+
+    describe('axis label formatters', () => {
+        it('formats x-axis times as hours and minutes and y-axis values as rounded numbers', () => {
+            renderWithTheme(
+                <CheckpointTile
+                    connections={[createConnectionPerformance(1, 'Server 1')]}
+                    loading={false}
+                />
+            );
+
+            const options = capturedChart.options as {
+                xAxis: { axisLabel: { formatter: (v: string) => string } };
+                yAxis: { axisLabel: { formatter: (v: number) => string } };
+            };
+            const time = '2024-01-01T10:05:00Z';
+            expect(options.xAxis.axisLabel.formatter(time)).toBe(
+                new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            );
+            expect(options.yAxis.axisLabel.formatter(1234.6)).toBe((1235).toLocaleString());
         });
     });
 

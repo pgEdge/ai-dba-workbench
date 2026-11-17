@@ -16,13 +16,18 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { useTheme } from '@mui/material/styles';
 import { Chart } from '../../Chart';
 import { useAuth } from '../../../contexts/useAuth';
+import { useClusterData } from '../../../contexts/useClusterData';
 import { apiFetch } from '../../../utils/apiClient';
 import { computeEstateServerCounts } from '../../../utils/clusterHelpers';
+import { chunkConnectionIds } from '../../../utils/connectionIdBatches';
 import { logger } from '../../../utils/logger';
+import { useRetryingFetch } from '../../../hooks/useRetryingFetch';
+import { useRequestSequence } from '../../../hooks/useRequestSequence';
 import type { EstateSelection } from '../../../types/selection';
 
 interface HealthOverviewSectionProps {
     selection: EstateSelection;
+    serverIds: number[];
 }
 
 interface AlertCounts {
@@ -30,6 +35,10 @@ interface AlertCounts {
     warning: number;
     info: number;
 }
+
+const SEVERITIES = ['critical', 'warning', 'info'] as const;
+
+const NO_ALERTS: AlertCounts = { critical: 0, warning: 0, info: 0 };
 
 const RINGS_CONTAINER_SX = {
     display: 'grid',
@@ -57,64 +66,116 @@ const LOADING_CONTAINER_SX = {
 /**
  * HealthOverviewSection shows fleet health via two donut charts:
  * one for server status distribution (online/warning/offline) and
- * one for alert severity distribution (critical/warning/info).
+ * one for the active alerts on the estate's servers by severity
+ * (critical/warning/info). The alert counts refresh with the
+ * estate data.
  */
-const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection }) => {
+const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection, serverIds }) => {
     const theme = useTheme();
     const { user } = useAuth();
-    const [alertCounts, setAlertCounts] = useState<AlertCounts>({ critical: 0, warning: 0, info: 0 });
+    const { lastRefresh } = useClusterData();
+    const [alertCounts, setAlertCounts] = useState<AlertCounts>(NO_ALERTS);
     const [alertsLoading, setAlertsLoading] = useState<boolean>(false);
-    const isMountedRef = useRef<boolean>(true);
+    // useRetryingFetch checks its own attempt generation only after the
+    // fetch has written state, so overlapping refreshes are ordered
+    // here instead.
+    const { beginRequest, supersedeRequest } = useRequestSequence();
     const initialLoadDoneRef = useRef<boolean>(false);
+    const { run } = useRetryingFetch({
+        resetKey: lastRefresh,
+        enabled: !!user && serverIds.length > 0,
+    });
 
     const serverCounts = useMemo(() => computeEstateServerCounts(selection), [selection]);
+    const serverIdsKey = serverIds.join(',');
 
-    const fetchAlertCounts = useCallback(async (): Promise<void> => {
-        if (!user) { return; }
+    const fetchAlertCounts = useCallback(async (): Promise<boolean> => {
+        if (!user || serverIds.length === 0) { return true; }
+
+        // The counts match the Active Alerts tile: status=active leaves
+        // out acknowledged and cleared alerts, and naming the estate's
+        // servers leaves out system alerts and other servers. Only each
+        // response's total is read, so one row per page is enough and
+        // the count is not capped by the page size. The batches are
+        // disjoint, so their totals sum.
+        const requests = chunkConnectionIds(serverIds).flatMap(batch =>
+            SEVERITIES.map(severity => {
+                const params = new URLSearchParams({
+                    connection_ids: batch.join(','),
+                    status: 'active',
+                    severity,
+                    limit: '1',
+                });
+                return {
+                    severity,
+                    url: `/api/v1/alerts?${params.toString()}`,
+                };
+            }),
+        );
 
         if (!initialLoadDoneRef.current) {
             setAlertsLoading(true);
         }
 
+        const isCurrent = beginRequest();
+
         try {
-            const response = await apiFetch('/api/v1/alerts?exclude_cleared=true&limit=200');
+            const responses = await Promise.all(
+                requests.map(req => apiFetch(req.url)),
+            );
 
-            if (response.ok && isMountedRef.current) {
-                const data = await response.json();
-                const alerts = data.alerts || [];
-                const counts: AlertCounts = { critical: 0, warning: 0, info: 0 };
+            // A superseded or unmounted attempt is not a failure.
+            if (!isCurrent()) { return true; }
 
-                alerts.forEach((alert: Record<string, unknown>) => {
-                    const severity = (alert.severity as string || '').toLowerCase();
-                    if (severity === 'critical') {
-                        counts.critical += 1;
-                    } else if (severity === 'warning') {
-                        counts.warning += 1;
-                    } else {
-                        counts.info += 1;
-                    }
-                });
+            // One failed request fails the refresh, so the chart keeps
+            // its last complete distribution and the fetch is retried
+            // rather than showing a partial one.
+            if (responses.some(r => !r.ok)) { return false; }
 
-                setAlertCounts(counts);
-                initialLoadDoneRef.current = true;
-            }
+            const bodies: { total?: unknown }[] = await Promise.all(
+                responses.map(r => r.json()),
+            );
+            if (!isCurrent()) { return true; }
+
+            const counts: AlertCounts = { ...NO_ALERTS };
+            bodies.forEach((body, i) => {
+                if (typeof body.total === 'number') {
+                    counts[requests[i].severity] += body.total;
+                }
+            });
+
+            setAlertCounts(counts);
+            initialLoadDoneRef.current = true;
+            return true;
         } catch (err) {
             logger.error('Error fetching alert counts:', err);
+            return false;
         } finally {
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setAlertsLoading(false);
             }
         }
-    }, [user]);
+    }, [user, serverIds, beginRequest]);
 
+    // A different set of servers is a fresh load; an estate with no
+    // servers has no alerts to show.
     useEffect(() => {
-        isMountedRef.current = true;
-        void fetchAlertCounts();
+        initialLoadDoneRef.current = false;
+        if (serverIdsKey === '') {
+            // Drop any request still in flight for the old servers.
+            supersedeRequest();
+            setAlertCounts(NO_ALERTS);
+            setAlertsLoading(false);
+        }
+    }, [serverIdsKey, supersedeRequest]);
 
-        return () => {
-            isMountedRef.current = false;
-        };
-    }, [fetchAlertCounts]);
+    // Refetch on mount, when the servers change, and on every estate
+    // data refresh (lastRefresh), as the KPI tiles do.
+    useEffect(() => {
+        if (user && serverIds.length > 0) {
+            void run(fetchAlertCounts);
+        }
+    }, [user, serverIds.length, run, fetchAlertCounts, lastRefresh]);
 
     const serverStatusData = useMemo(() => ({
         categories: ['OK', 'Warning', 'Offline'],

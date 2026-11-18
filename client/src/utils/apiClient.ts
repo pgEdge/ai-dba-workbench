@@ -104,9 +104,38 @@ type DisconnectListener = (reason: DisconnectReason) => void;
 
 const CONSECUTIVE_FAILURE_THRESHOLD = 3;
 
+/**
+ * The request used to confirm an outage before the client declares
+ * itself disconnected.
+ *
+ * A run of consecutive failures does not by itself show that the
+ * server is down: one broken endpoint retried by a dashboard panel
+ * (see `useRetryingFetch`) fails over and over on a healthy server.
+ * So when the threshold is reached the client asks the server
+ * something cheap and independent of that endpoint. The capabilities
+ * endpoint is public, is served from memory, and sits under `/api`,
+ * which every deployment (the Vite proxy and the nginx
+ * configurations) forwards to the server. The server's own `/health`
+ * route is not used because not every front end forwards it; where it
+ * is not forwarded, the single-page fallback would answer 200 and
+ * hide a real outage.
+ */
+export const OUTAGE_PROBE_URL = '/api/v1/capabilities';
+
+/**
+ * How long the outage probe may take before the server is treated as
+ * unreachable. The endpoint normally answers in milliseconds, so this
+ * only bounds a request that never settles.
+ */
+export const OUTAGE_PROBE_TIMEOUT_MS = 5000;
+
 let consecutiveFailures = 0;
 let disconnected = false;
 let disconnectListener: DisconnectListener | null = null;
+let probeInFlight = false;
+// Bumped by resetConnectionHealth so that a probe started before a
+// reset cannot act on the state after it.
+let healthGeneration = 0;
 
 /**
  * Register a callback that fires when the server is considered
@@ -128,10 +157,87 @@ export function onDisconnect(listener: DisconnectListener): () => void {
 export function resetConnectionHealth(): void {
     consecutiveFailures = 0;
     disconnected = false;
+    probeInFlight = false;
+    healthGeneration += 1;
 }
 
 function recordSuccess(): void {
     consecutiveFailures = 0;
+    // A success proves the server reachable, so a probe still pending for
+    // the failure run it ended is stale. Invalidate it, so that a new run
+    // of failures starts a fresh probe instead of acting on this one's
+    // late answer.
+    if (probeInFlight) {
+        probeInFlight = false;
+        healthGeneration += 1;
+    }
+}
+
+function declareDisconnected(reason: DisconnectReason): void {
+    disconnected = true;
+    disconnectListener?.(reason);
+}
+
+/**
+ * Ask the server whether it is reachable. Any answer below 500 means
+ * something on the server side responded, so the session is not cut
+ * off; a network error, a timeout or a 5xx (which a reverse proxy
+ * returns when the server behind it is down) means it is.
+ *
+ * This calls `fetch` directly rather than going through the helpers
+ * below, so the probe never feeds back into the failure accounting.
+ */
+async function serverIsReachable(): Promise<boolean> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+        controller.abort();
+    }, OUTAGE_PROBE_TIMEOUT_MS);
+    try {
+        const response = await fetch(OUTAGE_PROBE_URL, {
+            method: 'GET',
+            credentials: 'include',
+            signal: controller.signal,
+        });
+        return response.status < 500;
+    } catch {
+        return false;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
+ * Confirm a suspected outage with one probe, then disconnect only if
+ * the server really is unreachable. If the server answers, the run
+ * of failures came from the endpoints being called rather than from
+ * the connection, so the counter starts again and those callers
+ * report their own errors.
+ */
+async function confirmOutage(reason: DisconnectReason): Promise<void> {
+    probeInFlight = true;
+    const generation = healthGeneration;
+    const reachable = await serverIsReachable();
+
+    // A reset while the probe was pending started a new session of
+    // accounting; this probe's answer no longer applies to it.
+    if (generation !== healthGeneration) {
+        return;
+    }
+    probeInFlight = false;
+
+    // Something else (a 401) may already have disconnected, and a
+    // request that succeeded while the probe was pending has already
+    // shown the server to be reachable.
+    if (disconnected || consecutiveFailures < CONSECUTIVE_FAILURE_THRESHOLD) {
+        return;
+    }
+
+    if (reachable) {
+        consecutiveFailures = 0;
+        return;
+    }
+
+    declareDisconnected(reason);
 }
 
 function recordFailure(reason: DisconnectReason): void {
@@ -141,15 +247,13 @@ function recordFailure(reason: DisconnectReason): void {
 
     if (reason === 'auth') {
         // Auth failures fire immediately.
-        disconnected = true;
-        disconnectListener?.(reason);
+        declareDisconnected(reason);
         return;
     }
 
     consecutiveFailures += 1;
-    if (consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD) {
-        disconnected = true;
-        disconnectListener?.(reason);
+    if (consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD && !probeInFlight) {
+        void confirmOutage(reason);
     }
 }
 

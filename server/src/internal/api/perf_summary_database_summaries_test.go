@@ -1447,3 +1447,52 @@ func TestDatabaseSummaries_DeadTupleRatioCountsUserTablesOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestDatabaseSummaries_DeadTupleRatioNewestSnapshotSystemOnly verifies
+// that the newest pg_stat_all_tables snapshot is chosen over every row
+// before the system-schema filter applies. When that snapshot holds only
+// system rows, the ratio is 0, not the ratio of an older snapshot that
+// still had user rows; filtering inside the MAX(collected_at) subquery
+// would wrongly report the older snapshot's 50%.
+func TestDatabaseSummaries_DeadTupleRatioNewestSnapshotSystemOnly(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 8681
+	ctx := context.Background()
+	now := time.Now().UTC()
+	newest := now.Add(-1 * time.Minute)
+	older := now.Add(-30 * time.Minute)
+
+	exec := func(sql string, args ...any) {
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("seed exec failed: %v\nSQL: %s", err, sql)
+		}
+	}
+
+	exec(`INSERT INTO metrics.pg_database
+        (connection_id, collected_at, datname, datistemplate,
+         database_size_bytes)
+        VALUES ($1, $2, 'stale', false, 1000)`, connID, newest)
+
+	// The newest snapshot holds only system rows; the older one has a
+	// user table at 50%.
+	exec(`INSERT INTO metrics.pg_stat_all_tables
+        (connection_id, collected_at, database_name, schemaname,
+         n_live_tup, n_dead_tup)
+        VALUES ($1, $2, 'stale', 'pg_catalog', 313, 56),
+               ($1, $2, 'stale', 'pg_toast_temp_3', 10, 90),
+               ($1, $3, 'stale', 'public', 50, 50)`, connID, newest, older)
+
+	summaries := buildDatabaseSummaries(t, h, pool, connID,
+		now.Add(-24*time.Hour), now, "60 seconds")
+
+	db, ok := summaries["stale"]
+	if !ok {
+		t.Fatalf("database %q missing from summaries: %#v", "stale",
+			summaries)
+	}
+	if db.DeadTupleRatio != 0 {
+		t.Errorf("stale: DeadTupleRatio = %v, want 0", db.DeadTupleRatio)
+	}
+}

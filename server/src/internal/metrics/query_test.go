@@ -2042,6 +2042,10 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		for _, c := range []string{
 			`SUM("n_live_tup")`,
 			`SUM("n_dead_tup")`,
+			// The bucket stage sums the per-sample totals for any
+			// aggregation but last.
+			`CASE WHEN SUM("live_tup") + SUM("dead_tup") = 0 THEN 0`,
+			`ELSE SUM("dead_tup")::float`,
 			`* 100.0`,
 			`END AS dead_tuple_ratio`,
 			`ratio_buckets.dead_tuple_ratio`,
@@ -2053,6 +2057,9 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		}
 		if strings.Contains(query, "rate_buckets") {
 			t.Error("ratio-only query should not reference rate_buckets")
+		}
+		if strings.Contains(query, "array_agg(") {
+			t.Errorf("avg must not take the last sample:\n%s", query)
 		}
 		if len(args) != 4 {
 			t.Errorf("expected 4 args, got %d", len(args))
@@ -2286,11 +2293,29 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// The ratio samples, the rate samples and the rate lookback's
-		// pre-window sample lookup each carry it.
-		if n := strings.Count(query, SystemSchemaPredicate); n != 3 {
-			t.Errorf("expected the system-schema predicate in the ratio "+
-				"samples, rate samples and lookback, found %d:\n%s", n, query)
+		// The rate samples and the rate lookback's pre-window sample
+		// lookup filter rows with it in their WHERE clauses.
+		rateCTE := query[strings.Index(query, "rate_samples AS ("):strings.Index(query, "rate_buckets AS (")]
+		if n := strings.Count(rateCTE, SystemSchemaPredicate); n != 2 {
+			t.Errorf("expected the system-schema predicate in the rate "+
+				"samples and lookback, found %d:\n%s", n, rateCTE)
+		}
+		// The ratio samples keep every row of the sample in WHERE, so a
+		// sample with only system relations still exists, and apply the
+		// predicate to the sums instead, counting such a sample as 0.
+		ratioCTE := query[strings.Index(query, "ratio_samples AS ("):strings.Index(query, "ratio_buckets AS (")]
+		userRows := "FILTER (WHERE " + SystemSchemaPredicate + ")"
+		for _, c := range []string{
+			`CASE WHEN COUNT(*) ` + userRows + ` = 0 THEN 0 ELSE SUM("n_live_tup") ` + userRows + ` END AS live_tup`,
+			`CASE WHEN COUNT(*) ` + userRows + ` = 0 THEN 0 ELSE SUM("n_dead_tup") ` + userRows + ` END AS dead_tup`,
+		} {
+			if !strings.Contains(ratioCTE, c) {
+				t.Errorf("ratio samples missing %q:\n%s", c, ratioCTE)
+			}
+		}
+		where := ratioCTE[strings.Index(ratioCTE, "WHERE connection_id"):]
+		if strings.Contains(where, SystemSchemaPredicate) {
+			t.Errorf("ratio samples must not drop system rows in WHERE:\n%s", ratioCTE)
 		}
 		// The predicate binds nothing: 4 base arguments plus the gap
 		// bound and lookback bound of the rate CTE.

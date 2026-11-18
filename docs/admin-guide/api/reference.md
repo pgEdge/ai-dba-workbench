@@ -428,6 +428,19 @@ most 100 entries in `connection_ids`, because each one adds
 a further set of queries to the request; a longer list
 returns status 400.
 
+The `/api/v1/metrics/query` endpoint accepts the optional
+`exclude_system_schemas` parameter in both its bucketed and
+latest-row modes. When the value is `true` or `1`, the
+server leaves out the rows of the `pg_catalog`,
+`information_schema` and `pg_toast*` schemas, as
+`pg_stat_user_tables` does and as the parameter of the same
+name on `/api/v1/metrics/latest` does. The parameter applies
+only to a probe with a `schemaname` column; a request that
+sets it for any other probe returns status 400. With the
+parameter set, the `dead_tuple_ratio` metric totals the live
+and dead tuples of the user relations in each sample, and a
+sample with no user relations reports 0.
+
 The `/api/v1/metrics/top-queries` endpoint defaults to
 `time_range=1h` when the request names no window.
 PostgreSQL reports the `pg_stat_statements` counters

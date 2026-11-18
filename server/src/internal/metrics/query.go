@@ -133,7 +133,17 @@ func checkSystemSchemaFilter(
 	if err != nil {
 		return fmt.Errorf("failed to get probe columns: %w", err)
 	}
-	if !slices.Contains(cols, "schemaname") {
+	return systemSchemaFilterError(probeName, cols, filters)
+}
+
+// systemSchemaFilterError is checkSystemSchemaFilter for a caller that
+// already holds the probe's columns, so it needs no catalog round trip.
+func systemSchemaFilterError(
+	probeName string,
+	cols []string,
+	filters MetricFilters,
+) error {
+	if filters.ExcludeSystemSchemas && !slices.Contains(cols, "schemaname") {
 		return fmt.Errorf(
 			"exclude_system_schemas is not supported for probe %q: "+
 				"it has no schemaname column", probeName)
@@ -1476,21 +1486,52 @@ func BuildDerivedMetricsQuery(
 		// The ratio is expressed on a 0-100 percentage scale (not a 0-1
 		// fraction) to match what the client dashboards render. A sample
 		// whose relations hold no tuples at all is a genuine 0%; a bucket
-		// with no sample has no row here and stays a gap.
+		// with no sample has no row here and is NULL (which the gauge
+		// carry-forward in scanSeriesRows may then fill, as for any gauge).
 		liveExpr := ratioTupleExpr(aggregation, "live_tup")
 		deadExpr := ratioTupleExpr(aggregation, "dead_tup")
+
+		// With the system-schema exclusion, the predicate must not drop a
+		// sample's rows before grouping: a sample of a database that has
+		// no user relations left would otherwise vanish, and "last" would
+		// keep reporting an older sample's ratio. So the sample times come
+		// from every row the other filters keep (the database filter still
+		// scopes them), and the exclusion moves into FILTER clauses on the
+		// sums. A sample with no user relation then totals 0 live and 0
+		// dead tuples, a 0% ratio, while a bucket with no sample at all
+		// still has no row here. The predicate binds nothing, so the
+		// argument layout is the same with or without it.
+		ratioWhere := whereSQL
+		liveSum := `SUM("n_live_tup")`
+		deadSum := `SUM("n_dead_tup")`
+		if filters.ExcludeSystemSchemas {
+			unfiltered := filters
+			unfiltered.ExcludeSystemSchemas = false
+			ratioWhere = metricQueryClauses(
+				probeName, connectionID, timeStart, timeEnd, bucketWidth,
+				unfiltered).where()
+			userRows := "FILTER (WHERE " + SystemSchemaPredicate + ")"
+			liveSum = fmt.Sprintf(
+				`CASE WHEN COUNT(*) %[1]s = 0 THEN 0 ELSE SUM("n_live_tup") %[1]s END`,
+				userRows)
+			deadSum = fmt.Sprintf(
+				`CASE WHEN COUNT(*) %[1]s = 0 THEN 0 ELSE SUM("n_dead_tup") %[1]s END`,
+				userRows)
+		}
 		ctes = append(ctes, fmt.Sprintf(`
         ratio_samples AS (
             SELECT
                 collected_at,
-                SUM("n_live_tup") AS live_tup,
-                SUM("n_dead_tup") AS dead_tup
+                %[3]s AS live_tup,
+                %[4]s AS dead_tup
             FROM metrics.%[1]s
             WHERE %[2]s
             GROUP BY collected_at
         )`,
 			QuoteIdentifier(probeName),
-			whereSQL,
+			ratioWhere,
+			liveSum,
+			deadSum,
 		))
 		ctes = append(ctes, fmt.Sprintf(`
         ratio_buckets AS (
@@ -2489,6 +2530,11 @@ func discoverLatestRowColumns(
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("failed to get probe columns: %w", err)
 	}
+	// Checked against every column, before the returnable ones are picked,
+	// so the same probes accept the flag here as in QueryTimeSeries.
+	if err := systemSchemaFilterError(probeName, allCols, *filters); err != nil {
+		return nil, nil, "", err
+	}
 
 	// A column that must never be returned, such as one whose name marks
 	// it as a secret, is neither returned nor a sort column.
@@ -2575,9 +2621,6 @@ func QueryLatestRows(
 	outputCols, colTypes, orderCol, err := discoverLatestRowColumns(
 		ctx, pool, probeName, orderBy, &filters)
 	if err != nil {
-		return nil, err
-	}
-	if err := checkSystemSchemaFilter(ctx, pool, probeName, filters); err != nil {
 		return nil, err
 	}
 

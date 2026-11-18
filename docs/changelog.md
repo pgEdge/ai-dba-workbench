@@ -78,6 +78,9 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+- Include active alerts on offline servers in the alert count on the
+  estate dashboard's cluster cards, and count a server whose collected
+  data is stale as a warning rather than online. (#835)
 
 ## [2.0.0-beta1] - 2026-11-12
 

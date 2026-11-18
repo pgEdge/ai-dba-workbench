@@ -97,6 +97,49 @@ describe('ClusterCardsSection', () => {
         expect(screen.getByText('unknown: 1')).toBeInTheDocument();
     });
 
+    it('counts alerts on offline servers and stale servers as warning (issue #835)', () => {
+        const mixedCluster: ClusterEntry = {
+            id: 'cluster-5',
+            name: 'Mixed',
+            servers: [
+                { id: 51, name: 'down', status: 'offline', active_alert_count: 2 },
+                { id: 52, name: 'stale', status: 'warning' },
+                { id: 53, name: 'stale-alerting', status: 'warning', active_alert_count: 1 },
+                { id: 54, name: 'healthy', status: 'online', active_alert_count: 0 },
+            ],
+        };
+
+        renderSection(makeSelection([mixedCluster]));
+
+        // Alerts on the offline server stay in the badge alongside the
+        // stale server's alert.
+        expect(screen.getByRole('button', { name: 'Select cluster Mixed' }))
+            .toHaveAccessibleDescription('3 active alerts');
+        expect(screen.getByText('1 online')).toBeInTheDocument();
+        expect(screen.getByText('2 warning')).toBeInTheDocument();
+        expect(screen.getByText('1 offline')).toBeInTheDocument();
+    });
+
+    it('labels a single alert in the singular', () => {
+        const oneAlert: ClusterEntry = {
+            id: 'cluster-6',
+            name: 'One Alert',
+            servers: [{ id: 61, name: 'down', status: 'offline', active_alert_count: 1 }],
+        };
+
+        renderSection(makeSelection([oneAlert]));
+
+        expect(screen.getByRole('button', { name: 'Select cluster One Alert' }))
+            .toHaveAccessibleDescription('1 active alert');
+    });
+
+    it('gives a card without alerts no description', () => {
+        renderSection(makeSelection([singleCluster]));
+
+        const card = screen.getByRole('button', { name: 'Select cluster Single' });
+        expect(card).not.toHaveAttribute('aria-describedby');
+    });
+
     it('selects the topology entry itself on click, keeping db_cluster_id', () => {
         renderSection(makeSelection([autoCluster]));
 

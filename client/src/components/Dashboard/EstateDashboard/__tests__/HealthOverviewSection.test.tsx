@@ -137,6 +137,16 @@ const hangingRequest = (init?: RequestInit): Promise<Response> =>
         });
     });
 
+/**
+ * A response with the given status whose body never arrives: json()
+ * rejects only when the request is aborted.
+ */
+const stalledBodyResponse = (status: number, init?: RequestInit): Response => ({
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => hangingRequest(init),
+} as unknown as Response);
+
 /** Let the pending promise callbacks run without advancing time. */
 const flush = async (): Promise<void> => {
     await act(async () => {
@@ -396,6 +406,61 @@ describe('HealthOverviewSection alert distribution', () => {
         expect(alertChartText()).toBe('Critical=0 Warning=5 Info=0');
     });
 
+    it('aborts a failed response whose body never arrives and retries', async () => {
+        vi.useFakeTimers();
+        let signal: AbortSignal | undefined;
+        mockApiFetch.mockImplementation((_url: string, init?: RequestInit) => {
+            signal = init?.signal ?? undefined;
+            return Promise.resolve(stalledBodyResponse(500, init));
+        });
+
+        renderSection([1]);
+        await flush();
+
+        // The attempt fails on the status alone and cancels the body
+        // rather than leaving it unbounded once the timer is cleared.
+        expect(alertUrls()).toHaveLength(1);
+        expect(signal?.aborted).toBe(true);
+        expect(screen.getByText('Alert counts unavailable')).toBeInTheDocument();
+
+        mockApiFetch.mockImplementation(
+            totalsBySeverity({ critical: 2, warning: 0, info: 1 }),
+        );
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
+        });
+        expect(alertChartText()).toBe('Critical=2 Warning=0 Info=1');
+    });
+
+    it('times out a successful response whose body never arrives and retries', async () => {
+        vi.useFakeTimers();
+        // The headers arrive at once; only the body stalls, so the
+        // timer must still be running while the body is read.
+        mockApiFetch.mockImplementation(
+            (_url: string, init?: RequestInit) =>
+                Promise.resolve(stalledBodyResponse(200, init)),
+        );
+
+        renderSection([1]);
+        await flush();
+        expect(alertUrls()).toHaveLength(1);
+        expect(screen.getByLabelText('Loading alert distribution')).toBeInTheDocument();
+
+        mockApiFetch.mockImplementation(
+            totalsBySeverity({ critical: 1, warning: 1, info: 1 }),
+        );
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(ALERT_COUNT_REQUEST_TIMEOUT_MS);
+        });
+        expect(screen.queryByLabelText('Loading alert distribution')).not.toBeInTheDocument();
+        expect(screen.getByText('Alert counts unavailable')).toBeInTheDocument();
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
+        });
+        expect(alertChartText()).toBe('Critical=1 Warning=1 Info=1');
+    });
+
     it('times out each request, not the whole attempt, so slow batches still load', async () => {
         vi.useFakeTimers();
         // Each request answers just inside its own limit, so the six
@@ -496,11 +561,14 @@ describe('HealthOverviewSection alert distribution', () => {
 
         // The first refresh hangs on its critical count; a second
         // refresh then completes first.
-        mockApiFetch.mockImplementation((url: string) =>
-            paramsOf(url).get('severity') === 'critical'
-                ? new Promise<Response>(r => { resolveSlow = r; })
-                : totalsBySeverity({})(url),
-        );
+        let slowSignal: AbortSignal | undefined;
+        mockApiFetch.mockImplementation((url: string, init?: RequestInit) => {
+            if (paramsOf(url).get('severity') === 'critical') {
+                slowSignal = init?.signal ?? undefined;
+                return new Promise<Response>(r => { resolveSlow = r; });
+            }
+            return totalsBySeverity({})(url);
+        });
         mockLastRefresh = 1;
         rerender(section([1]));
 
@@ -518,6 +586,9 @@ describe('HealthOverviewSection alert distribution', () => {
             await Promise.resolve();
         });
         expect(alertChartText()).toBe('Critical=3 Warning=0 Info=0');
+        // The discarded response is aborted so its body is not left
+        // downloading without a deadline.
+        expect(slowSignal?.aborted).toBe(true);
     });
 
     it('still renders the server status chart from the selection', async () => {

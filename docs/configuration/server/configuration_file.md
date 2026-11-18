@@ -284,12 +284,13 @@ order, and the first rule that matches decides:
 An address that an `allowed_hosts` range covers permits only that address, and
 the server connects only to the permitted addresses. The save-time check also
 refuses the always-refused addresses first, whether a `host` or `hostaddr` is
-such an address or a `host` name resolves to one, so a connection that could
-never connect is not saved; a host name that `allowed_hosts` lists is not
-resolved at save time and meets this check only when the server connects. When no resolved address is permitted, the connection
-attempt fails with an error that says the host resolves only to addresses that
-connections are not permitted to. The server's own connection to the datastore
-is not checked.
+such an address or a `host` name resolves to one; a name is refused when any of
+its addresses is always refused, even if the server could connect to another of
+them. A host name that `allowed_hosts` lists is not resolved at save time and
+meets this check only when the server connects. When no resolved address is
+permitted, the connection attempt fails with an error that says the host
+resolves only to addresses that connections are not permitted to. The server's
+own connection to the datastore is not checked.
 
 The collector applies a fixed check of its own when the collector connects;
 see

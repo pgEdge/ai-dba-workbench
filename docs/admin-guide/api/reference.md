@@ -456,12 +456,13 @@ sample. The behaviour that follows from that is:
   longest preset; the endpoint rejects a longer span with
   `span must not exceed 30 days`, as described under
   Metric Time Windows below.
-- On a server with `pg_stat_statements` installed in more
-  than one database, the collector stores each counter
-  once per such database. The endpoint counts each
-  counter once, and a `database_name` filter sums only
-  the counters of the statements that ran in that
-  database.
+- The collector reads `pg_stat_statements` in one
+  database per collection, the first that has the
+  extension installed; collectors from earlier releases
+  stored each counter once per such database. The
+  endpoint counts each counter once, and a
+  `database_name` filter sums only the counters of the
+  statements that ran in that database.
 - The optional `query_text` parameter keeps only the
   statements whose text contains the term, ignoring case;
   the term is a plain substring, so `%` and `_` match

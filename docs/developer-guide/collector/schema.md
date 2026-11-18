@@ -395,13 +395,15 @@ order is not arbitrary. The `pg_stat_statements` counters
 are cumulative within a statement identity, so the
 aggregation subtracts consecutive samples with a window
 function partitioned by `(queryid, userid, dbid,
-toplevel)` and ordered by `collected_at`. The probe runs
-in every database that has the extension installed and
-reads the same cluster-wide view each time, so one
-counter is stored once per such database under a
-different `database_name`; the aggregation keeps a single
-copy per identity and `collected_at` before differencing,
-choosing the lowest `database_name`. Listing the identity
+toplevel)` and ordered by `collected_at`. The view is
+cluster-wide, and collectors before issue #762 read it in
+every database that has the extension installed, so one
+counter can be stored once per such database under a
+different `database_name`; the current collector reads
+it in the first such database only. The aggregation
+keeps a single copy per identity and `collected_at`
+before differencing, choosing the lowest
+`database_name`. Listing the identity
 columns first, then `collected_at`, then `database_name`
 gives the planner that exact order, so the aggregation
 reads the rows already sorted rather than sorting a whole

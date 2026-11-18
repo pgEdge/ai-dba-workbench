@@ -26,9 +26,10 @@ import (
 // statementDatabaseParam names the GET /api/v1/metrics/query parameter
 // that restricts pg_stat_statements rows to the statements of one
 // database. database_name cannot do this: on that probe it is the
-// database the statistics were collected through, and the collector
-// records the server-wide statement list once per probing database, so
-// one probing database carries every database's counters for a queryid.
+// database the statistics were collected through, and the statement list
+// is server-wide, so one probing database carries every database's
+// counters for a queryid (collectors before GitHub issue #762 stored that
+// list once per probing database).
 const statementDatabaseParam = "statement_database_name"
 
 // statementDatabaseProbe is the only probe whose rows carry a dbid.

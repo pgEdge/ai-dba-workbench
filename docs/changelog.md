@@ -71,6 +71,14 @@ project adheres to
   so a failure looked like a range with no events; the pane now reads
   `Failed to load timeline events` with the error, or `Reconnecting…`
   while an automatic retry is pending. (#874)
+- Compute the dead tuple ratio in the server dashboard's Database
+  Summaries pane over each database's user tables only, as
+  `pg_stat_user_tables` does, excluding the `pg_catalog`,
+  `information_schema`, and `pg_toast*` schemas. The ratio previously
+  included the system catalogs, and the shared catalogs report the
+  same counts in every database, so databases with little data of
+  their own showed the same ratio. A database with no user tuples now
+  shows `0.0%`. (#868)
 - Apply the documented datastore defaults to a `database` section in
   the server configuration file. A section that omitted `host`, `port`,
   `database`, or `sslmode` previously left that field empty, so an

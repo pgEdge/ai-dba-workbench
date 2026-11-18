@@ -465,8 +465,10 @@ type latestSchemaFilter struct {
 // metrics.SystemSchemaPredicate, the predicate PostgreSQL uses to derive
 // pg_stat_user_tables from pg_stat_all_tables, shared with the
 // exclude_system_schemas filter of GET /api/v1/metrics/query so both
-// endpoints define "user relations" identically. It is a constant, so no
-// caller input reaches the SQL text through it.
+// endpoints define "user relations" identically. The database summaries
+// endpoint applies it too, so its dead tuple ratio covers the same user
+// relations. It is a constant, so no caller input reaches the SQL text
+// through it.
 const systemSchemaPredicate = metrics.SystemSchemaPredicate
 
 // deadTupleRatioSortKey is the order_by value that ranks tables by the

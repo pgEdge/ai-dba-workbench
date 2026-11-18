@@ -1295,8 +1295,16 @@ func (h *PerfSummaryHandler) queryDatabaseStats(
 }
 
 // queryDeadTupleRatios populates dead tuple ratios from the newest
-// pg_stat_all_tables snapshot inside the requested window. The window bounds
-// are repeated in the inner and the outer predicate to let the planner prune
+// pg_stat_all_tables snapshot inside the requested window. The ratio covers
+// user relations only, as pg_stat_user_tables does: rows in system schemas
+// are dropped with systemSchemaPredicate, the filter the latest-snapshot
+// endpoint applies for exclude_system_schemas. The probe stores system
+// catalogs too, and the shared catalogs report the same counts in every
+// database, so counting them gave databases with little data of their own
+// the same ratio (issue #868). A database with no user tuples in the
+// snapshot reports 0. The snapshot itself is still chosen over every row,
+// so it is the same collection whatever the schema. The window bounds are
+// repeated in the inner and the outer predicate to let the planner prune
 // partitions, as in queryDatabaseSizes.
 func (h *PerfSummaryHandler) queryDeadTupleRatios(
 	ctx context.Context,
@@ -1322,6 +1330,7 @@ func (h *PerfSummaryHandler) queryDeadTupleRatios(
                 AND collected_at >= $2
                 AND collected_at <= $3
           )
+          AND `+systemSchemaPredicate+`
         GROUP BY database_name
     `, connectionID, startTime, endTime)
 	if err != nil {

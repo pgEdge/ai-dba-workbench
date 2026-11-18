@@ -349,21 +349,23 @@ func (m *Manager) processNotification(ctx context.Context, history *database.Not
 	// Decrypt sensitive fields
 	m.decryptChannelSecrets(channel)
 
+	// Each attempt has its own deadline, covering the recipient lookup
+	// and the send, whatever ctx carries: the pending-retry and reminder
+	// workers pass a context with none, and without one a stalled
+	// datastore or endpoint would hold the worker indefinitely (the
+	// guarded dial would also give each address its full dial timeout).
+	sendCtx, cancel := context.WithTimeout(ctx, SendTimeout)
+
 	// For email channels, fetch recipients
 	if channel.ChannelType == database.ChannelTypeEmail {
-		recipients, err := m.datastore.GetEmailRecipients(ctx, channel.ID)
+		recipients, err := m.datastore.GetEmailRecipients(sendCtx, channel.ID)
 		if err != nil {
 			m.log("ERROR: Failed to get email recipients: %v", err)
 		}
 		channel.Recipients = recipients
 	}
 
-	// Send notification. Each send has its own deadline, whatever ctx
-	// carries: the pending-retry and reminder workers pass a context
-	// with none, and without one a stalled endpoint would hold the
-	// worker indefinitely (the guarded dial would also give each
-	// address its full dial timeout).
-	sendCtx, cancel := context.WithTimeout(ctx, SendTimeout)
+	// Send notification.
 	err := notifier.Send(sendCtx, channel, payload)
 	cancel()
 

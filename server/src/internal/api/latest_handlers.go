@@ -474,7 +474,9 @@ type latestSchemaFilter struct {
 // than a regex: on a ColdFront datastore the query runs in DuckDB, whose
 // ~ operator matches the whole string, so '^pg_toast' would let the
 // pg_toast_temp_N schemas through there. The escape keeps "_" literal,
-// so pg_temp_N schemas, which pg_stat_user_tables includes, stay in.
+// so a user schema such as pgXtoast is not mistaken for a TOAST schema;
+// pg_temp_N schemas, which pg_stat_user_tables includes, stay in either
+// way.
 const systemSchemaPredicate = `"schemaname" NOT IN ('pg_catalog', 'information_schema') AND "schemaname" NOT LIKE 'pg!_toast%' ESCAPE '!'`
 
 // deadTupleRatioSortKey is the order_by value that ranks tables by the

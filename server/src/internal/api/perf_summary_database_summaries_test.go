@@ -1249,9 +1249,14 @@ func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
 		install string
 		drop    string
 		run     func(pgx.Tx, map[string]*DatabaseSummary) error
+		// wantErr is the helper's scan wrapper, so a query error, such as
+		// a view missing a column the query needs, cannot pass as the
+		// scan failure this test is about.
+		wantErr string
 	}{
 		{
-			name: "sizes",
+			name:    "sizes",
+			wantErr: "scan database size:",
 			install: `DROP TABLE metrics.pg_database;
                 CREATE VIEW metrics.pg_database AS
                 SELECT 1 AS connection_id,
@@ -1264,7 +1269,8 @@ func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
 			},
 		},
 		{
-			name: "dead tuples",
+			name:    "dead tuples",
+			wantErr: "scan dead tuple ratio:",
 			install: `DROP TABLE metrics.pg_stat_all_tables;
                 CREATE VIEW metrics.pg_stat_all_tables AS
                 SELECT 1 AS connection_id,
@@ -1298,8 +1304,8 @@ func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
 				"app": {DatabaseName: "app"},
 			}
 			err := tc.run(tx, dbMap)
-			if err == nil || isUndefinedTableError(err) {
-				t.Errorf("err = %v, want a scan error", err)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want an error containing %q", err, tc.wantErr)
 			}
 		})
 	}
@@ -1350,13 +1356,17 @@ func TestDatabaseSummaries_DeadTupleRatioCountsUserTablesOnly(t *testing.T) {
 			connID, latest, db)
 	}
 
-	// "app" has user tables in two schemas: 900 live and 100 dead, so
-	// 10%. Its older snapshot must not count.
+	// "app" has user tables in three schemas: 1050 live and 350 dead, so
+	// 25%. "pgXtoast" is a user schema: the escaped underscore in the
+	// TOAST prefix must not match the X, so its rows count (an unescaped
+	// 'pg_toast%' would drop them and give 10%). Its older snapshot must
+	// not count.
 	exec(`INSERT INTO metrics.pg_stat_all_tables
         (connection_id, collected_at, database_name, schemaname,
          n_live_tup, n_dead_tup)
         VALUES ($1, $2, 'app', 'public', 600, 75),
                ($1, $2, 'app', 'sales', 300, 25),
+               ($1, $2, 'app', 'pgXtoast', 150, 250),
                ($1, $3, 'app', 'public', 10, 990)`, connID, latest, older)
 
 	// "emptytables" has a user table holding no tuples at all.
@@ -1369,7 +1379,7 @@ func TestDatabaseSummaries_DeadTupleRatioCountsUserTablesOnly(t *testing.T) {
 		now.Add(-24*time.Hour), now, "60 seconds")
 
 	want := map[string]float64{
-		"app":         10.0,
+		"app":         25.0,
 		"catalogonly": 0,
 		"emptytables": 0,
 	}

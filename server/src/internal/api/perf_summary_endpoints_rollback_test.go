@@ -66,6 +66,7 @@ CREATE TABLE metrics.pg_stat_all_tables (
     connection_id  integer     NOT NULL,
     collected_at   timestamptz NOT NULL,
     database_name  text,
+    schemaname     text        NOT NULL DEFAULT 'public',
     n_live_tup     bigint      NOT NULL DEFAULT 0,
     n_dead_tup     bigint      NOT NULL DEFAULT 0
 );

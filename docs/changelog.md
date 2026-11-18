@@ -57,6 +57,15 @@ project adheres to
 
 ### Fixed
 
+- Stop one failing dashboard request from showing the "Disconnected"
+  dialog in the web client and logging the user out. Three consecutive
+  server or network errors from any requests previously declared the
+  connection lost, so a single panel retrying an endpoint that kept
+  answering with an error was enough. The client now first checks
+  whether the server still answers, and shows the dialog only when it
+  does not; otherwise the panel reports its own error and keeps
+  retrying. A session that has expired still shows the dialog at
+  once. (#872)
 - Apply the documented datastore defaults to a `database` section in
   the server configuration file. A section that omitted `host`, `port`,
   `database`, or `sslmode` previously left that field empty, so an

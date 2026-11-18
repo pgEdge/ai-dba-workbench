@@ -581,6 +581,10 @@ describe('HealthOverviewSection alert distribution', () => {
             expect(alertChartText()).toBe('Critical=3 Warning=0 Info=0');
         });
 
+        // A superseded request is not aborted while it is in flight; only
+        // its response is discarded once it arrives.
+        expect(slowSignal?.aborted).toBe(false);
+
         await act(async () => {
             resolveSlow(okResponse({ alerts: [], total: 99 }));
             await Promise.resolve();

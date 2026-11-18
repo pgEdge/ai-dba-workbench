@@ -441,6 +441,15 @@ parameter set, the `dead_tuple_ratio` metric totals the live
 and dead tuples of the user relations in each sample, and a
 sample with no user relations reports 0.
 
+Within a bucket, the `dead_tuple_ratio` metric combines
+samples according to the `aggregation` parameter. The
+`last` aggregation takes the percentage of the latest
+sample's totals. The `avg`, `sum`, `min` and `max`
+aggregations add up the live and dead totals of every
+sample in the bucket and take the percentage of those
+sums; a bucket can therefore report a nonzero ratio under
+`avg` even when its latest sample reports 0.
+
 The `/api/v1/metrics/top-queries` endpoint defaults to
 `time_range=1h` when the request names no window.
 PostgreSQL reports the `pg_stat_statements` counters

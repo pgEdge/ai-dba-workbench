@@ -463,6 +463,79 @@ describe('useMetrics', () => {
         });
     });
 
+    /*
+     * A response for a superseded query must not land on the current
+     * one: the effect cleanup used to clear a mounted flag that the next
+     * run set straight back, so the older response passed the guard.
+     */
+    it('discards a superseded response that settles late', async () => {
+        let resolveFirst: (value: unknown) => void = () => undefined;
+        let resolveSecond: (value: unknown) => void = () => undefined;
+        mockApiGet
+            .mockImplementationOnce(() => new Promise((resolve) => {
+                resolveFirst = resolve;
+            }))
+            .mockImplementationOnce(() => new Promise((resolve) => {
+                resolveSecond = resolve;
+            }));
+        const series = (metric: string) => [{
+            name: metric, metric, data: [{ time: 't', value: 1 }],
+        }];
+
+        const { result, rerender } = renderHook(
+            ({ params }: { params: MetricQueryParams }) => useMetrics(params),
+            { initialProps: { params: { probeName: 'old', timeRange: '24h' } } },
+        );
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
+        });
+
+        rerender({ params: { probeName: 'new', timeRange: '24h' } });
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(2);
+        });
+
+        await act(async () => {
+            resolveSecond(series('new_metric'));
+        });
+        await waitFor(() => {
+            expect(result.current.data?.[0].metric).toBe('new_metric');
+        });
+
+        await act(async () => {
+            resolveFirst(series('old_metric'));
+        });
+        expect(result.current.data?.[0].metric).toBe('new_metric');
+        expect(result.current.loading).toBe(false);
+    });
+
+    it('keeps loading while the current request is pending after a superseded one settles', async () => {
+        let resolveFirst: (value: unknown) => void = () => undefined;
+        mockApiGet
+            .mockImplementationOnce(() => new Promise((resolve) => {
+                resolveFirst = resolve;
+            }))
+            .mockImplementationOnce(() => new Promise(() => undefined));
+
+        const { result, rerender } = renderHook(
+            ({ params }: { params: MetricQueryParams }) => useMetrics(params),
+            { initialProps: { params: { probeName: 'old', timeRange: '24h' } } },
+        );
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
+        });
+        rerender({ params: { probeName: 'new', timeRange: '24h' } });
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(2);
+        });
+
+        await act(async () => {
+            resolveFirst(makeMetricSeries());
+        });
+        expect(result.current.loading).toBe(true);
+        expect(result.current.data).toBeNull();
+    });
+
     it('resets initial load state when indexName changes so loading flashes again', async () => {
         // Initial index resolves immediately.
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());

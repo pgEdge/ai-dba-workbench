@@ -20,6 +20,7 @@ import type {
 } from '../components/Dashboard/types';
 import { apiGet } from '../utils/apiClient';
 import { logger } from '../utils/logger';
+import { useRequestSequence } from './useRequestSequence';
 import {
     appendTimeRangeParams,
     isTimeRangeQueryable,
@@ -222,7 +223,10 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         useState<MetricsWindow | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-    const isMountedRef = useRef<boolean>(true);
+    // Only the newest request may write state: a mounted flag alone lets
+    // a superseded query's response land, because the next effect run
+    // sets it straight back before that response settles.
+    const { beginRequest, supersedeRequest } = useRequestSequence();
     const initialLoadDoneRef = useRef<boolean>(false);
 
     const fetchData = useCallback(async (): Promise<void> => {
@@ -237,6 +241,11 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
             range: params.timeRange, customStart, customEnd,
         };
         if (!isTimeRangeQueryable(selectedWindow)) {
+            // Abandon a request still in flight for the previous window,
+            // so its response cannot land as though it described this
+            // one; with it goes its chance to clear the loading state.
+            supersedeRequest();
+            setLoading(false);
             return;
         }
 
@@ -247,6 +256,8 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         }
         setError(null);
 
+        const isCurrent = beginRequest();
+
         try {
             // Any batch that rejects rejects the whole load, exactly as
             // a failed single request did, so a partial series is never
@@ -255,7 +266,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
                 url => apiGet<MetricsQueryResult | MetricSeries[]>(url),
             ));
 
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 const parsed = mergeMetricsResponses(
                     results.map(parseMetricsResponse),
                 );
@@ -265,17 +276,17 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
             }
         } catch (err) {
             logger.error('Error fetching metrics:', err);
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setError((err as Error).message || 'Failed to fetch metrics');
                 setData(null);
                 setMetricsWindow(null);
             }
         } finally {
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setLoading(false);
             }
         }
-    }, [user, params, customStart, customEnd]);
+    }, [user, params, customStart, customEnd, beginRequest, supersedeRequest]);
 
     const refetch = useCallback((): void => {
         void fetchData();
@@ -303,16 +314,17 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
 
     // Fetch when dependencies change or refresh is triggered
     useEffect(() => {
-        isMountedRef.current = true;
-
         if (user && params) {
             void fetchData();
+        } else {
+            // No query any more: a response still in flight for the
+            // previous one must not land.
+            supersedeRequest();
         }
-
-        return () => {
-            isMountedRef.current = false;
-        };
-    }, [user, params, fetchData, refreshTrigger, customStart, customEnd]);
+    }, [
+        user, params, fetchData, refreshTrigger, customStart, customEnd,
+        supersedeRequest,
+    ]);
 
     return { data, window: metricsWindow, loading, error, refetch };
 };

@@ -239,10 +239,12 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
 
     /*
      * Per-bucket dead tuple ratio, computed by the server from the
-     * database's totals. A bucket with no sample is null, so a gap shows
-     * as a gap instead of a reassuring 0.0%, and the headline is the
-     * latest bucket that has a ratio; a database whose user relations
-     * hold no tuples at all is a genuine 0%.
+     * database's totals. Like every gauge, a bucket without a sample is
+     * carried forward from the previous reading for a few probe
+     * intervals and is null beyond that, so a collection outage shows as
+     * a gap rather than a reassuring 0.0%. The headline is the latest
+     * bucket that has a ratio; a sample whose user relations hold no
+     * tuples, or that has no user relations at all, is a genuine 0%.
      */
     const deadTupleSparkline = useMemo(
         () => extractSparklineData(deadTupleKpi.data, 'dead_tuple_ratio'),

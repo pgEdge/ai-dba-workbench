@@ -109,7 +109,13 @@ type MetricFilters struct {
 // information_schema by name, and every TOAST schema (pg_toast and the
 // per-backend pg_toast_temp_N schemas) by prefix. It is a constant, so no
 // caller input reaches the SQL text through it, and it binds no argument.
-const SystemSchemaPredicate = `"schemaname" NOT IN ('pg_catalog', 'information_schema') AND "schemaname" !~ '^pg_toast'`
+//
+// The TOAST prefix is matched with LIKE and an explicit escape rather
+// than a regex: on a ColdFront datastore the query runs in DuckDB, whose
+// ~ operator matches the whole string, so '^pg_toast' would let the
+// pg_toast_temp_N schemas through there. The escape keeps "_" literal,
+// so pg_temp_N schemas, which pg_stat_user_tables includes, stay in.
+const SystemSchemaPredicate = `"schemaname" NOT IN ('pg_catalog', 'information_schema') AND "schemaname" NOT LIKE 'pg!_toast%' ESCAPE '!'`
 
 // checkSystemSchemaFilter refuses ExcludeSystemSchemas on a probe without a
 // schemaname column, which the predicate could not be applied to. It does

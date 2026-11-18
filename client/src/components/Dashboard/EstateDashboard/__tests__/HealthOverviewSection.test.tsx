@@ -11,7 +11,7 @@
 import { render, screen, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
-import HealthOverviewSection, { ALERT_COUNTS_TIMEOUT_MS } from '../HealthOverviewSection';
+import HealthOverviewSection, { ALERT_COUNT_REQUEST_TIMEOUT_MS } from '../HealthOverviewSection';
 import { DEFAULT_RETRY_BASE_DELAY_MS } from '../../../../hooks/useRetryingFetch';
 import type { EstateSelection } from '../../../../types/selection';
 import { MAX_CONNECTION_IDS_PER_REQUEST } from '../../../../utils/connectionIdBatches';
@@ -386,7 +386,7 @@ describe('HealthOverviewSection alert distribution', () => {
             totalsBySeverity({ critical: 0, warning: 5, info: 0 }),
         );
         await act(async () => {
-            await vi.advanceTimersByTimeAsync(ALERT_COUNTS_TIMEOUT_MS);
+            await vi.advanceTimersByTimeAsync(ALERT_COUNT_REQUEST_TIMEOUT_MS);
         });
         expect(screen.getByText('Alert counts unavailable')).toBeInTheDocument();
 
@@ -394,6 +394,57 @@ describe('HealthOverviewSection alert distribution', () => {
             await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
         });
         expect(alertChartText()).toBe('Critical=0 Warning=5 Info=0');
+    });
+
+    it('times out each request, not the whole attempt, so slow batches still load', async () => {
+        vi.useFakeTimers();
+        // Each request answers just inside its own limit, so the six
+        // requests for two batches take far longer than one limit.
+        const delay = ALERT_COUNT_REQUEST_TIMEOUT_MS - 1000;
+        const answer = totalsBySeverity({ critical: 1, warning: 2, info: 3 });
+        mockApiFetch.mockImplementation((url: string, init?: RequestInit) =>
+            new Promise<Response>((resolve, reject) => {
+                const timer = setTimeout(() => { void answer(url).then(resolve); }, delay);
+                init?.signal?.addEventListener('abort', () => {
+                    clearTimeout(timer);
+                    reject(new DOMException('Aborted', 'AbortError'));
+                });
+            }),
+        );
+
+        const serverIds = Array.from(
+            { length: MAX_CONNECTION_IDS_PER_REQUEST + 1 },
+            (_, i) => i + 1,
+        );
+        renderSection(serverIds);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(delay * 6);
+        });
+        expect(alertUrls()).toHaveLength(6);
+        expect(alertChartText()).toBe('Critical=2 Warning=4 Info=6');
+    });
+
+    it('keeps Server Status visible while the alert counts load', async () => {
+        vi.useFakeTimers();
+        mockApiFetch.mockImplementation(
+            (_url: string, init?: RequestInit) => hangingRequest(init),
+        );
+
+        renderSection([1, 2]);
+        await flush();
+
+        expect(screen.getByTestId('chart-Servers').textContent)
+            .toBe('OK=2 Warning=0 Offline=0');
+        expect(screen.getByLabelText('Loading alert distribution')).toBeInTheDocument();
+        expect(screen.queryByTestId('chart-Alerts')).not.toBeInTheDocument();
+
+        // Still there once the attempt has failed and is waiting to retry.
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(ALERT_COUNT_REQUEST_TIMEOUT_MS);
+        });
+        expect(screen.getByTestId('chart-Servers')).toBeInTheDocument();
+        expect(screen.getByText('Alert counts unavailable')).toBeInTheDocument();
     });
 
     it('counts a failed attempt at most once toward the disconnect threshold', async () => {

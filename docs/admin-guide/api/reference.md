@@ -216,7 +216,7 @@ The API provides endpoints in the following categories.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/metrics/query` | Query metrics for preset or custom windows. |
+| GET | `/api/v1/metrics/query` | Query bucketed metrics for preset or custom windows, or the latest raw rows; `exclude_system_schemas` filters out system relations in both modes. |
 | GET | `/api/v1/metrics/baselines` | Get metric baseline values. |
 | GET | `/api/v1/metrics/anomaly-comparison` | Compare a metric with its anomaly baselines. |
 | GET | `/api/v1/metrics/anomaly-comparison/metrics` | List the metrics the anomaly comparison accepts. |

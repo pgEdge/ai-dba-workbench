@@ -3943,7 +3943,10 @@ func buildPaths() map[string]OpenAPIPathItem {
 						"0. A real column of "+
 						"that name always takes precedence, and a suffix on "+
 						"a column of the wrong kind (for example _per_sec "+
-						"on a gauge) is rejected with 400."),
+						"on a gauge) is rejected with 400. Applies to "+
+						"bucketed queries only: when limit or order_by "+
+						"is set, the endpoint returns the latest raw rows "+
+						"and ignores metrics."),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("MetricsQueryResult", "Metrics query results"),

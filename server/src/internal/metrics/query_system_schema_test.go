@@ -202,6 +202,30 @@ func TestDeadTupleRatioTotals_Integration(t *testing.T) {
 		}
 	})
 
+	// With both northwind samples in one bucket, avg combines the tuple
+	// totals of the two samples before taking the percentage: (500 + 1000)
+	// dead of (1000 + 2900) tuples is 38.46%. Averaging the two samples'
+	// percentages (50% and 34.48%) would give 42.24% instead.
+	t.Run("avg combines sample totals within a bucket", func(t *testing.T) {
+		series, err := queryTimeSeriesData(ctx, pool, probe, []int{1},
+			window, MetricFilters{DatabaseName: "northwind"}, 1, "avg",
+			[]string{"dead_tuple_ratio"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(series) != 1 {
+			t.Fatalf("expected 1 series, got %d", len(series))
+		}
+		points := nonNull(series[0])
+		if len(points) != 1 {
+			t.Fatalf("expected one bucket holding both samples, got %d points", len(points))
+		}
+		want := 1500.0 / 3900.0 * 100
+		if got := *points[0].Value; !near(got, want) {
+			t.Errorf("dead_tuple_ratio = %v, want %v", got, want)
+		}
+	})
+
 	t.Run("system-only newest sample without the exclusion", func(t *testing.T) {
 		got := latestRatio(t, MetricFilters{DatabaseName: "emptied"})
 		// 40 / (60 + 40) = 40%.

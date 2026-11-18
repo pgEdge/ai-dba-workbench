@@ -1,4 +1,4 @@
-# Account Management
+# Managing Accounts
 
 The Workbench and MCP server support built-in authentication via two methods:
 
@@ -18,8 +18,8 @@ issues the session. A federated account appears in the account listing
 and is administered in the same way as a local one, but it cannot be
 given a working password, because password authentication is refused for
 any account the provider owns. See
-[Single Sign-On](sso.md) for the configuration and its operational
-limits.
+[Configuring Single Sign-On](../../configuration/server/single_sign_on.md) for the configuration and
+[Managing Single Sign-On](sso.md) for its operational limits.
 
 Authentication data is stored in a SQLite database (`auth.db`) within the
 `data` directory. By default, the database resides at `./data/auth.db`
@@ -137,7 +137,7 @@ the `Users` page in the `Administration` console:
 Use the arrow to the left of a Username to review detailed information about
 the privileges assigned to the user:
 
-![Viewing the Users list](../../images/user_privs.png)
+![Viewing a user's effective permissions](../../images/user_privs.png)
 
 You can also use the `-list-users` command to display a list of user accounts
 on the command line:
@@ -156,11 +156,11 @@ Users:
 =================================================================================================================
 Username             Created           Last Login        Status               Notes                Authentication
 -----------------------------------------------------------------------------------------------------------------
-Alice                2026-06-10 13:24  Never             Enabled              Developer            https://idp.example.com
-Bob                  2026-06-10 13:31  Never             DISABLED             developer            Local
-Carol                2026-06-10 13:32  Never             Enabled              Management           https://idp.example.com
-Dan                  2026-06-10 13:37  Never             Enabled              sales                Local
-admin                2026-06-09 11:59  2026-06-10 12:27  Enabled              management           Local
+admin                2026-06-09 11:59  2026-06-10 12:27  Enabled                                   Local
+alice                2026-06-10 13:24  Never             Enabled              Developer            Local
+bob                  2026-06-10 13:31  Never             DISABLED             Developer            Local
+carol                2026-06-10 13:32  Never             Enabled              Management           Local
+dan                  2026-06-10 13:37  Never             Enabled              Sales                Local
 inventory            2026-06-10 13:31  Never             Enabled              Software             Local
 =================================================================================================================
 ```
@@ -168,7 +168,7 @@ inventory            2026-06-10 13:31  Never             Enabled              So
 The `Authentication` column reads `Local` for an account that holds a
 Workbench password, and the identity provider's issuer for an account that
 signs in through single sign-on; see
-[Single Sign-On](sso.md) for how federated accounts are identified in each
+[Managing Single Sign-On](sso.md) for how federated accounts are identified in each
 administrative interface.
 
 ### Modifying an Account
@@ -190,8 +190,8 @@ you to modify:
 
 ![Editing user details](../../images/edit_account.png)
 
-A federated account is marked in the `Type` column with a `Federated` chip
-and the provider's issuer, and its `Edit user` dialog offers no password
+The `Type` column marks a federated account with a `Federated` label and the
+provider's issuer, and the account's `Edit user` dialog offers no password
 field; the dialog explains instead that the account signs in through the
 provider and that the provider reconciles its group membership and
 superuser flag at every sign-in.
@@ -253,7 +253,7 @@ when either leaves no enabled superuser:
 - a federated sign-in removes superuser status from an account that the
   identity provider no longer places in the `oidc.superuser_group` group,
   even when the account is the last enabled superuser; see
-  [Single Sign-On](sso.md) for how the server synchronises that flag.
+  [Managing Single Sign-On](sso.md) for how the server synchronises that flag.
 
 ### Deleting an Account
 
@@ -275,11 +275,38 @@ following example, the `-delete-user` flag removes a user account:
 ./bin/ai-dba-server -delete-user -username charlie
 ```
 
+## Understanding Authentication Flow
+
+Interactive users authenticate with a username and password to obtain a
+session token; that session token is used for subsequent requests until the
+token expires:
+
+1. A user authenticates with a username and password using the login API.
+
+2. The client receives the session token in the response.
+
+3. The user can use the session token for subsequent requests until the token
+   expires.
+
+Machine-to-machine integrations use API tokens instead of session tokens. You
+can create an API token for a service account or regular user via the
+Administration console or command line. Use the token directly in all requests
+as a Bearer token.
+
+In the following example, an API token authenticates a request:
+
+```bash
+curl -X POST http://localhost:8080/mcp/v1 \
+  -H "Authorization: Bearer <api_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
 ## Managing Authentication Rate Limiting and Account Lockout
 
 Rate limiting and account lockout behavior are controlled by authentication
 settings in the server configuration file
-([`/etc/pgedge/ai-dba-server.yaml`](../../getting-started/configuration/server.md)).
+([`/etc/pgedge/ai-dba-server.yaml`](../../configuration/server/index.md)).
 When a valid user name is provided for authentication, the server begins to
 track failed login attempts and the time period in which those attempts are
 made.
@@ -326,4 +353,20 @@ number of failed login attempts:
 
 The server records every account change in the audit log, naming the
 user, token or command-line operator that made it; for details, see
-[Audit Log](audit-log.md).
+[Managing the Audit Log](../audit-log.md).
+
+## Error Responses
+
+The server returns standard HTTP status codes for authentication failures. A
+request without valid credentials receives a plain-text body, and a login
+request that a rate limit refuses receives a JSON body. The following table
+describes the responses:
+
+| Error Type | Response Body | HTTP Status |
+|------------|---------------|-------------|
+| Missing credentials | `Missing or invalid authentication credentials` | 401 |
+| Invalid, unknown, or expired token | `Invalid or unknown token` | 401 |
+| Too many login requests | `{"error": "Too many login requests, please try again later"}` | 429 |
+| Too many failed login attempts | `{"error": "Too many failed authentication attempts, please try again later"}` | 429 |
+
+The server does not expose specific error details for security reasons.

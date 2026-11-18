@@ -59,9 +59,11 @@ The pgEdge AI DBA Workbench consists of five sub-projects:
   they need Docker and are deliberately not part of `make test-all`.
 
 Go and TypeScript tests sit beside the source they cover. Documentation
-lives under `docs/` and is organised by audience (`getting-started/`,
-`user-guide/`, `admin-guide/`, `developer-guide/`), with per-sub-project
-pages nested one level below; the navigation is defined in `mkdocs.yml`.
+lives under `docs/` and is organised by task (`getting-started/` for
+installation, `configuration/` for per-component configuration reference,
+`user-guide/`, `admin-guide/`, `troubleshooting/` and `developer-guide/`),
+with per-component pages nested one level below; the navigation is defined
+in `mkdocs.yml`.
 
 Key files: `docs/changelog.md` (notable changes by release), `mkdocs.yml`
 (documentation navigation) and `Makefile` (build and test commands).

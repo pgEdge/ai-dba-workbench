@@ -1,4 +1,4 @@
-# Permission Management
+# Managing Permissions
 
 The `Permissions` page of the Workbench console allows an administrator to
 view and manage the privileges assigned to a group.
@@ -8,7 +8,7 @@ view and manage the privileges assigned to a group.
     The Workbench assigns privileges to groups rather than to individual
     accounts; an account gains a privilege by joining a group that holds
     the privilege. For instructions on creating groups and managing their
-    membership, see [Group Management](groups.md).
+    membership, see [Managing Groups](groups.md).
 
 To open the `Permissions` page, navigate through the `Settings` icon to the
 `Administration` console, and select `Permissions` from the navigation pane.
@@ -24,11 +24,73 @@ The page organizes a group's permissions in three sections:
 
 ![The Permissions page](../../images/permissions_console.png)
 
+## Administrative Permissions
+
+Administrative (or `ADMIN`) permissions control access to management
+operations in the Workbench's `Administration` console and the REST API.
+Privileged users assign these permissions through groups, alongside connection
+and MCP privileges. A superuser bypasses these checks and holds every
+administrative permission automatically, although an API token that a
+superuser owns holds only the permissions its admin scope names, unless
+that scope is unset or holds the `*` wildcard. An endpoint reserved for
+superusers that names no permission, such as the RBAC audit log, refuses
+any token whose admin scope names specific permissions.
+
+The Workbench defines the following ten ADMIN permissions:
+
+| Permission | Description |
+|------------|-------------|
+| `manage_connections` | Allows creating monitored database connections, and editing and deleting those that you can see. |
+| `manage_groups` | Allows creating, editing, and deleting groups and their memberships. |
+| `manage_permissions` | Allows granting and revoking privileges on groups. |
+| `manage_users` | Allows creating, editing, and deleting user accounts and service accounts. |
+| `manage_token_scopes` | Allows viewing every token, narrowing or deleting any token a superuser does not own, and creating or widening the scope of the holder's own tokens. |
+| `manage_blackouts` | Allows creating, editing, and deleting maintenance blackout windows. |
+| `manage_probes` | Allows configuring probe frequency, retention, and enabled state. |
+| `manage_alert_rules` | Allows configuring alert rule defaults and per-connection overrides. |
+| `manage_notification_channels` | Allows creating, editing, and deleting alert notification channels. |
+| `store_system_memory` | Allows storing, pinning, unpinning and deleting system-scoped chat memories visible to all users. |
+
+Each permission allows a specific class of management operation; for example,
+`manage_users` allows creating, editing, and deleting accounts.
+
+An administrative permission applies only to what the holder can see. A
+probe, alert or notification channel override set on a cluster or a cluster
+group applies to every connection in it, so changing or deleting one requires
+the holder to see every one of those connections, whilst viewing one needs
+only one of them to be visible. The same applies to deleting a cluster or a
+cluster group, and to moving a cluster to another group, since each of those
+changes which overrides reach the cluster's connections.
+
+A blackout or a blackout schedule on a cluster or a cluster group silences
+alerts on every connection in it, so creating, changing, stopping or deleting
+one likewise requires the holder to see every one of those connections. An
+estate-wide blackout or schedule silences alerts on every connection, so
+creating, changing, stopping or deleting one requires the holder to see every
+connection, although every user can view it. A blackout on a connection,
+cluster or group the holder cannot see at all is answered as though it did
+not exist.
+
+An alert rule's defaults, a global probe configuration, and a notification
+channel with its email recipients apply to every connection, so changing an
+alert rule or a global probe configuration, or creating, changing or deleting
+a notification channel or a recipient, requires the holder to see every
+connection, although they stay readable to everyone else. A probe
+configuration on a single connection, cluster or group follows the rule for
+overrides above.
+
+A change refused because a member connection is hidden answers in the same
+way as a missing permission, so it does not reveal which connections are
+hidden or how many. A connection the holder cannot see cannot be removed from
+a cluster either; the attempt is answered as though the connection were not a
+member. Superusers, and users granted access to all connections, see every
+connection and are not affected.
+
 ## Assigning or Revoking Permissions
 
 Use the `Select Group` drop-down at the top of the page to select the group
-whose permissions you wish to review or edit; once selected, the console loads
-the selected group's current grants into each table below the drop-down.
+whose permissions you wish to review or edit; when you select a group, the
+console loads the group's current grants into each table below the drop-down.
 Choose a different group at any time to switch the displayed permissions; the
 tables refresh to match the new selection.
 
@@ -273,8 +335,8 @@ ID     Type       Identifier                     Description
 
 To review the privileges already assigned to a group, use the
 `-show-group-privileges` command described in
-[Group Management](groups.md#managing-group-membership).
+[Managing Groups](groups.md#managing-group-membership).
 
 The server records every privilege and permission grant or revocation in
 the audit log, naming the user, token or command-line operator that made
-it; for details, see [Audit Log](audit-log.md).
+it; for details, see [Managing the Audit Log](../audit-log.md).

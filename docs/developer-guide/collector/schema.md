@@ -44,8 +44,11 @@ The table contains the following columns:
 
 ### connections
 
-The `connections` table stores information about
-PostgreSQL servers to monitor.
+The `connections` table stores information about PostgreSQL servers to monitor.
+The following definition is a simplified excerpt; the Collector's migrations in
+`collector/src/database/schema.go` create the full table, which also includes
+the `enabled`, `cluster_id`, `role`, `connection_error`, `description`,
+`membership_source`, and `deleted_at` columns:
 
 ```sql
 CREATE TABLE connections (
@@ -115,67 +118,96 @@ The table has the following indexes:
 
 ### probe_configs
 
-The `probe_configs` table defines monitoring probes
-and their configuration. The table supports both global
-defaults and per-connection overrides.
+The `probe_configs` table defines monitoring probes and their configuration.
+The table supports global defaults and group, cluster, and server overrides.
+The definition references the `clusters` and `cluster_groups` tables, which the
+Collector's migrations create before `probe_configs`; the definition does not
+run on a database that lacks those tables:
 
 ```sql
 CREATE TABLE probe_configs (
     id INTEGER GENERATED ALWAYS AS IDENTITY
         PRIMARY KEY,
+    connection_id INTEGER
+        REFERENCES connections(id)
+        ON DELETE CASCADE,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     name TEXT NOT NULL,
     description TEXT NOT NULL,
     collection_interval_seconds INTEGER NOT NULL
         DEFAULT 60,
     retention_days INTEGER NOT NULL DEFAULT 28,
-    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    connection_id INTEGER
-        REFERENCES connections(id)
+    scope TEXT NOT NULL DEFAULT 'global',
+    group_id INTEGER
+        REFERENCES cluster_groups(id)
         ON DELETE CASCADE,
-    created_at TIMESTAMP NOT NULL
+    cluster_id INTEGER
+        REFERENCES clusters(id)
+        ON DELETE CASCADE,
+    user_modified BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL
         DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL
+    updated_at TIMESTAMPTZ NOT NULL
         DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_name_not_empty
         CHECK (name <> ''),
     CONSTRAINT chk_collection_interval_positive
         CHECK (collection_interval_seconds > 0),
     CONSTRAINT chk_retention_days_positive
-        CHECK (retention_days > 0)
+        CHECK (retention_days > 0),
+    CONSTRAINT probe_configs_scope_check
+        CHECK (scope IN ('global', 'group', 'cluster', 'server')),
+    CONSTRAINT probe_configs_scope_ids_check CHECK (
+        (scope = 'global' AND connection_id IS NULL
+            AND group_id IS NULL AND cluster_id IS NULL)
+        OR (scope = 'group' AND group_id IS NOT NULL
+            AND connection_id IS NULL AND cluster_id IS NULL)
+        OR (scope = 'cluster' AND cluster_id IS NOT NULL
+            AND connection_id IS NULL AND group_id IS NULL)
+        OR (scope = 'server' AND connection_id IS NOT NULL
+            AND group_id IS NULL AND cluster_id IS NULL)
+    )
 );
 ```
 
 The table contains the following key columns:
 
 - `id` is the unique probe configuration identifier.
-- `name` is the probe name, which matches the
-  `pg_stat_*` view name.
+- `name` is the registered probe name, such as `pg_stat_activity`,
+  `pg_node_role`, or `pg_sys_os_info`.
 - `description` is a human-readable description.
-- `collection_interval_seconds` defines how often
-  the probe runs in seconds.
-- `retention_days` defines how long the system
-  retains data in days.
+- `collection_interval_seconds` defines how often the probe runs in seconds.
+- `retention_days` defines how long the system retains data in days.
 - `is_enabled` controls whether the probe runs.
-- `connection_id` references the connection for
-  per-server configuration; a NULL value indicates
-  a global default.
+- `scope` identifies the level the row applies to: `global`, `group`,
+  `cluster`, or `server`.
+- `connection_id`, `cluster_id`, and `group_id` identify the server, cluster,
+  or group for a scoped row; the column that matches the `scope` is set, and
+  the others are NULL.
+- `user_modified` marks the row as an explicit override; the Collector keeps a
+  server row whose `user_modified` is `FALSE` in step with its parent.
 
 #### Configuration Hierarchy
 
 The Collector uses a fallback hierarchy for probe
 settings:
 
-1. Per-server configuration applies if a
-   `probe_configs` row exists with the specific
-   `connection_id`.
-2. Global default applies if no per-server
-   configuration exists; the system uses the
-   `probe_configs` row where `scope = 'global'`;
-   cluster and group overrides also have a NULL
-   `connection_id`, so the global row is matched on
-   its scope.
-3. Hardcoded default applies if no database
-   configuration exists.
+1. Server configuration applies if a `probe_configs` row exists with
+   `scope = 'server'` and the connection's `connection_id`.
+2. Cluster configuration applies if no server row exists and a row with
+   `scope = 'cluster'` exists for the connection's cluster.
+3. Group configuration applies if neither applies and a row with
+   `scope = 'group'` exists for the group of the connection's cluster.
+4. Global configuration applies if no scoped row exists; the system uses the
+   `probe_configs` row where `scope = 'global'`.
+5. Hardcoded defaults apply if no database configuration exists.
+
+When a connection first needs a probe and has no server row, the Collector
+creates one by copying the values from the first level that resolves. At each
+configuration reload, each server row whose `user_modified` is `FALSE` takes
+the values of its effective parent, which is the cluster row where one exists,
+then the group row, and then the global row; a change to a parent that a
+higher-precedence row overrides does not reach the server row.
 
 The table has the following indexes:
 
@@ -350,15 +382,13 @@ CREATE INDEX idx_pg_stat_statements_identity_time
 
 Each index serves a different access pattern:
 
-- `idx_pg_stat_statements_conn_time` serves a scan of one
-  connection over a time range.
-- `idx_pg_stat_statements_object` serves a lookup of one
-  statement in one database, including the query text that
-  the server resolves once per returned row.
-- `idx_pg_stat_statements_identity_time` serves the
-  windowed aggregation behind
-  `/api/v1/metrics/top-queries`, which was added by
-  migration 15.
+- `idx_pg_stat_statements_conn_time` serves a scan of one connection over a
+  time range.
+- `idx_pg_stat_statements_object` serves a lookup of one statement in one
+  database, including the query text that the server resolves once per returned
+  row.
+- `idx_pg_stat_statements_identity_time` serves the windowed aggregation behind
+  `/api/v1/metrics/top-queries`, which migration 15 added.
 
 The third index repays a closer look, because the column
 order is not arbitrary. The `pg_stat_statements` counters
@@ -427,13 +457,11 @@ The system optimizes storage in several ways:
 
 ## Data Retention
 
-The garbage collector manages data retention
-automatically. When the `use_coldfront_for_metrics`
-option is enabled, the collector creates no partitions,
-does not start the garbage collector, and ignores
-`retention_days`; the
-[Storing Metrics in pgEdge ColdFront](../../getting-started/configuration/coldfront-metrics.md)
-document describes that mode.
+The garbage collector manages data retention automatically. When the
+`use_coldfront_for_metrics` option is enabled, the collector creates no
+partitions, does not start the garbage collector, and ignores
+`retention_days`; the [Storing Metrics in pgEdge ColdFront](../../configuration/collector/coldfront-metrics.md) page
+describes that mode.
 
 ### Automatic Cleanup
 
@@ -450,12 +478,11 @@ The garbage collector performs the following steps:
 
 ### Manual Cleanup
 
-To manually drop a partition, first check existing
-partitions and then drop the target partition. Manual
-cleanup applies to PostgreSQL storage only; a ColdFront
-datastore has no partitions, and the
-[Managing Metrics Retention](../../getting-started/configuration/coldfront-metrics.md#managing-metrics-retention)
-section describes how to delete old rows in that mode.
+To manually drop a partition, first check existing partitions and then drop the
+target partition. Manual cleanup applies to PostgreSQL storage only; a
+ColdFront datastore has no partitions, and the
+[Managing Metrics Retention](../../configuration/collector/coldfront-metrics.md#managing-metrics-retention) section describes
+how to delete old rows in that mode.
 
 In the following example, the query lists all
 partitions for `pg_stat_activity`:
@@ -477,13 +504,11 @@ DROP TABLE metrics.pg_stat_activity_20251104;
 
 ### Adjusting Retention
 
-Update the `probe_configs` table to change retention
-settings. The `retention_days` value applies to
-PostgreSQL storage only; the collector ignores the
-value when the `use_coldfront_for_metrics` option is
-enabled, as the
-[Managing Metrics Retention](../../getting-started/configuration/coldfront-metrics.md#managing-metrics-retention)
-section describes.
+Update the `probe_configs` table to change retention settings. The
+`retention_days` value applies to PostgreSQL storage only; the collector
+ignores the value when the `use_coldfront_for_metrics` option is enabled, as
+the [Managing Metrics Retention](../../configuration/collector/coldfront-metrics.md#managing-metrics-retention) section
+describes.
 
 In the following example, the command updates the
 global default retention:
@@ -495,18 +520,37 @@ WHERE name = 'pg_stat_activity'
   AND scope = 'global';
 ```
 
-In the following example, the command sets retention
-for a specific connection:
+A row with `user_modified = TRUE` overrides every inherited setting, not only
+the one you change: the Collector stops copying `is_enabled`,
+`collection_interval_seconds`, and `retention_days` from the parent, so later
+parent changes, including disabling the probe, no longer reach that connection.
+In the following example, the command sets retention for a specific connection
+and marks the row as an override:
 
 ```sql
 UPDATE probe_configs
-SET retention_days = 30
+SET retention_days = 30,
+    user_modified = TRUE
 WHERE name = 'pg_stat_activity'
   AND connection_id = 1;
 ```
 
-Changes take effect on the next garbage collection
-run.
+Each garbage collection run reads the global and server rows directly, so a
+retention change that you make to a row applies at the next run, which can come
+before the next configuration reload. A change to a global row reaches the
+server rows that inherit from it, those without an override and without a
+cluster or group override above them, at the next reload, within five minutes;
+a garbage collection run in between still uses their old values. Server rows
+that inherit from a cluster or group override keep that override's values.
+Coordinate retention changes with the garbage collection schedule to avoid
+dropping partitions unexpectedly, and query `probe_configs` to confirm the
+retention on each enabled row for the probe.
+
+All connections share one metrics table per probe, and garbage collection
+applies the retention of a single enabled configuration row for the probe to
+the whole table. A longer retention on one connection's row therefore does not
+guarantee that the collector keeps that connection's data for longer; keep
+`retention_days` the same on every enabled row for a probe.
 
 ## Querying Metrics
 

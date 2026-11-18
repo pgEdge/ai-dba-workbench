@@ -320,8 +320,9 @@ not run against the database named in the connection string; instead,
 creates a database named `ai_workbench_test_<YYYYMMDD_HHMMSS>_<microseconds>`,
 and points the tests that connect through `getTestConnection()` at that
 generated database. One test, `TestMigration_PgSettings`, does not use the
-generated database; the Testing the pg_settings Migration section describes the
-exception.
+generated database;
+[Testing the pg_settings Migration](#testing-the-pg_settings-migration)
+describes the exception.
 
 #### Selecting a Server
 
@@ -384,7 +385,7 @@ connection or because `DROP DATABASE` returns an error. A complete run also
 leaves databases behind, because the three tests in `maintenance_test.go` each
 call `setupTestDatabase()` again; each call replaces the generated database for
 the rest of the run, and teardown drops only the last one. Leftover databases
-are safe to drop once you have confirmed that no test run or other client is
+are safe to drop when you have confirmed that no test run or other client is
 still connected to them.
 
 #### Confirming the Tests Ran

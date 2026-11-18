@@ -587,7 +587,7 @@ func TestProbeStalenessSnapshotReadsOncePerPass(t *testing.T) {
 
 // setProbeInterval rewrites the server-wide collection interval for one
 // probe, which is what an operator does through the probe configuration
-// page documented in docs/admin-guide/probes.md.
+// page documented in docs/admin-guide/probes/index.md.
 func setProbeInterval(t *testing.T, pool *pgxpool.Pool, probe string, seconds int) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(),

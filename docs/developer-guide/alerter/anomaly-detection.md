@@ -199,18 +199,16 @@ on the connection into one alert.
 
 ### Stale Baseline Rows
 
-The baseline calculator writes an `hourly` or `daily` row only
-while that bucket holds at least three samples, and visits a
-connection or database only while it has samples inside
-`baselines.lookback_days`. Once it has rebuilt a metric, it deletes
-every row of that metric whose `last_calculated` timestamp is older
-than the start of the current cycle, because the cycle did not
-rewrite those rows and their statistics no longer describe the
-data. A metric whose historical query fails, or for which any
-baseline row fails to upsert, keeps its rows for that cycle; a row
-that failed to upsert still carries the previous cycle's timestamp,
-so pruning would otherwise delete the very row the cycle could not
-refresh.
+The baseline calculator writes an `hourly` or `daily` row only while that
+bucket holds at least three samples, and visits a connection or database only
+while it has samples inside `baselines.lookback_days`. When it has rebuilt a
+metric, it deletes every row of that metric whose `last_calculated` timestamp
+is older than the start of the current cycle, because the cycle did not rewrite
+those rows and their statistics no longer describe the data. A metric whose
+historical query fails, or for which any baseline row fails to upsert, keeps
+its rows for that cycle; a row that failed to upsert still carries the previous
+cycle's timestamp, so pruning would otherwise delete the very row the cycle
+could not refresh.
 
 ### Baseline Selection
 
@@ -528,11 +526,10 @@ Tier 2 settings are configured in the `anomaly.tier2` section:
 
 ## Tier 3: LLM Classification
 
-Tier 3 uses an LLM to classify uncertain anomalies. The model
-receives context about the anomaly and similar past anomalies,
-then determines whether to alert or suppress. Tier 3 uses a
-reasoning model by default, and can optionally ask a decision
-model first, as the Decision Model section describes. The code
+Tier 3 uses an LLM to classify uncertain anomalies. The model receives context
+about the anomaly and similar past anomalies, then determines whether to alert
+or suppress. Tier 3 uses a reasoning model by default, and can optionally ask a
+decision model first, as [Decision Model](#decision-model) describes. The code
 lives in `alerter/src/internal/engine/anomalies.go` and
 `alerter/src/internal/engine/tier3_decision.go`.
 
@@ -727,18 +724,16 @@ which kind of model decided a candidate:
 - `tier3_model` holds the provider and model, in the form
   `provider/model`, that `tier3_source` names.
 
-`setTier3Source` sets both columns before each model call, so when
-every model fails the columns name the last model tried. Rows that
-Tier 3 has not classified, and rows classified before the
-migration, hold `NULL`. The alerter reads and writes both columns
-whenever it loads or updates a candidate, so the collector that
-applies migration 22 must be upgraded before, or together with,
-the alerter. An alerter upgraded first logs `ERROR: Failed to get
-anomaly candidates` once each anomaly cycle, naming the missing
-column, and raises no anomaly alerts; the candidates that Tier 1
-queues meanwhile are expired unprocessed once they pass the stale
-candidate cut-off, two and a half hours at the default Tier 3
-timeout.
+`setTier3Source` sets both columns before each model call, so when every model
+fails the columns name the last model tried. Rows that Tier 3 has not
+classified, and rows classified before the migration, hold `NULL`. The alerter
+reads and writes both columns whenever it loads or updates a candidate, so the
+collector that applies migration 22 must be upgraded before, or together with,
+the alerter. An alerter upgraded first logs
+`ERROR: Failed to get anomaly candidates` once each anomaly cycle, naming the
+missing column, and raises no anomaly alerts; the candidates that Tier 1 queues
+meanwhile are expired unprocessed when they pass the stale candidate cut-off,
+two and a half hours at the default Tier 3 timeout.
 
 ### Decision Model Trade-offs
 
@@ -899,11 +894,11 @@ The alerter calculates three baseline types:
 - `daily` baselines group values by UTC day of week (0-6, with 0
   being Sunday).
 
-Each type is written per connection and, when the metric's
-historical query returns a database name, per database. The
-calculator only processes metrics that carry a historical query;
-see the Supported Metrics section above for the list of metrics
-that are skipped and for the clean-up of their leftover rows.
+Each type is written per connection and, when the metric's historical query
+returns a database name, per database. The calculator only processes metrics
+that carry a historical query; [Supported Metrics](#supported-metrics) gives
+the list of metrics that are skipped and for the clean-up of their leftover
+rows.
 
 ### Baseline Statistics
 

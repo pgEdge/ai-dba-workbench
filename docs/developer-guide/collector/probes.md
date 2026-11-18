@@ -297,13 +297,13 @@ func (p *PgStatActivityProbe) Store(
 
     columns := []string{
         "connection_id", "collected_at",
-        "datid", "datname",
+        "pid", "datid", "datname",
     }
     var values [][]interface{}
     for _, metric := range metrics {
         row := []interface{}{
             connectionID, timestamp,
-            metric["datid"],
+            metric["pid"], metric["datid"], metric["datname"],
         }
         values = append(values, row)
     }

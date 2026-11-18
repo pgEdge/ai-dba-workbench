@@ -1,4 +1,4 @@
-# Quick Start - Installing the Workbench with Binary Files
+# Installing the Workbench from Binary Files
 
 The AI DBA Workbench collects metrics from PostgreSQL servers, evaluates
 alert rules, and displays results in a web interface. This guide covers
@@ -122,6 +122,15 @@ file in the `/etc/pgedge` directory and set the file permissions:
 ```bash
 sudo sh -c 'echo "1safepassword" > /etc/pgedge/password.txt'
 sudo chmod 600 /etc/pgedge/password.txt
+```
+
+The walkthrough runs the Workbench components under your own account, so that
+account must be able to read both files. In the following example, the `chown`
+command gives your account ownership of the files and keeps the restrictive
+permissions:
+
+```bash
+sudo chown "$USER" /etc/pgedge/server.secret /etc/pgedge/password.txt
 ```
 
 !!! hint
@@ -280,13 +289,12 @@ file to describe the deployment. The following changes are the minimum settings
 required for our installation walkthrough:
 
 ```yaml
-datastore:
+database:
   host: localhost
   database: ai_workbench
-  username: postgres
+  user: postgres
   # Use either password or password_file (see the note below).
-  password: ""
-  # password_file: /etc/pgedge/password.txt
+  password_file: /etc/pgedge/password.txt
   port: 5432
   sslmode: disable
 ```
@@ -295,6 +303,16 @@ datastore:
 
     You can use either the `password` property or the `password_file`
     property to specify the password.
+
+The sample file sets the server to listen on port 8080 of every interface.
+In this walkthrough, nginx on the same host forwards requests to the server,
+so bind the server to the loopback address; the server then accepts no
+plain-HTTP connections from the network:
+
+```yaml
+http:
+  address: "127.0.0.1:8080"
+```
 
 By default, the server blocks connections to internal and private IP
 addresses. To monitor a PostgreSQL instance on the same host or local
@@ -408,10 +426,12 @@ datastore:
   sslmode: disable
 ```
 
-The `SECURITY SETTINGS` section stores the location of the secret file:
+The `notifications` section stores the location of the secret file that the
+alerter uses to decrypt notification channel credentials:
 
 ```yaml
-secret_file: /etc/pgedge/server.secret
+notifications:
+  secret_file: /etc/pgedge/server.secret
 ```
 
 After updating the configuration file, start the alerter; for example:
@@ -483,14 +503,14 @@ for your installation:
 
 ```nginx
 server {
-    listen 80;
-    server_name your_server_hostname_or_ip;
+    listen 127.0.0.1:80;
+    server_name localhost;
 
     root /opt/ai-workbench/client;
     index index.html;
 
     location /api/ {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -498,7 +518,7 @@ server {
     }
 
     location /mcp/ {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -509,7 +529,7 @@ server {
     }
 
     location = /health {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://127.0.0.1:8080;
     }
 
     location / {
@@ -517,6 +537,15 @@ server {
     }
 }
 ```
+
+!!! warning
+
+    This configuration serves the Workbench over plain HTTP, which suits a
+    local evaluation only, so nginx listens on the loopback address and the
+    Workbench is reachable only from the same host at `http://localhost`.
+    Before you expose the Workbench on a network, add TLS as shown in the
+    [Nginx configuration example](../configuration/client.md#nginx-configuration),
+    and keep the server itself bound to the loopback address.
 
 Then, use the `ln`, `nginx`, and `systemctl` commands to enable the
 configuration and restart nginx:
@@ -529,10 +558,13 @@ sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-Open a browser and navigate to `http://<server-ip>`; log in with the
+Open a browser and navigate to `http://localhost`; log in with the
 username and password you created when you ran the `-add-user` command.
 
 ![Log in to the AI DBA Workbench](../images/workbench_login.png)
+
+Before you add a server, prepare it for monitoring as described in
+[Preparing Monitored Servers](../admin-guide/monitored-database-privileges.md).
 
 After logging in, select the `+` next to the DATABASE SERVERS heading
 in the left navigation panel. The Workbench adds a new server definition
@@ -541,25 +573,25 @@ entry.
 ![Adding a server definition](../images/add_server.png)
 
 For detailed information about using the Workbench, see the
-[User Guide](../user-guide/index.md).
+[Using the Workbench](../user-guide/index.md) guide.
 
 
 ### Customizing your Configuration
 
 Consult the following guides for additional configuration information:
 
-- The [systemd configuration](configuration/configure_systemd.md) guide
-  provides details about setting up systemd service management for users
-  who did not use pgEdge packages when installing.
+- The [systemd configuration](../configuration/configure_systemd.md) guide
+  provides details about setting up systemd service management for users who
+  did not use pgEdge packages when installing.
 
-- The [collector](configuration/collector.md) guide covers tuned
+- The [server](../configuration/server/index.md) guide covers TLS,
+  authentication, and LLM integration.
+
+- The [collector](../configuration/collector/index.md) guide covers tuned
   connection pools and SSL.
 
-- The [server](configuration/server.md) guide covers TLS, authentication,
-  and LLM integration.
+- The [alerter](../configuration/alerter/index.md) guide covers anomaly
+  detection and notification channels.
 
-- The [alerter](configuration/alerter.md) guide covers anomaly detection
-  and notification channels.
-
-- The [web client](configuration/client.md) guide covers proxy settings
-  and build options.
+- The [web client](../configuration/client.md) guide covers proxy settings and
+  build options.

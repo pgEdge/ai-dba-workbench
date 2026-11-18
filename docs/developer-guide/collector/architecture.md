@@ -92,7 +92,7 @@ When the `use_coldfront_for_metrics` option is enabled,
 the Collector stores each metrics table in pgEdge
 ColdFront, creates and drops no partitions, and does not
 start the garbage collector. The
-[Storing Metrics in pgEdge ColdFront](../../getting-started/configuration/coldfront-metrics.md)
+[Storing Metrics in pgEdge ColdFront](../../configuration/collector/coldfront-metrics.md)
 document describes that mode.
 
 ### Connection Pooling

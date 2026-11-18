@@ -48,13 +48,12 @@ The recommended topology has the following properties:
   not exposed to the network; the reverse proxy is the
   only client that connects to the server directly.
 
-The official Docker images follow this topology. The
-client container runs nginx as a non-root user, serves
-the bundled SPA, and proxies API and MCP traffic to the
-server container. See the
-[Docker deployment guide](../getting-started/docker.md)
-for the production Compose configuration and the
-[web client configuration page](../getting-started/configuration/client.md#nginx-configuration)
+The official Docker images follow this topology. The client container runs
+nginx as a non-root user, serves the bundled SPA, and proxies API and MCP
+traffic to the server container. See the
+[Docker deployment guide](../getting-started/docker.md) for the production
+Compose configuration and the
+[web client configuration page](../configuration/client.md#nginx-configuration)
 for an annotated nginx configuration.
 
 ## Operator Responsibilities
@@ -79,29 +78,24 @@ the operator must also configure the proxy correctly.
   `127.0.0.1` or to a private interface that the proxy
   alone can reach.
 
-The server's `http.trusted_proxies` list pairs with
-the operator's network controls; configure the list
-with the CIDR ranges of the reverse proxies that send
-`X-Forwarded-For` headers. See the
-[server configuration reference](../getting-started/configuration/server.md#http-server-http)
+The server's `http.trusted_proxies` list pairs with the operator's network
+controls; configure the list with the CIDR ranges of the reverse proxies that
+send `X-Forwarded-For` headers. See the
+[server configuration reference](../configuration/server/configuration_file.md#http-server-properties)
 for details.
 
-The two forwarded headers are believed to different
-degrees. `X-Forwarded-For` is read only from an
-address on `http.trusted_proxies`, because it decides
-which client a rate limit or a log line is attributed
-to. `X-Forwarded-Proto` marks every cookie the server
-sets as `Secure` whenever it says `https`, from any
-address, since a client forging it can only lose its
-own cookie, whereas ignoring a genuine proxy's header
-would send the session cookie in clear on any
-plain-HTTP request to the same host. The list still
-matters to that header for one thing: the federated
-login state cookie uses the `__Host-` name prefix only
-when the header came from a listed proxy, so a
-TLS-terminating proxy deployment with federated login
-enabled and no list refuses to start unless
-`http.auth.oidc.allow_unprefixed_state_cookie` is set.
+The server trusts the two forwarded headers to different degrees. The server
+reads `X-Forwarded-For` only from an address on `http.trusted_proxies`,
+because the header decides which client a rate limit or a log line is
+attributed to. When `X-Forwarded-Proto` says `https`, the server marks every
+cookie it sets as `Secure`, whatever the sending address; a client that forges
+the header can only lose its own cookie, whereas ignoring a genuine proxy's
+header would send the session cookie in clear on any plain-HTTP request to the
+same host. The `http.trusted_proxies` list still affects `X-Forwarded-Proto` in
+one way: the federated login state cookie uses the `__Host-` name prefix only
+when the header came from a listed proxy. A deployment with a TLS-terminating
+proxy, federated login enabled, and no `http.trusted_proxies` list refuses to
+start unless `http.auth.oidc.allow_unprefixed_state_cookie` is set.
 
 ## Direct TLS on the Server
 
@@ -185,24 +179,17 @@ to restore a supported configuration.
 
 ## See Also
 
+- The [installation guide](../getting-started/installation_overview.md) covers
+  the standard production deployment.
+- The [Docker deployment guide](../getting-started/docker.md) documents the
+  container topology that ships with the project.
 - The
-  [installation guide](../getting-started/installation_overview.md)
-  covers the standard production deployment.
+  [server configuration reference](../configuration/server/configuration_file.md#http-server-properties)
+  lists every option for the `http` and `http.tls` sections.
 - The
-  [Docker deployment guide](../getting-started/docker.md)
-  documents the container topology that ships with
-  the project.
-- The
-  [server configuration reference](../getting-started/configuration/server.md#http-server-http)
-  lists every option for the `http` and `http.tls`
-  sections.
-- The
-  [web client configuration page](../getting-started/configuration/client.md#nginx-configuration)
-  shows an annotated nginx configuration for the
-  static SPA.
-- The
-  [Single Sign-On guide](managing-users-and-permissions/sso.md)
-  explains why the federated login callback URL must
-  match the address the browser reaches, and why
-  `http.trusted_proxies` matters to the callback's
-  rate limit.
+  [web client configuration page](../configuration/client.md#nginx-configuration)
+  shows an annotated nginx configuration for the static SPA.
+- The [Configuring Single Sign-On](../configuration/server/single_sign_on.md) page explains
+  why the federated login callback URL must match the address the browser
+  reaches, and why `http.trusted_proxies` matters to the callback's rate
+  limit.

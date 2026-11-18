@@ -53,8 +53,9 @@ cd ai-dba-workbench
 
 ## Building the Binaries
 
-The Makefile builds all of the server-side components and the web client.
-In the following example, the `make all` command builds the Workbench:
+The Makefile builds the collector, server, and alerter; the web client builds
+separately with `npm`, as described in the next section. In the following
+example, the `make all` command builds the server-side components:
 
 ```bash
 make all
@@ -184,6 +185,15 @@ sudo sh -c 'echo "1safepassword" > /etc/pgedge/password.txt'
 sudo chmod 600 /etc/pgedge/password.txt
 ```
 
+The walkthrough runs the Workbench components under your own account, so that
+account must be able to read both files. In the following example, the `chown`
+command gives your account ownership of the files and keeps the restrictive
+permissions:
+
+```bash
+sudo chown "$USER" /etc/pgedge/server.secret /etc/pgedge/password.txt
+```
+
 !!! hint
 
     When configuring your installation, ensure that the locations of
@@ -260,12 +270,13 @@ User 'admin' is now a superuser
 Copy the sample configuration file for the collector to the system
 configuration directory before editing the settings. The `/etc/pgedge`
 directory is the system-wide default location that the Workbench searches for
-configuration files; specify an alternate location on the command line
-when invoking the Workbench. In the following example, the `cp` command
-copies the sample collector configuration file to `/etc/pgedge`:
+configuration files; specify an alternate location on the command line when
+invoking the Workbench. Run the `cp` commands in this guide from the
+repository root. In the following example, the `cp` command copies the sample
+collector configuration file to `/etc/pgedge`:
 
 ```bash
-sudo cp ~/ai-dba-workbench/examples/ai-dba-collector.yaml /etc/pgedge/ai-dba-collector.yaml
+sudo cp examples/ai-dba-collector.yaml /etc/pgedge/ai-dba-collector.yaml
 ```
 
 Use your choice of editor to update the configuration file to describe your
@@ -322,7 +333,7 @@ before editing the settings. In the following example, the `cp` command
 copies the sample configuration file to the `/etc/pgedge` directory:
 
 ```bash
-sudo cp ~/ai-dba-workbench/examples/ai-dba-server.yaml /etc/pgedge/ai-dba-server.yaml
+sudo cp examples/ai-dba-server.yaml /etc/pgedge/ai-dba-server.yaml
 ```
 
 The sample configuration file specifies the minimum settings for a local
@@ -334,13 +345,23 @@ server's database; update the properties with the connection details and the
 password for the `postgres` user:
 
 ```yaml
-datastore:
+database:
   host: localhost
   port: 5432
   database: ai_workbench
   user: postgres
   password: "1safepassword"
   sslmode: disable
+```
+
+The sample file sets the server to listen on port 8080 of every interface.
+In this walkthrough, nginx on the same host forwards requests to the server,
+so bind the server to the loopback address; the server then accepts no
+plain-HTTP connections from the network:
+
+```yaml
+http:
+  address: "127.0.0.1:8080"
 ```
 
 By default, the server blocks connections to internal and private IP
@@ -419,14 +440,13 @@ prompt.
 ## Configuring and Starting the Alerter
 
 The alerter connects to the same datastore database as the collector and
-server. Configure the alerter with a YAML configuration file or
-command-line flags; see the
-[alerter configuration](configuration/alerter.md) reference to review the
-available options. In the following example, the `cp` command copies the
-sample alerter configuration file to `/etc/pgedge`:
+server. Configure the alerter with a YAML configuration file or command-line
+flags; see the [alerter configuration](../configuration/alerter/index.md) reference
+to review the available options. In the following example, the `cp` command
+copies the sample alerter configuration file to `/etc/pgedge`:
 
 ```bash
-sudo cp ~/ai-dba-workbench/examples/ai-dba-alerter.yaml /etc/pgedge/ai-dba-alerter.yaml
+sudo cp examples/ai-dba-alerter.yaml /etc/pgedge/ai-dba-alerter.yaml
 ```
 
 Next, update the configuration file to describe your deployment. The following
@@ -447,10 +467,12 @@ The `sslmode: disable` setting disables SSL for the datastore connection;
 this setting is suitable for local development only. For other
 deployment environments, use the default `prefer` setting or a stricter mode.
 
-The `SECURITY SETTINGS` section stores the location of the secret file:
+The `notifications` section stores the location of the secret file that the
+alerter uses to decrypt notification channel credentials:
 
 ```yaml
-secret_file: /etc/pgedge/server.secret
+notifications:
+  secret_file: /etc/pgedge/server.secret
 ```
 
 After updating the settings and saving the file, start the alerter:
@@ -517,14 +539,14 @@ for your installation:
 
 ```nginx
 server {
-    listen 80;
-    server_name your_server_hostname_or_ip;
+    listen 127.0.0.1:80;
+    server_name localhost;
 
     root /opt/ai-workbench/client;
     index index.html;
 
     location /api/ {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -532,7 +554,7 @@ server {
     }
 
     location /mcp/ {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -543,7 +565,7 @@ server {
     }
 
     location = /health {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://127.0.0.1:8080;
     }
 
     location / {
@@ -551,6 +573,15 @@ server {
     }
 }
 ```
+
+!!! warning
+
+    This configuration serves the Workbench over plain HTTP, which suits a
+    local evaluation only, so nginx listens on the loopback address and the
+    Workbench is reachable only from the same host at `http://localhost`.
+    Before you expose the Workbench on a network, add TLS as shown in the
+    [Nginx configuration example](../configuration/client.md#nginx-configuration),
+    and keep the server itself bound to the loopback address.
 
 Then, use the `ln`, `nginx`, and `systemctl` commands to enable the
 configuration and restart nginx:
@@ -563,10 +594,13 @@ sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-Open a browser and navigate to `http://<server-ip>`; provide
+Open a browser and navigate to `http://localhost`; provide
 authentication details when the Workbench opens.
 
 ![Log in to the AI DBA Workbench](../images/workbench_login.png)
+
+Before you add a server, prepare it for monitoring as described in
+[Preparing Monitored Servers](../admin-guide/monitored-database-privileges.md).
 
 After logging in, select the `+` next to the DATABASE SERVERS heading in
 the left navigation panel. The Workbench adds a new server definition
@@ -575,25 +609,25 @@ entry.
 ![Adding a server definition](../images/add_server.png)
 
 For detailed information about using the Workbench, see the
-[User Guide](../user-guide/index.md).
+[Using the Workbench](../user-guide/index.md) guide.
 
 
 ## Customizing your Configuration
 
 Consult the following guides for additional configuration information:
 
-- The [systemd configuration](configuration/configure_systemd.md) guide
-  provides details about setting up systemd service management for users
-  who did not use pgEdge packages when installing.
+- The [systemd configuration](../configuration/configure_systemd.md) guide
+  provides details about setting up systemd service management for users who
+  did not use pgEdge packages when installing.
 
-- The [collector](configuration/collector.md) guide covers tuned
+- The [server](../configuration/server/index.md) guide covers TLS,
+  authentication, and LLM integration.
+
+- The [collector](../configuration/collector/index.md) guide covers tuned
   connection pools and SSL.
 
-- The [server](configuration/server.md) guide covers TLS, authentication,
-  and LLM integration.
+- The [alerter](../configuration/alerter/index.md) guide covers anomaly
+  detection and notification channels.
 
-- The [alerter](configuration/alerter.md) guide covers anomaly detection
-  and notification channels.
-
-- The [web client](configuration/client.md) guide covers proxy settings
-  and build options.
+- The [web client](../configuration/client.md) guide covers proxy settings and
+  build options.

@@ -224,9 +224,9 @@ To keep these connections working, complete the following steps:
    `PUT /api/v1/connections/{id}`, and only then remove the original
    files.
 
-See [Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
+See [Connection Security](../configuration/server/configuration_file.md#connection-security-properties)
 for the server option, and
-[Connection Security Options](../getting-started/configuration/collector.md#connection-security-options)
+[Connection Security Options](../configuration/collector/configuration_file.md#specifying-connection-security-options)
 for the collector option.
 
 ### Connection Host Addresses
@@ -289,7 +289,7 @@ prefixes `64:ff9b::/96` and `64:ff9b:1::/48`, the 6to4 range `2002::/16`
 and the site-local range `fec0::/10`. A deployment that reaches IPv4
 servers through NAT64 must set `allow_internal_networks` to `true` or add
 the NAT64 prefix to `allowed_hosts`. See
-[Connection Security](../getting-started/configuration/server.md#connection-security-connection_security)
+[Connection Security](../configuration/server/configuration_file.md#connection-security-properties)
 for the full list.
 
 The refusal of unspecified, link-local and cloud metadata addresses
@@ -323,7 +323,7 @@ written for release 1.0.0:
   a time range, `filters` and `shape`. The new `describe_datastore`
   tool lists the sources, and a grant of `query_datastore` also grants
   `describe_datastore`. See
-  [Querying the Datastore](../user-guide/mcp-tools.md#querying-the-datastore)
+  [Querying the Datastore](../user-guide/ai/mcp-tools.md#querying-the-datastore)
   for the arguments.
 - The `query_database` tool is read-only for every caller, including a
   superuser, and refuses a query that holds more than one statement.
@@ -346,7 +346,7 @@ delivers a Slack, Mattermost, Telegram or webhook notification; a
 delivery that receives a `3xx` response fails. Before you upgrade,
 check that the URL of each notification channel is the final URL, and
 not a URL that the provider redirects. See
-[Notification Channels](notification-channels.md) for the channel
+[Managing Notification Channels](notification-channels/index.md) for the channel
 settings.
 
 ### Notification Delivery Addresses
@@ -383,7 +383,7 @@ cloud metadata addresses stay refused even when the option is `true`.
 As in release 1.0.0, the alerter ignores `HTTP_PROXY`, `HTTPS_PROXY`
 and `NO_PROXY` and connects to each provider directly, so that the
 alerter can check the destination address. See
-[Delivery Address Checks](../getting-started/configuration/alerter.md#delivery-address-checks).
+[Delivery Address Checks](../configuration/alerter/configuration_file.md#delivery-address-checks).
 
 The server's test send, from the Send icon of a channel, now checks every
 address that the send connects to as well. The server refuses unspecified,
@@ -392,7 +392,7 @@ link-local and cloud metadata addresses and then applies its own
 succeed for a channel whose deliveries the alerter refuses. A test send no
 longer uses the `HTTP_PROXY` or `HTTPS_PROXY` environment variables; a
 server that reached a provider only through a proxy now fails the test.
-See [Test Sends](notification-channels.md#test-sends).
+See [Test Sends](notification-channels/index.md#test-sends).
 
 ### Retired Alert Rule
 
@@ -541,7 +541,7 @@ for a description of the `-check-config` option.
 
 This procedure upgrades an installation set up with the
 [binary installation](../getting-started/binary_install.md) guide and
-the [systemd units](../getting-started/configuration/configure_systemd.md),
+the [systemd units](../configuration/configure_systemd.md),
 with the binaries in `/opt/ai-workbench`. Replace `user_name` with the
 account that runs the services, and replace `linux-amd64` with the
 platform of the release archives you use.

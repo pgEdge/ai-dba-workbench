@@ -11,10 +11,11 @@
 import { render, screen, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
-import HealthOverviewSection from '../HealthOverviewSection';
+import HealthOverviewSection, { ALERT_COUNTS_TIMEOUT_MS } from '../HealthOverviewSection';
 import { DEFAULT_RETRY_BASE_DELAY_MS } from '../../../../hooks/useRetryingFetch';
 import type { EstateSelection } from '../../../../types/selection';
 import { MAX_CONNECTION_IDS_PER_REQUEST } from '../../../../utils/connectionIdBatches';
+import { onDisconnect, resetConnectionHealth } from '../../../../utils/apiClient';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -22,7 +23,10 @@ import { MAX_CONNECTION_IDS_PER_REQUEST } from '../../../../utils/connectionIdBa
 
 const mockApiFetch = vi.fn();
 
-vi.mock('../../../../utils/apiClient', () => ({
+// apiFetch is replaced so each test can answer the requests; the rest
+// of the module, including its connection-health tracking, is real.
+vi.mock('../../../../utils/apiClient', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../../../../utils/apiClient')>()),
     apiFetch: (...args: unknown[]) => mockApiFetch(...args),
 }));
 
@@ -125,6 +129,21 @@ const totalsBySeverity = (totals: Record<string, number>) =>
         }));
     };
 
+/** A request that answers only by rejecting when it is aborted. */
+const hangingRequest = (init?: RequestInit): Promise<Response> =>
+    new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+        });
+    });
+
+/** Let the pending promise callbacks run without advancing time. */
+const flush = async (): Promise<void> => {
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+    });
+};
+
 const alertChartText = (): string =>
     screen.getByTestId('chart-Alerts').textContent ?? '';
 
@@ -191,7 +210,9 @@ describe('HealthOverviewSection alert distribution', () => {
             totalsBySeverity({ critical: 1, warning: 2, info: 3 }),
         );
 
-        const { rerender } = renderSection([1]);
+        // The same array on both renders, so only lastRefresh changes.
+        const serverIds = [1];
+        const { rerender } = renderSection(serverIds);
 
         await waitFor(() => {
             expect(alertChartText()).toBe('Critical=1 Warning=2 Info=3');
@@ -202,7 +223,7 @@ describe('HealthOverviewSection alert distribution', () => {
             totalsBySeverity({ critical: 5, warning: 0, info: 0 }),
         );
         mockLastRefresh = 1;
-        rerender(section([1]));
+        rerender(section(serverIds));
 
         await waitFor(() => {
             expect(alertChartText()).toBe('Critical=5 Warning=0 Info=0');
@@ -288,6 +309,127 @@ describe('HealthOverviewSection alert distribution', () => {
             await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
         });
         expect(alertChartText()).toBe('Critical=2 Warning=2 Info=2');
+    });
+
+    it('shows the counts as unavailable, not as zero, while a failed first load retries', async () => {
+        vi.useFakeTimers();
+        mockApiFetch.mockImplementation(() => Promise.resolve(errorResponse()));
+
+        renderSection([1]);
+        await flush();
+
+        expect(screen.getByText('Alert counts unavailable')).toBeInTheDocument();
+        expect(screen.queryByText('No active alerts')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('chart-Alerts')).not.toBeInTheDocument();
+
+        // A successful zero result is a real "no alerts".
+        mockApiFetch.mockImplementation(totalsBySeverity({}));
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
+        });
+        expect(screen.getByText('No active alerts')).toBeInTheDocument();
+        expect(screen.queryByText('Alert counts unavailable')).not.toBeInTheDocument();
+    });
+
+    it('does not show the previous servers\' counts when the new servers fail', async () => {
+        vi.useFakeTimers();
+        mockApiFetch.mockImplementation(
+            totalsBySeverity({ critical: 4, warning: 4, info: 4 }),
+        );
+
+        const { rerender } = renderSection([1]);
+        await flush();
+        expect(alertChartText()).toBe('Critical=4 Warning=4 Info=4');
+
+        mockApiFetch.mockImplementation(() => Promise.resolve(errorResponse()));
+        rerender(section([7]));
+        await flush();
+
+        expect(screen.queryByTestId('chart-Alerts')).not.toBeInTheDocument();
+        expect(screen.getByText('Alert counts unavailable')).toBeInTheDocument();
+    });
+
+    it('fails the attempt at the first failed request without waiting for the others', async () => {
+        vi.useFakeTimers();
+        // The first request fails; any other would never answer.
+        mockApiFetch.mockImplementation((url: string, init?: RequestInit) =>
+            paramsOf(url).get('severity') === 'critical'
+                ? Promise.resolve(errorResponse())
+                : hangingRequest(init),
+        );
+
+        renderSection([1]);
+        await flush();
+        expect(alertUrls()).toHaveLength(1);
+
+        // The failure is known, so the retry is scheduled straight away.
+        mockApiFetch.mockImplementation(
+            totalsBySeverity({ critical: 1, warning: 2, info: 3 }),
+        );
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
+        });
+        expect(alertChartText()).toBe('Critical=1 Warning=2 Info=3');
+    });
+
+    it('aborts a request that never answers and retries', async () => {
+        vi.useFakeTimers();
+        mockApiFetch.mockImplementation(
+            (_url: string, init?: RequestInit) => hangingRequest(init),
+        );
+
+        renderSection([1]);
+        await flush();
+        expect(alertUrls()).toHaveLength(1);
+
+        mockApiFetch.mockImplementation(
+            totalsBySeverity({ critical: 0, warning: 5, info: 0 }),
+        );
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(ALERT_COUNTS_TIMEOUT_MS);
+        });
+        expect(screen.getByText('Alert counts unavailable')).toBeInTheDocument();
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
+        });
+        expect(alertChartText()).toBe('Critical=0 Warning=5 Info=0');
+    });
+
+    it('counts a failed attempt at most once toward the disconnect threshold', async () => {
+        vi.useFakeTimers();
+        resetConnectionHealth();
+        const disconnected = vi.fn();
+        const unsubscribe = onDisconnect(disconnected);
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+            () => Promise.resolve(new Response('{}', { status: 500 })),
+        );
+        const { apiFetch: realApiFetch } = await vi.importActual<
+            typeof import('../../../../utils/apiClient')
+        >('../../../../utils/apiClient');
+        mockApiFetch.mockImplementation(realApiFetch);
+
+        try {
+            renderSection([1]);
+            await flush();
+
+            // Every request would fail with a 5xx, but the attempt stops
+            // at the first, so it makes one request and counts one
+            // failure; three would have reached the threshold.
+            expect(fetchSpy).toHaveBeenCalledTimes(1);
+            expect(disconnected).not.toHaveBeenCalled();
+
+            // The retry is a second attempt and a second failure.
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
+            });
+            expect(fetchSpy).toHaveBeenCalledTimes(2);
+            expect(disconnected).not.toHaveBeenCalled();
+        } finally {
+            unsubscribe();
+            fetchSpy.mockRestore();
+            resetConnectionHealth();
+        }
     });
 
     it('ignores a response that a newer refresh has superseded', async () => {

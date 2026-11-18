@@ -64,6 +64,12 @@ project adheres to
   failed to start; the omitted fields now default to `localhost`,
   `5432`, `postgres`, and `prefer`, as they already did when the
   datastore was configured only through the `-db-*` flags. (#860)
+- Make the server's user, group, token, privilege, and audit commands,
+  such as `-add-user`, exit with `configuration file not found` when
+  `-config` names a file that does not exist, as start-up does. They
+  previously ran with the default data directory and server secret,
+  so a command could write to an `auth.db` the configured server never
+  reads. (#861)
 
 ## [2.0.0-beta1] - 2026-11-12
 

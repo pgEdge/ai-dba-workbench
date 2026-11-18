@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -77,6 +78,17 @@ func main() {
 	configPath := flags.ConfigFile
 	if !cliFlags.ConfigFileSet {
 		configPath = defaultConfigPath
+	}
+
+	// A file named with -config that does not exist is fatal here, with
+	// start-up's own error, before anything below reads the file, for
+	// the reason an unreadable one is: the reads below would skip it,
+	// and -check-config and every management command would then run on
+	// the default data directory and secret instead of the configured
+	// ones (issue #861). A missing default is not an error.
+	if _, err := resolveConfigLoadPath(configPath, cliFlags.ConfigFileSet, io.Discard); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Load data_dir from the config file early, before resolving the

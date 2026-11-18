@@ -57,6 +57,28 @@ func TestParseMetricFilters(t *testing.T) {
 		}
 	})
 
+	t.Run("parses exclude_system_schemas", func(t *testing.T) {
+		for query, want := range map[string]bool{
+			"exclude_system_schemas=true":   true,
+			"exclude_system_schemas=1":      true,
+			"exclude_system_schemas=false":  false,
+			"probe_name=pg_stat_all_tables": false,
+		} {
+			req := httptest.NewRequest(http.MethodGet,
+				"/api/v1/metrics/query?"+query, nil)
+			rec := httptest.NewRecorder()
+			filters, ok := parseMetricFilters(rec, req)
+			if !ok {
+				t.Fatalf("%s: expected the parse to succeed, got %d",
+					query, rec.Code)
+			}
+			if filters.ExcludeSystemSchemas != want {
+				t.Errorf("%s: ExcludeSystemSchemas = %v, want %v",
+					query, filters.ExcludeSystemSchemas, want)
+			}
+		}
+	})
+
 	t.Run("absent mount_point leaves the field empty", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
 			"/api/v1/metrics/query?probe_name=pg_sys_cpu_info", nil)

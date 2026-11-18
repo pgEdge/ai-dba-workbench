@@ -3903,6 +3903,12 @@ func buildPaths() map[string]OpenAPIPathItem {
 							"whose database ID no longer resolves to a name "+
 							"is attributed to the database it was collected "+
 							"through, as Top Queries does"),
+					queryParamBool("exclude_system_schemas",
+						"Exclude pg_catalog, information_schema and "+
+							"pg_toast* schemas, as pg_stat_user_tables "+
+							"does and as on /metrics/latest. Only for a "+
+							"probe with a schemaname column; any other "+
+							"probe is rejected with 400"),
 					queryParamInt("buckets", "Number of time buckets, "+
 						"1 to 500 (default 150). The count is clamped so "+
 						"that no bucket is narrower than the probe's "+
@@ -3923,10 +3929,24 @@ func buildPaths() map[string]OpenAPIPathItem {
 						"it advanced by, or a session time counter suffixed "+
 						"with _sessions for the average number of sessions "+
 						"it represents; or dead_tuple_ratio on a probe "+
-						"exposing n_live_tup and n_dead_tup. A real column of "+
+						"exposing n_live_tup and n_dead_tup, computed from "+
+						"the live and dead tuples totalled across every "+
+						"relation the filters keep at each sample (a "+
+						"sample with no tuples, or with "+
+						"exclude_system_schemas no user relations, is "+
+						"0). Within a bucket, last takes the percentage "+
+						"of the latest sample's totals, while avg, sum, "+
+						"min and max all add up the live and dead totals "+
+						"of every sample in the bucket and take the "+
+						"percentage of those sums, so a bucket can be "+
+						"nonzero under avg although its latest sample is "+
+						"0. A real column of "+
 						"that name always takes precedence, and a suffix on "+
 						"a column of the wrong kind (for example _per_sec "+
-						"on a gauge) is rejected with 400."),
+						"on a gauge) is rejected with 400. Applies to "+
+						"bucketed queries only: when limit or order_by "+
+						"is set, the endpoint returns the latest raw rows "+
+						"and ignores metrics."),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("MetricsQueryResult", "Metrics query results"),

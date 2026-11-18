@@ -674,9 +674,10 @@ silently rather than producing invalid SQL:
 - `exclude_schemas` is a comma-separated list, each name validated with
   `IsValidIdentifier` and bound as a placeholder.
 - `exclude_system_schemas=true` appends the constant
-  `systemSchemaPredicate`, the same predicate PostgreSQL uses to derive
+  `systemSchemaPredicate` (an alias of `metrics.SystemSchemaPredicate`,
+  shared with `/metrics/query`), the same predicate PostgreSQL uses to derive
   `pg_stat_user_tables` from `pg_stat_all_tables`: `pg_catalog` and
-  `information_schema` by name, and every `pg_toast*` schema by regex.
+  `information_schema` by name, and every `pg_toast*` schema by `LIKE` prefix.
   `pg_temp_N` schemas stay in, as they do in `pg_stat_user_tables`.
 
 The flag is opt-in. The Table and Index Leaderboards send it (issue #499:
@@ -769,7 +770,36 @@ combined output order. The routing rules are deliberate and order-sensitive:
   `_sessions` name that does make sense; a millisecond counter divided by
   seconds is a dimensionless number that only looks like a rate.
 - The literal `dead_tuple_ratio` is accepted only when the probe exposes
-  both `n_live_tup` and `n_dead_tup`; it is a 0-100 percentage.
+  both `n_live_tup` and `n_dead_tup`; it is a 0-100 percentage. Its
+  `ratio_samples` CTE first sums both columns across every relation the
+  filters keep at each `collected_at`; `ratio_buckets` then applies the
+  aggregation to those per-sample totals (`last` takes the latest sample's
+  totals, anything else sums them), and a total of zero tuples is 0%. Do
+  not apply `last` to the per-relation rows: that returns one arbitrary
+  relation's counts (issue #869, where the database dashboard KPI read 0%
+  for a database with millions of dead tuples).
+
+`/metrics/query` (both modes) also takes `exclude_system_schemas`, carried
+as `MetricFilters.ExcludeSystemSchemas`. `metricQueryClauses` and
+`buildLatestRowsQuery` append `SystemSchemaPredicate`, which binds no
+argument, and `checkSystemSchemaFilter` (or `systemSchemaFilterError` in
+`discoverLatestRowColumns`, which already holds the columns) refuses the
+flag with an error (400) on a probe without a `schemaname` column, unlike
+`/metrics/latest`, which drops it silently. The ratio's `ratio_samples` is
+the exception to the WHERE placement: it is built from the clauses without
+the predicate and applies it as `FILTER (WHERE ...)` on the sums, with a
+`COUNT(*) FILTER` of zero giving 0 totals, so a sample holding only system
+relations still exists and reads 0% instead of vanishing and leaving `last`
+on an older sample's ratio. `SystemSchemaPredicate` matches TOAST schemas
+with `NOT LIKE 'pg!_toast%' ESCAPE '!'`, not a regex, because on ColdFront
+the query runs in DuckDB, where `~` is a whole-string match. The Database Dashboard's Dead Tuple Ratio KPI
+requests `dead_tuple_ratio` with `aggregation=last` and this flag, so it
+matches `pg_stat_user_tables`.
+
+Raw columns are different: `BuildMetricsQuery` groups by bucket only, so
+`aggregation=last` on a raw column of a multi-entity probe (one row per
+relation, index, statement or mount) returns one arbitrary entity's value.
+Ask for a derived metric, or pin the entity with filters, instead.
 - A repeated name is silently de-duplicated; anything else is a client
   error.
 

@@ -6863,6 +6863,14 @@
             }
           },
           {
+            "name": "exclude_system_schemas",
+            "in": "query",
+            "description": "Exclude pg_catalog, information_schema and pg_toast* schemas, as pg_stat_user_tables does and as on /metrics/latest. Only for a probe with a schemaname column; any other probe is rejected with 400",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "buckets",
             "in": "query",
             "description": "Number of time buckets, 1 to 500 (default 150). The count is clamped so that no bucket is narrower than the probe's collection interval; a one-hour window on a five-minute probe therefore yields at most 12 buckets however many are requested.",
@@ -6888,7 +6896,7 @@
           {
             "name": "metrics",
             "in": "query",
-            "description": "Comma-separated metric names. A name may be a raw probe column; a cumulative counter column suffixed with _per_sec for its per-second rate or _delta for its per-bucket increase; a cumulative time counter (milliseconds) suffixed with _pct for the share of wall-clock time it advanced by, or a session time counter suffixed with _sessions for the average number of sessions it represents; or dead_tuple_ratio on a probe exposing n_live_tup and n_dead_tup. A real column of that name always takes precedence, and a suffix on a column of the wrong kind (for example _per_sec on a gauge) is rejected with 400.",
+            "description": "Comma-separated metric names. A name may be a raw probe column; a cumulative counter column suffixed with _per_sec for its per-second rate or _delta for its per-bucket increase; a cumulative time counter (milliseconds) suffixed with _pct for the share of wall-clock time it advanced by, or a session time counter suffixed with _sessions for the average number of sessions it represents; or dead_tuple_ratio on a probe exposing n_live_tup and n_dead_tup, computed from the live and dead tuples totalled across every relation the filters keep at each sample (a sample with no tuples, or with exclude_system_schemas no user relations, is 0). Within a bucket, last takes the percentage of the latest sample's totals, while avg, sum, min and max all add up the live and dead totals of every sample in the bucket and take the percentage of those sums, so a bucket can be nonzero under avg although its latest sample is 0. A real column of that name always takes precedence, and a suffix on a column of the wrong kind (for example _per_sec on a gauge) is rejected with 400. Applies to bucketed queries only: when limit or order_by is set, the endpoint returns the latest raw rows and ignores metrics.",
             "schema": {
               "type": "string"
             }

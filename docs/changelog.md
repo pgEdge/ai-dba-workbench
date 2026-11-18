@@ -57,6 +57,16 @@ project adheres to
 
 ### Fixed
 
+- Make the Database Dashboard's `Dead Tuple Ratio` tile and sparkline
+  report the database's ratio from the live and dead tuples totalled
+  across its user tables at each sample. The tile previously read the
+  latest sample of a single, arbitrary relation, so it could show 0.0%
+  for a database with millions of dead tuples. The `dead_tuple_ratio`
+  metric of `GET /api/v1/metrics/query` now totals every relation in a
+  sample before applying `aggregation=last`, and the endpoint accepts
+  `exclude_system_schemas` to leave out `pg_catalog`,
+  `information_schema`, and `pg_toast*` relations, as
+  `GET /api/v1/metrics/latest` does. (#869)
 - Apply the documented datastore defaults to a `database` section in
   the server configuration file. A section that omitted `host`, `port`,
   `database`, or `sslmode` previously left that field empty, so an

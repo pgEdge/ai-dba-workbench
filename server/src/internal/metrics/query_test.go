@@ -2042,6 +2042,10 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		for _, c := range []string{
 			`SUM("n_live_tup")`,
 			`SUM("n_dead_tup")`,
+			// The bucket stage sums the per-sample totals for any
+			// aggregation but last.
+			`CASE WHEN SUM("live_tup") + SUM("dead_tup") = 0 THEN 0`,
+			`ELSE SUM("dead_tup")::float`,
 			`* 100.0`,
 			`END AS dead_tuple_ratio`,
 			`ratio_buckets.dead_tuple_ratio`,
@@ -2053,6 +2057,9 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		}
 		if strings.Contains(query, "rate_buckets") {
 			t.Error("ratio-only query should not reference rate_buckets")
+		}
+		if strings.Contains(query, "array_agg(") {
+			t.Errorf("avg must not take the last sample:\n%s", query)
 		}
 		if len(args) != 4 {
 			t.Errorf("expected 4 args, got %d", len(args))
@@ -2240,7 +2247,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		}
 	})
 
-	t.Run("dead_tuple_ratio last uses latest sample not SUM", func(t *testing.T) {
+	t.Run("dead_tuple_ratio last uses latest sample's totals", func(t *testing.T) {
 		query, _, err := BuildDerivedMetricsQuery(
 			"pg_stat_all_tables",
 			[]DerivedMetric{{
@@ -2251,9 +2258,16 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+		// The relations of each sample are totalled first, and "last"
+		// then picks the latest sample's totals, never one relation's
+		// raw counts (issue #869).
 		for _, c := range []string{
-			`(array_agg("n_live_tup" ORDER BY collected_at DESC))[1]`,
-			`(array_agg("n_dead_tup" ORDER BY collected_at DESC))[1]`,
+			`SUM("n_live_tup") AS live_tup`,
+			`SUM("n_dead_tup") AS dead_tup`,
+			`GROUP BY collected_at`,
+			`(array_agg("live_tup" ORDER BY collected_at DESC))[1]`,
+			`(array_agg("dead_tup" ORDER BY collected_at DESC))[1]`,
+			`FROM ratio_samples`,
 			`END AS dead_tuple_ratio`,
 			`* 100.0`,
 		} {
@@ -2261,9 +2275,52 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				t.Errorf("query missing %q\n---\n%s", c, query)
 			}
 		}
-		if strings.Contains(query, `SUM("n_live_tup")`) ||
-			strings.Contains(query, `SUM("n_dead_tup")`) {
-			t.Errorf("last aggregation should not SUM tuple counts:\n%s", query)
+		if strings.Contains(query, `array_agg("n_live_tup"`) ||
+			strings.Contains(query, `array_agg("n_dead_tup"`) {
+			t.Errorf("last aggregation must not pick a single relation's counts:\n%s", query)
+		}
+	})
+
+	t.Run("exclude system schemas filters every derived CTE", func(t *testing.T) {
+		query, args, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{
+				{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio},
+				{OutputName: "seq_scan_per_sec", BaseColumn: "seq_scan", Kind: DerivedPerSec},
+			},
+			[]string{"schemaname", "relname"}, nil, 1, start, end, 60, "last",
+			MetricFilters{ExcludeSystemSchemas: true}, testMaxElapsed)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The rate samples and the rate lookback's pre-window sample
+		// lookup filter rows with it in their WHERE clauses.
+		rateCTE := query[strings.Index(query, "rate_samples AS ("):strings.Index(query, "rate_buckets AS (")]
+		if n := strings.Count(rateCTE, SystemSchemaPredicate); n != 2 {
+			t.Errorf("expected the system-schema predicate in the rate "+
+				"samples and lookback, found %d:\n%s", n, rateCTE)
+		}
+		// The ratio samples keep every row of the sample in WHERE, so a
+		// sample with only system relations still exists, and apply the
+		// predicate to the sums instead, counting such a sample as 0.
+		ratioCTE := query[strings.Index(query, "ratio_samples AS ("):strings.Index(query, "ratio_buckets AS (")]
+		userRows := "FILTER (WHERE " + SystemSchemaPredicate + ")"
+		for _, c := range []string{
+			`CASE WHEN COUNT(*) ` + userRows + ` = 0 THEN 0 ELSE SUM("n_live_tup") ` + userRows + ` END AS live_tup`,
+			`CASE WHEN COUNT(*) ` + userRows + ` = 0 THEN 0 ELSE SUM("n_dead_tup") ` + userRows + ` END AS dead_tup`,
+		} {
+			if !strings.Contains(ratioCTE, c) {
+				t.Errorf("ratio samples missing %q:\n%s", c, ratioCTE)
+			}
+		}
+		where := ratioCTE[strings.Index(ratioCTE, "WHERE connection_id"):]
+		if strings.Contains(where, SystemSchemaPredicate) {
+			t.Errorf("ratio samples must not drop system rows in WHERE:\n%s", ratioCTE)
+		}
+		// The predicate binds nothing: 4 base arguments plus the gap
+		// bound and lookback bound of the rate CTE.
+		if len(args) != 6 {
+			t.Errorf("expected 6 args, got %d: %v", len(args), args)
 		}
 	})
 
@@ -2416,15 +2473,19 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+			// Both stages: the per-sample totals, then the bucket
+			// stage summing those totals rather than picking one.
 			for _, c := range []string{
 				`SUM("n_live_tup")`,
 				`SUM("n_dead_tup")`,
+				`SUM("live_tup")`,
+				`SUM("dead_tup")`,
 			} {
 				if !strings.Contains(query, c) {
 					t.Errorf("query missing %q\n---\n%s", c, query)
 				}
 			}
-			if strings.Contains(query, `array_agg("n_dead_tup"`) {
+			if strings.Contains(query, `array_agg(`) {
 				t.Errorf("%s aggregation should not use array_agg:\n%s",
 					agg, query)
 			}
@@ -2504,15 +2565,15 @@ func TestRateSampleExpr(t *testing.T) {
 
 func TestRatioTupleExpr(t *testing.T) {
 	t.Run("standard aggregation uses SUM", func(t *testing.T) {
-		expr := ratioTupleExpr("avg", "n_dead_tup")
-		if expr != `SUM("n_dead_tup")` {
+		expr := ratioTupleExpr("avg", "dead_tup")
+		if expr != `SUM("dead_tup")` {
 			t.Errorf("unexpected expr: %s", expr)
 		}
 	})
 
 	t.Run("last aggregation uses ordered array_agg", func(t *testing.T) {
-		expr := ratioTupleExpr("last", "n_live_tup")
-		want := `(array_agg("n_live_tup" ORDER BY collected_at DESC))[1]`
+		expr := ratioTupleExpr("last", "live_tup")
+		want := `(array_agg("live_tup" ORDER BY collected_at DESC))[1]`
 		if expr != want {
 			t.Errorf("expected %q, got %q", want, expr)
 		}

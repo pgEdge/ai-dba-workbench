@@ -41,13 +41,14 @@ const SEVERITIES = ['critical', 'warning', 'info'] as const;
 const NO_ALERTS: AlertCounts = { critical: 0, warning: 0, info: 0 };
 
 /**
- * The longest one attempt at the alert counts may take before its
- * outstanding request is aborted and the attempt fails, so a request
- * that never answers cannot hold off the retry. It is well under the
- * estate data's 30-second refresh, so an attempt ends before the next
- * refresh would supersede it.
+ * The longest one alert-count request may take, response body
+ * included, before it is aborted and the attempt fails, so a request
+ * that never answers cannot hold off the retry. The bound is per
+ * request rather than per attempt because the requests run one after
+ * another, three per batch of servers, so an attempt over many batches
+ * may legitimately take longer than this.
  */
-export const ALERT_COUNTS_TIMEOUT_MS = 15000;
+export const ALERT_COUNT_REQUEST_TIMEOUT_MS = 15000;
 
 /** A complete set of counts and the servers they were fetched for. */
 interface AlertCountsResult {
@@ -72,10 +73,11 @@ const RING_LABEL_SX = {
     mt: 1,
 };
 
-const LOADING_CONTAINER_SX = {
+const ALERT_PANEL_SX = {
+    height: 200,
     display: 'flex',
+    alignItems: 'center',
     justifyContent: 'center',
-    py: 4,
 };
 
 /**
@@ -130,8 +132,6 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
         const key = serverIds.join(',');
         setAlertsLoading(true);
         const isCurrent = beginRequest();
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), ALERT_COUNTS_TIMEOUT_MS);
 
         try {
             // The requests run one at a time and the attempt stops at
@@ -143,22 +143,33 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
             // than after every other request has answered. Aborting
             // concurrent requests on the first failure would not help,
             // as apiFetch counts an aborted request as a failure too;
-            // for the same reason a superseded attempt is left to
-            // finish its one request rather than aborted. Only the
-            // timeout aborts, and it counts as the attempt's failure.
+            // for the same reason a superseded attempt is not aborted;
+            // it sends no further request once its current one answers.
+            // Only a request's own timeout aborts it, and that counts as
+            // the attempt's one failure.
             const counts: AlertCounts = { ...NO_ALERTS };
             for (const req of requests) {
-                const response = await apiFetch(req.url, { signal: controller.signal });
+                const controller = new AbortController();
+                const timer = setTimeout(
+                    () => controller.abort(),
+                    ALERT_COUNT_REQUEST_TIMEOUT_MS,
+                );
+                let body: { total?: unknown };
+                try {
+                    const response = await apiFetch(req.url, { signal: controller.signal });
 
-                // A superseded or unmounted attempt is not a failure.
-                if (!isCurrent()) { return true; }
+                    // A superseded or unmounted attempt is not a failure.
+                    if (!isCurrent()) { return true; }
 
-                // One failed request fails the refresh, so the chart
-                // keeps its last complete distribution and the fetch
-                // is retried rather than showing a partial one.
-                if (!response.ok) { return false; }
+                    // One failed request fails the refresh, so the chart
+                    // keeps its last complete distribution and the fetch
+                    // is retried rather than showing a partial one.
+                    if (!response.ok) { return false; }
 
-                const body = await response.json() as { total?: unknown };
+                    body = await response.json() as { total?: unknown };
+                } finally {
+                    clearTimeout(timer);
+                }
                 if (!isCurrent()) { return true; }
                 if (typeof body.total === 'number') {
                     counts[req.severity] += body.total;
@@ -171,7 +182,6 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
             logger.error('Error fetching alert counts:', err);
             return false;
         } finally {
-            clearTimeout(timer);
             if (isCurrent()) {
                 setAlertsLoading(false);
             }
@@ -233,18 +243,50 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
         theme.palette.info.main,
     ], [theme]);
 
-    // Without a complete result for these servers the first attempt
-    // failed and is being retried, which says nothing about whether
-    // alerts exist, so the panel says the counts are unavailable rather
-    // than that there are none.
     const totalAlerts = alertCounts
         ? alertCounts.critical + alertCounts.warning + alertCounts.info
         : 0;
 
-    if (alertsLoading && !alertCounts) {
-        return (
-            <Box sx={LOADING_CONTAINER_SX}>
-                <CircularProgress size={32} aria-label="Loading health overview" />
+    // Server Status comes from the selection and always renders; only
+    // the Alert Distribution panel waits on the alert counts. Without a
+    // complete result for these servers, an attempt is either in flight
+    // or failed and being retried. A failure says nothing about whether
+    // alerts exist, so the panel says the counts are unavailable rather
+    // than that there are none.
+    let alertPanel: React.ReactNode;
+    if (alertCounts && totalAlerts > 0) {
+        alertPanel = (
+            <Chart
+                type="donut"
+                data={alertDistData}
+                height={200}
+                showLegend
+                showTooltip
+                enableExport={false}
+                colorPalette={alertColors}
+                showPercentage
+                analysisContext={{
+                    metricDescription: 'Distribution of alerts by severity across the estate',
+                }}
+            />
+        );
+    } else if (!alertCounts && alertsLoading) {
+        alertPanel = (
+            <Box sx={ALERT_PANEL_SX}>
+                <CircularProgress size={32} aria-label="Loading alert distribution" />
+            </Box>
+        );
+    } else {
+        alertPanel = (
+            <Box sx={ALERT_PANEL_SX}>
+                <Typography
+                    sx={{
+                        color: 'text.secondary',
+                        fontSize: '0.875rem',
+                    }}
+                >
+                    {alertCounts ? 'No active alerts' : 'Alert counts unavailable'}
+                </Typography>
             </Box>
         );
     }
@@ -270,37 +312,7 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
                 </Typography>
             </Box>
             <Box>
-                {alertCounts && totalAlerts > 0 ? (
-                    <Chart
-                        type="donut"
-                        data={alertDistData}
-                        height={200}
-                        showLegend
-                        showTooltip
-                        enableExport={false}
-                        colorPalette={alertColors}
-                        showPercentage
-                        analysisContext={{
-                            metricDescription: 'Distribution of alerts by severity across the estate',
-                        }}
-                    />
-                ) : (
-                    <Box sx={{
-                        height: 200,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                    }}>
-                        <Typography
-                            sx={{
-                                color: 'text.secondary',
-                                fontSize: '0.875rem',
-                            }}
-                        >
-                            {alertCounts ? 'No active alerts' : 'Alert counts unavailable'}
-                        </Typography>
-                    </Box>
-                )}
+                {alertPanel}
                 <Typography sx={RING_LABEL_SX}>
                     Alert Distribution
                 </Typography>

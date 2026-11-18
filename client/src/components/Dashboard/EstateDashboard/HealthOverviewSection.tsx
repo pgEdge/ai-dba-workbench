@@ -143,10 +143,14 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
             // than after every other request has answered. Aborting
             // concurrent requests on the first failure would not help,
             // as apiFetch counts an aborted request as a failure too;
-            // for the same reason a superseded attempt is not aborted;
-            // it sends no further request once its current one answers.
-            // Only a request's own timeout aborts it, and that counts as
-            // the attempt's one failure.
+            // for the same reason a superseded attempt is not aborted
+            // while its request is in flight; it sends no further
+            // request once its current one answers. Only a request's own
+            // timeout aborts it in flight, and that counts as the
+            // attempt's one failure. Once apiFetch has returned, the
+            // status is already recorded, so a response the attempt
+            // discards is aborted to cancel its body, which the timeout
+            // would otherwise have bounded.
             const counts: AlertCounts = { ...NO_ALERTS };
             for (const req of requests) {
                 const controller = new AbortController();
@@ -159,12 +163,18 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
                     const response = await apiFetch(req.url, { signal: controller.signal });
 
                     // A superseded or unmounted attempt is not a failure.
-                    if (!isCurrent()) { return true; }
+                    if (!isCurrent()) {
+                        controller.abort();
+                        return true;
+                    }
 
                     // One failed request fails the refresh, so the chart
                     // keeps its last complete distribution and the fetch
                     // is retried rather than showing a partial one.
-                    if (!response.ok) { return false; }
+                    if (!response.ok) {
+                        controller.abort();
+                        return false;
+                    }
 
                     body = await response.json() as { total?: unknown };
                 } finally {

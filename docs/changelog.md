@@ -78,6 +78,11 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+- Show estate totals in the Transactions and Checkpoints graphs when
+  several servers are selected, rather than one line that jumped
+  between the servers' values. Commits per second and checkpoint write
+  and sync times are summed for each point in time, and the rollback
+  percentage is weighted by each server's commit rate. (#837)
 
 ## [2.0.0-beta1] - 2026-11-12
 

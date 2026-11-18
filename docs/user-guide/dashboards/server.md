@@ -347,6 +347,13 @@ that moment rather than the present values. The cache hit ratio on each tile is
 a per-interval value, and displays `--` when the database had no block access
 in the latest interval.
 
+The dead tuple ratio on each tile is the dead tuples as a percentage of the live
+plus dead tuples across the database's user tables, the tables that
+`pg_stat_user_tables` lists. Tables in the `pg_catalog`, `information_schema`,
+and `pg_toast*` schemas are not counted, so the shared system catalogs, which
+report the same counts in every database, do not set the ratio. A database
+with no user tuples, such as one with no tables of its own, shows `0.0%`.
+
 ## Reviewing Connections
 
 The `Connections` pane breaks down the server's client connections by database

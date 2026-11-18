@@ -59,6 +59,7 @@ CREATE TABLE metrics.pg_stat_all_tables (
     connection_id  integer     NOT NULL,
     collected_at   timestamptz NOT NULL,
     database_name  text,
+    schemaname     text        NOT NULL DEFAULT 'public',
     n_live_tup     bigint      NOT NULL DEFAULT 0,
     n_dead_tup     bigint      NOT NULL DEFAULT 0
 );
@@ -1269,6 +1270,7 @@ func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
                 SELECT 1 AS connection_id,
                        now() - INTERVAL '1 minute' AS collected_at,
                        ARRAY['app'] AS database_name,
+                       'public'::text AS schemaname,
                        1::bigint AS n_live_tup, 1::bigint AS n_dead_tup`,
 			drop: "DROP VIEW IF EXISTS metrics.pg_stat_all_tables",
 			run: func(tx pgx.Tx, m map[string]*DatabaseSummary) error {
@@ -1300,5 +1302,86 @@ func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
 				t.Errorf("err = %v, want a scan error", err)
 			}
 		})
+	}
+}
+
+// TestDatabaseSummaries_DeadTupleRatioCountsUserTablesOnly verifies that
+// the dead tuple ratio covers user relations only, as pg_stat_user_tables
+// does (issue #868). The pg_stat_all_tables probe stores system catalogs
+// too, and the shared catalogs (pg_shdepend, pg_authid, pg_database, ...)
+// report the same counts in every database, so including them gave
+// databases with little data of their own the same ratio. Rows in
+// pg_catalog, information_schema, pg_toast and pg_toast_temp_N must be
+// ignored, and a database with no user tuples reports 0.
+func TestDatabaseSummaries_DeadTupleRatioCountsUserTablesOnly(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 868
+	ctx := context.Background()
+	now := time.Now().UTC()
+	latest := now.Add(-1 * time.Minute)
+	older := now.Add(-30 * time.Minute)
+
+	exec := func(sql string, args ...any) {
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("seed exec failed: %v\nSQL: %s", err, sql)
+		}
+	}
+
+	exec(`INSERT INTO metrics.pg_database
+        (connection_id, collected_at, datname, datistemplate,
+         database_size_bytes)
+        VALUES ($1, $2, 'app', false, 1000),
+               ($1, $2, 'catalogonly', false, 1000),
+               ($1, $2, 'emptytables', false, 1000)`, connID, latest)
+
+	// Every database carries the same shared-catalog counts (56 dead /
+	// 313 live, 15.18%), which used to set the ratio of the databases
+	// with no data of their own.
+	for _, db := range []string{"app", "catalogonly", "emptytables"} {
+		exec(`INSERT INTO metrics.pg_stat_all_tables
+            (connection_id, collected_at, database_name, schemaname,
+             n_live_tup, n_dead_tup)
+            VALUES ($1, $2, $3, 'pg_catalog', 313, 56),
+                   ($1, $2, $3, 'information_schema', 0, 40),
+                   ($1, $2, $3, 'pg_toast', 10, 90),
+                   ($1, $2, $3, 'pg_toast_temp_3', 0, 25)`,
+			connID, latest, db)
+	}
+
+	// "app" has user tables in two schemas: 900 live and 100 dead, so
+	// 10%. Its older snapshot must not count.
+	exec(`INSERT INTO metrics.pg_stat_all_tables
+        (connection_id, collected_at, database_name, schemaname,
+         n_live_tup, n_dead_tup)
+        VALUES ($1, $2, 'app', 'public', 600, 75),
+               ($1, $2, 'app', 'sales', 300, 25),
+               ($1, $3, 'app', 'public', 10, 990)`, connID, latest, older)
+
+	// "emptytables" has a user table holding no tuples at all.
+	exec(`INSERT INTO metrics.pg_stat_all_tables
+        (connection_id, collected_at, database_name, schemaname,
+         n_live_tup, n_dead_tup)
+        VALUES ($1, $2, 'emptytables', 'public', 0, 0)`, connID, latest)
+
+	summaries := buildDatabaseSummaries(t, h, pool, connID,
+		now.Add(-24*time.Hour), now, "60 seconds")
+
+	want := map[string]float64{
+		"app":         10.0,
+		"catalogonly": 0,
+		"emptytables": 0,
+	}
+	for name, ratio := range want {
+		db, ok := summaries[name]
+		if !ok {
+			t.Fatalf("database %q missing from summaries: %#v", name,
+				summaries)
+		}
+		if db.DeadTupleRatio != ratio {
+			t.Errorf("%s: DeadTupleRatio = %v, want %v", name,
+				db.DeadTupleRatio, ratio)
+		}
 	}
 }

@@ -1652,7 +1652,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"size_pretty":        {Type: "string", Description: "Human-readable database size"},
 				"cache_hit_ratio":    {Ref: "#/components/schemas/CacheHitRatioData"},
 				"transaction_rate":   {Type: "number", Description: "Transactions per second"},
-				"dead_tuple_ratio":   {Type: "number", Description: "Dead tuples as a percentage of live plus dead tuples"},
+				"dead_tuple_ratio":   {Type: "number", Description: "Dead tuples as a percentage of live plus dead tuples across the database's user tables in the latest pg_stat_all_tables snapshot of the window, excluding the pg_catalog, information_schema and pg_toast* schemas as pg_stat_user_tables does; 0 when the database has no user tuples"},
 				"active_connections": {Type: "integer", Description: "Backends connected to the database at the most recent collection"},
 			},
 		},

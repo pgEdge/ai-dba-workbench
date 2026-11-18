@@ -465,8 +465,10 @@ type latestSchemaFilter struct {
 // PostgreSQL uses to derive pg_stat_user_tables from pg_stat_all_tables
 // (and pg_stat_user_indexes from pg_stat_all_indexes): pg_catalog and
 // information_schema by name, and every TOAST schema (pg_toast and the
-// per-backend pg_toast_temp_N schemas) by prefix. It is a constant, so
-// no caller input reaches the SQL text through it.
+// per-backend pg_toast_temp_N schemas) by prefix. The database summaries
+// endpoint applies it too, so its dead tuple ratio covers the same user
+// relations. It is a constant, so no caller input reaches the SQL text
+// through it.
 const systemSchemaPredicate = `"schemaname" NOT IN ('pg_catalog', 'information_schema') AND "schemaname" !~ '^pg_toast'`
 
 // deadTupleRatioSortKey is the order_by value that ranks tables by the

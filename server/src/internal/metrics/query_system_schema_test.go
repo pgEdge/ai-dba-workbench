@@ -90,7 +90,9 @@ func TestMetricQueryClausesExcludeSystemSchemas(t *testing.T) {
 // does.
 func TestDeadTupleRatioTotals_Integration(t *testing.T) {
 	pool, closePool := newLatestRowsTestPool(t)
-	defer closePool()
+	// Registered before setProbeIntervalForTest, so its cleanup (which
+	// deletes the interval row) runs while the pool is still open.
+	t.Cleanup(closePool)
 	ctx := context.Background()
 
 	const probe = "pg_stat_all_tables_ratio_test"
@@ -136,6 +138,11 @@ func TestDeadTupleRatioTotals_Integration(t *testing.T) {
 		{latest, "northwind", "pg_catalog", "pg_class", 600, 500},
 		{latest, "northwind", "pg_toast", "pg_toast_1234", 400, 400},
 		{latest, "other", "public", "orders", 0, 999},
+		// "emptied" lost its last user table between the two samples:
+		// its newest sample holds only a catalog relation.
+		{earlier, "emptied", "public", "orders", 75, 25},
+		{earlier, "emptied", "pg_catalog", "pg_class", 50, 50},
+		{latest, "emptied", "pg_catalog", "pg_class", 60, 40},
 	}
 	for i, r := range rows {
 		if _, err := pool.Exec(ctx, `INSERT INTO metrics."`+probe+`"
@@ -180,6 +187,26 @@ func TestDeadTupleRatioTotals_Integration(t *testing.T) {
 		// (100 + 0 + 500 + 400) / (800 + 200 + 1100 + 800) = 34.48%.
 		if !near(got, 1000.0/2900.0*100) {
 			t.Errorf("dead_tuple_ratio = %v, want %v", got, 1000.0/2900.0*100)
+		}
+	})
+
+	// A sample with no user relation is still a sample: its user totals
+	// are 0 live and 0 dead tuples, so it reads 0% rather than vanishing
+	// and leaving "last" on the older sample's 25%.
+	t.Run("system-only newest sample reads 0", func(t *testing.T) {
+		got := latestRatio(t, MetricFilters{
+			DatabaseName: "emptied", ExcludeSystemSchemas: true,
+		})
+		if got != 0 {
+			t.Errorf("dead_tuple_ratio = %v, want 0", got)
+		}
+	})
+
+	t.Run("system-only newest sample without the exclusion", func(t *testing.T) {
+		got := latestRatio(t, MetricFilters{DatabaseName: "emptied"})
+		// 40 / (60 + 40) = 40%.
+		if !near(got, 40) {
+			t.Errorf("dead_tuple_ratio = %v, want 40", got)
 		}
 	})
 

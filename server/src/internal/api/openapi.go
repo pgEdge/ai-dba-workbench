@@ -3932,7 +3932,9 @@ func buildPaths() map[string]OpenAPIPathItem {
 						"exposing n_live_tup and n_dead_tup, computed from "+
 						"the live and dead tuples totalled across every "+
 						"relation the filters keep at each sample (a "+
-						"sample with no tuples is 0). A real column of "+
+						"sample with no tuples, or with "+
+						"exclude_system_schemas no user relations, is "+
+						"0). A real column of "+
 						"that name always takes precedence, and a suffix on "+
 						"a column of the wrong kind (for example _per_sec "+
 						"on a gauge) is rejected with 400."),

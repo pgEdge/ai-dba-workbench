@@ -677,7 +677,7 @@ silently rather than producing invalid SQL:
   `systemSchemaPredicate` (an alias of `metrics.SystemSchemaPredicate`,
   shared with `/metrics/query`), the same predicate PostgreSQL uses to derive
   `pg_stat_user_tables` from `pg_stat_all_tables`: `pg_catalog` and
-  `information_schema` by name, and every `pg_toast*` schema by regex.
+  `information_schema` by name, and every `pg_toast*` schema by `LIKE` prefix.
   `pg_temp_N` schemas stay in, as they do in `pg_stat_user_tables`.
 
 The flag is opt-in. The Table and Index Leaderboards send it (issue #499:
@@ -782,9 +782,17 @@ combined output order. The routing rules are deliberate and order-sensitive:
 `/metrics/query` (both modes) also takes `exclude_system_schemas`, carried
 as `MetricFilters.ExcludeSystemSchemas`. `metricQueryClauses` and
 `buildLatestRowsQuery` append `SystemSchemaPredicate`, which binds no
-argument, and `checkSystemSchemaFilter` refuses the flag with an error
-(400) on a probe without a `schemaname` column, unlike `/metrics/latest`,
-which drops it silently. The Database Dashboard's Dead Tuple Ratio KPI
+argument, and `checkSystemSchemaFilter` (or `systemSchemaFilterError` in
+`discoverLatestRowColumns`, which already holds the columns) refuses the
+flag with an error (400) on a probe without a `schemaname` column, unlike
+`/metrics/latest`, which drops it silently. The ratio's `ratio_samples` is
+the exception to the WHERE placement: it is built from the clauses without
+the predicate and applies it as `FILTER (WHERE ...)` on the sums, with a
+`COUNT(*) FILTER` of zero giving 0 totals, so a sample holding only system
+relations still exists and reads 0% instead of vanishing and leaving `last`
+on an older sample's ratio. `SystemSchemaPredicate` matches TOAST schemas
+with `NOT LIKE 'pg!_toast%' ESCAPE '!'`, not a regex, because on ColdFront
+the query runs in DuckDB, where `~` is a whole-string match. The Database Dashboard's Dead Tuple Ratio KPI
 requests `dead_tuple_ratio` with `aggregation=last` and this flag, so it
 matches `pg_stat_user_tables`.
 

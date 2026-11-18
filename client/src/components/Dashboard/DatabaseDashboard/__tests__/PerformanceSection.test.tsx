@@ -97,7 +97,7 @@ const CACHE_TITLE = 'Cache Hit Ratio Over Time';
 
 const TXN_KEY = 'xact_commit_per_sec,xact_rollback_per_sec';
 const CACHE_KEY = 'blks_hit_per_sec,blks_read_per_sec';
-const DEAD_TUPLE_KEY = 'n_dead_tup,n_live_tup';
+const DEAD_TUPLE_KEY = 'dead_tuple_ratio';
 
 /** Build a MetricSeries for the given metric and values. */
 const series = (
@@ -169,10 +169,7 @@ const routeMetrics = (
                     series('xact_rollback_per_sec', [1, 2]),
                 ]);
             case DEAD_TUPLE_KEY:
-                return ready([
-                    series('n_dead_tup', [5, 10]),
-                    series('n_live_tup', [95, 90]),
-                ]);
+                return ready([series('dead_tuple_ratio', [5, 10])]);
             default:
                 return ready([]);
         }
@@ -241,6 +238,34 @@ describe('PerformanceSection', () => {
             expect(aggregations.get(TXN_KEY)).toBe('avg');
             expect(aggregations.get('database_size_bytes')).toBe('last');
             expect(aggregations.get(CACHE_KEY)).toBe('last');
+        });
+
+        /*
+         * pg_stat_all_tables holds one row per relation, so the raw
+         * n_dead_tup/n_live_tup columns with "last" came back as one
+         * arbitrary relation's counts (issue #869). The KPI asks for the
+         * server's dead_tuple_ratio instead, which totals the user
+         * relations of each sample, as pg_stat_user_tables would.
+         */
+        it('requests the database-wide dead tuple ratio of user relations', async () => {
+            renderSection();
+
+            await waitFor(() => {
+                expect(mockUseMetrics).toHaveBeenCalled();
+            });
+            const params = mockUseMetrics.mock.calls
+                .map(([p]) => p)
+                .filter(p => p?.probeName === 'pg_stat_all_tables');
+            expect(params.length).toBeGreaterThan(0);
+            for (const p of params) {
+                expect(p?.metrics).toEqual(['dead_tuple_ratio']);
+                expect(p?.aggregation).toBe('last');
+                expect(p?.excludeSystemSchemas).toBe(true);
+                expect(p?.databaseName).toBe('appdb');
+                expect(p?.connectionId).toBe(7);
+                expect(p?.schemaName).toBeUndefined();
+                expect(p?.tableName).toBeUndefined();
+            }
         });
 
         it('requests the per-second block metrics for the cache KPI and chart', async () => {
@@ -481,7 +506,7 @@ describe('PerformanceSection', () => {
             });
             expect(kpi('Database Size').getAttribute('data-value'))
                 .toBe('2.0 MB');
-            // 10 dead against 90 live tuples is a 10.0% ratio.
+            // The latest bucket's ratio is the headline.
             expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
                 .toBe('10.0');
             expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
@@ -510,11 +535,12 @@ describe('PerformanceSection', () => {
             expect(screen.getByLabelText('Loading')).toBeInTheDocument();
         });
 
-        it('handles dead tuple series with all zero and mismatched lengths', async () => {
+        it('reports a genuine 0% ratio rather than skipping it', async () => {
+            // The server reports a database whose user relations hold
+            // no tuples at all as 0%, not as a gap.
             routeMetrics({
                 [DEAD_TUPLE_KEY]: ready([
-                    series('n_dead_tup', [0, 0, 0]),
-                    series('n_live_tup', [0]),
+                    series('dead_tuple_ratio', [12, 0]),
                 ]),
             });
             renderSection();
@@ -524,11 +550,13 @@ describe('PerformanceSection', () => {
             });
             expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
                 .toBe('0.0');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-status'))
+                .toBe('good');
             expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
-                .toBe('[0]');
+                .toBe('[12,0]');
         });
 
-        it('returns an empty dead tuple sparkline when a series is missing', async () => {
+        it('returns an empty dead tuple sparkline when the series is missing', async () => {
             routeMetrics({
                 [DEAD_TUPLE_KEY]: ready([series('n_dead_tup', [3])]),
             });
@@ -539,8 +567,8 @@ describe('PerformanceSection', () => {
             });
             expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
                 .toBe('[]');
-            // Without a live count there is nothing to divide by, so
-            // the tile shows no data rather than a spurious 100%.
+            // Without the ratio series the tile shows no data rather
+            // than a spurious 0% or 100%.
             expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
                 .toBe('--');
             expect(kpi('Dead Tuple Ratio').getAttribute('data-unit'))
@@ -621,11 +649,10 @@ describe('PerformanceSection', () => {
                 .toBe('[null,null]');
         });
 
-        it('leaves a dead tuple ratio gap where a count is null', async () => {
+        it('leaves a dead tuple ratio gap where a bucket is null', async () => {
             routeMetrics({
                 [DEAD_TUPLE_KEY]: ready([
-                    series('n_dead_tup', [5, null]),
-                    series('n_live_tup', [95, 95]),
+                    series('dead_tuple_ratio', [5, null]),
                 ]),
             });
             renderSection();
@@ -634,23 +661,19 @@ describe('PerformanceSection', () => {
                 expect(kpi('Dead Tuple Ratio')).toBeInTheDocument();
             });
             // The null bucket is a gap, not a spurious 0%, and the
-            // headline falls back to the last bucket with both counts.
+            // headline falls back to the last bucket with a ratio.
             expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
                 .toBe('[5,null]');
             expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
                 .toBe('5.0');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-status'))
+                .toBe('good');
         });
 
-        /*
-         * A dead count missing in the latest bucket used to be read as
-         * 0 against a live count of 95, which displayed a reassuring
-         * 0.0%: a healthy-looking number built from no data at all.
-         */
-        it('shows no data when the latest dead count is missing', async () => {
+        it('shows no data when every bucket is null', async () => {
             routeMetrics({
                 [DEAD_TUPLE_KEY]: ready([
-                    series('n_dead_tup', [null]),
-                    series('n_live_tup', [95]),
+                    series('dead_tuple_ratio', [null]),
                 ]),
             });
             renderSection();
@@ -668,35 +691,10 @@ describe('PerformanceSection', () => {
                 .toBe('[null]');
         });
 
-        it('shows no data when the latest live count is missing', async () => {
+        it('grades the latest ratio as a warning', async () => {
             routeMetrics({
                 [DEAD_TUPLE_KEY]: ready([
-                    series('n_dead_tup', [5]),
-                    series('n_live_tup', [null]),
-                ]),
-            });
-            renderSection();
-
-            await waitFor(() => {
-                expect(kpi('Dead Tuple Ratio')).toBeInTheDocument();
-            });
-            expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
-                .toBe('--');
-            expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
-                .toBe('[null]');
-        });
-
-        /*
-         * The counts must come from one bucket. Taking each from its
-         * own latest reading would pair the dead count of 40 with the
-         * live count of 60 and report 40%, whereas the latest aligned
-         * bucket is 10 dead against 90 live.
-         */
-        it('derives the ratio from a single aligned bucket', async () => {
-            routeMetrics({
-                [DEAD_TUPLE_KEY]: ready([
-                    series('n_dead_tup', [40, 10]),
-                    series('n_live_tup', [60, 90]),
+                    series('dead_tuple_ratio', [40, 10, null]),
                 ]),
             });
             renderSection();
@@ -709,40 +707,14 @@ describe('PerformanceSection', () => {
             expect(kpi('Dead Tuple Ratio').getAttribute('data-unit'))
                 .toBe('%');
             expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
-                .toBe('[40,10]');
-        });
-
-        /*
-         * A trailing gap must not blank the headline: the latest
-         * bucket that has both counts still stands, which is what the
-         * per-bucket sparkline already carries.
-         */
-        it('falls back to the last bucket holding both counts', async () => {
-            routeMetrics({
-                [DEAD_TUPLE_KEY]: ready([
-                    series('n_dead_tup', [40, 10, null]),
-                    series('n_live_tup', [60, 90, 90]),
-                ]),
-            });
-            renderSection();
-
-            await waitFor(() => {
-                expect(kpi('Dead Tuple Ratio')).toBeInTheDocument();
-            });
-            expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
-                .toBe('10.0');
-            expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
                 .toBe('[40,10,null]');
             expect(kpi('Dead Tuple Ratio').getAttribute('data-status'))
                 .toBe('warning');
         });
 
-        it('flags an aligned bucket above the critical threshold', async () => {
+        it('flags a ratio above the critical threshold', async () => {
             routeMetrics({
-                [DEAD_TUPLE_KEY]: ready([
-                    series('n_dead_tup', [40]),
-                    series('n_live_tup', [60]),
-                ]),
+                [DEAD_TUPLE_KEY]: ready([series('dead_tuple_ratio', [40])]),
             });
             renderSection();
 

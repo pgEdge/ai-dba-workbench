@@ -228,6 +228,12 @@ export interface MetricQueryParams {
      * for pg_stat_statements on a single connection.
      */
     statementDatabaseName?: string;
+    /**
+     * Drops pg_catalog, information_schema and pg_toast* relations, as
+     * pg_stat_user_tables does; sent as exclude_system_schemas. The
+     * server accepts it only for probes with a schemaname column.
+     */
+    excludeSystemSchemas?: boolean;
     timeRange: TimeRange;
     buckets?: number;
     aggregation?: 'avg' | 'sum' | 'min' | 'max' | 'last';

@@ -743,6 +743,40 @@ describe('apiClient', () => {
             expect(listener).not.toHaveBeenCalled();
         });
 
+        it('ignores a probe superseded by a success and a new run of failures', async () => {
+            const probes: Array<{
+                resolve: (r: Response) => void;
+                reject: (e: Error) => void;
+            }> = [];
+            routeFetch(
+                () =>
+                    new Promise<Response>((resolve, reject) => {
+                        probes.push({ resolve, reject });
+                    }),
+            );
+
+            // Run 1 starts probe P1; a success interrupts the run.
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch(FAILING_URL);
+            }
+            await apiGet('/api/v1/alerts');
+
+            // Run 2 reaches the threshold again before P1 settles, and
+            // must start a fresh probe rather than reuse P1's answer.
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch(FAILING_URL);
+            }
+            expect(probeCalls()).toBe(2);
+
+            probes[0].reject(new TypeError('Failed to fetch'));
+            await settle();
+            expect(listener).not.toHaveBeenCalled();
+
+            probes[1].resolve(mockResponse({ ok: true }));
+            await settle();
+            expect(listener).not.toHaveBeenCalled();
+        });
+
         it('ignores a probe that resolves after the health state was reset', async () => {
             let failProbe: (e: Error) => void = () => {};
             routeFetch(

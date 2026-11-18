@@ -163,6 +163,14 @@ export function resetConnectionHealth(): void {
 
 function recordSuccess(): void {
     consecutiveFailures = 0;
+    // A success proves the server reachable, so a probe still pending for
+    // the failure run it ended is stale. Invalidate it, so that a new run
+    // of failures starts a fresh probe instead of acting on this one's
+    // late answer.
+    if (probeInFlight) {
+        probeInFlight = false;
+        healthGeneration += 1;
+    }
 }
 
 function declareDisconnected(reason: DisconnectReason): void {

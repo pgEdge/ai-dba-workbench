@@ -854,19 +854,28 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 		userinfo = url.User(conn.Username)
 	}
 
-	// Use hostaddr if available, otherwise host
-	host := conn.Host
-	if hostaddr != "" {
-		host = hostaddr
-	}
-
 	// net.JoinHostPort brackets an IPv6 literal, so strip any brackets
 	// the stored value already carries rather than nesting them.
-	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	host := hostvalidation.BareHost(conn.Host)
 
 	// Collect query parameters so per-connection SSL settings flow
 	// through to the pgx driver (e.g., verify-full with a custom CA).
 	params := url.Values{}
+
+	// As in libpq, hostaddr is the address connected to whilst host
+	// stays the name TLS verifies the certificate against (and pgx's
+	// .pgpass lookup key). pgx has no hostaddr keyword, so the dial
+	// guard (GuardConnConfig) takes it out of the parsed runtime
+	// parameters and pins the dial to it. With no host, the address
+	// stands in for one, as libpq does. CheckStoredTarget has already
+	// refused a hostaddr that is not an IP address.
+	if hostaddr != "" {
+		addr := hostvalidation.BareHost(hostaddr)
+		params.Set(hostvalidation.HostAddrParam, addr)
+		if host == "" {
+			host = addr
+		}
+	}
 	addParam := func(key string, value sql.NullString) {
 		if value.Valid && value.String != "" {
 			params.Set(key, value.String)

@@ -78,6 +78,13 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+- Make the server verify a monitored connection that has both a `host`
+  and a `hostaddr` against the host name, as the collector already
+  does. The server connected to the `hostaddr` as though it were the
+  host, so with `sslmode=verify-full` it checked the certificate
+  against the IP address and sent no TLS server name, and the query
+  tools and the MCP tools failed against a certificate that names only
+  the host. (#840)
 
 ## [2.0.0-beta1] - 2026-11-12
 

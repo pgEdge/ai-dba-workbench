@@ -318,8 +318,11 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
             void fetchData();
         } else {
             // No query any more: a response still in flight for the
-            // previous one must not land.
+            // previous one must not land, and since superseding it also
+            // takes away its chance to clear the loading state, and no
+            // replacement request starts, clear it here.
             supersedeRequest();
+            setLoading(false);
         }
     }, [
         user, params, fetchData, refreshTrigger, customStart, customEnd,

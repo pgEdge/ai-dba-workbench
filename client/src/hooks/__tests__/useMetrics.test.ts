@@ -536,6 +536,41 @@ describe('useMetrics', () => {
         expect(result.current.data).toBeNull();
     });
 
+    it('clears loading when params become null during the initial fetch', async () => {
+        let resolveFirst: (value: unknown) => void = () => undefined;
+        mockApiGet.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveFirst = resolve;
+        }));
+
+        const { result, rerender } = renderHook(
+            ({ params }: { params: MetricQueryParams | null }) =>
+                useMetrics(params),
+            {
+                initialProps: {
+                    params: { probeName: 'old', timeRange: '24h' } as
+                        MetricQueryParams | null,
+                },
+            },
+        );
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
+        });
+        expect(result.current.loading).toBe(true);
+
+        rerender({ params: null });
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        // The abandoned response must still not land.
+        await act(async () => {
+            resolveFirst(makeMetricSeries());
+        });
+        expect(result.current.loading).toBe(false);
+        expect(result.current.data).toBeNull();
+        expect(mockApiGet).toHaveBeenCalledTimes(1);
+    });
+
     it('resets initial load state when indexName changes so loading flashes again', async () => {
         // Initial index resolves immediately.
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());

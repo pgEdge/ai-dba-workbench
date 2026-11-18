@@ -142,6 +142,10 @@ const buildMetricsUrl = (
         );
     }
 
+    if (params.excludeSystemSchemas) {
+        searchParams.append('exclude_system_schemas', 'true');
+    }
+
     if (params.buckets !== undefined) {
         searchParams.append('buckets', params.buckets.toString());
     }
@@ -288,6 +292,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         params?.tableName,
         params?.schemaName,
         params?.mountPoint,
+        params?.excludeSystemSchemas,
         // A new custom window is as much a change of query as a new
         // preset is, so the loading state must show for it too.
         customStart,

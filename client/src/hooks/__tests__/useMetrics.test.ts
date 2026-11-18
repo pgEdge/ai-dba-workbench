@@ -238,6 +238,48 @@ describe('useMetrics', () => {
         expect(url).toContain('mount_point=%2Fvar%2Flib%2Fpostgresql');
     });
 
+    it('builds URL with exclude_system_schemas when set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_all_tables',
+            timeRange: '1h',
+            connectionId: 5,
+            databaseName: 'appdb',
+            excludeSystemSchemas: true,
+            metrics: ['dead_tuple_ratio'],
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).toContain('exclude_system_schemas=true');
+    });
+
+    it('omits exclude_system_schemas when not set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_all_tables',
+            timeRange: '1h',
+            connectionId: 5,
+            excludeSystemSchemas: false,
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).not.toContain('exclude_system_schemas');
+    });
+
     it('omits mount_point when mountPoint is not set', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 

@@ -77,20 +77,6 @@ const getDeadTupleStatus = (
 };
 
 /**
- * Percentage that `part` makes of `part + rest`. A null on either side
- * means the bucket has no reading, so the ratio is null too rather
- * than a misleading 0 or 100; a zero total is reported as 0.
- */
-const ratioPercent = (
-    part: number | null,
-    rest: number | null,
-): number | null => {
-    if (part === null || rest === null) { return null; }
-    const total = part + rest;
-    return total > 0 ? (part / total) * 100 : 0;
-};
-
-/**
  * Sum two optional readings, ignoring nulls; null when neither has a
  * value, so a gap stays a gap instead of collapsing to 0.
  */
@@ -155,14 +141,22 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         metrics: ['xact_commit_per_sec', 'xact_rollback_per_sec'],
     }), [connectionId, databaseName, timeRange.range]);
 
+    // pg_stat_all_tables holds one row per relation, so the raw tuple
+    // columns with 'last' would come back as one arbitrary relation's
+    // counts (issue #869). The server's dead_tuple_ratio totals the live
+    // and dead tuples of every relation at each sample instead, and the
+    // system schemas are excluded so the ratio covers the user relations
+    // pg_stat_user_tables lists, the definition the Database Summaries
+    // pane shares (issue #868).
     const deadTupleKpiParams = useMemo((): MetricQueryParams => ({
         probeName: 'pg_stat_all_tables',
         connectionId,
         databaseName,
+        excludeSystemSchemas: true,
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'last',
-        metrics: ['n_dead_tup', 'n_live_tup'],
+        metrics: ['dead_tuple_ratio'],
     }), [connectionId, databaseName, timeRange.range]);
 
     // Chart queries (150 buckets)
@@ -244,38 +238,16 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
     const txnRate = useMemo(() => latestNonNull(txnSparkline), [txnSparkline]);
 
     /*
-     * Per-bucket dead tuple ratio. The dead and live counts are paired
-     * by bucket rather than each taken from its own latest reading, so
-     * the headline can never divide a dead count from one bucket by a
-     * live count from another; a bucket missing either count carries
-     * no ratio at all, so a gap shows as the no-data placeholder
-     * instead of a reassuring 0.0%. A bucket whose counts are both 0
-     * is still a genuine 0% and is reported as such.
+     * Per-bucket dead tuple ratio, computed by the server from the
+     * database's totals. A bucket with no sample is null, so a gap shows
+     * as a gap instead of a reassuring 0.0%, and the headline is the
+     * latest bucket that has a ratio; a database whose user relations
+     * hold no tuples at all is a genuine 0%.
      */
-    const deadTupleSparkline = useMemo((): MetricDataPoint[] => {
-        if (!deadTupleKpi.data) { return []; }
-        const deadSeries = deadTupleKpi.data.find(
-            s => s.metric === 'n_dead_tup'
-        );
-        const liveSeries = deadTupleKpi.data.find(
-            s => s.metric === 'n_live_tup'
-        );
-        if (!deadSeries || !liveSeries) { return []; }
-
-        const len = Math.min(
-            deadSeries.data.length, liveSeries.data.length
-        );
-        const points: MetricDataPoint[] = [];
-        for (let i = 0; i < len; i++) {
-            points.push({
-                time: deadSeries.data[i].time,
-                value: ratioPercent(
-                    deadSeries.data[i].value, liveSeries.data[i].value,
-                ),
-            });
-        }
-        return points;
-    }, [deadTupleKpi.data]);
+    const deadTupleSparkline = useMemo(
+        () => extractSparklineData(deadTupleKpi.data, 'dead_tuple_ratio'),
+        [deadTupleKpi.data]
+    );
     const deadTupleRatio = useMemo(
         () => latestNonNull(deadTupleSparkline),
         [deadTupleSparkline]

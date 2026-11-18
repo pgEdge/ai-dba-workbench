@@ -19,8 +19,11 @@ health. The pane displays the following tiles:
 - The `CACHE HIT RATIO` tile shows the buffer cache hit ratio as a percentage.
 - The `TRANSACTIONS` tile shows the current transactions per second, combining
   commits and rollbacks.
-- The `DEAD TUPLE RATIO` tile shows the dead tuple percentage across all
-  tables.
+- The `DEAD TUPLE RATIO` tile shows dead tuples as a percentage of live plus
+  dead tuples, totalled across the database's user tables at each sample.
+  System catalogs, `information_schema`, and TOAST tables are excluded, as in
+  `pg_stat_user_tables`; a database whose user tables hold no tuples shows
+  0%.
 
 ![Reviewing the Database Performance Overview](../../images/database_performance_overview.png)
 

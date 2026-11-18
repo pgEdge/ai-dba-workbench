@@ -2473,15 +2473,19 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+			// Both stages: the per-sample totals, then the bucket
+			// stage summing those totals rather than picking one.
 			for _, c := range []string{
 				`SUM("n_live_tup")`,
 				`SUM("n_dead_tup")`,
+				`SUM("live_tup")`,
+				`SUM("dead_tup")`,
 			} {
 				if !strings.Contains(query, c) {
 					t.Errorf("query missing %q\n---\n%s", c, query)
 				}
 			}
-			if strings.Contains(query, `array_agg("n_dead_tup"`) {
+			if strings.Contains(query, `array_agg(`) {
 				t.Errorf("%s aggregation should not use array_agg:\n%s",
 					agg, query)
 			}

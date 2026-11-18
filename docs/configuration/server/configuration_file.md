@@ -215,7 +215,8 @@ table lists the ranges that the server treats as internal:
 An IPv4-mapped IPv6 address, such as `::ffff:10.0.0.1`, counts as the IPv4
 address that it carries. Neither `allow_internal_networks` nor `allowed_hosts`
 lets the server connect to an unspecified, link-local or cloud metadata
-address, and a connection that names one is refused when it is saved; see
+address, and a save request that supplies such a `host` or `hostaddr` is
+refused; see
 [Checking Addresses at Connect Time](#checking-addresses-at-connect-time).
 That refusal also covers an address in `::/96`, `::ffff:0:0:0/96`,
 `64:ff9b::/96` or `2002::/16` that embeds an unspecified, link-local or cloud
@@ -283,10 +284,12 @@ order, and the first rule that matches decides:
 
 An address that an `allowed_hosts` range covers permits only that address, and
 the server connects only to the permitted addresses. The save-time check also
-refuses the always-refused addresses first, whether a `host` or `hostaddr` is
-such an address or a `host` name resolves to one; a name is refused when any of
-its addresses is always refused, even if the server could connect to another of
-them. A host name that `allowed_hosts` lists is not resolved at save time and
+refuses the always-refused addresses first, whether a `host` or `hostaddr` that
+the request supplies is such an address or a supplied `host` name resolves to
+one; a name is refused when any of its addresses is always refused, even if the
+server could connect to another of them. An update that supplies neither value
+is not checked, so a stored connection that names such an address can still be
+edited, and is refused only when the server connects. A host name that `allowed_hosts` lists is not resolved at save time and
 meets this check only when the server connects. When no resolved address is
 permitted, the connection attempt fails with an error that says the host
 resolves only to addresses that connections are not permitted to. The server's

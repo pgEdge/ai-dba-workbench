@@ -98,10 +98,10 @@ The right tile displays an `Alert Distribution` chart that breaks down the
 active alerts on the estate's servers by severity. The count excludes
 acknowledged, cleared, and system alerts, and has no upper limit. The chart
 refreshes with the rest of the estate dashboard. When there are no active
-alerts, the panel displays `No active alerts`; the panel also displays that
-message while it retries a first request for the counts that failed, so the
-message does not prove that no alerts exist. When a later refresh fails, the
-chart keeps the last counts it fetched and retries. The brain icon in the
+alerts, the panel displays `No active alerts`. When the first request for the
+counts fails, the panel displays `Alert counts unavailable` and retries until
+the counts load. When a later refresh fails, the chart keeps the last counts it
+fetched and retries. The brain icon in the
 top-right corner of the tile opens an [AI chart
 analysis](../ai/index.md#in-depth-object-analysis) of the displayed data.
 

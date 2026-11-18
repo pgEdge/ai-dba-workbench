@@ -78,6 +78,11 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+- Count only the active alerts on the estate's servers in the estate
+  dashboard's Alert Distribution chart, which stopped at 200 alerts,
+  included acknowledged alerts, system alerts and alerts on other
+  servers, and never refreshed; the chart now refreshes with the rest
+  of the dashboard. (#864)
 
 ## [2.0.0-beta1] - 2026-11-12
 

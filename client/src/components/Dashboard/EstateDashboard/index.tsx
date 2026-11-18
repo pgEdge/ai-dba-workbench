@@ -29,7 +29,10 @@ const EstateDashboard: React.FC<{ selection: EstateSelection }> = ({ selection }
     return (
         <Box>
             <CollapsibleSection title="Health Overview" defaultExpanded>
-                <HealthOverviewSection selection={selection} />
+                <HealthOverviewSection
+                    selection={selection}
+                    serverIds={serverIds}
+                />
             </CollapsibleSection>
 
             <CollapsibleSection title="Key Performance Indicators" defaultExpanded>

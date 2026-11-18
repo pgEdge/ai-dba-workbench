@@ -469,7 +469,13 @@ type latestSchemaFilter struct {
 // endpoint applies it too, so its dead tuple ratio covers the same user
 // relations. It is a constant, so no caller input reaches the SQL text
 // through it.
-const systemSchemaPredicate = `"schemaname" NOT IN ('pg_catalog', 'information_schema') AND "schemaname" !~ '^pg_toast'`
+//
+// The TOAST prefix is matched with LIKE and an explicit escape rather
+// than a regex: on a ColdFront datastore the query runs in DuckDB, whose
+// ~ operator matches the whole string, so '^pg_toast' would let the
+// pg_toast_temp_N schemas through there. The escape keeps "_" literal,
+// so pg_temp_N schemas, which pg_stat_user_tables includes, stay in.
+const systemSchemaPredicate = `"schemaname" NOT IN ('pg_catalog', 'information_schema') AND "schemaname" NOT LIKE 'pg!_toast%' ESCAPE '!'`
 
 // deadTupleRatioSortKey is the order_by value that ranks tables by the
 // share of their tuples that are dead, n_dead_tup / (n_live_tup +

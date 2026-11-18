@@ -289,7 +289,7 @@ the request supplies is such an address or a supplied `host` name resolves to
 one; a name is refused when any of its addresses is always refused, even if the
 server could connect to another of them. An update that supplies neither value
 is not checked, so a stored connection that names such an address can still be
-edited, and is refused only when the server connects. A host name that `allowed_hosts` lists is not resolved at save time and
+edited, and the connect-time checks decide whether it connects. A host name that `allowed_hosts` lists is not resolved at save time and
 meets this check only when the server connects. When no resolved address is
 permitted, the connection attempt fails with an error that says the host
 resolves only to addresses that connections are not permitted to. The server's

@@ -147,27 +147,9 @@ func (s *Service) Propose(ctx context.Context, req ProposeRequest) (*ProposeResu
 		via = "token"
 	}
 
-	attempt := 1
-	var parent *Action
-	if req.RevisesActionID != nil {
-		parent, err = s.store.Get(ctx, *req.RevisesActionID)
-		if errors.Is(err, ErrNotFound) {
-			// Indistinguishable from another proposer's action, so ids
-			// cannot be probed.
-			return nil, ErrBadRevision
-		}
-		if err != nil {
-			return nil, err
-		}
-		if parent.ReviewStatus != reviewStatusVetoed ||
-			parent.ConnectionID != req.ConnectionID ||
-			parent.ProposedBy != username {
-			return nil, ErrBadRevision
-		}
-		attempt = parent.Attempt + 1
-	}
-	if attempt > s.maxAttempts {
-		return nil, ErrChainExhausted
+	attempt, err := s.nextAttempt(ctx, req, username)
+	if err != nil {
+		return nil, err
 	}
 
 	created, err := s.store.Create(ctx, NewAction{
@@ -191,9 +173,54 @@ func (s *Service) Propose(ctx context.Context, req ProposeRequest) (*ProposeResu
 		return nil, err
 	}
 
+	status, err := s.review(ctx, created)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &ProposeResult{Action: created, AttemptsLeft: s.maxAttempts - attempt}
+	if status == reviewStatusVetoed && res.AttemptsLeft == 0 {
+		res.ChainExhausted = true
+		res.BestAttempt = s.bestAttempt(ctx, created)
+	}
+	return res, nil
+}
+
+// nextAttempt returns the attempt number for a proposal: 1 for a new
+// change, or one more than the action it revises. A revision must name a
+// vetoed action on the same connection by the same proposer, and the
+// chain must have attempts left.
+func (s *Service) nextAttempt(ctx context.Context, req ProposeRequest, username string) (int, error) {
+	attempt := 1
+	if req.RevisesActionID != nil {
+		parent, err := s.store.Get(ctx, *req.RevisesActionID)
+		if errors.Is(err, ErrNotFound) {
+			// Indistinguishable from another proposer's action, so ids
+			// cannot be probed.
+			return 0, ErrBadRevision
+		}
+		if err != nil {
+			return 0, err
+		}
+		if parent.ReviewStatus != reviewStatusVetoed ||
+			parent.ConnectionID != req.ConnectionID ||
+			parent.ProposedBy != username {
+			return 0, ErrBadRevision
+		}
+		attempt = parent.Attempt + 1
+	}
+	if attempt > s.maxAttempts {
+		return 0, ErrChainExhausted
+	}
+	return attempt, nil
+}
+
+// review has a stored action reviewed, records the verdict and updates
+// the action to match, returning its review status.
+func (s *Service) review(ctx context.Context, created *Action) (string, error) {
 	verdict, err := s.reviewer.Review(ctx, created)
 	if err != nil {
-		return nil, fmt.Errorf("review action %d: %w", created.ID, err)
+		return "", fmt.Errorf("review action %d: %w", created.ID, err)
 	}
 	var status string
 	switch verdict.Decision {
@@ -202,20 +229,14 @@ func (s *Service) Propose(ctx context.Context, req ProposeRequest) (*ProposeResu
 	case decisionVeto:
 		status = reviewStatusVetoed
 	default:
-		return nil, fmt.Errorf("review action %d: unknown decision %q", created.ID, verdict.Decision)
+		return "", fmt.Errorf("review action %d: unknown decision %q", created.ID, verdict.Decision)
 	}
 	if err := s.store.SetReview(ctx, created.ID, status, verdict); err != nil {
-		return nil, err
+		return "", err
 	}
 	created.ReviewStatus = status
 	created.Review = &verdict
-
-	res := &ProposeResult{Action: created, AttemptsLeft: s.maxAttempts - attempt}
-	if status == reviewStatusVetoed && res.AttemptsLeft == 0 {
-		res.ChainExhausted = true
-		res.BestAttempt = s.bestAttempt(ctx, created)
-	}
-	return res, nil
+	return status, nil
 }
 
 // bestAttempt walks the chain back from last and returns the attempt with

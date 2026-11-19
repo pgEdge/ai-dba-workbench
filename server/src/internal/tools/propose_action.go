@@ -196,45 +196,82 @@ func parseProposeArgs(args map[string]any) (actions.ProposeRequest, string) {
 	}
 	req.ConnectionID = id
 
-	sql, ok := args["sql"].(string)
-	if !ok || strings.TrimSpace(sql) == "" {
-		return req, "Missing or invalid 'sql' parameter"
-	}
-	if len(sql) > proposeMaxSQLBytes {
-		return req, "'sql' is too large; propose a smaller change"
+	sql, msg := requiredTextArg(args, "sql", proposeMaxSQLBytes,
+		"Missing or invalid 'sql' parameter",
+		"'sql' is too large; propose a smaller change")
+	if msg != "" {
+		return req, msg
 	}
 	req.SQL = sql
 
-	rationale, ok := args["rationale"].(string)
-	if !ok || strings.TrimSpace(rationale) == "" {
-		return req, "Missing or invalid 'rationale' parameter: explain why the change is needed"
-	}
-	if len(rationale) > proposeMaxRationaleBytes {
-		return req, "'rationale' is too long; shorten it"
+	rationale, msg := requiredTextArg(args, "rationale", proposeMaxRationaleBytes,
+		"Missing or invalid 'rationale' parameter: explain why the change is needed",
+		"'rationale' is too long; shorten it")
+	if msg != "" {
+		return req, msg
 	}
 	req.Rationale = rationale
 
-	if raw, present := args["database_name"]; present && raw != nil {
-		name, isString := raw.(string)
-		if !isString {
-			return req, "Invalid 'database_name' parameter"
-		}
-		if name != "" {
-			if err := database.ValidateDatabaseName(name); err != nil {
-				return req, "Invalid 'database_name' parameter"
-			}
-			req.DatabaseName = &name
-		}
+	if req.DatabaseName, msg = databaseNameArg(args); msg != "" {
+		return req, msg
 	}
-
-	if raw, present := args["revises_action_id"]; present && raw != nil {
-		rev, isNum := int64Arg(raw)
-		if !isNum || rev <= 0 {
-			return req, "Invalid 'revises_action_id' parameter"
-		}
-		req.RevisesActionID = &rev
+	if req.RevisesActionID, msg = revisesActionArg(args); msg != "" {
+		return req, msg
 	}
 	return req, ""
+}
+
+// requiredTextArg reads a string argument that must not be blank and
+// must be at most limit bytes long. A non-empty second value is the tool
+// error to return: missing for an absent, non-string or blank value, and
+// tooLong for one over the limit.
+func requiredTextArg(args map[string]any, key string, limit int,
+	missing, tooLong string) (string, string) {
+
+	v, ok := args[key].(string)
+	if !ok || strings.TrimSpace(v) == "" {
+		return "", missing
+	}
+	if len(v) > limit {
+		return "", tooLong
+	}
+	return v, ""
+}
+
+// databaseNameArg reads the optional 'database_name' argument. An
+// absent, null or empty value gives nil; anything else must be a valid
+// database name. A non-empty second value is the tool error to return.
+func databaseNameArg(args map[string]any) (*string, string) {
+	raw, present := args["database_name"]
+	if !present || raw == nil {
+		return nil, ""
+	}
+	name, isString := raw.(string)
+	if !isString {
+		return nil, "Invalid 'database_name' parameter"
+	}
+	if name == "" {
+		return nil, ""
+	}
+	if err := database.ValidateDatabaseName(name); err != nil {
+		return nil, "Invalid 'database_name' parameter"
+	}
+	return &name, ""
+}
+
+// revisesActionArg reads the optional 'revises_action_id' argument. An
+// absent or null value gives nil; anything else must be a positive
+// integer. A non-empty second value is the tool error to return.
+func revisesActionArg(args map[string]any) (*int64, string) {
+	raw, present := args["revises_action_id"]
+	if !present || raw == nil {
+		return nil, ""
+	}
+	rev, isNum := int64Arg(raw)
+	if !isNum || rev <= 0 {
+		return nil, "Invalid 'revises_action_id' parameter"
+	}
+	return &rev, ""
 }
 
 // intArg reads a JSON number as an int.

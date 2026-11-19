@@ -297,31 +297,11 @@ func proposeErrorStatus(err error) (int, string) {
 
 // handleCreate serves POST /api/v1/connections/{id}/actions.
 func (h *ActionHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(r)
-	if !ok || id > int64(^uint32(0)>>1) {
-		RespondError(w, http.StatusNotFound, connectionNotFound)
+	connectionID, ok := h.writableConnection(w, r)
+	if !ok {
 		return
 	}
-	connectionID := int(id)
 	ctx := r.Context()
-
-	if canAccess, _ := h.access.CanAccessConnection(ctx, connectionID); !canAccess {
-		RespondError(w, http.StatusNotFound, connectionNotFound)
-		return
-	}
-	if _, err := h.connections.GetConnection(ctx, connectionID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			RespondError(w, http.StatusNotFound, connectionNotFound)
-			return
-		}
-		log.Printf("[ERROR] Get connection %d failed: %v", connectionID, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to read the connection")
-		return
-	}
-	if !h.access.HasWriteAccess(ctx, connectionID) {
-		h.refuseWrite(w, r, deniedActionActionCreate, connectionID)
-		return
-	}
 
 	var req createActionRequest
 	if !DecodeJSONBody(w, r, &req) {
@@ -331,30 +311,11 @@ func (h *ActionHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		RespondError(w, http.StatusBadRequest, msg)
 		return
 	}
-
-	if req.ConversationID != nil &&
-		!h.ownsConversation(ctx, w, *req.ConversationID) {
-		return
-	}
-	if req.AlertID != nil && !h.alertOnConnection(ctx, w, *req.AlertID, connectionID) {
+	if !h.checkCreateLinks(ctx, w, &req, connectionID) {
 		return
 	}
 
-	preq := actions.ProposeRequest{
-		ConnectionID:   connectionID,
-		SQL:            req.SQL,
-		Rationale:      req.Rationale,
-		Source:         req.Source,
-		ConversationID: req.ConversationID,
-		AlertID:        req.AlertID,
-		Evidence:       h.proposalEvidence(req.Context),
-	}
-	if req.DatabaseName != "" {
-		name := req.DatabaseName
-		preq.DatabaseName = &name
-	}
-
-	res, err := h.service.Propose(ctx, preq)
+	res, err := h.service.Propose(ctx, h.proposeRequest(&req, connectionID))
 	if err != nil {
 		status, msg := proposeErrorStatus(err)
 		RespondError(w, status, msg)
@@ -374,6 +335,74 @@ func (h *ActionHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		BestAttempt:    res.BestAttempt,
 		ExecuteError:   executeError,
 	})
+}
+
+// writableConnection reads the connection named in the path and checks
+// the caller may write to it, answering the refusal itself. It answers
+// 404 for an id out of range, a connection the caller cannot see and
+// one that does not exist, then checks write access last, so that
+// visibility is decided before anything about write access is revealed.
+func (h *ActionHandler) writableConnection(w http.ResponseWriter, r *http.Request) (int, bool) {
+	id, ok := pathID(r)
+	if !ok || id > int64(^uint32(0)>>1) {
+		RespondError(w, http.StatusNotFound, connectionNotFound)
+		return 0, false
+	}
+	connectionID := int(id)
+	ctx := r.Context()
+
+	if canAccess, _ := h.access.CanAccessConnection(ctx, connectionID); !canAccess {
+		RespondError(w, http.StatusNotFound, connectionNotFound)
+		return 0, false
+	}
+	if _, err := h.connections.GetConnection(ctx, connectionID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			RespondError(w, http.StatusNotFound, connectionNotFound)
+			return 0, false
+		}
+		log.Printf("[ERROR] Get connection %d failed: %v", connectionID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to read the connection")
+		return 0, false
+	}
+	if !h.access.HasWriteAccess(ctx, connectionID) {
+		h.refuseWrite(w, r, deniedActionActionCreate, connectionID)
+		return 0, false
+	}
+	return connectionID, true
+}
+
+// checkCreateLinks checks the conversation and the alert a proposal
+// links to, in that order, answering the refusal itself.
+func (h *ActionHandler) checkCreateLinks(ctx context.Context, w http.ResponseWriter,
+	req *createActionRequest, connectionID int) bool {
+
+	if req.ConversationID != nil &&
+		!h.ownsConversation(ctx, w, *req.ConversationID) {
+		return false
+	}
+	if req.AlertID != nil && !h.alertOnConnection(ctx, w, *req.AlertID, connectionID) {
+		return false
+	}
+	return true
+}
+
+// proposeRequest builds the service request for a validated create
+// request.
+func (h *ActionHandler) proposeRequest(req *createActionRequest, connectionID int) actions.ProposeRequest {
+	preq := actions.ProposeRequest{
+		ConnectionID:   connectionID,
+		SQL:            req.SQL,
+		Rationale:      req.Rationale,
+		Source:         req.Source,
+		ConversationID: req.ConversationID,
+		AlertID:        req.AlertID,
+		Evidence:       h.proposalEvidence(req.Context),
+	}
+	if req.DatabaseName != "" {
+		name := req.DatabaseName
+		preq.DatabaseName = &name
+	}
+	return preq
 }
 
 // ownsConversation answers 404 and returns false unless the caller owns
@@ -533,52 +562,14 @@ func (h *ActionHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	approval := "approved"
-	if req.Override {
-		if !h.checkOverride(w, r, a, req.Confirm) {
-			return
-		}
-		approval = "overridden"
-	} else if a.ReviewStatus != "passed" {
-		RespondError(w, http.StatusConflict,
-			"The action has not passed review; it cannot be executed without an override")
+	approval, ok := h.executeApproval(w, r, a, &req)
+	if !ok {
 		return
 	}
-
-	by := auth.GetUsernameFromContext(ctx)
-	// An action approved or overridden earlier whose start failed or never
-	// happened is retried without deciding again, but only by whoever
-	// decided it or a superuser, and only through the same kind of
-	// request: an overridden action is retried as an override, so the
-	// override rules above have been applied again. Anyone else falls
-	// through to Approve, which refuses it. ClaimForExecution in Start
-	// stays the atomic gate either way.
-	retry := a.Approval == approval && a.ExecStatus == "not_started" &&
-		(auth.IsSuperuserFromContext(ctx) ||
-			(by != "" && a.ApprovedBy != nil && *a.ApprovedBy == by))
-	if !retry {
-		if err := h.store.Approve(ctx, a.ID, approval, by, actorVia(ctx)); err != nil {
-			if errors.Is(err, actions.ErrInvalidState) || errors.Is(err, actions.ErrNotFound) {
-				RespondError(w, http.StatusConflict, "The action has already been approved or started")
-				return
-			}
-			log.Printf("[ERROR] Approve action %d failed: %v", a.ID, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to approve the action")
-			return
-		}
+	if !h.approveForExecute(ctx, w, a, approval) {
+		return
 	}
-
-	switch err := h.executor.Start(ctx, a.ID); {
-	case err == nil:
-	case errors.Is(err, actions.ErrAlreadyStarted):
-		RespondError(w, http.StatusConflict, "The action has already been started or cannot be started")
-		return
-	case errors.Is(err, actions.ErrShuttingDown):
-		RespondError(w, http.StatusServiceUnavailable, "The server is shutting down")
-		return
-	default:
-		log.Printf("[ERROR] Start action %d failed: %v", a.ID, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to start the action")
+	if !h.startExecution(ctx, w, a.ID) {
 		return
 	}
 
@@ -587,6 +578,83 @@ func (h *ActionHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 		fresh = a
 	}
 	RespondJSON(w, http.StatusAccepted, redactFor(ctx, fresh))
+}
+
+// executeApproval decides the kind of approval an execute request
+// records, answering the refusal itself. An override must pass the
+// override rules; otherwise the action must have passed review.
+func (h *ActionHandler) executeApproval(w http.ResponseWriter, r *http.Request,
+	a *actions.Action, req *executeActionRequest) (string, bool) {
+
+	if req.Override {
+		if !h.checkOverride(w, r, a, req.Confirm) {
+			return "", false
+		}
+		return "overridden", true
+	}
+	if a.ReviewStatus != "passed" {
+		RespondError(w, http.StatusConflict,
+			"The action has not passed review; it cannot be executed without an override")
+		return "", false
+	}
+	return "approved", true
+}
+
+// isExecuteRetry reports whether an execute request retries an earlier
+// decision rather than making a new one. An action approved or
+// overridden earlier whose start failed or never happened is retried
+// without deciding again, but only by whoever decided it or a superuser,
+// and only through the same kind of request: an overridden action is
+// retried as an override, so the override rules have been applied
+// again. Anyone else falls through to Approve, which refuses it.
+// ClaimForExecution in Start stays the atomic gate either way.
+func isExecuteRetry(ctx context.Context, a *actions.Action, approval, by string) bool {
+	if a.Approval != approval || a.ExecStatus != "not_started" {
+		return false
+	}
+	if auth.IsSuperuserFromContext(ctx) {
+		return true
+	}
+	return by != "" && a.ApprovedBy != nil && *a.ApprovedBy == by
+}
+
+// approveForExecute records the approval unless the request is a retry,
+// answering the refusal itself.
+func (h *ActionHandler) approveForExecute(ctx context.Context, w http.ResponseWriter,
+	a *actions.Action, approval string) bool {
+
+	by := auth.GetUsernameFromContext(ctx)
+	if isExecuteRetry(ctx, a, approval, by) {
+		return true
+	}
+	err := h.store.Approve(ctx, a.ID, approval, by, actorVia(ctx))
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, actions.ErrInvalidState) || errors.Is(err, actions.ErrNotFound) {
+		RespondError(w, http.StatusConflict, "The action has already been approved or started")
+		return false
+	}
+	log.Printf("[ERROR] Approve action %d failed: %v", a.ID, err)
+	RespondError(w, http.StatusInternalServerError, "Failed to approve the action")
+	return false
+}
+
+// startExecution starts an approved action, answering the refusal
+// itself.
+func (h *ActionHandler) startExecution(ctx context.Context, w http.ResponseWriter, id int64) bool {
+	switch err := h.executor.Start(ctx, id); {
+	case err == nil:
+		return true
+	case errors.Is(err, actions.ErrAlreadyStarted):
+		RespondError(w, http.StatusConflict, "The action has already been started or cannot be started")
+	case errors.Is(err, actions.ErrShuttingDown):
+		RespondError(w, http.StatusServiceUnavailable, "The server is shutting down")
+	default:
+		log.Printf("[ERROR] Start action %d failed: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to start the action")
+	}
+	return false
 }
 
 // checkOverride applies the override rules and answers the refusal, so

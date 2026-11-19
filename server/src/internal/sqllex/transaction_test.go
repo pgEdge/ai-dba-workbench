@@ -22,6 +22,8 @@ func TestRequiresNoTransaction(t *testing.T) {
 		want bool
 	}{
 		{"vacuum", "VACUUM", true},
+		{"bare alter", "ALTER", false},
+		{"bare create unique", "CREATE UNIQUE", false},
 		{"vacuum full", "VACUUM FULL t", true},
 		{"vacuum options lowercase", "vacuum (analyze) t", true},
 		{"create index concurrently", "CREATE INDEX CONCURRENTLY i ON t (a)", true},

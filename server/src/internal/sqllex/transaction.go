@@ -81,67 +81,96 @@ func RequiresNoTransaction(stmt string) bool {
 }
 
 func requiresNoTransactionAs(stmt string, reading StringReading) bool {
-	words := codeWords(stmt, reading)
+	words := stmtWords(codeWords(stmt, reading))
 	if len(words) == 0 {
 		return false
 	}
-	word := func(i int) string {
-		if i < len(words) {
-			return words[i]
-		}
-		return ""
-	}
-	has := func(w string) bool {
-		for _, x := range words {
-			if x == w {
-				return true
-			}
-		}
-		return false
-	}
-	follows := func(first, second string) bool {
-		for i := 0; i+1 < len(words); i++ {
-			if words[i] == first && words[i+1] == second {
-				return true
-			}
-		}
-		return false
-	}
-
 	switch words[0] {
 	case "VACUUM":
 		return true
 	case "ALTER":
-		switch word(1) {
-		case "SYSTEM":
-			return true
-		case "DATABASE":
-			return follows("SET", "TABLESPACE")
-		case "TABLE":
-			return follows("DETACH", "PARTITION") && has("CONCURRENTLY")
-		}
+		return alterRequiresNoTransaction(words)
 	case "CREATE":
-		switch word(1) {
-		case "DATABASE", "TABLESPACE", "SUBSCRIPTION":
-			return true
-		case "INDEX":
-			return word(2) == "CONCURRENTLY"
-		case "UNIQUE":
-			return word(2) == "INDEX" && word(3) == "CONCURRENTLY"
-		}
+		return createRequiresNoTransaction(words)
 	case "DROP":
-		switch word(1) {
-		case "DATABASE", "TABLESPACE", "SUBSCRIPTION":
-			return true
-		case "INDEX":
-			return word(2) == "CONCURRENTLY"
-		}
+		return dropRequiresNoTransaction(words)
 	case "REINDEX":
 		return reindexRequiresNoTransaction(strings.ToUpper(MaskNonCode(stmt, reading)))
 	case "DISCARD":
-		return word(1) == "ALL"
+		return words.at(1) == "ALL"
 	case "CLUSTER":
 		return clusterHasNoTable(stmt)
+	}
+	return false
+}
+
+// alterRequiresNoTransaction reports whether an ALTER statement must run
+// outside a transaction block.
+func alterRequiresNoTransaction(words stmtWords) bool {
+	switch words.at(1) {
+	case "SYSTEM":
+		return true
+	case "DATABASE":
+		return words.follows("SET", "TABLESPACE")
+	case "TABLE":
+		return words.follows("DETACH", "PARTITION") && words.has("CONCURRENTLY")
+	}
+	return false
+}
+
+// createRequiresNoTransaction reports whether a CREATE statement must
+// run outside a transaction block.
+func createRequiresNoTransaction(words stmtWords) bool {
+	switch words.at(1) {
+	case "DATABASE", "TABLESPACE", "SUBSCRIPTION":
+		return true
+	case "INDEX":
+		return words.at(2) == "CONCURRENTLY"
+	case "UNIQUE":
+		return words.at(2) == "INDEX" && words.at(3) == "CONCURRENTLY"
+	}
+	return false
+}
+
+// dropRequiresNoTransaction reports whether a DROP statement must run
+// outside a transaction block.
+func dropRequiresNoTransaction(words stmtWords) bool {
+	switch words.at(1) {
+	case "DATABASE", "TABLESPACE", "SUBSCRIPTION":
+		return true
+	case "INDEX":
+		return words.at(2) == "CONCURRENTLY"
+	}
+	return false
+}
+
+// stmtWords holds the upper-cased code words of one statement.
+type stmtWords []string
+
+// at returns the word at index i, or "" past the end.
+func (w stmtWords) at(i int) string {
+	if i < len(w) {
+		return w[i]
+	}
+	return ""
+}
+
+// has reports whether word appears anywhere in the statement.
+func (w stmtWords) has(word string) bool {
+	for _, x := range w {
+		if x == word {
+			return true
+		}
+	}
+	return false
+}
+
+// follows reports whether second appears immediately after first.
+func (w stmtWords) follows(first, second string) bool {
+	for i := 0; i+1 < len(w); i++ {
+		if w[i] == first && w[i+1] == second {
+			return true
+		}
 	}
 	return false
 }

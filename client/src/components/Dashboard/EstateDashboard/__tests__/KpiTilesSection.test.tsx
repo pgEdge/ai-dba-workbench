@@ -106,12 +106,19 @@ const renderSection = (serverIds: number[]) => render(
 
 const perfBody = {
     connections: [
-        { transactions: { commits_per_sec: 3.5 } },
-        { transactions: { commits_per_sec: 1.25 } },
+        { active_connections: 7, transactions: { commits_per_sec: 3.5 } },
+        { active_connections: 5, transactions: { commits_per_sec: 1.25 } },
     ],
 };
 
-const alertsBody = { alerts: [{ id: 1 }, { id: 2 }, { id: 3 }] };
+// The tile asks for a single row and reads the total, so the total is
+// deliberately larger than the page.
+const alertsBody = { alerts: [{ id: 1 }], total: 3 };
+
+const alertUrls = (): string[] =>
+    mockApiFetch.mock.calls
+        .map(call => call[0] as string)
+        .filter(url => url.includes('/alerts'));
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -306,10 +313,68 @@ describe('KpiTilesSection', () => {
             expect(screen.getByText('4.75 tx/s')).toBeInTheDocument();
         });
 
-        // Total connections equals the number of connection entries.
+        // Total connections sums each server's backend count rather
+        // than counting the servers (issue #833).
         expect(screen.getByText('Total Connections')).toBeInTheDocument();
-        // Active alerts reflects the alerts payload length.
+        expect(screen.getByText('12')).toBeInTheDocument();
+        // Active alerts reflects the response total, not the page.
         expect(screen.getByText('3')).toBeInTheDocument();
+    });
+
+    it('counts only active alerts on the estate servers (issue #834)', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            url.includes('/alerts')
+                ? Promise.resolve(okResponse({ alerts: [{ id: 1 }], total: 450 }))
+                : Promise.resolve(okResponse(perfBody)),
+        );
+
+        renderSection([4, 9]);
+
+        // The count is not capped at one page of results.
+        await screen.findByText('450');
+
+        const urls = alertUrls();
+        expect(urls).toHaveLength(1);
+        const params = new URLSearchParams(urls[0].split('?')[1]);
+        expect(params.get('connection_ids')).toBe('4,9');
+        expect(params.get('status')).toBe('active');
+        expect(params.get('limit')).toBe('1');
+        expect(params.has('exclude_cleared')).toBe(false);
+    });
+
+    it('treats missing counts as zero', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            url.includes('/alerts')
+                ? Promise.resolve(okResponse({ alerts: [] }))
+                : Promise.resolve(okResponse({
+                    connections: [{ transactions: { commits_per_sec: 2 } }],
+                })),
+        );
+
+        renderSection([1]);
+
+        await screen.findByText('2 tx/s');
+        // Connections and alerts both fall back to zero.
+        expect(screen.getAllByText('0')).toHaveLength(2);
+    });
+
+    it('treats a non-ok alerts response as a failure', async () => {
+        vi.useFakeTimers();
+        mockApiFetch.mockImplementation((url: string) =>
+            url.includes('/alerts')
+                ? Promise.resolve(errorResponse())
+                : Promise.resolve(okResponse(perfBody)),
+        );
+
+        renderSection([1]);
+
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(screen.getByText('Reconnecting…')).toBeInTheDocument();
+        expect(screen.queryByText('Active Alerts')).not.toBeInTheDocument();
     });
 
     it('renders nothing to fetch when there are no server ids', async () => {
@@ -415,6 +480,7 @@ describe('KpiTilesSection connection_ids batching', () => {
         return {
             connections: requested.map(id => ({
                 connection_id: Number(id),
+                active_connections: 2,
                 transactions: { commits_per_sec: 1 },
             })),
         };
@@ -456,8 +522,8 @@ describe('KpiTilesSection connection_ids batching', () => {
         const serverIds = ids(250);
         renderSection(serverIds);
 
-        // 250 ids at a cap of 100 is three requests, plus the single
-        // uncapped alerts request.
+        // 250 ids at a cap of 100 is three requests, and the same three
+        // batches for the alert counts.
         await waitFor(() => {
             expect(perfUrls()).toHaveLength(3);
         });
@@ -472,8 +538,17 @@ describe('KpiTilesSection connection_ids batching', () => {
         await waitFor(() => {
             expect(screen.getByText('250 tx/s')).toBeInTheDocument();
         });
-        expect(screen.getByText('Total Connections')).toBeInTheDocument();
+        expect(screen.getByText('Total Servers')).toBeInTheDocument();
         expect(screen.getAllByText('250').length).toBeGreaterThan(0);
+        // Two backends per server across all three batches.
+        expect(screen.getByText('500')).toBeInTheDocument();
+
+        // The alert counts use the same disjoint batches and sum their
+        // totals.
+        const alerts = alertUrls();
+        expect(alerts).toHaveLength(3);
+        expect(alerts.flatMap(requestedIds)).toEqual(serverIds);
+        expect(screen.getByText('9')).toBeInTheDocument();
     });
 
     it('fails the whole load when one batch fails', async () => {

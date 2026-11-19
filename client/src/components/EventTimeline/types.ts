@@ -281,3 +281,10 @@ export interface TimelineHeaderProps {
     eventTypes: string[];
     onEventTypesChange: (eventTypes: string[]) => void;
 }
+
+export interface ErrorStateProps {
+    /** The message from the failed events request. */
+    error: string;
+    /** True while an automatic retry is pending. */
+    retrying: boolean;
+}

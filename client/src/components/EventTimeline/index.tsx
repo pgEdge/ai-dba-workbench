@@ -16,7 +16,7 @@ import { useTheme } from '@mui/material/styles';
 import { useTimelineEvents } from '../../hooks/useTimelineEvents';
 import { TIME_RANGE_STORAGE_KEY, getInitialTimeRange } from './config';
 import { isCustomTimeRange } from '../../utils/timelineRange';
-import { TimelineHeader, LoadingSkeleton, EmptyState } from './TimelineHeader';
+import { TimelineHeader, LoadingSkeleton, EmptyState, ErrorState } from './TimelineHeader';
 import TimelineCanvas from './TimelineCanvas';
 import EventDetailPanel from './EventDetailPanel';
 import { getOuterContainerSx } from './styles';
@@ -78,7 +78,7 @@ const EventTimeline: React.FC<EventTimelineProps> = ({ selection }) => {
     );
 
     // Fetch events using the hook
-    const { events, loading, totalCount } = useTimelineEvents({
+    const { events, loading, error, retrying, totalCount } = useTimelineEvents({
         connectionId,
         connectionIds,
         timeRange,
@@ -118,8 +118,15 @@ const EventTimeline: React.FC<EventTimelineProps> = ({ selection }) => {
             />
 
             <Collapse in={expanded}>
+                {/*
+                  * A failed request must not fall through to the empty
+                  * state: "No events in this time range" is only true of
+                  * a request that succeeded and found nothing.
+                  */}
                 {loading ? (
                     <LoadingSkeleton />
+                ) : error ? (
+                    <ErrorState error={error} retrying={retrying} />
                 ) : events.length === 0 ? (
                     <EmptyState />
                 ) : (

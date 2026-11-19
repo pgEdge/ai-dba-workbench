@@ -21,11 +21,12 @@ import { useTheme } from '@mui/material/styles';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import TimelineIcon from '@mui/icons-material/Timeline';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import { resolveColor } from './utils';
 import { ALL_EVENT_TYPES, FILTER_CHIPS, TIME_RANGE_OPTIONS } from './config';
 import { isCustomTimeRange } from '../../utils/timelineRange';
 import type { CustomTimeRange, TimeRangePreset } from '../../utils/timelineRange';
-import type { TimelineHeaderProps } from './types';
+import type { ErrorStateProps, TimelineHeaderProps } from './types';
 import CustomTimeRangePopover from '../Dashboard/CustomTimeRangePopover';
 import {
     headerContainerSx,
@@ -240,6 +241,28 @@ export const LoadingSkeleton = () => {
                     <Skeleton key={i} variant="text" width={40} height={14} />
                 ))}
             </Box>
+        </Box>
+    );
+};
+
+/**
+ * ErrorState - Shown when the events request fails, so a failure is not
+ * mistaken for an empty time range. While an automatic retry is pending
+ * it reads "Reconnecting…", matching the estate KPI tiles.
+ */
+export const ErrorState = ({ error, retrying }: ErrorStateProps) => {
+    const theme = useTheme();
+    const containerSx = useMemo(() => getEmptyStateSx(theme), [theme]);
+
+    return (
+        <Box sx={containerSx} role="status">
+            <ErrorOutlineIcon sx={{ fontSize: 24, color: 'text.disabled', mb: 0.5 }} />
+            <Typography sx={emptyStateTitleSx}>
+                Failed to load timeline events
+            </Typography>
+            <Typography sx={emptyStateSubtitleSx}>
+                {retrying ? 'Reconnecting…' : error}
+            </Typography>
         </Box>
     );
 };

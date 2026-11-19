@@ -405,6 +405,32 @@ describe('useTimelineEvents', () => {
         expect(result.current.events).toHaveLength(2);
     });
 
+    it('reports a failed refresh after a successful load as an error', async () => {
+        mockApiGet
+            .mockResolvedValueOnce(makeApiResponse())
+            .mockRejectedValueOnce(new Error('refresh failed'));
+
+        const { result } = renderHook(() =>
+            useTimelineEvents({ connectionId: 1 }),
+        );
+
+        await waitFor(() => {
+            expect(result.current.events).toHaveLength(2);
+        });
+
+        await act(async () => {
+            await result.current.refetch();
+        });
+
+        // The earlier events are dropped rather than left on screen as
+        // though they were current, and the failure is surfaced without
+        // a loading flash so the timeline can show its error state.
+        expect(result.current.error).toBe('refresh failed');
+        expect(result.current.events).toEqual([]);
+        expect(result.current.totalCount).toBe(0);
+        expect(result.current.loading).toBe(false);
+    });
+
     it('retries after a failed fetch and heals on recovery', async () => {
         vi.useFakeTimers();
         mockApiGet

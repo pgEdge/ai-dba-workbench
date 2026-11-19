@@ -49,9 +49,11 @@ export const ActionFrame: React.FC<{ children: React.ReactNode }> = ({
     );
 };
 
-export const ActionErrorRow: React.FC<{ children: React.ReactNode }> = ({
-    children,
-}) => {
+export const ActionErrorRow: React.FC<{
+    children: React.ReactNode;
+    /** When given, a Dismiss control closes the block. */
+    onDismiss?: () => void;
+}> = ({ children, onDismiss }) => {
     const theme = useTheme();
     return (
         <Box sx={getQueryErrorSx(theme)} role="alert">
@@ -59,6 +61,11 @@ export const ActionErrorRow: React.FC<{ children: React.ReactNode }> = ({
             <Typography variant="body2" sx={{ flex: 1, ...monoSx }}>
                 {children}
             </Typography>
+            {onDismiss && (
+                <IconButton size="small" aria-label="Dismiss" onClick={onDismiss}>
+                    <CloseIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+            )}
         </Box>
     );
 };

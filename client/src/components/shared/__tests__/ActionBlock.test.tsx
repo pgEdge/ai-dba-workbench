@@ -543,4 +543,25 @@ describe('ActionBlock', () => {
         await user.click(screen.getByRole('button', { name: 'Dismiss' }));
         expect(onDismiss).toHaveBeenCalled();
     });
+
+    it('offers Dismiss on the error when the action could not be created', async () => {
+        const user = userEvent.setup();
+        const onDismiss = vi.fn();
+        hook.error = 'could not propose the action';
+        renderBlock({ sql: 'DELETE FROM t', onDismiss });
+
+        expect(screen.getByRole('alert')).toHaveTextContent(
+            'could not propose the action',
+        );
+        await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+        expect(onDismiss).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps Dismiss off a request error while the action is showing', () => {
+        hook.error = 'The server is shutting down';
+        renderBlock({ action: makeAction(), onDismiss: vi.fn() });
+        expect(
+            screen.queryByRole('button', { name: 'Dismiss' }),
+        ).not.toBeInTheDocument();
+    });
 });

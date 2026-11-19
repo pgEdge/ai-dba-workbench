@@ -870,3 +870,70 @@ describe('RunnableCodeBlock validation gating', () => {
         expect(screen.queryByTestId('sql-validation-error')).toBeNull();
     });
 });
+
+describe('RunnableCodeBlock while an action is showing', () => {
+    it('disables Run until the action is dismissed', async () => {
+        mockApiFetch.mockResolvedValueOnce(makeRefusal(['DELETE FROM t;']));
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="DELETE FROM t;"
+            />,
+        );
+
+        const user = userEvent.setup();
+        await user.click(getRunButton());
+        await user.click(
+            await screen.findByRole('button', { name: /execute/i }),
+        );
+
+        expect(screen.getByTestId('action-block-stub')).toBeInTheDocument();
+        expect(getRunButton()).toBeDisabled();
+
+        // Only the action's own dismiss clears it and re-enables Run.
+        const { onDismiss } = mockActionBlock.mock.calls.at(-1)?.[0] as {
+            onDismiss: () => void;
+        };
+        act(() => { onDismiss(); });
+
+        expect(
+            screen.queryByTestId('action-block-stub'),
+        ).not.toBeInTheDocument();
+        expect(getRunButton()).toBeEnabled();
+        expect(mockApiFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('proposes the SQL that was run, even if the block changed since', async () => {
+        mockApiFetch.mockResolvedValueOnce(makeRefusal(['DELETE FROM t;']));
+        const { rerender } = renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="DELETE FROM t;"
+            />,
+        );
+
+        const user = userEvent.setup();
+        await user.click(getRunButton());
+        await screen.findByRole('button', { name: /execute/i });
+
+        rerender(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="DROP TABLE accounts;"
+            />,
+        );
+        await user.click(screen.getByRole('button', { name: /execute/i }));
+
+        expect(mockActionBlock).toHaveBeenLastCalledWith(
+            expect.objectContaining({ sql: 'DELETE FROM t;' }),
+        );
+        expect(screen.getByTestId('action-block-stub')).toHaveTextContent(
+            'DELETE FROM t;',
+        );
+        // Confirming hands over the snapshot; it does not query again.
+        expect(mockApiFetch).toHaveBeenCalledTimes(1);
+    });
+});

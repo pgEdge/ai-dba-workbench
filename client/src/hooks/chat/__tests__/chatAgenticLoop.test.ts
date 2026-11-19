@@ -306,6 +306,7 @@ describe('chatAgenticLoop', () => {
                     isError = false,
                     conversationId?: string | null,
                     input: Record<string, unknown> = { connection_id: 3 },
+                    onActionProposed?: (actionId: number) => void,
                 ) => {
                     const mockFetch = createMockFetch(
                         [
@@ -330,6 +331,7 @@ describe('chatAgenticLoop', () => {
                             fetchFn: mockFetch,
                             availableTools: [proposeTool],
                             conversationId,
+                            onActionProposed,
                         }),
                     );
                     return { result, mockFetch };
@@ -376,6 +378,24 @@ describe('chatAgenticLoop', () => {
                     expect(
                         result.finalMessage.activity?.[0].proposal,
                     ).toBeUndefined();
+                });
+
+                it.each([
+                    ['a proposal', JSON.stringify(proposal), false, [11]],
+                    ['an error result', JSON.stringify(proposal), true, []],
+                    ['a non-proposal result', 'not json', false, []],
+                ])('reports the action id for %s', async (
+                    _label, text, isError, want,
+                ) => {
+                    const reported: number[] = [];
+                    await run(
+                        text,
+                        isError,
+                        undefined,
+                        { connection_id: 3 },
+                        id => { reported.push(id); },
+                    );
+                    expect(reported).toEqual(want);
                 });
 
                 it('sends the conversation id when it is known', async () => {

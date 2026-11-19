@@ -161,6 +161,24 @@ export const useAction = (): UseActionResult => {
         }
     }, [followIfActive]);
 
+    const load = useCallback(async (id: number): Promise<Action | null> => {
+        setError(null);
+        try {
+            const loaded = await apiGet<Action>(`/api/v1/actions/${id}`);
+            if (!mountedRef.current) {
+                return loaded;
+            }
+            setAction(loaded);
+            followIfActive(loaded);
+            return loaded;
+        } catch (err) {
+            if (mountedRef.current) {
+                setError(messageOf(err));
+            }
+            return null;
+        }
+    }, [followIfActive]);
+
     const execute = useCallback(async (
         id: number,
         override?: ActionOverride,
@@ -191,13 +209,25 @@ export const useAction = (): UseActionResult => {
             if (mountedRef.current) {
                 setError(messageOf(err));
             }
+            // A refusal means the action is not in the state the UI
+            // showed, so fetch it again rather than keep a stale button.
+            if (
+                err instanceof ApiError
+                && (err.statusCode === 409 || err.statusCode === 503)
+                && mountedRef.current
+            ) {
+                await load(id);
+                if (mountedRef.current) {
+                    setError(messageOf(err));
+                }
+            }
             return false;
         } finally {
             if (mountedRef.current) {
                 setBusy(false);
             }
         }
-    }, [startPolling, stopPolling]);
+    }, [startPolling, stopPolling, load]);
 
     const cancel = useCallback(async (id: number): Promise<boolean> => {
         setError(null);
@@ -212,23 +242,6 @@ export const useAction = (): UseActionResult => {
         }
     }, []);
 
-    const load = useCallback(async (id: number): Promise<Action | null> => {
-        setError(null);
-        try {
-            const loaded = await apiGet<Action>(`/api/v1/actions/${id}`);
-            if (!mountedRef.current) {
-                return loaded;
-            }
-            setAction(loaded);
-            followIfActive(loaded);
-            return loaded;
-        } catch (err) {
-            if (mountedRef.current) {
-                setError(messageOf(err));
-            }
-            return null;
-        }
-    }, [followIfActive]);
 
     return { action, busy, error, create, execute, cancel, load };
 };

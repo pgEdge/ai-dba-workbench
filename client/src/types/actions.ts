@@ -171,3 +171,20 @@ export const parseProposeActionResult = (
     }
     return null;
 };
+
+/** Map a danger rating to a theme colour for its chip. */
+export const dangerColour = (
+    danger: string | undefined,
+): 'success' | 'warning' | 'error' | 'default' => {
+    switch (danger) {
+        case 'low':
+            return 'success';
+        case 'moderate':
+            return 'warning';
+        case 'high':
+        case 'critical':
+            return 'error';
+        default:
+            return 'default';
+    }
+};

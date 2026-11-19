@@ -13,7 +13,7 @@
  */
 
 import type React from 'react';
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
@@ -24,14 +24,13 @@ import { useTheme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
 import ErrorIcon from '@mui/icons-material/Error';
 import { useAction } from '../../hooks/useAction';
-import AuthContext from '../../contexts/AuthContext';
-import { isTerminalExecStatus } from '../../types/actions';
+import { dangerColour, isTerminalExecStatus } from '../../types/actions';
 import type {
     Action,
     ActionCreateRequest,
     ClientActionSource,
 } from '../../types/actions';
-import OverrideActionDialog, { dangerColour } from './OverrideActionDialog';
+import OverrideActionDialog from './OverrideActionDialog';
 import {
     sxMonoFont,
     getTableSx,
@@ -50,7 +49,8 @@ export interface ActionBlockProps {
     databaseName?: string;
     /** The connection's name, which an override must be confirmed with. */
     serverName?: string;
-    source: ClientActionSource;
+    /** Required when `sql` is given; unused for an existing action. */
+    source?: ClientActionSource;
     context?: string;
     alertId?: number;
     conversationId?: string;
@@ -77,7 +77,6 @@ const ActionBlock: React.FC<ActionBlockProps> = ({
     onDismiss,
 }) => {
     const theme = useTheme();
-    const auth = useContext(AuthContext);
     const { action: polled, busy, error, create, execute, cancel, load } =
         useAction();
     const [overrideOpen, setOverrideOpen] = useState(false);
@@ -92,6 +91,9 @@ const ActionBlock: React.FC<ActionBlockProps> = ({
         startedRef.current = true;
 
         if (sql !== undefined) {
+            if (!source) {
+                return;
+            }
             const body: ActionCreateRequest = {
                 sql,
                 source,
@@ -171,14 +173,10 @@ const ActionBlock: React.FC<ActionBlockProps> = ({
     );
     const firstError = results.find((r) => r.error)?.error;
 
-    // A user may only override an action they proposed, or any action if
-    // they are a superuser; the server still checks write access.
+    // Anyone who can reach the action may try an override; the server
+    // refuses (403) a user without write access and the error is shown.
     const canOverride = Boolean(
-        vetoed
-        && current.exec_status === 'not_started'
-        && serverName
-        && (auth?.user?.isSuperuser
-            || (auth?.user?.username && auth.user.username === current.proposed_by)),
+        vetoed && current.exec_status === 'not_started' && serverName,
     );
 
     const reviewLabel = reviewing

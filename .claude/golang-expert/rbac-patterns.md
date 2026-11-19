@@ -1981,7 +1981,10 @@ atomically in the store, so a double execute gives one 202 and one 409.
 `Store.Approve` is one-shot (`WHERE exec_status = 'not_started' AND
 approval = 'none'`): a lost race or wrong state is `ErrInvalidState`
 (409), a missing row `ErrNotFound`; a vetoed action can still be
-overridden once. Tests: `TestExecuteAfterWriteAccessRevoked`,
+overridden once. Execute on an action that is `approved` but still
+`not_started` (start failed) skips `Approve` and goes to `Start` only for
+the recorded approver or a superuser; others get 409
+(`TestExecuteRetryOfApprovedAction`). Tests: `TestExecuteAfterWriteAccessRevoked`,
 `TestOverrideWithTokenRefused`, `TestDoubleExecute`,
 `TestApproveIsOneShot` (real DB, concurrent).
 

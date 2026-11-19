@@ -704,6 +704,43 @@ func TestExecuteActionStatuses(t *testing.T) {
 	}
 }
 
+// TestExecuteRetryOfApprovedAction covers an action that was approved but
+// never started: its approver or a superuser may start it without a second
+// approval, anyone else gets 409.
+func TestExecuteRetryOfApprovedAction(t *testing.T) {
+	tests := []struct {
+		name      string
+		user      string
+		superuser bool
+		status    int
+	}{
+		{"approver", "alice", false, 202},
+		{"superuser", "root", true, 202},
+		{"other user", "bob", false, 409},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newActionTestEnv(t)
+			a := notStarted(1, "passed")
+			a.Approval = "approved"
+			approver := "alice"
+			a.ApprovedBy = &approver
+			e.b.actions[1] = a
+
+			rec := e.doAs("POST", "/api/v1/actions/1/execute", "", false, tt.user, tt.superuser)
+			if rec.Code != tt.status {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.status, rec.Body)
+			}
+			if len(e.b.approvals) != 0 {
+				t.Errorf("retry approved again: %v", e.b.approvals)
+			}
+			if started := len(e.b.started) == 1; started != (tt.status == 202) {
+				t.Errorf("started = %v for status %d", e.b.started, tt.status)
+			}
+		})
+	}
+}
+
 // TestDoubleExecute proves two concurrent executes of one action start
 // it once; the loser gets 409.
 func TestDoubleExecute(t *testing.T) {

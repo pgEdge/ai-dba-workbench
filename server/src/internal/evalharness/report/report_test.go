@@ -145,6 +145,20 @@ func TestWriteComparison(t *testing.T) {
 	}
 }
 
+func TestWriteComparisonDuplicateLabels(t *testing.T) {
+	t.Parallel()
+	cand := sampleResults()
+	cand.Runs = cand.Runs[:1]
+	var b bytes.Buffer
+	if err := WriteComparison(&b, []Labeled{{"run", sampleResults()}, {"run", cand}}); err != nil {
+		t.Fatal(err)
+	}
+	want := "| lock-pileup | 50%, 0.75 ± 0.35 | 100%, 1.00 ± 0.00 | 100%, 1.00 ± 0.00 |"
+	if !strings.Contains(b.String(), want) {
+		t.Errorf("comparison lacks %q\n%s", want, b.String())
+	}
+}
+
 func TestSaveAndLoad(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

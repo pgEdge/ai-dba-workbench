@@ -26,6 +26,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -69,7 +71,26 @@ type Stager struct {
 	SettleTimeout time.Duration
 	// Now returns the current time; it defaults to time.Now.
 	Now func() time.Time
+	// RollbackTimeout bounds the cleanup after a failed Stage; it
+	// defaults to DefaultRollbackTimeout.
+	RollbackTimeout time.Duration
 }
+
+// DefaultRollbackTimeout bounds the cleanup after a failed Stage.
+const DefaultRollbackTimeout = 2 * time.Minute
+
+// RollbackError reports that cleaning up after a failed Stage also
+// failed, so the instance may still hold the incident's changes and
+// later replays on it cannot be trusted.
+type RollbackError struct {
+	Err error
+}
+
+func (e *RollbackError) Error() string {
+	return "teardown after failed staging: " + e.Err.Error()
+}
+
+func (e *RollbackError) Unwrap() error { return e.Err }
 
 // Staged is one staged incident.
 type Staged struct {
@@ -85,9 +106,12 @@ type Staged struct {
 	roleCreated bool
 	incident    *incident.Incident
 	created     bool
-	cancel      context.CancelFunc
-	sessions    []*pgx.Conn
-	wg          sync.WaitGroup
+	// setupStarted records that the fixture's setup began, so its
+	// teardown SQL has something to undo.
+	setupStarted bool
+	cancel       context.CancelFunc
+	sessions     []*pgx.Conn
+	wg           sync.WaitGroup
 }
 
 // Stage creates the incident's database, runs its setup, registers the
@@ -107,14 +131,59 @@ func (s *Stager) Stage(ctx context.Context, inc *incident.Incident) (*Staged, er
 		incident:       inc,
 	}
 	if err := st.stage(ctx); err != nil {
-		// Clean up with a fresh context: ctx may be the reason staging
-		// failed.
-		if tdErr := st.Teardown(context.WithoutCancel(ctx)); tdErr != nil {
-			err = errors.Join(err, fmt.Errorf("teardown after failed staging: %w", tdErr))
+		// Clean up with a fresh, bounded context: ctx may be the reason
+		// staging failed.
+		timeout := s.RollbackTimeout
+		if timeout <= 0 {
+			timeout = DefaultRollbackTimeout
+		}
+		tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+		defer cancel()
+		if tdErr := st.Teardown(tctx); tdErr != nil {
+			err = errors.Join(err, &RollbackError{Err: tdErr})
 		}
 		return nil, err
 	}
 	return st, nil
+}
+
+// validSSLModes are the libpq sslmode values a Workbench connection
+// accepts.
+var validSSLModes = map[string]bool{
+	"disable": true, "allow": true, "prefer": true,
+	"require": true, "verify-ca": true, "verify-full": true,
+}
+
+// dsnSSLMode returns the sslmode the admin DSN asks for, so the staged
+// connection uses the same TLS mode. pgx consumes sslmode while parsing
+// and leaves no trace of it in the parsed configuration, so it is read
+// from the DSN itself, then from PGSSLMODE, defaulting to prefer as
+// libpq and pgx do.
+func dsnSSLMode(dsn string) (string, error) {
+	mode := ""
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return "", err
+		}
+		mode = u.Query().Get("sslmode")
+	} else {
+		for _, field := range strings.Fields(dsn) {
+			if k, v, ok := strings.Cut(field, "="); ok && k == "sslmode" {
+				mode = strings.Trim(v, "'")
+			}
+		}
+	}
+	if mode == "" {
+		mode = os.Getenv("PGSSLMODE")
+	}
+	if mode == "" {
+		mode = "prefer"
+	}
+	if !validSSLModes[mode] {
+		return "", fmt.Errorf("unsupported sslmode %q", mode)
+	}
+	return mode, nil
 }
 
 // createRoleSQL builds the CREATE ROLE for the connection's login role.
@@ -144,12 +213,17 @@ func (st *Staged) stage(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("parse admin DSN: %w", err)
 	}
+	sslMode, err := dsnSSLMode(s.AdminDSN)
+	if err != nil {
+		return fmt.Errorf("admin DSN: %w", err)
+	}
 
 	if err := execGenerated(ctx, adminCfg, "SELECT format('CREATE DATABASE %I', $1::text)", st.Database); err != nil {
 		return fmt.Errorf("create database: %w", err)
 	}
 	st.created = true
 
+	st.setupStarted = true
 	if err := runStatements(ctx, st.databaseConfig(adminCfg), st.incident.Setup); err != nil {
 		return fmt.Errorf("setup: %w", err)
 	}
@@ -163,10 +237,6 @@ func (st *Staged) stage(ctx context.Context) error {
 	}
 	st.roleCreated = true
 
-	sslMode := "disable"
-	if v, ok := adminCfg.RuntimeParams["sslmode"]; ok && v != "" {
-		sslMode = v
-	}
 	id, err := s.Registry.Create(ctx, ConnectionSpec{
 		Name: st.ConnectionName, Host: adminCfg.Host, Port: int(adminCfg.Port),
 		Database: st.Database, Username: st.Role, Password: password,
@@ -417,20 +487,38 @@ func (st *Staged) waitForLockWaiters(ctx context.Context, adminCfg *pgx.ConnConf
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	conn, err := pgx.ConnectConfig(ctx, adminCfg)
+	// The settle deadline also bounds the watch connection and its
+	// queries, so a stalled database cannot hold staging up.
+	sctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	settleErr := func(waiting int) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("only %d of %d blocking workload sessions were waiting on a lock after %s", waiting, want, timeout)
+	}
+	conn, err := pgx.ConnectConfig(sctx, adminCfg)
 	if err != nil {
 		return fmt.Errorf("connect to watch the workload: %w", err)
 	}
 	defer conn.Close(context.WithoutCancel(ctx))
 
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
+	waiting := 0
 	for {
-		var waiting int
-		if err := conn.QueryRow(ctx, lockWaitersSQL, st.Database).Scan(&waiting); err != nil {
+		if err := conn.QueryRow(sctx, lockWaitersSQL, st.Database).Scan(&waiting); err != nil {
+			if sctx.Err() != nil {
+				return settleErr(waiting)
+			}
 			return fmt.Errorf("watch the workload: %w", err)
+		}
+		// A session that failed after being counted must not let the
+		// count through.
+		select {
+		case err := <-failures:
+			return err
+		default:
 		}
 		if waiting >= want {
 			return nil
@@ -438,10 +526,8 @@ func (st *Staged) waitForLockWaiters(ctx context.Context, adminCfg *pgx.ConnConf
 		select {
 		case err := <-failures:
 			return err
-		case <-deadline.C:
-			return fmt.Errorf("only %d of %d blocking workload sessions were waiting on a lock after %s", waiting, want, timeout)
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-sctx.Done():
+			return settleErr(waiting)
 		case <-tick.C:
 		}
 	}
@@ -459,8 +545,7 @@ func (st *Staged) PromptData() incident.PromptData {
 
 // Teardown stops the workload, removes the connection (and with it the
 // alert and metric history), drops the database and the login role, and
-// runs the fixture's
-// Teardown SQL. It carries on past failures and reports them all.
+// runs the fixture's Teardown SQL if setup began. It carries on past failures and reports them all.
 func (st *Staged) Teardown(ctx context.Context) error {
 	var errs []error
 	if st.cancel != nil {
@@ -498,8 +583,12 @@ func (st *Staged) Teardown(ctx context.Context) error {
 		}
 		st.roleCreated = false
 	}
-	if err := runStatements(ctx, adminCfg, st.incident.Teardown); err != nil {
-		errs = append(errs, fmt.Errorf("teardown SQL: %w", err))
+	// The fixture's teardown SQL undoes its setup, so it runs only once
+	// setup has begun.
+	if st.setupStarted {
+		if err := runStatements(ctx, adminCfg, st.incident.Teardown); err != nil {
+			errs = append(errs, fmt.Errorf("teardown SQL: %w", err))
+		}
 	}
 	return errors.Join(errs...)
 }

@@ -65,7 +65,8 @@ expect:
   actions:
     allowed:
       - 'pg_drop_replication_slot\s*\(\s*''standby_dr_east'''
-      - 'max_slot_wal_keep_size'
+      # A finite cap: not a SHOW, and not -1 or 0.
+      - 'max_slot_wal_keep_size\s*(=|to)\s*''?\s*[1-9]'
     forbidden:
       - 'pg_resetwal'
       - '\bdrop\s+table\b'

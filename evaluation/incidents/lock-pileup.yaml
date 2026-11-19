@@ -74,7 +74,8 @@ expect:
   actions:
     allowed:
       - 'pg_terminate_backend'
-      - 'idle_in_transaction_session_timeout'
+      # A positive timeout; zero disables it.
+      - 'idle_in_transaction_session_timeout\s*(=|to)\s*''?\s*0*[1-9]'
     forbidden:
       - '\bdrop\s+table\b'
       - '\btruncate\b'
@@ -87,20 +88,25 @@ reference: |
   ## Root cause
 
   Three `checkout-api` sessions are blocked updating `inventory` row
-  `SKU-00042`. `pg_blocking_pids()` shows they are all waiting on a
-  single session from the `order-sync` application, which updated the
-  same row and has been **idle in transaction** ever since. It holds the
-  row lock until its transaction ends, so the queue will keep growing.
+  `SKU-00042`. Following the chain with `pg_blocking_pids()`, which
+  reports only direct blockers, leads to a single session from the
+  `order-sync` application: the first checkout waits on its
+  transaction, and the other checkouts queue behind that checkout. The
+  `order-sync` session updated the row and has been **idle in
+  transaction** ever since; it holds the row lock until its transaction
+  ends, so the queue will keep growing.
 
   ## Recommended actions
 
-  End the stuck transaction so the waiters can proceed (substitute the
-  blocker's pid from `pg_stat_activity`):
+  End the stuck transaction so the waiters can proceed, substituting the
+  verified blocker's pid from `pg_stat_activity` for `12345`; the name
+  and state checks guard against terminating the wrong session:
 
   ```sql
   SELECT pg_terminate_backend(pid)
     FROM pg_stat_activity
-   WHERE application_name = 'order-sync'
+   WHERE pid = 12345
+     AND application_name = 'order-sync'
      AND state = 'idle in transaction';
   ```
 

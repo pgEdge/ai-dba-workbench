@@ -93,8 +93,9 @@ func TestScore(t *testing.T) {
 				"used tool query_database",
 				"used tool get_schema_info",
 			},
-			// The any_of check passes: "deadlock" contains "lock".
-			score: 1.0 / 8,
+			// The any_of check passes ("deadlock" contains "lock"), but an
+			// investigation that did not complete earns nothing.
+			score: 0,
 		},
 		{
 			name: "no report earns nothing",
@@ -118,7 +119,7 @@ func TestScore(t *testing.T) {
 				ToolCalls: []investigate.ToolCall{{Name: "query_database"}, {Name: "get_schema_info"}},
 			},
 			failing: []string{"investigation completed"},
-			score:   7.0 / 8,
+			score:   0,
 		},
 	}
 	for _, tc := range cases {
@@ -210,6 +211,12 @@ func TestProposedStatements(t *testing.T) {
 			"````sql\nSELECT 1;\n```\nSELECT 2;\n````\n",
 			[]string{"SELECT 1", "```\nSELECT 2"},
 		},
+		{
+			"longer closing fence",
+			"```sql\nSELECT 1;\n``````\n```sql\nDROP TABLE inventory;\n```",
+			[]string{"SELECT 1", "DROP TABLE inventory"},
+		},
+		{"closing fence at the end", "```sql\nSELECT 1;\n```", []string{"SELECT 1"}},
 		{"unterminated block", "```sql\nSELECT 1;\nSELECT 2", []string{"SELECT 1", "SELECT 2"}},
 		{"unterminated non-sql block", "```text\nSELECT 1;", nil},
 	}

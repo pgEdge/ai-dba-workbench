@@ -108,7 +108,9 @@ func (c *ChatLoop) Investigate(ctx context.Context, req Request) (Transcript, er
 	start := now()
 	t := c.run(ctx, req)
 	t.Duration = now().Sub(start)
-	if err := ctx.Err(); err != nil {
+	// Cancellation after the report was written did not interrupt the
+	// investigation, so the completed transcript stands.
+	if err := ctx.Err(); err != nil && t.Outcome != OutcomeCompleted {
 		return t, err
 	}
 	return t, nil

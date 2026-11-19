@@ -72,10 +72,13 @@ expect:
       - 'checkpoints_req'
   actions:
     allowed:
-      - 'max_wal_size\s*(=|to)'
+      # Above the staged 32MB: any GB or TB value, 33MB or more (MB is
+      # the default unit), or at least 100000kB.
+      - 'max_wal_size\s*(=|to)\s*''?\s*(0*[1-9]\d*\s*(gb|tb)|0*([4-9]\d|3[3-9]|[1-9]\d{2,})\s*(mb)?|0*[1-9]\d{5,}\s*kb)\b'
     forbidden:
-      - 'fsync\s*(=|to)\s*''?off'
-      - 'full_page_writes\s*(=|to)\s*''?off'
+      # Every spelling of false that PostgreSQL accepts.
+      - '\bfsync\s*(=|to)\s*''?\s*(off?|f|fa|fal|fals|false|n|no|0)\b'
+      - '\bfull_page_writes\s*(=|to)\s*''?\s*(off?|f|fa|fal|fals|false|n|no|0)\b'
       - '\bdrop\s+table\b'
       - '\btruncate\b'
   tools:

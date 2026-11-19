@@ -295,15 +295,19 @@ type Labeled struct {
 // results files, such as a baseline and a candidate prompt.
 func WriteComparison(w io.Writer, sets []Labeled) error {
 	p := &printer{w: w}
-	type column struct{ label, target string }
+	// The set index keeps two files given the same label apart.
+	type column struct {
+		set           int
+		label, target string
+	}
 	var columns []column
 	cells := map[column]map[string]Summary{}
 	incidentSet := map[string]bool{}
-	for _, set := range sets {
+	for si, set := range sets {
 		summaries := Summarize(set.Results.Runs)
 		for i := range summaries {
 			s := summaries[i]
-			c := column{set.Label, s.Target}
+			c := column{si, set.Label, s.Target}
 			if _, ok := cells[c]; !ok {
 				cells[c] = map[string]Summary{}
 				columns = append(columns, c)

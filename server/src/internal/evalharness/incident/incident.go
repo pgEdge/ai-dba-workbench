@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -201,6 +202,14 @@ func Load(path string) (*Incident, error) {
 	if err := dec.Decode(&inc); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	// A second document would otherwise be silently ignored.
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, fmt.Errorf("parse %s: more than one YAML document", path)
+		}
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
 	inc.Path = path
 	if err := inc.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -211,9 +220,17 @@ func Load(path string) (*Incident, error) {
 // LoadDir loads every *.yaml file in dir, sorted by ID, and rejects
 // duplicate IDs.
 func LoadDir(dir string) ([]*Incident, error) {
-	paths, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	// ReadDir rather than Glob, so a directory name containing glob
+	// metacharacters is taken literally.
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("list incidents: %w", err)
+	}
+	var paths []string
+	for _, e := range entries {
+		if e.Type().IsRegular() && strings.HasSuffix(e.Name(), ".yaml") {
+			paths = append(paths, filepath.Join(dir, e.Name()))
+		}
 	}
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("no incident files (*.yaml) in %s", dir)
@@ -283,6 +300,9 @@ func (inc *Incident) Validate() error {
 			add("metrics[%d] has no samples", i)
 		}
 		for j, s := range m.Samples {
+			if s.Ago < 0 {
+				add("metrics[%d].samples[%d].ago must not be negative", i, j)
+			}
 			if len(s.Values) == 0 {
 				add("metrics[%d].samples[%d] has no values", i, j)
 			}
@@ -295,6 +315,9 @@ func (inc *Incident) Validate() error {
 	}
 	if strings.TrimSpace(inc.Alert.Title) == "" || strings.TrimSpace(inc.Alert.Description) == "" {
 		add("alert needs a title and a description")
+	}
+	if inc.Alert.TriggeredAgo < 0 {
+		add("alert.triggered_ago must not be negative")
 	}
 	if !severities[inc.Alert.Severity] {
 		add("alert.severity %q must be info, warning or critical", inc.Alert.Severity)

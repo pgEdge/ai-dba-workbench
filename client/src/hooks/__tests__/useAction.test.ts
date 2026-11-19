@@ -314,6 +314,20 @@ describe('useAction', () => {
         expect(result.current.error).toBe('already approved');
     });
 
+    it('re-fetches the action after a refused execute', async () => {
+        mockPost.mockRejectedValueOnce(new ApiError('busy', 503));
+        mockGet.mockResolvedValueOnce(makeAction({ exec_status: 'succeeded' }));
+        const { result } = renderHook(() => useAction());
+
+        await act(async () => {
+            await result.current.execute(7);
+        });
+
+        expect(mockGet).toHaveBeenCalledWith('/api/v1/actions/7');
+        expect(result.current.action?.exec_status).toBe('succeeded');
+        expect(result.current.error).toBe('busy');
+    });
+
     it('cancels and reports cancel failures', async () => {
         mockPost.mockResolvedValueOnce({ cancel_requested: true });
         const { result } = renderHook(() => useAction());

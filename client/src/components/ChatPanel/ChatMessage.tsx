@@ -645,7 +645,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                         connectionId={proposed.connectionId}
                         databaseName={proposed.databaseName}
                         serverName={servers.get(proposed.connectionId)?.name}
-                        source="chat_block"
                     />
                 )}
                 {renderToolActivity()}

@@ -21,6 +21,7 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import { dangerColour } from '../../types/actions';
 import type { Action } from '../../types/actions';
 import { MONO_CAPTION_SX } from '../../theme/tokens';
 
@@ -33,23 +34,6 @@ export interface OverrideActionDialogProps {
     /** Called with the confirmation text once it matches. */
     onConfirm: (confirm: string) => void;
 }
-
-/** Map a danger rating to a theme colour for its chip. */
-export const dangerColour = (
-    danger: string | undefined,
-): 'success' | 'warning' | 'error' | 'default' => {
-    switch (danger) {
-        case 'low':
-            return 'success';
-        case 'moderate':
-            return 'warning';
-        case 'high':
-        case 'critical':
-            return 'error';
-        default:
-            return 'default';
-    }
-};
 
 const OverrideActionDialog: React.FC<OverrideActionDialogProps> = ({
     open,

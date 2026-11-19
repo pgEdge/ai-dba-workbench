@@ -391,15 +391,19 @@ describe('ActionBlock', () => {
             ).not.toBeInTheDocument();
         });
 
-        it('is hidden from a user who did not propose the action', () => {
+        it('is offered to a user who did not propose the action', () => {
             renderBlock({ action: vetoed }, auth('someone-else'));
             expect(
-                screen.queryByRole('button', { name: 'Override and run' }),
-            ).not.toBeInTheDocument();
+                screen.getByRole('button', { name: 'Override and run' }),
+            ).toBeInTheDocument();
         });
 
-        it('is offered to a superuser who did not propose it', () => {
-            renderBlock({ action: vetoed }, auth('someone-else', true));
+        it('shows the server refusal when the user lacks write access', () => {
+            hook.error = 'write access required';
+            renderBlock({ action: vetoed }, auth('reader'));
+            expect(screen.getByRole('alert')).toHaveTextContent(
+                'write access required',
+            );
             expect(
                 screen.getByRole('button', { name: 'Override and run' }),
             ).toBeInTheDocument();

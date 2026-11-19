@@ -328,6 +328,26 @@ describe('useAction', () => {
         expect(result.current.error).toBe('busy');
     });
 
+    it('keeps the refusal error when the re-fetch fails, and never clears it', async () => {
+        mockPost.mockRejectedValueOnce(new ApiError('busy', 503));
+        mockGet.mockRejectedValueOnce(new ApiError('gone', 500));
+        const seen: Array<string | null> = [];
+        const { result } = renderHook(() => {
+            const hook = useAction();
+            seen.push(hook.error);
+            return hook;
+        });
+
+        await act(async () => {
+            await result.current.execute(7);
+        });
+
+        expect(result.current.error).toBe('busy');
+        // Once the refusal is shown it is never blanked while re-fetching.
+        const first = seen.indexOf('busy');
+        expect(seen.slice(first).every((e) => e === 'busy')).toBe(true);
+    });
+
     it('cancels and reports cancel failures', async () => {
         mockPost.mockResolvedValueOnce({ cancel_requested: true });
         const { result } = renderHook(() => useAction());

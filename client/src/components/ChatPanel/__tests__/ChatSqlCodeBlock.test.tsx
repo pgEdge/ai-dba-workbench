@@ -150,6 +150,50 @@ describe('ChatSqlCodeBlock', () => {
             .toHaveTextContent('conv-42');
     });
 
+    it('links a write confirmed after choosing a server to the conversation', async () => {
+        mockApiFetch.mockResolvedValue({
+            ok: false,
+            status: 409,
+            json: vi.fn().mockResolvedValue({
+                error: 'write',
+                requires_action: true,
+                write_statements: ['DELETE FROM t'],
+            }),
+        });
+        const user = userEvent.setup();
+        const chat = { conversationId: 'conv-43' } as unknown as ChatContextType;
+        const clusters = { clusterData } as unknown as ClusterDataContextValue;
+        renderWithTheme(
+            <ChatContext.Provider value={chat}>
+                <ClusterDataContext.Provider value={clusters}>
+                    <ReplyTargetsContext.Provider value={EMPTY_REPLY_TARGETS}>
+                        <ChatSqlCodeBlock
+                            code="DELETE FROM t"
+                            language="sql"
+                            isDark={false}
+                            syntaxTheme={{}}
+                            customBackground="#fff"
+                            theme={theme}
+                            props={{}}
+                        />
+                    </ReplyTargetsContext.Provider>
+                </ClusterDataContext.Provider>
+            </ChatContext.Provider>,
+        );
+
+        await user.click(screen.getByRole('combobox', {
+            name: 'Server to run this query on',
+        }));
+        await user.click(screen.getByRole('option', { name: 'beta/postgres (ID: 2)' }));
+        await user.click(
+            screen.getByLabelText('Run on beta/postgres').querySelector('button') as HTMLElement,
+        );
+        await user.click(await screen.findByRole('button', { name: /execute/i }));
+
+        expect(await screen.findByTestId('action-block-stub'))
+            .toHaveTextContent('conv-43');
+    });
+
     it('runs the query on that server and database', async () => {
         mockApiFetch.mockResolvedValue({
             ok: true,

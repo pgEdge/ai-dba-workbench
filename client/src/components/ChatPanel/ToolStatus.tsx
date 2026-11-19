@@ -37,6 +37,11 @@ export interface ToolActivity {
     databaseName?: string;
     /** The parsed result of a completed `propose_action` call. */
     proposal?: ProposeActionResult;
+    /**
+     * The `revises_action_id` a `propose_action` call was made with,
+     * which links it to the vetoed attempt it revises.
+     */
+    revisesActionId?: number;
 }
 
 // ---------------------------------------------------------------------------

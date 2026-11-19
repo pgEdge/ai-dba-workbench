@@ -305,6 +305,7 @@ describe('chatAgenticLoop', () => {
                     resultText: string,
                     isError = false,
                     conversationId?: string | null,
+                    input: Record<string, unknown> = { connection_id: 3 },
                 ) => {
                     const mockFetch = createMockFetch(
                         [
@@ -312,7 +313,7 @@ describe('chatAgenticLoop', () => {
                                 {
                                     id: 'tool-1',
                                     name: 'propose_action',
-                                    input: { connection_id: 3 },
+                                    input,
                                 },
                             ]),
                             createTextResponse('Done'),
@@ -339,6 +340,22 @@ describe('chatAgenticLoop', () => {
                     );
                     return JSON.parse(call?.[1]?.body as string);
                 };
+
+                it.each([
+                    [7, 7],
+                    ['7', undefined],
+                    [0, undefined],
+                    [1.5, undefined],
+                ])('records revises_action_id %s as %s', async (given, want) => {
+                    const { result } = await run(
+                        JSON.stringify(proposal),
+                        false,
+                        undefined,
+                        { connection_id: 3, revises_action_id: given },
+                    );
+                    expect(result.finalMessage.activity?.[0].revisesActionId)
+                        .toBe(want);
+                });
 
                 it('stores the parsed proposal on the activity', async () => {
                     const { result } = await run(JSON.stringify(proposal));

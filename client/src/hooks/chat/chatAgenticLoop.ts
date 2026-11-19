@@ -303,6 +303,15 @@ export async function runAgenticLoop(
                 startedAt: new Date().toISOString(),
                 ...extractToolTarget(toolUse.tool_use?.input),
             };
+            const revises = toolUse.tool_use?.input?.revises_action_id;
+            if (
+                toolName === 'propose_action'
+                && typeof revises === 'number'
+                && Number.isSafeInteger(revises)
+                && revises > 0
+            ) {
+                activity.revisesActionId = revises;
+            }
             collectedActivity.push(activity);
             onToolActivity([...collectedActivity]);
 

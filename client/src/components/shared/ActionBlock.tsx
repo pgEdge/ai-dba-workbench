@@ -13,7 +13,7 @@
  */
 
 import type React from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
@@ -23,6 +23,7 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
 import ErrorIcon from '@mui/icons-material/Error';
+import AuthContext from '../../contexts/AuthContext';
 import { useAction } from '../../hooks/useAction';
 import { dangerColour, isTerminalExecStatus } from '../../types/actions';
 import type {
@@ -81,14 +82,21 @@ const ActionBlock: React.FC<ActionBlockProps> = ({
         useAction();
     const [overrideOpen, setOverrideOpen] = useState(false);
 
+    const user = useContext(AuthContext)?.user;
+
     // Creating twice would record two actions, so the mount-time request
-    // is guarded against effects that run twice in development.
-    const startedRef = useRef(false);
+    // is guarded against effects that run twice in development. The guard
+    // is keyed by what the block shows, so a different action id starts a
+    // fresh load.
+    const startedRef = useRef<string | null>(null);
+    const startKey = sql !== undefined
+        ? 'sql'
+        : `action:${initialAction?.id ?? actionId ?? ''}`;
     useEffect(() => {
-        if (startedRef.current) {
+        if (startedRef.current === startKey) {
             return;
         }
-        startedRef.current = true;
+        startedRef.current = startKey;
 
         if (sql !== undefined) {
             if (!source) {
@@ -122,11 +130,18 @@ const ActionBlock: React.FC<ActionBlockProps> = ({
             void load(actionId);
         }
     }, [
-        sql, source, databaseName, context, alertId, conversationId,
-        connectionId, initialAction, actionId, create, load,
+        startKey, sql, source, databaseName, context, alertId,
+        conversationId, connectionId, initialAction, actionId, create, load,
     ]);
 
-    const current = polled ?? initialAction ?? null;
+    // The hook keeps the last action it saw, which is stale for a
+    // different id until the new one has loaded.
+    const wantedId = initialAction?.id ?? actionId;
+    const polledCurrent = polled
+        && (sql !== undefined || wantedId === undefined || polled.id === wantedId)
+        ? polled
+        : null;
+    const current = polledCurrent ?? initialAction ?? null;
 
     const mono = { ...sxMonoFont, wordBreak: 'break-word' as const };
 
@@ -147,6 +162,18 @@ const ActionBlock: React.FC<ActionBlockProps> = ({
             </Typography>
         </Box>
     ) : null;
+
+    if (sql !== undefined && !source) {
+        return frame(
+            <Box sx={getQueryErrorSx(theme)} role="alert">
+                <ErrorIcon sx={{ fontSize: 16, color: 'error.main', mt: 0.25 }} />
+                <Typography variant="body2" sx={{ flex: 1, ...mono }}>
+                    This SQL cannot be proposed because its origin is
+                    unknown.
+                </Typography>
+            </Box>,
+        );
+    }
 
     if (!current) {
         if (error) {
@@ -176,8 +203,23 @@ const ActionBlock: React.FC<ActionBlockProps> = ({
     // Anyone who can reach the action may try an override; the server
     // refuses (403) a user without write access and the error is shown.
     const canOverride = Boolean(
-        vetoed && current.exec_status === 'not_started' && serverName,
+        vetoed && current.exec_status === 'not_started'
+        && current.approval === 'none' && serverName,
     );
+
+    // The server retries an action that was decided but did not start
+    // only for whoever decided it, or a superuser. An override is retried
+    // by confirming the connection name again.
+    const mayRetry = Boolean(
+        user?.isSuperuser
+        || (user?.username
+            && current.approved_by
+            && current.approved_by === user.username),
+    );
+    const canRetry = current.approval === 'approved' && mayRetry;
+    const canRetryOverride =
+        current.approval === 'overridden' && mayRetry && Boolean(serverName);
+    const showOverrideDialog = canOverride || canRetryOverride;
 
     const reviewLabel = reviewing
         ? REVIEWING
@@ -343,12 +385,18 @@ const ActionBlock: React.FC<ActionBlockProps> = ({
                             Execute
                         </Button>
                     )}
-                    {current.approval !== 'none' && (
+                    {(canRetry || canRetryOverride) && (
                         <Button
                             size="small"
                             variant="outlined"
                             disabled={busy}
-                            onClick={() => { void execute(current.id); }}
+                            onClick={() => {
+                                if (canRetryOverride) {
+                                    setOverrideOpen(true);
+                                } else {
+                                    void execute(current.id);
+                                }
+                            }}
                             sx={{ textTransform: 'none' }}
                         >
                             Retry
@@ -371,7 +419,7 @@ const ActionBlock: React.FC<ActionBlockProps> = ({
 
             {errorRow}
 
-            {canOverride && serverName && (
+            {showOverrideDialog && serverName && (
                 <OverrideActionDialog
                     open={overrideOpen}
                     action={current}

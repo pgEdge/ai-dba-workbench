@@ -28,13 +28,24 @@ type ActionProposer interface {
 	Propose(ctx context.Context, req actions.ProposeRequest) (*actions.ProposeResult, error)
 }
 
-// Limits on the free-text arguments, so a runaway call cannot store an
-// unbounded row.
+// ConversationOwnership reports whether the named user owns the
+// conversation. The server supplies it from the conversation store; the
+// REST create path applies the same check.
+type ConversationOwnership func(ctx context.Context, conversationID, username string) (bool, error)
+
+// Limits on the free-text arguments and call metadata, so a runaway call
+// cannot store an unbounded row.
 const (
 	proposeMaxSQLBytes       = 256 * 1024
 	proposeMaxRationaleBytes = 16 * 1024
 	proposeMaxConversationID = 128
+	proposeMaxModelName      = 128
 )
+
+// proposeConversationDenied is the refusal for a conversation id the
+// caller does not own. A missing conversation and another user's get the
+// same text, so the tool cannot be used to probe ids.
+const proposeConversationDenied = "The conversation this call belongs to was not found for your account. Nothing has been recorded."
 
 // proposeActionWriteDenied is the refusal for a connection the caller
 // cannot write to. It is the same text whether the connection is missing,
@@ -55,7 +66,11 @@ type proposeActionResult struct {
 
 // ProposeActionTool creates the propose_action tool. It only records a
 // proposal and has it reviewed; it never runs SQL, approves or overrides.
-func ProposeActionTool(proposer ActionProposer, rbacChecker *auth.RBACChecker, record DenialRecorder) Tool {
+// A conversation id in the call metadata is recorded only when owns
+// confirms the caller owns that conversation; otherwise the call is
+// refused, and with owns nil every conversation id is refused.
+func ProposeActionTool(proposer ActionProposer, owns ConversationOwnership,
+	rbacChecker *auth.RBACChecker, record DenialRecorder) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "propose_action",
@@ -131,7 +146,10 @@ You need write access to the connection. The result's statements field lists the
 			}
 
 			meta := mcp.CallMetaFromContext(ctx)
-			if meta.ConversationID != "" && len(meta.ConversationID) <= proposeMaxConversationID {
+			if meta.ConversationID != "" {
+				if msg := checkProposeConversation(ctx, owns, meta.ConversationID); msg != "" {
+					return mcp.NewToolError(msg)
+				}
 				id := meta.ConversationID
 				req.ConversationID = &id
 			}
@@ -145,6 +163,26 @@ You need write access to the connection. The result's statements field lists the
 			return proposeResponse(res)
 		},
 	}
+}
+
+// checkProposeConversation returns the refusal for a conversation id
+// the caller may not attach a proposal to, or "" when they own it. An
+// oversized id, an anonymous caller and a missing check are refused like
+// a conversation owned by someone else.
+func checkProposeConversation(ctx context.Context, owns ConversationOwnership, id string) string {
+	username := auth.GetUsernameFromContext(ctx)
+	if owns == nil || username == "" || len(id) > proposeMaxConversationID {
+		return proposeConversationDenied
+	}
+	owned, err := owns(ctx, id, username)
+	if err != nil {
+		log.Printf("[ERROR] propose_action conversation ownership check failed: %v", err)
+		return "The conversation could not be checked. Nothing has been recorded. Tell the user, and try again later."
+	}
+	if !owned {
+		return proposeConversationDenied
+	}
+	return ""
 }
 
 // parseProposeArgs validates the arguments and builds the request. A
@@ -223,19 +261,31 @@ func int64Arg(v any) (int64, bool) {
 }
 
 // proposeEvidence records the model and provider the client supplied;
-// with neither, no evidence is stored.
+// with neither, no evidence is stored. A value longer than
+// proposeMaxModelName is dropped, so the client cannot store an
+// unbounded string.
 func proposeEvidence(meta mcp.CallMeta) json.RawMessage {
-	if meta.Model == "" && meta.Provider == "" {
+	model, provider := capMetaValue(meta.Model), capMetaValue(meta.Provider)
+	if model == "" && provider == "" {
 		return nil
 	}
 	b, err := json.Marshal(map[string]string{
-		"model":    meta.Model,
-		"provider": meta.Provider,
+		"model":    model,
+		"provider": provider,
 	})
 	if err != nil {
 		return nil
 	}
 	return b
+}
+
+// capMetaValue returns v, or "" when it is longer than
+// proposeMaxModelName.
+func capMetaValue(v string) string {
+	if len(v) > proposeMaxModelName {
+		return ""
+	}
+	return v
 }
 
 // proposeErrorMessage turns a Propose error into text the model can act

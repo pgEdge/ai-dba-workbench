@@ -168,7 +168,10 @@ selector leaves the other unchanged.
 
     When no events fall within the selected range, the pane displays the
     message `No events in this time range`. The pane suggests that you try
-    expanding the time range or adjusting the filters.
+    expanding the time range or adjusting the filters. When the events
+    cannot be loaded, the pane displays `Failed to load timeline events`
+    with the error instead; while the pane retries the request
+    automatically, the error is replaced by `Reconnecting…`.
 
 ### Monitored Event Types
 

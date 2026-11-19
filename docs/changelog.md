@@ -81,7 +81,6 @@ project adheres to
 - Show the number of client connections across the estate in the
   estate dashboard's Total Connections tile, which showed the number
   of servers. (#833)
-
 - Count only active alerts on the estate's servers in the estate
   dashboard's Active Alerts tile, which stopped at 200 and included
   acknowledged alerts, system alerts and alerts on other servers; it

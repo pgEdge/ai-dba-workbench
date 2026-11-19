@@ -1002,6 +1002,12 @@ cannot be parsed or is not greater than zero, or when `max_attempts` or
 `context_snapshot_limit` is negative. Omitting an option, or setting an integer
 option to `0`, keeps the default.
 
+The action executor assumes that one server instance uses each datastore. At
+start-up the server marks every action still running as `unknown`, because the
+previous process cannot have finished it. Running two servers against one
+datastore can therefore mislabel an action that the other server is still
+running.
+
 In the following example, the `actions` section shortens the lock timeout and
 allows five attempts per chain:
 

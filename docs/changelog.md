@@ -21,7 +21,9 @@ project adheres to
   The new `actions` section of the server configuration file sets the
   lock timeout, statement timeout, attempt limit and context size. The
   new action endpoints propose, fetch, execute and cancel an action.
-  (#774)
+  An approved action can be retried only by its approver or a
+  superuser, and an overridden one only by the person who overrode it
+  or a superuser. (#774)
 - Add a top-level `make test-changed` target that runs `test-all` only
   in the sub-projects a branch changes, including those that depend on
   a changed shared package, collector schema, or example

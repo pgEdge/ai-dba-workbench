@@ -349,7 +349,9 @@ These tools query alert data from the monitoring system.
 The `propose_action` tool takes `connection_id`, `sql` and `rationale`, and
 optionally `database_name` and `revises_action_id` (the vetoed action being
 revised). The SQL must contain at least one write and must not contain
-transaction control or change `lock_timeout` or `statement_timeout`.
+transaction control or change `lock_timeout` or `statement_timeout`. The
+server refuses the call, and records nothing, when the conversation the call
+belongs to is not one the caller owns.
 
 ## Memory Tools
 

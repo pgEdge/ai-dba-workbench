@@ -996,11 +996,16 @@ monitored connection.
 | `max_attempts` | int | `3` | Maximum attempts per retry chain of an action |
 | `context_snapshot_limit` | int | `16384` | Maximum size in bytes of the context snapshot stored with an action |
 
-The two timeouts accept any Go duration string, such as `10s` or `2m30s`. The
-server refuses to start, and a configuration reload fails, when a timeout
-cannot be parsed or is not greater than zero, or when `max_attempts` or
-`context_snapshot_limit` is negative. Omitting an option, or setting an integer
-option to `0`, keeps the default.
+The two timeouts accept any Go duration string, such as `10s` or `2m30s`, and
+must be at least `1ms`. The server refuses to start, and a configuration
+reload fails, when a timeout cannot be parsed or is shorter than `1ms`, or when
+`max_attempts` or `context_snapshot_limit` is negative. Omitting an option, or
+setting an integer option to `0`, keeps the default; setting
+`context_snapshot_limit` to `0` therefore cannot disable the snapshot.
+
+The server reads the `actions` settings at start-up; a `SIGHUP` reload
+validates them but does not apply changes, so restart the server after editing
+this section.
 
 The action executor assumes that one server instance uses each datastore. At
 start-up the server marks every action still running as `unknown`, because the

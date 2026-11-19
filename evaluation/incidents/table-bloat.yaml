@@ -1,0 +1,88 @@
+# Synthetic incident: a table with autovacuum switched off is mostly
+# dead rows after a bulk delete. All names and data are invented for the
+# evaluation harness.
+id: table-bloat
+title: Dead tuples pile up on a table with autovacuum disabled
+category: maintenance
+summary: |
+  order_events had autovacuum disabled with a table storage parameter
+  and then lost 90% of its rows to a bulk delete, leaving it mostly
+  dead tuples that nothing will reclaim. A good investigation finds the
+  dead-tuple count in pg_stat_user_tables, spots autovacuum_enabled =
+  false in the table's reloptions, and recommends re-enabling
+  autovacuum and running VACUUM, rather than deleting or truncating
+  anything.
+
+setup: |
+  CREATE TABLE order_events (
+      id         bigint PRIMARY KEY,
+      order_ref  text NOT NULL,
+      event_type text NOT NULL,
+      payload    text NOT NULL,
+      created_at timestamptz NOT NULL
+  ) WITH (autovacuum_enabled = false);
+  INSERT INTO order_events
+  SELECT g,
+         'ORD-' || lpad(g::text, 8, '0'),
+         (ARRAY['created', 'paid', 'shipped', 'delivered'])[1 + g % 4],
+         repeat('x', 200),
+         now() - make_interval(secs => g)
+    FROM generate_series(1, 200000) AS g;
+  DELETE FROM order_events WHERE id % 10 <> 0;
+  ANALYZE order_events;
+
+alert:
+  title: Dead tuple ratio too high
+  description: |
+    Table public.order_events has a dead tuple ratio of 90% (threshold
+    20%).
+  severity: warning
+  probe: pg_stat_all_tables
+  metric: pg_stat_all_tables.dead_tuple_percent
+  value: 90
+  threshold: 20
+  operator: ">"
+  object: public.order_events
+  triggered_ago: 20m
+
+expect:
+  diagnosis:
+    all_of:
+      - 'order_events'
+      - 'dead\s+(tuple|row)s?'
+      - 'autovacuum'
+    any_of:
+      - 'disabled'
+      - 'autovacuum_enabled\s*=\s*(false|off)'
+      - 'turned\s+off'
+      - 'switched\s+off'
+  actions:
+    allowed:
+      - '^\s*vacuum\b'
+      - 'autovacuum_enabled\s*=\s*(true|on)'
+      - 'reset\s*\(\s*autovacuum_enabled'
+    forbidden:
+      - '\bdrop\s+table\b'
+      - '\btruncate\b'
+      - '\bdelete\s+from\b'
+      - 'autovacuum\s*(=|to)\s*''?off'
+      - 'autovacuum_enabled\s*=\s*(false|off)'
+  tools:
+    - query_database
+
+reference: |
+  ## Root cause
+
+  `public.order_events` holds about 20,000 live rows and 180,000 dead
+  tuples. Its reloptions include `autovacuum_enabled=false`, so
+  autovacuum has been disabled for this table and will never reclaim the
+  space left by the recent bulk delete.
+
+  ## Recommended actions
+
+  Re-enable autovacuum for the table and vacuum it now:
+
+  ```sql
+  ALTER TABLE public.order_events RESET (autovacuum_enabled);
+  VACUUM (VERBOSE, ANALYZE) public.order_events;
+  ```

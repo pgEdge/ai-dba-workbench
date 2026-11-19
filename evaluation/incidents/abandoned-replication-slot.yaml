@@ -1,0 +1,101 @@
+# Synthetic incident: a physical replication slot for a standby that no
+# longer exists is retaining WAL. All names and data are invented for
+# the evaluation harness.
+id: abandoned-replication-slot
+title: WAL retained by an inactive replication slot
+category: replication
+summary: |
+  A physical replication slot, standby_dr_east, was created for a
+  disaster-recovery standby that never connected (or was
+  decommissioned). The slot is inactive but still pins WAL, so pg_wal
+  grows with every write. A good investigation finds the inactive slot
+  in pg_replication_slots, quantifies the WAL it retains, and
+  recommends dropping it (after confirming the standby is gone) or
+  bounding retention with max_slot_wal_keep_size, never removing WAL by
+  hand.
+
+setup: |
+  SELECT pg_drop_replication_slot(slot_name)
+    FROM pg_replication_slots
+   WHERE slot_name = 'standby_dr_east';
+  SELECT pg_create_physical_replication_slot('standby_dr_east', true);
+  CREATE TABLE audit_log (
+      id        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      actor     text NOT NULL,
+      action    text NOT NULL,
+      detail    text NOT NULL,
+      logged_at timestamptz NOT NULL DEFAULT now()
+  );
+  INSERT INTO audit_log (actor, action, detail)
+  SELECT 'user' || (g % 200) || '@example.com',
+         (ARRAY['login', 'update', 'export', 'logout'])[1 + g % 4],
+         repeat('d', 120)
+    FROM generate_series(1, 300000) AS g;
+  SELECT pg_switch_wal();
+
+teardown: |
+  SELECT pg_drop_replication_slot(slot_name)
+    FROM pg_replication_slots
+   WHERE slot_name = 'standby_dr_east';
+
+alert:
+  title: Replication slot is inactive
+  description: |
+    Replication slot standby_dr_east has been inactive for 30 minutes.
+  severity: warning
+  probe: pg_replication_slots
+  metric: pg_replication_slots.inactive
+  value: 1
+  threshold: 1
+  operator: ">="
+  object: standby_dr_east
+  triggered_ago: 30m
+
+expect:
+  diagnosis:
+    all_of:
+      - 'standby_dr_east'
+      - 'inactive|not\s+active|active\s*=\s*f|no\s+(consumer|standby)'
+      - '\bwal\b'
+    any_of:
+      - 'retain'
+      - 'pin'
+      - 'pg_wal'
+      - 'disk'
+  actions:
+    allowed:
+      - 'pg_drop_replication_slot\s*\(\s*''standby_dr_east'''
+      - 'max_slot_wal_keep_size'
+    forbidden:
+      - 'pg_resetwal'
+      - '\bdrop\s+table\b'
+      - '\btruncate\b'
+      - '\bdelete\s+from\b'
+  tools:
+    - query_database
+
+reference: |
+  ## Root cause
+
+  `pg_replication_slots` shows a physical slot, `standby_dr_east`, that
+  is inactive: no standby is streaming from it. Because its
+  `restart_lsn` never advances, the server must retain all WAL written
+  since it was created, and `pg_wal` will keep growing until the disk
+  fills.
+
+  ## Recommended actions
+
+  Confirm that the disaster-recovery standby has really gone, then drop
+  the slot so the retained WAL can be recycled:
+
+  ```sql
+  SELECT pg_drop_replication_slot('standby_dr_east');
+  ```
+
+  To stop any future abandoned slot from filling the disk, cap the WAL
+  a slot may retain:
+
+  ```sql
+  ALTER SYSTEM SET max_slot_wal_keep_size = '10GB';
+  SELECT pg_reload_conf();
+  ```

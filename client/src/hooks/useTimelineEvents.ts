@@ -160,6 +160,10 @@ export const useTimelineEvents = ({
                 setError((err as Error).message || 'Failed to fetch timeline events');
                 setEvents([]);
                 setTotalCount(0);
+                // The events are gone, so the next attempt is a first
+                // load again: it must show the loading state rather than
+                // an empty timeline while its outcome is unknown.
+                initialLoadDoneRef.current = false;
             }
             return false;
         } finally {

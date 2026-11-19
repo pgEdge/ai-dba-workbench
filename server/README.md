@@ -109,7 +109,7 @@ The following general options configure the server:
   chain file.
 - `-debug` enables debug logging.
 - `-data-dir string` sets the data directory for the
-  auth database and conversations.
+  authentication database.
 
 The following options configure the database connection:
 

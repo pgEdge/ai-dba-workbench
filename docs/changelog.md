@@ -120,6 +120,11 @@ project adheres to
   endpoint returned the databases in a random order, so the cards
   could move each time the dashboard loaded; it now sorts them by
   name. (#875)
+- Correct the server's `-data-dir` help text and the `data_dir`
+  comments in the example configuration and installation guides, which
+  said the data directory holds conversation history. The directory
+  holds the authentication database (`auth.db`); the server stores
+  conversations in the PostgreSQL datastore. (#876)
 
 ### Security
 

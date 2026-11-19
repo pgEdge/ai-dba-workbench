@@ -714,7 +714,7 @@ builtins:
 # Path to custom definitions file (user-defined prompts and resources)
 # custom_definitions_path: "/etc/ai-workbench/custom-definitions.yaml"
 
-# Data directory for conversation history and other persistent data
+# Data directory for the authentication database (auth.db)
 # data_dir: "/var/lib/ai-workbench/data"
 
 # Trace file for logging MCP requests and responses (for debugging)

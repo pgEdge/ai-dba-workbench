@@ -213,13 +213,15 @@ func (s *Store) Approve(ctx context.Context, id int64, approval, by, via string)
 }
 
 // ClaimForExecution atomically moves a not-started action that has
-// either passed review or been overridden to executing. It returns true
-// for exactly one caller however many race for the same action; every
-// other caller, and any action not eligible, gets false.
+// either passed review or been overridden to executing, recording the
+// start time in executed_at. It returns true for exactly one caller
+// however many race for the same action; every other caller, and any
+// action not eligible, gets false.
 func (s *Store) ClaimForExecution(ctx context.Context, id int64) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
         UPDATE proposed_actions
-           SET exec_status = 'executing', updated_at = now()
+           SET exec_status = 'executing', executed_at = now(),
+               updated_at = now()
          WHERE id = $1
            AND exec_status = 'not_started'
            AND (review_status = 'passed' OR approval = 'overridden')`, id)
@@ -248,7 +250,7 @@ func (s *Store) FinishExecution(ctx context.Context, id int64, status string, tr
 	tag, err := s.pool.Exec(ctx, `
         UPDATE proposed_actions
            SET exec_status = $2, transactional = $3, results = $4,
-               executed_at = now(), updated_at = now()
+               updated_at = now()
          WHERE id = $1 AND exec_status = 'executing'`,
 		id, status, transactional, encoded)
 	if err != nil {

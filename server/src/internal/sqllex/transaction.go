@@ -44,8 +44,11 @@ func codeWords(stmt string, reading StringReading) []string {
 //   - VACUUM (every form, VACUUM FULL included)
 //   - CREATE INDEX CONCURRENTLY, DROP INDEX CONCURRENTLY and
 //     ALTER TABLE ... DETACH PARTITION ... CONCURRENTLY
-//   - REINDEX ... CONCURRENTLY, and REINDEX DATABASE, SCHEMA and SYSTEM
-//     (REINDEX TABLE and INDEX without CONCURRENTLY are allowed)
+//   - REINDEX DATABASE, SCHEMA and SYSTEM, and REINDEX with CONCURRENTLY
+//     after the target kind or in its option list (REINDEX TABLE and
+//     INDEX without CONCURRENTLY are allowed). The target kind is read
+//     from its place after the option list, so a table, index or
+//     tablespace named like a target kind does not count.
 //   - ALTER SYSTEM
 //   - CREATE and DROP DATABASE, CREATE and DROP TABLESPACE
 //   - ALTER DATABASE ... SET TABLESPACE
@@ -53,8 +56,15 @@ func codeWords(stmt string, reading StringReading) []string {
 //   - DISCARD ALL
 //   - CREATE SUBSCRIPTION and DROP SUBSCRIPTION. PostgreSQL only refuses
 //     these when a replication slot is created or dropped, which is the
-//     default; they are reported as true in every form so that the
-//     answer errs towards running outside a transaction.
+//     default; they are reported as true in every form.
+//
+// The two ways of being wrong cost different things. A false true runs
+// the batch outside a transaction, so it loses atomicity: a later
+// failure leaves the earlier statements applied. A false false runs the
+// statement in a transaction block, where PostgreSQL refuses it and the
+// whole batch rolls back with nothing applied. A false true is accepted
+// only where the form cannot be told from the text (the subscription
+// slot options); every other entry is matched exactly.
 //
 // ALTER TYPE ... ADD VALUE is allowed in a transaction block from
 // PostgreSQL 12, and PostgreSQL 13 and later are the supported
@@ -127,12 +137,62 @@ func requiresNoTransactionAs(stmt string, reading StringReading) bool {
 			return word(2) == "CONCURRENTLY"
 		}
 	case "REINDEX":
-		return has("CONCURRENTLY") || has("DATABASE") || has("SCHEMA") ||
-			has("SYSTEM")
+		return reindexRequiresNoTransaction(strings.ToUpper(MaskNonCode(stmt, reading)))
 	case "DISCARD":
 		return word(1) == "ALL"
 	case "CLUSTER":
 		return clusterHasNoTable(stmt)
+	}
+	return false
+}
+
+// reindexRequiresNoTransaction reads a masked, upper-cased REINDEX
+// statement, REINDEX [ ( option [, ...] ) ] kind [ CONCURRENTLY ] name,
+// and reports whether PostgreSQL refuses it in a transaction block: the
+// kind is DATABASE, SCHEMA or SYSTEM, CONCURRENTLY follows the kind, or
+// the option list turns CONCURRENTLY on. An unbalanced option list is
+// a syntax error PostgreSQL reports either way, so it reads as false.
+func reindexRequiresNoTransaction(masked string) bool {
+	rest := strings.TrimSpace(masked)
+	rest = strings.TrimSpace(rest[len("REINDEX"):])
+	concurrentOption := false
+	if strings.HasPrefix(rest, "(") {
+		end := strings.IndexByte(rest, ')')
+		if end < 0 {
+			return false
+		}
+		concurrentOption = reindexOptionsConcurrent(rest[1:end])
+		rest = rest[end+1:]
+	}
+	words := sqlWords(rest)
+	if len(words) == 0 {
+		return false
+	}
+	switch words[0] {
+	case "DATABASE", "SCHEMA", "SYSTEM":
+		return true
+	}
+	return concurrentOption || (len(words) > 1 && words[1] == "CONCURRENTLY")
+}
+
+// reindexOptionsConcurrent reports whether a REINDEX option list turns
+// CONCURRENTLY on. Each comma-separated option is a name and an
+// optional value; the tablespace name in TABLESPACE name is a value,
+// not an option, so a tablespace called concurrently does not count.
+func reindexOptionsConcurrent(options string) bool {
+	for _, opt := range strings.Split(options, ",") {
+		words := sqlWords(opt)
+		if len(words) == 0 || words[0] != "CONCURRENTLY" {
+			continue
+		}
+		if len(words) == 1 {
+			return true
+		}
+		switch words[1] {
+		case "FALSE", "OFF", "0":
+		default:
+			return true
+		}
 	}
 	return false
 }

@@ -15,6 +15,7 @@ import "testing"
 // TestRequiresNoTransaction pins the statements PostgreSQL 18 refuses
 // inside a transaction block (each was confirmed against a live server).
 func TestRequiresNoTransaction(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		stmt string
@@ -31,6 +32,10 @@ func TestRequiresNoTransaction(t *testing.T) {
 		{"reindex database", "REINDEX DATABASE d", true},
 		{"reindex schema", "REINDEX SCHEMA public", true},
 		{"reindex system", "REINDEX SYSTEM d", true},
+		{"reindex verbose option schema", "REINDEX (VERBOSE) SCHEMA s", true},
+		{"reindex concurrently option true", "REINDEX (VERBOSE, CONCURRENTLY true) TABLE t", true},
+		{"reindex concurrently option on", "REINDEX (CONCURRENTLY ON) INDEX i", true},
+		{"reindex database lowercase comment", "reindex /* c */ database d", true},
 		{"alter system", "ALTER SYSTEM SET work_mem = '4MB'", true},
 		{"create database", "CREATE DATABASE d", true},
 		{"drop database", "DROP DATABASE d", true},
@@ -56,6 +61,17 @@ func TestRequiresNoTransaction(t *testing.T) {
 		{"detach without concurrently", "ALTER TABLE t DETACH PARTITION p", false},
 		{"alter database set parameter", "ALTER DATABASE d SET work_mem = '4MB'", false},
 		{"reindex table", "REINDEX TABLE t", false},
+		{"reindex table named system", "REINDEX TABLE system", false},
+		{"reindex index in schema named schema", "REINDEX INDEX schema.i", false},
+		{"reindex table named database", "REINDEX TABLE public.database", false},
+		{"reindex tablespace named schema", "REINDEX (TABLESPACE schema) TABLE t", false},
+		{"reindex tablespace named concurrently", "REINDEX (TABLESPACE concurrently) TABLE t", false},
+		{"reindex concurrently option false", "REINDEX (CONCURRENTLY false) TABLE t", false},
+		{"reindex concurrently option off", "REINDEX (VERBOSE, CONCURRENTLY OFF) INDEX i", false},
+		{"reindex concurrently option zero", "REINDEX (CONCURRENTLY 0) INDEX i", false},
+		{"reindex quoted schema table", `REINDEX TABLE "schema"."system"`, false},
+		{"reindex unbalanced options", "REINDEX (CONCURRENTLY TABLE t", false},
+		{"reindex alone", "REINDEX", false},
 		{"cluster table", "CLUSTER t USING i", false},
 		{"cluster quoted table", `CLUSTER "t"`, false},
 		{"cluster option table", "CLUSTER (VERBOSE) t", false},
@@ -71,6 +87,7 @@ func TestRequiresNoTransaction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := RequiresNoTransaction(tt.stmt); got != tt.want {
 				t.Errorf("RequiresNoTransaction(%q) = %v, want %v",
 					tt.stmt, got, tt.want)
@@ -79,26 +96,8 @@ func TestRequiresNoTransaction(t *testing.T) {
 	}
 }
 
-func TestExplainExecutes(t *testing.T) {
-	tests := []struct {
-		body string
-		want bool
-	}{
-		{"EXPLAIN SELECT 1", false},
-		{"EXPLAIN VERBOSE SELECT 1", false},
-		{"EXPLAIN ANALYZE SELECT 1", true},
-		{"EXPLAIN (ANALYZE) SELECT 1", true},
-		{"EXPLAIN (VERBOSE, COSTS OFF) SELECT 1", false},
-		{"EXPLAIN (VERBOSE SELECT 1", true},
-	}
-	for _, tt := range tests {
-		if got := ExplainExecutes(tt.body); got != tt.want {
-			t.Errorf("ExplainExecutes(%q) = %v, want %v", tt.body, got, tt.want)
-		}
-	}
-}
-
 func TestIsTransactionControl(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		stmt string
@@ -133,6 +132,7 @@ func TestIsTransactionControl(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := IsTransactionControl(tt.stmt); got != tt.want {
 				t.Errorf("IsTransactionControl(%q) = %v, want %v",
 					tt.stmt, got, tt.want)
@@ -142,6 +142,7 @@ func TestIsTransactionControl(t *testing.T) {
 }
 
 func TestIsTimeoutOverride(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		stmt string
 		want bool

@@ -264,6 +264,33 @@ func TestBestAttemptPrefersLowerDanger(t *testing.T) {
 	}
 }
 
+// TestAttemptRankWithoutReview ranks an attempt with no recorded review
+// as worst, alongside an unknown danger level, so it is never chosen as
+// the best attempt over a reviewed one.
+func TestAttemptRankWithoutReview(t *testing.T) {
+	t.Parallel()
+	unreviewed := attemptRank(&Action{})
+	if unreviewed != dangerRank("") {
+		t.Errorf("attemptRank(no review) = %d, want %d", unreviewed, dangerRank(""))
+	}
+	if reviewed := attemptRank(&Action{Review: &Verdict{Danger: "critical"}}); reviewed >= unreviewed {
+		t.Errorf("a critical attempt (%d) must outrank one with no review (%d)", reviewed, unreviewed)
+	}
+}
+
+// TestBestAttemptStopsAtUnreadableAncestor settles for the attempts it
+// has read when an ancestor cannot be fetched.
+func TestBestAttemptStopsAtUnreadableAncestor(t *testing.T) {
+	t.Parallel()
+	st := newFakeReviewStore()
+	svc := NewService(st, &scriptedReviewer{}, 3)
+	missing := int64(424242)
+	last := &Action{ID: 7, ParentActionID: &missing, Review: &Verdict{Danger: "high"}}
+	if got := svc.bestAttempt(context.Background(), last); got != last {
+		t.Errorf("bestAttempt = %+v, want the last attempt", got)
+	}
+}
+
 func TestProposeBadRevision(t *testing.T) {
 	tests := []struct {
 		name   string

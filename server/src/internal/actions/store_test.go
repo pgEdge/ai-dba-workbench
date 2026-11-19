@@ -95,6 +95,13 @@ func TestStoreLifecycle(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("first claim: ok=%v err=%v", ok, err)
 	}
+	claimed, err := s.Get(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("get after claim: %v", err)
+	}
+	if claimed.ExecStatus != "executing" || claimed.ExecutedAt == nil {
+		t.Fatalf("claim must record the start time: %+v", claimed)
+	}
 	ok, err = s.ClaimForExecution(ctx, a.ID)
 	if err != nil || ok {
 		t.Fatalf("second claim: ok=%v err=%v", ok, err)
@@ -112,7 +119,8 @@ func TestStoreLifecycle(t *testing.T) {
 		t.Fatalf("get after finish: %v", err)
 	}
 	if got.ExecStatus != "failed" || got.Transactional == nil || *got.Transactional ||
-		got.ExecutedAt == nil || len(got.Results) != 2 ||
+		got.ExecutedAt == nil || !got.ExecutedAt.Equal(*claimed.ExecutedAt) ||
+		len(got.Results) != 2 ||
 		got.Results[0].CommandTag != "CREATE INDEX" || !got.Results[1].Truncated ||
 		got.Results[1].Rows[0][0] != "1" {
 		t.Fatalf("results not stored: %+v", got)
@@ -160,8 +168,8 @@ func TestStoreLifecycle(t *testing.T) {
 	if err := s.SetReview(ctx, b.ID, "vetoed", Verdict{Decision: "veto", Danger: "high"}); err != nil {
 		t.Fatalf("veto: %v", err)
 	}
-	if ok, _ := s.ClaimForExecution(ctx, b.ID); ok {
-		t.Error("vetoed, unapproved action must not be claimable")
+	if ok, err := s.ClaimForExecution(ctx, b.ID); err != nil || ok {
+		t.Errorf("vetoed, unapproved action must not be claimable: ok=%v err=%v", ok, err)
 	}
 	if err := s.Approve(ctx, b.ID, "overridden", "bob", "session"); err != nil {
 		t.Fatalf("override: %v", err)
@@ -265,11 +273,17 @@ func TestMarkInterruptedUnknown(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("mark: n=%d err=%v", n, err)
 	}
-	got, _ := s.Get(ctx, running.ID)
+	got, err := s.Get(ctx, running.ID)
+	if err != nil {
+		t.Fatalf("get running: %v", err)
+	}
 	if got.ExecStatus != "unknown" {
 		t.Errorf("running row is %q, want unknown", got.ExecStatus)
 	}
-	got, _ = s.Get(ctx, idle.ID)
+	got, err = s.Get(ctx, idle.ID)
+	if err != nil {
+		t.Fatalf("get idle: %v", err)
+	}
 	if got.ExecStatus != "not_started" {
 		t.Errorf("idle row is %q, want not_started", got.ExecStatus)
 	}
@@ -287,12 +301,20 @@ func TestLinkConversationOnlyOwnRows(t *testing.T) {
 	s, pool, connID := newTestStore(t, "_act_link")
 	ctx := context.Background()
 
-	mine, _ := s.Create(ctx, sampleAction(connID, "alice"))
-	theirs, _ := s.Create(ctx, sampleAction(connID, "mallory"))
+	create := func(na NewAction) *Action {
+		t.Helper()
+		a, err := s.Create(ctx, na)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		return a
+	}
+	mine := create(sampleAction(connID, "alice"))
+	theirs := create(sampleAction(connID, "mallory"))
 	na := sampleAction(connID, "alice")
 	existing := "other-conv"
 	na.ConversationID = &existing
-	linked, _ := s.Create(ctx, na)
+	linked := create(na)
 
 	ids := []int64{mine.ID, theirs.ID, linked.ID}
 	if err := s.LinkConversation(ctx, ids, "conv-9", "alice"); err != nil {

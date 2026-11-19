@@ -16,6 +16,7 @@ import (
 )
 
 func TestIsReadOnlyStatement(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -61,6 +62,7 @@ func TestIsReadOnlyStatement(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := IsReadOnly(tt.input)
 			if result != tt.readOnly {
 				t.Errorf("IsReadOnly(%q) = %v, want %v",
@@ -76,6 +78,7 @@ func TestIsReadOnlyStatement(t *testing.T) {
 // names appearing as text are not calls. The spellings and bypass
 // attempts the call finder handles are pinned in package sqllex.
 func TestIsReadOnlyStatement_SideEffectingFunctions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -138,6 +141,7 @@ func TestIsReadOnlyStatement_SideEffectingFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := IsReadOnly(tt.input); got != tt.readOnly {
 				t.Errorf("IsReadOnly(%q) = %v, want %v",
 					tt.input, got, tt.readOnly)
@@ -149,6 +153,7 @@ func TestIsReadOnlyStatement_SideEffectingFunctions(t *testing.T) {
 // TestIssue530_IsReadOnlyStatementExplain covers classification of
 // EXPLAIN by what it explains rather than by its leading keyword.
 func TestIssue530_IsReadOnlyStatementExplain(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -245,6 +250,7 @@ func TestIssue530_IsReadOnlyStatementExplain(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := IsReadOnly(tt.input); got != tt.readOnly {
 				t.Errorf("IsReadOnly(%q) = %v, want %v",
 					tt.input, got, tt.readOnly)
@@ -258,6 +264,7 @@ func TestIssue530_IsReadOnlyStatementExplain(t *testing.T) {
 // which creates a table, and the row-locking clauses, which stamp the
 // lock onto every row they return.
 func TestIssue530_WritingSelectClauses(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -289,6 +296,7 @@ func TestIssue530_WritingSelectClauses(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := IsReadOnly(tt.input); got != tt.readOnly {
 				t.Errorf("IsReadOnly(%q) = %v, want %v",
 					tt.input, got, tt.readOnly)
@@ -302,6 +310,7 @@ func TestIssue530_WritingSelectClauses(t *testing.T) {
 // literal, a quoted identifier or a comment no longer classifies an
 // ordinary read as a write.
 func TestIssue530_KeywordScansIgnoreNonCode(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -417,10 +426,31 @@ func TestIssue530_KeywordScansIgnoreNonCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := IsReadOnly(tt.input); got != tt.readOnly {
 				t.Errorf("IsReadOnly(%q) = %v, want %v",
 					tt.input, got, tt.readOnly)
 			}
 		})
+	}
+}
+
+func TestExplainExecutes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		body string
+		want bool
+	}{
+		{"EXPLAIN SELECT 1", false},
+		{"EXPLAIN VERBOSE SELECT 1", false},
+		{"EXPLAIN ANALYZE SELECT 1", true},
+		{"EXPLAIN (ANALYZE) SELECT 1", true},
+		{"EXPLAIN (VERBOSE, COSTS OFF) SELECT 1", false},
+		{"EXPLAIN (VERBOSE SELECT 1", true},
+	}
+	for _, tt := range tests {
+		if got := ExplainExecutes(tt.body); got != tt.want {
+			t.Errorf("ExplainExecutes(%q) = %v, want %v", tt.body, got, tt.want)
+		}
 	}
 }

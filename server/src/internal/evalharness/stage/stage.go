@@ -155,6 +155,11 @@ func (s *Stager) Stage(ctx context.Context, inc *incident.Incident) (*Staged, er
 func sslModeOf(cfg *pgx.ConnConfig) string {
 	plaintextFallback, tlsFallback := false, false
 	for _, fb := range cfg.Fallbacks {
+		// Only the primary host's own fallbacks show its mode; another
+		// host, such as a Unix socket, has its own TLS settings.
+		if fb.Host != cfg.Host || fb.Port != cfg.Port {
+			continue
+		}
 		if fb.TLSConfig == nil {
 			plaintextFallback = true
 		} else {

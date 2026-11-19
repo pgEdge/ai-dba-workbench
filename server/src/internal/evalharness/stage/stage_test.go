@@ -461,6 +461,9 @@ func TestSSLModeOf(t *testing.T) {
 		{dsn: "host=h user=u", env: "allow", want: "allow"},
 		{dsn: "postgres://u@h/db", want: "prefer"},
 		{dsn: "postgres://u@h/db?sslnegotiation=direct", want: "require"},
+		{dsn: "host=127.0.0.1,/tmp user=u sslmode=require", want: "require"},
+		{dsn: "host=h1,h2 user=u sslmode=prefer", want: "prefer"},
+		{dsn: "host=h1,h2 user=u sslmode=allow", want: "allow"},
 	} {
 		t.Run(tc.dsn, func(t *testing.T) {
 			t.Setenv("PGSSLMODE", tc.env)

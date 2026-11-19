@@ -968,6 +968,121 @@ func TestAuthenticateUserNonExistent(t *testing.T) {
 	}
 }
 
+// TestAuthenticateUserFailurePathsCompareOnce checks that every failed
+// login makes exactly one bcrypt comparison and returns the same error,
+// so that response timing does not reveal why a login failed. A
+// disabled account compares against its own stored hash, as a wrong
+// password does, rather than returning before any comparison runs.
+// It replaces compareHashAndPassword, so it must not run in parallel.
+func TestAuthenticateUserFailurePathsCompareOnce(t *testing.T) {
+	const password = "Password12345"
+	tests := []struct {
+		name     string
+		username string
+		password string
+		setup    func(t *testing.T, store *AuthStore)
+		// storedHash reports whether the comparison should be against
+		// the user's own hash rather than the timing-equalizer hash.
+		storedHash bool
+	}{
+		{
+			name:     "unknown user",
+			username: "nobody",
+			password: password,
+		},
+		{
+			name:     "service account",
+			username: "svc",
+			password: password,
+			setup: func(t *testing.T, store *AuthStore) {
+				if err := store.CreateServiceAccount("svc", "", "", ""); err != nil {
+					t.Fatalf("CreateServiceAccount: %v", err)
+				}
+			},
+		},
+		{
+			name:     "federated account",
+			username: "fed",
+			password: password,
+			setup: func(t *testing.T, store *AuthStore) {
+				if err := store.CreateUser("fed", password, "", "", ""); err != nil {
+					t.Fatalf("CreateUser: %v", err)
+				}
+				if _, err := store.db.Exec(
+					"UPDATE users SET auth_source = ? WHERE username = ?",
+					AuthSourceOIDC, "fed"); err != nil {
+					t.Fatalf("seed federated account: %v", err)
+				}
+			},
+		},
+		{
+			name:       "disabled account with correct password",
+			username:   "disabled",
+			password:   password,
+			storedHash: true,
+			setup: func(t *testing.T, store *AuthStore) {
+				if err := store.CreateUser("disabled", password, "", "", ""); err != nil {
+					t.Fatalf("CreateUser: %v", err)
+				}
+				if err := store.DisableUser("disabled"); err != nil {
+					t.Fatalf("DisableUser: %v", err)
+				}
+			},
+		},
+		{
+			name:       "wrong password",
+			username:   "local",
+			password:   "Wrongpassword1",
+			storedHash: true,
+			setup: func(t *testing.T, store *AuthStore) {
+				if err := store.CreateUser("local", password, "", "", ""); err != nil {
+					t.Fatalf("CreateUser: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, cleanup := createTestAuthStoreForStore(t)
+			defer cleanup()
+			if tt.setup != nil {
+				tt.setup(t, store)
+			}
+
+			var hashes [][]byte
+			saved := compareHashAndPassword
+			compareHashAndPassword = func(hash, pw []byte) error {
+				hashes = append(hashes, hash)
+				return saved(hash, pw)
+			}
+			defer func() { compareHashAndPassword = saved }()
+
+			_, _, err := store.AuthenticateUser(tt.username, tt.password)
+			if err == nil || err.Error() != "invalid username or password" {
+				t.Fatalf("err = %v, want invalid username or password", err)
+			}
+			if len(hashes) != 1 {
+				t.Fatalf("made %d bcrypt comparisons, want exactly 1", len(hashes))
+			}
+
+			want := store.timingDummyHash()
+			if tt.storedHash {
+				var stored string
+				if err := store.db.QueryRow(
+					"SELECT password_hash FROM users WHERE username = ?",
+					tt.username).Scan(&stored); err != nil {
+					t.Fatalf("read stored hash: %v", err)
+				}
+				want = []byte(stored)
+			}
+			if !bytes.Equal(hashes[0], want) {
+				t.Errorf("compared against %q, want %q", hashes[0], want)
+			}
+		})
+	}
+}
+
 // =============================================================================
 // Session Token Tests
 // =============================================================================

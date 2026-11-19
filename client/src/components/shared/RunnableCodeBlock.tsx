@@ -27,6 +27,8 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { apiFetch } from '../../utils/apiClient';
+import ActionBlock from './ActionBlock';
+import type { ClientActionSource } from '../../types/actions';
 import { useSqlValidation } from '../../hooks/useSqlValidation';
 import { extractExecutableSQL, hasSqlParameters } from './sqlDetection';
 import CopyCodeButton from './CopyCodeButton';
@@ -63,9 +65,10 @@ export interface StatementResult {
 export interface QueryResponse {
     results?: StatementResult[];
     total_statements?: number;
-    requires_confirmation?: boolean;
+    /** Set on a 409: the SQL writes, so it must be proposed as an action. */
+    requires_action?: boolean;
     write_statements?: string[];
-    confirmation_message?: string;
+    error?: string;
 }
 
 export interface QueryState {
@@ -106,6 +109,12 @@ export interface RunnableCodeBlockProps {
     theme: Theme;
     isSql: boolean;
     props: Record<string, unknown>;
+    /** Where a write confirmed from this block is recorded as coming from. */
+    actionSource?: ClientActionSource;
+    /** What the user was looking at, kept with any action created. */
+    actionContext?: string;
+    alertId?: number;
+    conversationId?: string;
 }
 
 const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
@@ -120,6 +129,10 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
     theme,
     isSql,
     props,
+    actionSource = 'chat_block',
+    actionContext,
+    alertId,
+    conversationId,
 }) => {
     const [queryState, setQueryState] = useState<QueryState>({
         loading: false,
@@ -129,9 +142,9 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
         writeStatements: [],
     });
 
-    // Store the cleaned SQL so the confirmation "Execute" button can
-    // re-send the same payload with confirmed=true.
-    const [cleanedSQL, setCleanedSQL] = useState<string>('');
+    // The SQL the user confirmed as a write; once set, an ActionBlock
+    // takes over and proposes it as a reviewed action.
+    const [actionSQL, setActionSQL] = useState<string | null>(null);
 
     // The SQL that would actually be sent to the server, which is also
     // what gets validated.
@@ -162,13 +175,9 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
     const validating = validation.status === 'pending';
     const blockedByValidation = validation.status === 'invalid' && !runAnyway;
 
-    const handleRun = useCallback(async (confirmed = false) => {
-        // On the initial run, extract executable SQL from the code block.
-        // When re-running after confirmation, reuse the previously cleaned SQL.
-        const sql = confirmed ? cleanedSQL : executableSQL;
-        if (!confirmed) {
-            setCleanedSQL(sql);
-        }
+    const handleRun = useCallback(async () => {
+        const sql = executableSQL;
+        setActionSQL(null);
 
         if (!sql.trim()) {
             setQueryState({
@@ -194,10 +203,6 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
             if (databaseName) {
                 body.database_name = databaseName;
             }
-            if (confirmed) {
-                body.confirmed = true;
-            }
-
             const response = await apiFetch(
                 `/api/v1/connections/${connectionId}/query`,
                 {
@@ -206,6 +211,25 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                     body: JSON.stringify(body),
                 },
             );
+
+            if (response.status === 409) {
+                const refusal: QueryResponse = await response
+                    .json()
+                    .catch(() => ({}));
+                if (refusal.requires_action) {
+                    setQueryState({
+                        loading: false,
+                        response: null,
+                        error: null,
+                        pendingConfirmation: true,
+                        writeStatements: refusal.write_statements || [],
+                    });
+                    return;
+                }
+                throw new Error(
+                    refusal.error || 'Query failed with status 409',
+                );
+            }
 
             if (!response.ok) {
                 let errorMessage = `Query failed with status ${response.status}`;
@@ -226,17 +250,6 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
 
             const data: QueryResponse = await response.json();
 
-            if (data.requires_confirmation) {
-                setQueryState({
-                    loading: false,
-                    response: null,
-                    error: null,
-                    pendingConfirmation: true,
-                    writeStatements: data.write_statements || [],
-                });
-                return;
-            }
-
             setQueryState({
                 loading: false,
                 response: data,
@@ -253,9 +266,10 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                 writeStatements: [],
             });
         }
-    }, [executableSQL, connectionId, databaseName, cleanedSQL]);
+    }, [executableSQL, connectionId, databaseName]);
 
     const handleDismiss = useCallback(() => {
+        setActionSQL(null);
         setQueryState({
             loading: false,
             response: null,
@@ -436,8 +450,23 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                 </Box>
             )}
 
+            {/* A confirmed write is proposed, reviewed and run as an action */}
+            {queryState.pendingConfirmation && actionSQL !== null && (
+                <ActionBlock
+                    sql={actionSQL}
+                    connectionId={connectionId}
+                    databaseName={databaseName}
+                    serverName={serverName}
+                    source={actionSource}
+                    context={actionContext}
+                    alertId={alertId}
+                    conversationId={conversationId}
+                    onDismiss={handleDismiss}
+                />
+            )}
+
             {/* Write-statement confirmation prompt */}
-            {queryState.pendingConfirmation && (
+            {queryState.pendingConfirmation && actionSQL === null && (
                 <Box sx={getQueryResultWrapperSx(theme)}>
                     <Box sx={getConfirmationPanelSx(theme)}>
                         <Box sx={getConfirmationTitleSx(theme)}>
@@ -470,7 +499,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                                 size="small"
                                 variant="contained"
                                 color="warning"
-                                onClick={() => handleRun(true)}
+                                onClick={() => { setActionSQL(executableSQL); }}
                                 sx={{ textTransform: 'none' }}
                             >
                                 Execute

@@ -54,6 +54,12 @@ describe('getToolDisplayName', () => {
         expect(getToolDisplayName('delete_memory')).toBe('Deleting memory');
     });
 
+    it('returns the supervisor label for propose_action', () => {
+        expect(getToolDisplayName('propose_action')).toBe(
+            'Supervisor reviewing action…',
+        );
+    });
+
     it('returns the raw tool name when no mapping exists', () => {
         expect(getToolDisplayName('unknown_tool')).toBe('unknown_tool');
     });

@@ -20,6 +20,7 @@ import { useChat } from '../useChat';
 const mockRunAgenticLoop = vi.fn();
 const mockMaybeCompact = vi.fn();
 const mockCreateConversation = vi.fn();
+const mockLinkConversationActions = vi.fn();
 const mockUpdateConversation = vi.fn();
 const mockFetchConversation = vi.fn();
 const mockApiFetch = vi.fn();
@@ -49,6 +50,8 @@ vi.mock('../chatCompaction', () => ({
 vi.mock('../chatConversation', () => ({
     createConversation: (...args: unknown[]) => mockCreateConversation(...args),
     updateConversation: (...args: unknown[]) => mockUpdateConversation(...args),
+    linkConversationActions: (...args: unknown[]) =>
+        mockLinkConversationActions(...args),
     fetchConversation: (...args: unknown[]) => mockFetchConversation(...args),
 }));
 
@@ -128,6 +131,7 @@ describe('useChat', () => {
 
         mockMaybeCompact.mockImplementation(msgs => Promise.resolve(msgs));
         mockCreateConversation.mockResolvedValue('new-conv-123');
+        mockLinkConversationActions.mockResolvedValue(true);
         mockUpdateConversation.mockResolvedValue(true);
         mockFetchConversation.mockResolvedValue({
             id: 'conv-123',
@@ -316,6 +320,46 @@ describe('useChat', () => {
                     ]),
                     maxIterations: 10,
                 }),
+            );
+        });
+
+        it('links proposed actions once the conversation is first saved', async () => {
+            mockRunAgenticLoop.mockResolvedValue({
+                finalMessage: {
+                    role: 'assistant',
+                    content: 'Proposed',
+                    timestamp: new Date().toISOString(),
+                    activity: [
+                        { name: 'propose_action', status: 'completed', proposal: { action_id: 21 } },
+                        { name: 'other', status: 'completed' },
+                    ],
+                },
+                updatedApiMessages: [],
+            });
+            const { result } = renderHook(() => useChat());
+
+            await act(async () => {
+                await result.current.sendMessage('Do it');
+            });
+
+            expect(mockLinkConversationActions).toHaveBeenCalledWith(
+                'new-conv-123',
+                [21],
+                expect.anything(),
+            );
+        });
+
+        it('links nothing when the reply proposed no actions', async () => {
+            const { result } = renderHook(() => useChat());
+
+            await act(async () => {
+                await result.current.sendMessage('Hi');
+            });
+
+            expect(mockLinkConversationActions).toHaveBeenCalledWith(
+                'new-conv-123',
+                [],
+                expect.anything(),
             );
         });
 

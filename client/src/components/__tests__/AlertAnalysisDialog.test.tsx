@@ -22,6 +22,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ThemeProvider } from '@mui/material/styles';
 import AlertAnalysisDialog, {
     ANALYSIS_UNAVAILABLE_MESSAGE,
+    toAlertId,
     type AlertAnalysisAlert,
 } from '../AlertAnalysisDialog';
 import { createPgedgeTheme } from '../../theme/pgedgeTheme';
@@ -54,6 +55,7 @@ vi.mock('../shared/BaseAnalysisDialog', () => ({
                 <div data-testid="loading">{String(props.loading)}</div>
                 <div data-testid="error">{String(props.error ?? '')}</div>
                 <div data-testid="markdown">{String(props.markdownContent ?? '')}</div>
+                <div data-testid="md-origin">{JSON.stringify(mdProps.actionOrigin)}</div>
                 <div data-testid="md-connection">{String(mdProps.connectionId)}</div>
                 <button type="button" onClick={props.onDownload as () => void}>
                     download
@@ -143,6 +145,26 @@ describe('AlertAnalysisDialog', () => {
         expect(toolbar).toHaveTextContent('95.12 % > 80 %');
         expect(screen.getByTestId('md-connection')).toHaveTextContent('7');
         expect(screen.getByTestId('error')).toHaveTextContent('');
+    });
+
+    it('records writes run from the analysis against the alert', () => {
+        renderDialog(connectionAlert);
+
+        expect(
+            JSON.parse(screen.getByTestId('md-origin').textContent ?? ''),
+        ).toMatchObject({ actionSource: 'alert_analysis', alertId: 5 });
+    });
+
+    it.each([
+        [7, 7],
+        ['12', 12],
+        [0, undefined],
+        [-3, undefined],
+        [1.5, undefined],
+        ['abc', undefined],
+        [undefined, undefined],
+    ])('parses alert id %s as %s', (id, expected) => {
+        expect(toAlertId(id)).toBe(expected);
     });
 
     it('fills defaults for a sparse connection alert', () => {

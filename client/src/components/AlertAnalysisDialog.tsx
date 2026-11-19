@@ -155,6 +155,14 @@ export const ANALYSIS_UNAVAILABLE_MESSAGE =
  * analysis gathers context from the alert's connection and would
  * otherwise run against a connection that does not exist.
  */
+/** The alert's id as a positive integer, or undefined if it is not one. */
+export const toAlertId = (id: unknown): number | undefined => {
+    const n = typeof id === 'string' ? Number(id) : id;
+    return typeof n === 'number' && Number.isInteger(n) && n > 0
+        ? n
+        : undefined;
+};
+
 const toAlertInput = (alert: AlertAnalysisAlert): AlertInput | null => {
     if (isSystemAlert(alert) || alert.connectionId === undefined) {
         return null;
@@ -370,6 +378,11 @@ ${analysis}
                 connectionId: alert?.connectionId,
                 databaseName: alert?.databaseName,
                 serverName: alert?.server,
+                actionOrigin: {
+                    actionSource: 'alert_analysis',
+                    actionContext: `Alert analysis: ${alert?.title || 'Alert'}`,
+                    alertId: toAlertId(alert?.id),
+                },
             }}
         />
     );

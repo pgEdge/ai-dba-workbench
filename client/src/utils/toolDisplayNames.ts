@@ -32,6 +32,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
     store_memory: 'Storing memory',
     recall_memories: 'Recalling memories',
     delete_memory: 'Deleting memory',
+    propose_action: 'Supervisor reviewing action…',
 };
 
 /**

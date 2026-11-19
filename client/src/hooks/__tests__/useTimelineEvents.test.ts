@@ -431,6 +431,49 @@ describe('useTimelineEvents', () => {
         expect(result.current.loading).toBe(false);
     });
 
+    it('shows loading, not an empty result, for the fetch after a failed refresh', async () => {
+        let resolvePending: (value: unknown) => void = () => {};
+        mockApiGet
+            .mockResolvedValueOnce(makeApiResponse())
+            .mockRejectedValueOnce(new Error('refresh failed'))
+            .mockImplementationOnce(() => new Promise((resolve) => {
+                resolvePending = resolve;
+            }));
+
+        const { result } = renderHook(() =>
+            useTimelineEvents({ connectionId: 1 }),
+        );
+
+        await waitFor(() => {
+            expect(result.current.events).toHaveLength(2);
+        });
+
+        await act(async () => {
+            await result.current.refetch();
+        });
+        expect(result.current.error).toBe('refresh failed');
+
+        // Hold the next request open: with no events and no error, it
+        // must report loading so the timeline does not claim the range
+        // is empty before the response arrives.
+        let pending: Promise<void> = Promise.resolve();
+        act(() => {
+            pending = result.current.refetch();
+        });
+
+        expect(result.current.loading).toBe(true);
+        expect(result.current.error).toBeNull();
+        expect(result.current.events).toEqual([]);
+
+        await act(async () => {
+            resolvePending(makeApiResponse());
+            await pending;
+        });
+
+        expect(result.current.loading).toBe(false);
+        expect(result.current.events).toHaveLength(2);
+    });
+
     it('retries after a failed fetch and heals on recovery', async () => {
         vi.useFakeTimers();
         mockApiGet

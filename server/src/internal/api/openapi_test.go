@@ -11,6 +11,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"slices"
 	"sort"
@@ -515,8 +516,29 @@ func TestOpenAPINullableSchemasHaveNoEnum(t *testing.T) {
 		}
 		walk(path+"[]", s.Items)
 		walk(path+"{}", s.AdditionalProperties)
+		for i, part := range s.AllOf {
+			walk(fmt.Sprintf("%s.allOf[%d]", path, i), part)
+		}
 	}
 	for name, schema := range BuildOpenAPISpec().Components.Schemas {
 		walk(name, schema)
+	}
+}
+
+// TestOpenAPIActionResponseComposesAction checks that the create
+// response schema includes every Action field, through allOf, as well as
+// the review chain fields the handler adds.
+func TestOpenAPIActionResponseComposesAction(t *testing.T) {
+	schema := BuildOpenAPISpec().Components.Schemas["ActionResponse"]
+	if schema == nil || len(schema.AllOf) != 2 {
+		t.Fatalf("ActionResponse = %+v, want allOf of two parts", schema)
+	}
+	if schema.AllOf[0].Ref != "#/components/schemas/Action" {
+		t.Errorf("allOf[0] = %+v, want the Action schema", schema.AllOf[0])
+	}
+	for _, name := range []string{"attempts_left", "chain_exhausted", "best_attempt", "execute_error"} {
+		if schema.AllOf[1].Properties[name] == nil {
+			t.Errorf("ActionResponse lacks %q", name)
+		}
 	}
 }

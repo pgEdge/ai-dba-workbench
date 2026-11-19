@@ -99,6 +99,7 @@ type OpenAPISchema struct {
 	AdditionalProperties *OpenAPISchema            `json:"additionalProperties,omitempty"`
 	Required             []string                  `json:"required,omitempty"`
 	Ref                  string                    `json:"$ref,omitempty"`
+	AllOf                []*OpenAPISchema          `json:"allOf,omitempty"`
 	Enum                 []string                  `json:"enum,omitempty"`
 	Default              any                       `json:"default,omitempty"`
 	Nullable             bool                      `json:"nullable,omitempty"`
@@ -2109,15 +2110,20 @@ func buildSchemas() map[string]*OpenAPISchema {
 			},
 		},
 		"ActionResponse": {
-			Type:        "object",
-			Description: "An action together with the state of its review chain. All the fields of Action are present at the top level.",
-			Properties: map[string]*OpenAPISchema{
-				"attempts_left":   {Type: "integer", Description: "Review attempts remaining in the chain"},
-				"chain_exhausted": {Type: "boolean", Description: "True when no further attempt may be proposed"},
-				"best_attempt":    {Ref: "#/components/schemas/Action"},
-				"execute_error":   {Type: "string", Description: "Present when execute was set and the action could not be approved or started; the action is still recorded, and exec_status shows where it stands"},
+			Description: "An action together with the state of its review chain: every field of Action at the top level, plus the chain fields.",
+			AllOf: []*OpenAPISchema{
+				{Ref: "#/components/schemas/Action"},
+				{
+					Type: "object",
+					Properties: map[string]*OpenAPISchema{
+						"attempts_left":   {Type: "integer", Description: "Review attempts remaining in the chain"},
+						"chain_exhausted": {Type: "boolean", Description: "True when no further attempt may be proposed"},
+						"best_attempt":    {Ref: "#/components/schemas/Action"},
+						"execute_error":   {Type: "string", Description: "Present when execute was set and the action could not be approved or started, including when write access was removed during the review; the action is still recorded, and exec_status shows where it stands"},
+					},
+					Required: []string{"attempts_left", "chain_exhausted"},
+				},
 			},
-			Required: []string{"attempts_left", "chain_exhausted"},
 		},
 		"ActionCreateRequest": {
 			Type: "object",

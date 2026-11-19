@@ -11932,28 +11932,35 @@
         ]
       },
       "ActionResponse": {
-        "type": "object",
-        "description": "An action together with the state of its review chain. All the fields of Action are present at the top level.",
-        "properties": {
-          "attempts_left": {
-            "type": "integer",
-            "description": "Review attempts remaining in the chain"
-          },
-          "best_attempt": {
+        "description": "An action together with the state of its review chain: every field of Action at the top level, plus the chain fields.",
+        "allOf": [
+          {
             "$ref": "#/components/schemas/Action"
           },
-          "chain_exhausted": {
-            "type": "boolean",
-            "description": "True when no further attempt may be proposed"
-          },
-          "execute_error": {
-            "type": "string",
-            "description": "Present when execute was set and the action could not be approved or started; the action is still recorded, and exec_status shows where it stands"
+          {
+            "type": "object",
+            "properties": {
+              "attempts_left": {
+                "type": "integer",
+                "description": "Review attempts remaining in the chain"
+              },
+              "best_attempt": {
+                "$ref": "#/components/schemas/Action"
+              },
+              "chain_exhausted": {
+                "type": "boolean",
+                "description": "True when no further attempt may be proposed"
+              },
+              "execute_error": {
+                "type": "string",
+                "description": "Present when execute was set and the action could not be approved or started, including when write access was removed during the review; the action is still recorded, and exec_status shows where it stands"
+              }
+            },
+            "required": [
+              "attempts_left",
+              "chain_exhausted"
+            ]
           }
-        },
-        "required": [
-          "attempts_left",
-          "chain_exhausted"
         ]
       },
       "ActionReview": {

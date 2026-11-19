@@ -129,9 +129,10 @@ user must click Execute to proceed or Cancel to abort. Running a write
 statement also requires write access to the connection.
 
 Clicking Execute does not run the statements directly. The Workbench records
-them as a proposed action, has Ellie's supervisor review them, and runs them
-only if the review passes; [Reviewed Write Actions](#reviewed-write-actions)
-describes the steps. The query endpoint refuses to run a write itself.
+them as a proposed action, passes them through a review step, and runs them
+only if the review passes. The review is not yet implemented, so you must check
+each statement yourself before you click Execute;
+[Reviewed Write Actions](#reviewed-write-actions) describes the steps. The query endpoint refuses to run a write itself.
 
 A query that calls a function with side effects beyond its own transaction also
 counts as a write, even though it begins with `SELECT`, because a read-only
@@ -171,24 +172,35 @@ transaction of its own and what happens when one of them fails.
 
 Every write that the Workbench runs from an AI-generated code block is stored
 first as a proposed action; nothing changes on the monitored server until the
-action has been reviewed and approved. The same lifecycle applies to a write
-from an analysis dialog, from a chart analysis, from a SQL block in one of
-Ellie's replies, and to a write that Ellie proposes herself in chat.
+action has been through the review step and approved. The same lifecycle
+applies to a write from an analysis dialog, from a chart analysis, from a SQL
+block in one of Ellie's replies, and to a write that Ellie proposes herself in
+chat.
+
+The supervisor review is not yet implemented. In this release the server uses a
+placeholder reviewer that passes every proposal as low danger without
+inspecting the SQL, so a passed review is not an independent danger assessment
+and says nothing about whether the statements are safe. Read each statement
+carefully and decide for yourself whether to run it. A real review by Ellie's
+supervisor is planned for a later release (issue #768). A rollback does not
+undo sequence changes made with `nextval` or `setval`.
 
 The lifecycle of an action has the following steps:
 
 1. Click Execute in the confirmation prompt. The Workbench stores the
    statements, the server and database, and the analysis text as context.
-2. The block displays Supervisor reviewing… whilst Ellie's supervisor
-   checks the statements and rates the danger as low, moderate, high or
-   critical.
-3. When the review passes, the block displays Approved by Ellie's supervisor
-   and, for a block that you have just confirmed, starts the run at once.
-   Your click on Execute is the approval. An action that Ellie proposed in
-   chat waits for you instead; click Execute on the block to run it. That
-   click is a single step, with no further prompt, because the supervisor has
-   already reviewed the action and a code block from chat is confirmed before
-   the action is created.
+2. The block displays Supervisor reviewing… whilst the review step runs. The
+   review rates the danger as low, moderate, high or critical; the placeholder
+   reviewer always rates it low.
+3. When the review passes, the block displays Not yet reviewed, with a low
+   danger rating, because the placeholder reviewer did not assess the
+   statements. Once a real supervisor review exists, a passed review displays
+   Approved by Ellie's supervisor instead. For a block that you have just
+   confirmed, the Workbench then starts the run at once. Your click on Execute
+   is the approval. An action that Ellie proposed in chat waits for you
+   instead; click Execute on the block to run it. That
+   click is a single step, with no further prompt, because a code block from
+   chat is confirmed before the action is created.
 4. The block displays Running… with a Cancel button whilst the statements
    run. Click Cancel to ask the server to stop the run.
 5. The block displays the outcome: Succeeded with the number of rows

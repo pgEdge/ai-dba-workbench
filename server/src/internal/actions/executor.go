@@ -407,22 +407,13 @@ func (e *Executor) runAction(ctx context.Context, a *Action, st *runState) {
 
 	// Statements run on a context that is never stopped, so pgx does
 	// not break the socket and leave the server statement running.
-	// Stopping ctx instead sends a cancel request, which the server
-	// answers with an error, leaving the connection usable for the
-	// rollback and the outcome known.
-	execCtx := context.WithoutCancel(ctx)
-	stop := context.AfterFunc(ctx, func() {
-		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelRequestTimeout)
-		defer cancel()
-		if err := pgConn.CancelRequest(cctx); err != nil {
-			log.Printf("[WARN] Action %d: cancel request failed: %v", a.ID, err)
-		}
-	})
-	defer stop()
-
+	// Stopping ctx instead sends a cancel request for the statement in
+	// flight, which the server answers with an error, leaving the
+	// connection usable for the rollback and the outcome known.
 	r := &stmtRunner{
+		actionID: a.ID,
 		ctx:      ctx,
-		execCtx:  execCtx,
+		execCtx:  context.WithoutCancel(ctx),
 		pgConn:   pgConn,
 		rowLimit: e.rowLimit,
 		timeout:  timeout,
@@ -433,6 +424,8 @@ func (e *Executor) runAction(ctx context.Context, a *Action, st *runState) {
 			return pgConn.Exec(c, sql).Close()
 		},
 	}
+	stop := context.AfterFunc(ctx, r.cancelInFlight)
+	defer stop()
 	if st.transactional {
 		r.runTransaction(st)
 	} else {
@@ -450,6 +443,7 @@ func newResults(stmts []string) []StatementResult {
 
 // stmtRunner holds what running a batch on one connection needs.
 type stmtRunner struct {
+	actionID int64
 	ctx      context.Context // stopped to stop the run
 	execCtx  context.Context // never stopped; used for the statements
 	pgConn   *pgconn.PgConn
@@ -462,6 +456,51 @@ type stmtRunner struct {
 	// beforeDispatch, when set, is called after the timeouts are set and
 	// before the statement is sent. It is a hook for tests.
 	beforeDispatch func()
+
+	// mu orders sending a statement against a stop request. A statement
+	// is only sent, and inFlight set, under mu after checking ctx, and
+	// cancelInFlight takes mu before deciding whether to send a cancel
+	// request, so a stop either finds the statement not yet sent, and it
+	// is never sent, or finds it in flight and cancels it.
+	mu       sync.Mutex
+	inFlight bool
+}
+
+// dispatch sends stmt, unless the run has been stopped, in which case it
+// returns nil and nothing is sent.
+func (r *stmtRunner) dispatch(ctx context.Context, stmt string) *pgconn.MultiResultReader {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ctx.Err() != nil {
+		return nil
+	}
+	if r.state != nil {
+		r.state.sent = true
+	}
+	r.inFlight = true
+	return r.pgConn.Exec(ctx, stmt)
+}
+
+// endDispatch records that the statement in flight has finished.
+func (r *stmtRunner) endDispatch() {
+	r.mu.Lock()
+	r.inFlight = false
+	r.mu.Unlock()
+}
+
+// cancelInFlight asks the server to cancel the statement in flight, if
+// there is one. It runs once the run's context is stopped.
+func (r *stmtRunner) cancelInFlight() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.inFlight {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cancelRequestTimeout)
+	defer cancel()
+	if err := r.pgConn.CancelRequest(ctx); err != nil {
+		log.Printf("[WARN] Action %d: cancel request failed: %v", r.actionID, err)
+	}
 }
 
 // roundTrip returns the context for one round trip to the target: the
@@ -504,7 +543,9 @@ const stoppedMessage = "the action was stopped before this statement ran"
 
 // step runs statement i, first checking for a stop request and then
 // re-sending the timeouts, so that an earlier statement that disabled
-// them cannot affect this one. ran reports whether the statement itself
+// them cannot affect this one. The stop request is checked again as the
+// statement is sent, so one that arrives while the timeouts are being set
+// is not lost. ran reports whether the statement itself
 // was sent; err is then the raw error it produced, which is also recorded
 // in the result as safe text.
 func (r *stmtRunner) step(results []StatementResult, i int) (ran bool, err error) {
@@ -519,12 +560,17 @@ func (r *stmtRunner) step(results []StatementResult, i int) (ran bool, err error
 	if r.beforeDispatch != nil {
 		r.beforeDispatch()
 	}
-	if r.state != nil {
-		r.state.sent = true
-	}
 	ctx, cancel := r.roundTrip()
 	defer cancel()
-	res, err := runOne(ctx, r.pgConn, results[i].Statement, r.rowLimit)
+	start := time.Now()
+	mrr := r.dispatch(ctx, results[i].Statement)
+	if mrr == nil {
+		results[i].Error = stoppedMessage
+		return false, nil
+	}
+	res, err := readResult(mrr, r.pgConn, results[i].Statement, r.rowLimit)
+	r.endDispatch()
+	res.DurationMS = time.Since(start).Milliseconds()
 	r.closeIfUnresponsive(err)
 	if err != nil {
 		res.Error = safeExecError(err)
@@ -556,7 +602,25 @@ func (r *stmtRunner) runTransaction(st *runState) {
 		clearApplied(results)
 		return
 	}
+	r.commit(st)
+}
 
+// stoppedBeforeCommitMessage is the COMMIT result of a transaction rolled
+// back because the run was stopped after its last statement.
+const stoppedBeforeCommitMessage = "the action was stopped before COMMIT, so the transaction was rolled back"
+
+// commit commits the transaction runTransaction opened, recording a
+// failed COMMIT as a result of its own. A stop request that arrived
+// after the last statement rolls the transaction back instead, so a
+// cancel request the server ignored still stops the change.
+func (r *stmtRunner) commit(st *runState) {
+	results := st.results
+	if r.ctx.Err() != nil {
+		rollbackQuietly(r.execCtx, r.exec)
+		st.results = append(results, StatementResult{Statement: "COMMIT", Error: stoppedBeforeCommitMessage})
+		clearApplied(st.results)
+		return
+	}
 	// COMMIT runs on the never-stopped context, so a stop request cannot
 	// abandon it and leave its outcome unknown; only the response
 	// deadline bounds it.
@@ -651,17 +715,13 @@ func openTransactionMessage(c pgexec.ConnState) string {
 	return ""
 }
 
-// runOne runs one statement over the simple query protocol, which sends
-// the text unaltered, and collects its command tag, rows affected and
-// result rows (up to rowLimit). It returns the error from the server or
-// connection, if any, alongside the result; a changed client_encoding is
-// reported in the result alone.
-func runOne(ctx context.Context, pgConn *pgconn.PgConn, stmt string, rowLimit int) (StatementResult, error) {
+// readResult reads the outcome of one statement sent over the simple
+// query protocol, which sends the text unaltered, collecting its command
+// tag, rows affected and result rows (up to rowLimit). It returns the
+// error from the server or connection, if any, alongside the result; a
+// changed client_encoding is reported in the result alone.
+func readResult(mrr *pgconn.MultiResultReader, pgConn *pgconn.PgConn, stmt string, rowLimit int) (StatementResult, error) {
 	res := StatementResult{Statement: stmt}
-	start := time.Now()
-	defer func() { res.DurationMS = time.Since(start).Milliseconds() }()
-
-	mrr := pgConn.Exec(ctx, stmt)
 	for mrr.NextResult() {
 		rr := mrr.ResultReader()
 		if fields := rr.FieldDescriptions(); len(fields) > 0 && res.Columns == nil {

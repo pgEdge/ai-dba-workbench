@@ -233,6 +233,15 @@ therefore be recorded as Outcome unknown. Inspect the database before you
 propose the change again, because some of the statements may have taken
 effect.
 
+If the server cannot record an action's outcome because of a transient error,
+it retries the recording; it never reruns the SQL.
+
+Whilst an action shows under a code block, the Run button of that block stays
+disabled until you dismiss the action. If creating the action fails, the error
+row has a Dismiss button. Confirming a write proposes exactly the SQL that was
+run. An action proposed before a chat is first saved is linked to its
+conversation when the chat is saved, even if that turn failed.
+
 #### Execution Behaviour
 
 The server runs only the statements stored with the action; the browser sends
@@ -253,6 +262,23 @@ applied; check for and drop the invalid index before you try again. These
 statements can also need more time than the default five-second lock timeout
 and five-minute statement timeout allow on a large table, so raise the
 timeouts in the `actions` section if they fail for that reason.
+
+Each round trip to the monitored database also has a client-side limit of the
+statement timeout plus 30 seconds; when the limit expires, the server closes
+the connection. Outside a transaction, or during `COMMIT`, the outcome is then
+recorded as unknown. Inside a transaction the statement fails and the
+transaction is not committed.
+
+A stop request that arrives before a statement is sent means the statement is
+never sent; the result reads "the action was stopped before this statement
+ran" and the action is cancelled. A stop request that arrives before `COMMIT`
+rolls the transaction back.
+
+A statement result can carry a note. A sequence change made with `nextval` or
+`setval` is not undone by a rollback; the server detects only calls written in
+the statement text, not the defaults of serial or identity columns. A failed
+`CREATE INDEX CONCURRENTLY` or `REINDEX ... CONCURRENTLY` can leave an invalid
+index, so check `pg_index.indisvalid` and drop or rebuild the index.
 
 The block displays the rows returned by a statement that has a `RETURNING`
 clause, and notes when the display is limited to the first rows.
@@ -289,7 +315,9 @@ the action was decided:
 Other users see no Retry button. Running an action needs write access to the
 connection at the time of the click, not only when the action was created; the
 server refuses the request, and the action stays not started, if you no longer
-have that access.
+have that access. If write access is revoked whilst an action awaits review,
+the server does not start the action automatically; it stays reviewed but
+unapproved.
 
 The Workbench assumes that one server instance uses a given datastore. When
 the server starts, it marks every action still running as Outcome unknown.

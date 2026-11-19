@@ -325,7 +325,7 @@ func (h *ActionHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	action := res.Action
 	executeError := ""
 	if req.Execute && action.ReviewStatus == "passed" {
-		action, executeError = h.approveAndStart(ctx, action)
+		action, executeError = h.startIfStillWritable(r, action, connectionID)
 	}
 
 	RespondJSON(w, http.StatusCreated, actionResponse{
@@ -455,6 +455,25 @@ func (h *ActionHandler) alertOnConnection(ctx context.Context, w http.ResponseWr
 		return false
 	}
 	return true
+}
+
+// startIfStillWritable checks write access again and then approves and
+// starts the action. The review runs between the first check and this
+// one and can take a while, so a grant removed in the meantime must stop
+// the run. A refusal is audited and reported through execute_error, as
+// any other failure to start is: the action stays recorded, reviewed and
+// unapproved, and nothing runs.
+func (h *ActionHandler) startIfStillWritable(r *http.Request, a *actions.Action,
+	connectionID int) (*actions.Action, string) {
+
+	if !h.access.HasWriteAccess(r.Context(), connectionID) {
+		if h.denialRecorder != nil {
+			h.denialRecorder(withDeniedTarget(r, deniedActionActionCreate,
+				connectionDenialTarget(connectionID)), connectionWriteDenied)
+		}
+		return a, connectionWriteDenied
+	}
+	return h.approveAndStart(r.Context(), a)
 }
 
 // approveAndStart records the caller's approval of a reviewed action and

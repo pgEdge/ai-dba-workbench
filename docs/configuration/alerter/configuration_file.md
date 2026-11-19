@@ -47,7 +47,7 @@ PostgreSQL datastore.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `host` | string | `localhost` | Server hostname |
-| `hostaddr` | string | None | Server IP address. Not currently usable: the alerter's PostgreSQL driver does not recognize `hostaddr` and passes it to the server as a setting, so the connection fails. Set `host` to the IP address instead. |
+| `hostaddr` | string | None | Server IP address. The alerter connects to this address instead of looking up `host`, but still verifies the server's SSL certificate against `host`; `hostaddr` must be a literal IPv4 or IPv6 address. |
 | `database` | string | `ai_workbench` | Database name |
 | `username` | string | `postgres` | Database username |
 | `password` | string | None | Database password |

@@ -20,6 +20,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/pkg/connstring"
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // Datastore provides access to the PostgreSQL datastore
@@ -88,6 +89,16 @@ func NewDatastore(cfg *config.Config) (*Datastore, error) {
 	poolConfig, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
+	}
+
+	// pgx would send hostaddr to the server as a startup parameter, which
+	// PostgreSQL refuses; dial it in place of resolving the host instead,
+	// keeping the host name for TLS verification.
+	if lookup, ok, err := hostvalidation.TakeHostAddr(poolConfig.ConnConfig.RuntimeParams); ok {
+		if err != nil {
+			return nil, fmt.Errorf("invalid datastore hostaddr: %w", err)
+		}
+		poolConfig.ConnConfig.LookupFunc = lookup
 	}
 
 	// Configure pool settings

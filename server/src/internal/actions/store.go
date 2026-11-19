@@ -222,7 +222,7 @@ func (s *Store) ClaimForExecution(ctx context.Context, id int64) (bool, error) {
 // the action is not executing.
 func (s *Store) FinishExecution(ctx context.Context, id int64, status string, transactional bool, results []StatementResult) error {
 	switch status {
-	case "succeeded", "failed", "cancelled": //nolint:misspell // value fixed by the table CHECK
+	case "succeeded", "failed", "cancelled", "unknown": //nolint:misspell // value fixed by the table CHECK
 	default:
 		return fmt.Errorf("invalid execution status %q", status)
 	}

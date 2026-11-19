@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,19 +28,26 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/sqllex"
 )
 
-// ErrAlreadyStarted is returned by Start when the action cannot be
-// claimed: it has already run or is running, or it has been neither
-// reviewed nor overridden.
-var ErrAlreadyStarted = errors.New("action cannot be started")
+var (
+	// ErrAlreadyStarted is returned by Start when the action cannot be
+	// claimed: it has already run or is running, or it has been neither
+	// reviewed nor overridden.
+	ErrAlreadyStarted = errors.New("action cannot be started")
+
+	// ErrShuttingDown is returned by Start after Shutdown has been called.
+	ErrShuttingDown = errors.New("executor is shutting down")
+)
 
 // defaultRowLimit caps the rows kept per statement when the caller gives
 // no positive limit.
 const defaultRowLimit = 1000
 
-// finishTimeout bounds the write that records the outcome, which runs on
-// a context that ignores cancellation so a stopped action still gets
-// its result recorded.
+// finishTimeout bounds the writes that must complete even after the run
+// has been stopped: recording the outcome and committing.
 const finishTimeout = 30 * time.Second
+
+// cancelRequestTimeout bounds the cancel request sent to the server.
+const cancelRequestTimeout = 5 * time.Second
 
 // Opener opens a single-connection pool on the monitored database an
 // action targets. The executor closes the pool after use. The pool must
@@ -52,6 +60,17 @@ type runningAction struct {
 	stopRequested atomic.Bool
 }
 
+// runState is what a run has established so far. It lives outside the run
+// so that the partial results survive a panic.
+type runState struct {
+	results       []StatementResult
+	transactional bool
+	// unknown is set when the outcome cannot be established: the
+	// connection was lost mid-statement in a non-transactional run, a
+	// COMMIT failed without a server verdict, or the executor panicked.
+	unknown bool
+}
+
 // Executor runs approved actions against their target databases.
 type Executor struct {
 	store            *Store
@@ -61,6 +80,7 @@ type Executor struct {
 	rowLimit         int
 
 	mu      sync.Mutex
+	closed  bool
 	running map[int64]*runningAction
 	wg      sync.WaitGroup
 }
@@ -81,21 +101,51 @@ func NewExecutor(store *Store, opener Opener, lockTimeout, statementTimeout time
 	}
 }
 
-// Wait blocks until every action started so far has finished. It is
-// meant for shutdown and tests.
-func (e *Executor) Wait() {
-	e.wg.Wait()
+// Shutdown stops the executor taking new actions, cancels the running
+// ones and waits for them to record their outcomes, or for ctx to end.
+func (e *Executor) Shutdown(ctx context.Context) error {
+	e.mu.Lock()
+	e.closed = true
+	for _, run := range e.running {
+		run.stopRequested.Store(true)
+		run.cancel()
+	}
+	e.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		e.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Start claims the action and runs it in a goroutine detached from ctx's
 // cancellation, recording the outcome on the action. It returns
-// ErrAlreadyStarted when the claim fails.
+// ErrAlreadyStarted when the claim fails and ErrShuttingDown after
+// Shutdown.
 func (e *Executor) Start(ctx context.Context, actionID int64) error {
-	ok, err := e.store.ClaimForExecution(ctx, actionID)
-	if err != nil {
-		return err
+	// The WaitGroup is incremented under the same lock Shutdown takes to
+	// set closed, so Shutdown's Wait never races with an Add.
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		return ErrShuttingDown
 	}
-	if !ok {
+	e.wg.Add(1)
+	e.mu.Unlock()
+
+	ok, err := e.store.ClaimForExecution(ctx, actionID)
+	if err != nil || !ok {
+		e.wg.Done()
+		if err != nil {
+			return err
+		}
 		return ErrAlreadyStarted
 	}
 
@@ -103,9 +153,13 @@ func (e *Executor) Start(ctx context.Context, actionID int64) error {
 	run := &runningAction{cancel: cancel}
 	e.mu.Lock()
 	e.running[actionID] = run
+	if e.closed {
+		// Shutdown began between the check above and the claim.
+		run.stopRequested.Store(true)
+		cancel()
+	}
 	e.mu.Unlock()
 
-	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
 		defer func() {
@@ -119,8 +173,9 @@ func (e *Executor) Start(ctx context.Context, actionID int64) error {
 	return nil
 }
 
-// Cancel cancels a running action and reports whether one was running.
-// The action is then recorded with the stopped-by-request status.
+// Cancel stops a running action and reports whether one was running. The
+// server is asked to cancel the statement in progress; the action is then
+// recorded as stopped unless it had already succeeded.
 func (e *Executor) Cancel(actionID int64) bool {
 	e.mu.Lock()
 	run, ok := e.running[actionID]
@@ -137,25 +192,16 @@ func (e *Executor) Cancel(actionID int64) bool {
 // returns an error: there is no caller to receive one, so failures are
 // logged and, where possible, recorded on the action.
 func (e *Executor) execute(ctx context.Context, run *runningAction, id int64) {
-	var (
-		status        = "failed"
-		transactional = true
-		results       []StatementResult
-	)
+	st := &runState{transactional: true}
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[ERROR] Action %d executor panicked: %v", id, r)
-			status = "failed"
-			if len(results) == 0 {
-				results = []StatementResult{{Error: "internal error while executing the action"}}
-			}
+			markPanic(st)
 		}
-		if run.stopRequested.Load() {
-			status = "cancelled" //nolint:misspell // value fixed by the table CHECK
-		}
+		status := finalStatus(st, run.stopRequested.Load())
 		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
 		defer cancel()
-		if err := e.store.FinishExecution(finishCtx, id, status, transactional, results); err != nil {
+		if err := e.store.FinishExecution(finishCtx, id, status, st.transactional, st.results); err != nil {
 			log.Printf("[ERROR] Failed to record outcome of action %d: %v", id, err)
 		}
 	}()
@@ -163,19 +209,72 @@ func (e *Executor) execute(ctx context.Context, run *runningAction, id int64) {
 	action, err := e.store.Get(ctx, id)
 	if err != nil {
 		log.Printf("[ERROR] Failed to load action %d: %v", id, err)
-		results = []StatementResult{{Error: "could not load the action"}}
+		st.results = []StatementResult{{Error: "could not load the action"}}
 		return
 	}
-	status, transactional, results = e.runAction(ctx, action)
+	e.runAction(ctx, action, st)
 }
 
-// runAction runs the action's statements and returns the end status,
-// whether they ran in one transaction and the per-statement results.
-func (e *Executor) runAction(ctx context.Context, a *Action) (string, bool, []StatementResult) {
-	stmts, badIdx, err := prepareStatements(a.Statements)
-	transactional := !slices.ContainsFunc(stmts, sqllex.RequiresNoTransaction)
-	if err != nil {
-		return "failed", transactional, failedBefore(stmts, badIdx, err.Error())
+// markPanic records a panic in st. A non-transactional run may already
+// have changed the database, so its outcome becomes unknown and the
+// partial results are kept; otherwise the run simply failed.
+func markPanic(st *runState) {
+	if len(st.results) == 0 {
+		st.results = []StatementResult{{Error: "internal error while executing the action"}}
+		return
+	}
+	if st.transactional {
+		for i := range st.results {
+			st.results[i].Applied = false
+		}
+		if !hasError(st.results) {
+			st.results[0].Error = "internal error while executing the action"
+		}
+		return
+	}
+	st.unknown = true
+	for i := range st.results {
+		if !st.results[i].Applied && st.results[i].Error == "" {
+			st.results[i].Error = "outcome unknown: internal error while executing the action"
+			return
+		}
+	}
+}
+
+func hasError(results []StatementResult) bool {
+	return slices.ContainsFunc(results, func(r StatementResult) bool { return r.Error != "" })
+}
+
+// finalStatus maps a finished run onto an exec_status end state. A stop
+// request only makes the status stopped when the run did not succeed.
+func finalStatus(st *runState, stopRequested bool) string {
+	switch {
+	case st.unknown:
+		return "unknown"
+	case !hasError(st.results):
+		return "succeeded"
+	case stopRequested:
+		return "cancelled" //nolint:misspell // value fixed by the table CHECK
+	default:
+		return "failed"
+	}
+}
+
+// runAction runs the action's statements, exactly as stored and one per
+// Exec, recording progress in st.
+func (e *Executor) runAction(ctx context.Context, a *Action, st *runState) {
+	stmts := a.Statements
+	st.results = newResults(stmts)
+	if !slices.ContainsFunc(stmts, func(s string) bool { return strings.TrimSpace(s) != "" }) {
+		st.results = []StatementResult{{Error: "the action has no statements"}}
+		return
+	}
+	st.transactional = !slices.ContainsFunc(stmts, sqllex.RequiresNoTransaction)
+	for i, s := range stmts {
+		if sqllex.IsTransactionControl(s) {
+			st.results[i].Error = "transaction control statements are not allowed in an action"
+			return
+		}
 	}
 
 	pool, err := e.opener(ctx, a.ConnectionID, a.DatabaseName)
@@ -183,149 +282,182 @@ func (e *Executor) runAction(ctx context.Context, a *Action) (string, bool, []St
 		// The error can quote the connection string, so only a fixed
 		// message goes into the result.
 		log.Printf("[ERROR] Action %d: could not open the target database", a.ID)
-		return "failed", transactional, failedBefore(stmts, 0, "could not connect to the target database")
+		st.results[0].Error = "could not connect to the target database"
+		return
 	}
 	defer pool.Close()
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		log.Printf("[ERROR] Action %d: could not acquire a connection", a.ID)
-		return "failed", transactional, failedBefore(stmts, 0, safeExecError(err))
+		st.results[0].Error = safeExecError(err)
+		return
 	}
 	defer conn.Release()
 	pgConn := conn.Conn().PgConn()
-	exec := func(c context.Context, sql string) error {
-		return pgConn.Exec(c, sql).Close()
-	}
 
-	for _, setting := range []struct {
-		name string
-		d    time.Duration
-	}{{"lock_timeout", e.lockTimeout}, {"statement_timeout", e.statementTimeout}} {
-		if err := exec(ctx, fmt.Sprintf("SET %s = %d", setting.name, setting.d.Milliseconds())); err != nil {
-			return "failed", transactional, failedBefore(stmts, 0, "could not set "+setting.name+": "+safeExecError(err))
+	// Statements run on a context that is never stopped, so pgx does
+	// not break the socket and leave the server statement running.
+	// Stopping ctx instead sends a cancel request, which the server
+	// answers with an error, leaving the connection usable for the
+	// rollback and the outcome known.
+	execCtx := context.WithoutCancel(ctx)
+	stop := context.AfterFunc(ctx, func() {
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelRequestTimeout)
+		defer cancel()
+		if err := pgConn.CancelRequest(cctx); err != nil {
+			log.Printf("[WARN] Action %d: cancel request failed: %v", a.ID, err)
 		}
-	}
+	})
+	defer stop()
 
-	var results []StatementResult
-	if transactional {
-		results = e.runTransaction(ctx, pgConn, exec, stmts)
+	r := &stmtRunner{
+		ctx:      ctx,
+		execCtx:  execCtx,
+		pgConn:   pgConn,
+		rowLimit: e.rowLimit,
+		settings: fmt.Sprintf("SET lock_timeout = %d; SET statement_timeout = %d",
+			e.lockTimeout.Milliseconds(), e.statementTimeout.Milliseconds()),
+		exec: func(c context.Context, sql string) error {
+			return pgConn.Exec(c, sql).Close()
+		},
+	}
+	if st.transactional {
+		r.runTransaction(st)
 	} else {
-		results = e.runIndividually(ctx, pgConn, exec, stmts)
+		r.runIndividually(st)
 	}
-	status := "succeeded"
-	for i := range results {
-		if results[i].Error != "" {
-			status = "failed"
-			break
-		}
-	}
-	return status, transactional, results
 }
 
-// failedBefore reports every statement as not applied, with message on
-// the statement at index bad.
-func failedBefore(stmts []string, bad int, message string) []StatementResult {
+func newResults(stmts []string) []StatementResult {
 	results := make([]StatementResult, len(stmts))
 	for i, s := range stmts {
 		results[i] = StatementResult{Statement: s}
-	}
-	if bad >= 0 && bad < len(results) {
-		results[bad].Error = message
 	}
 	return results
 }
 
-// prepareStatements flattens the stored statements into single
-// statements, and refuses what must not run. A stored entry is split with
-// SplitStatements under both readings of a plain quoted literal; if they
-// disagree the text is ambiguous and is refused, because the server might
-// split it differently from the classifier. Explicit transaction control
-// is refused because the executor owns the transaction. The returned
-// index is the offending statement, or -1 with a nil error.
-func prepareStatements(stored []string) ([]string, int, error) {
-	var out []string
-	bad := -1
-	var badErr error
-	for _, s := range stored {
-		parts := sqllex.SplitStatements(s, sqllex.StandardStrings)
-		if !slices.Equal(parts, sqllex.SplitStatements(s, sqllex.EscapeStrings)) {
-			return append(out, s), len(out), errors.New("statement is ambiguous: it splits differently depending on how string literals are read")
-		}
-		for _, p := range parts {
-			if bad < 0 && sqllex.IsTransactionControl(p) {
-				bad = len(out)
-				badErr = errors.New("transaction control statements are not allowed in an action")
-			}
-			out = append(out, p)
-		}
+// stmtRunner holds what running a batch on one connection needs.
+type stmtRunner struct {
+	ctx      context.Context // stopped to stop the run
+	execCtx  context.Context // never stopped; used for the statements
+	pgConn   *pgconn.PgConn
+	rowLimit int
+	settings string
+	exec     rollback.SimpleExec
+}
+
+const stoppedMessage = "the action was stopped before this statement ran"
+
+// step runs statement i, first checking for a stop request and then
+// re-sending the timeouts, so that an earlier statement that disabled
+// them cannot affect this one. ran reports whether the statement itself
+// was sent; err is then the raw error it produced, which is also recorded
+// in the result as safe text.
+func (r *stmtRunner) step(results []StatementResult, i int) (ran bool, err error) {
+	if r.ctx.Err() != nil {
+		results[i].Error = stoppedMessage
+		return false, nil
 	}
-	return out, bad, badErr
+	if err := r.exec(r.execCtx, r.settings); err != nil {
+		results[i].Error = "could not set the timeouts: " + safeExecError(err)
+		return false, nil
+	}
+	res, err := runOne(r.execCtx, r.pgConn, results[i].Statement, r.rowLimit)
+	if err != nil {
+		res.Error = safeExecError(err)
+	}
+	results[i] = res
+	return true, err
 }
 
 // runTransaction runs every statement in one transaction. The first
 // failure rolls it back, and every statement is then reported as not
-// applied. A clean run commits and reports every statement as applied.
-func (e *Executor) runTransaction(ctx context.Context, pgConn *pgconn.PgConn, exec rollback.SimpleExec, stmts []string) []StatementResult {
-	results := make([]StatementResult, len(stmts))
-	for i, s := range stmts {
-		results[i] = StatementResult{Statement: s}
-	}
-	if err := exec(ctx, "BEGIN"); err != nil {
+// applied. A clean run commits, and a failed COMMIT is a result of its
+// own.
+func (r *stmtRunner) runTransaction(st *runState) {
+	results := st.results
+	if err := r.exec(r.execCtx, "BEGIN"); err != nil {
 		results[0].Error = "could not start a transaction: " + safeExecError(err)
-		return results
+		return
 	}
 	failed := false
-	for i, s := range stmts {
-		r := runOne(ctx, pgConn, s, e.rowLimit)
-		r.Applied = false
-		results[i] = r
-		if r.Error != "" {
+	for i := range results {
+		_, err := r.step(results, i)
+		if err != nil || results[i].Error != "" {
 			failed = true
 			break
 		}
 	}
 	if failed {
-		rollbackQuietly(ctx, exec)
-		for i := range results {
-			results[i].Applied = false
-		}
-		return results
+		rollbackQuietly(r.execCtx, r.exec)
+		clearApplied(results)
+		return
 	}
-	if err := exec(ctx, "COMMIT"); err != nil {
-		rollbackQuietly(ctx, exec)
-		results[len(results)-1].Error = "commit failed: " + safeExecError(err)
-		return results
+
+	// COMMIT must not be abandoned by a stop request, which would leave
+	// its outcome unknown, so it has a bounded context of its own.
+	cctx, cancel := context.WithTimeout(r.execCtx, finishTimeout)
+	defer cancel()
+	if err := r.exec(cctx, "COMMIT"); err != nil {
+		commit := StatementResult{Statement: "COMMIT"}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			commit.Error = pgErr.Message
+			rollbackQuietly(r.execCtx, r.exec)
+		} else {
+			commit.Error = "outcome unknown: the connection was lost during COMMIT"
+			st.unknown = true
+		}
+		results = append(results, commit)
+		st.results = results
+		clearApplied(st.results)
+		return
 	}
 	for i := range results {
 		results[i].Applied = true
 	}
-	return results
+}
+
+// clearApplied reports every statement as not applied, clearing the
+// command tag and rows affected, which describe work that was undone.
+func clearApplied(results []StatementResult) {
+	for i := range results {
+		results[i].Applied = false
+		results[i].CommandTag = ""
+		results[i].RowsAffected = 0
+	}
 }
 
 // runIndividually runs each statement on its own, stopping at the first
-// failure. Statements after it are reported as not applied.
-func (e *Executor) runIndividually(ctx context.Context, pgConn *pgconn.PgConn, exec rollback.SimpleExec, stmts []string) []StatementResult {
-	results := make([]StatementResult, len(stmts))
-	for i, s := range stmts {
-		results[i] = StatementResult{Statement: s}
-	}
-	for i, s := range stmts {
-		r := runOne(ctx, pgConn, s, e.rowLimit)
-		r.Applied = r.Error == ""
-		if r.Error == "" {
-			if msg := openTransactionMessage(pgConn); msg != "" {
-				rollbackQuietly(ctx, exec)
-				r.Error = msg
-				r.Applied = false
-			}
+// failure. Statements after it are reported as not applied. If the
+// connection is lost mid-statement the outcome of that statement, and so
+// of the action, is unknown.
+func (r *stmtRunner) runIndividually(st *runState) {
+	results := st.results
+	for i := range results {
+		ran, err := r.step(results, i)
+		var pgErr *pgconn.PgError
+		if err != nil && !errors.As(err, &pgErr) {
+			results[i].Error = "outcome unknown: the connection was lost while the statement ran"
+			st.unknown = true
+			return
 		}
-		results[i] = r
-		if r.Error != "" {
-			break
+		// A statement that ran without a server error took effect, even
+		// if a check on its side effects then stops the batch.
+		results[i].Applied = ran && err == nil
+		if results[i].Error != "" {
+			return
+		}
+		// Defensive: a statement cannot normally open a transaction,
+		// because transaction control is refused before anything runs.
+		if msg := openTransactionMessage(r.pgConn); msg != "" {
+			rollbackQuietly(r.execCtx, r.exec)
+			results[i].Applied = false
+			results[i].Error = msg
+			return
 		}
 	}
-	return results
 }
 
 // openTransactionMessage returns a failure message when a statement left
@@ -338,8 +470,8 @@ func openTransactionMessage(c connState) string {
 	return ""
 }
 
-// connState is the part of *pgconn.PgConn that the post-statement check
-// reads.
+// connState is the part of *pgconn.PgConn that the post-statement checks
+// read.
 type connState interface {
 	ParameterStatus(key string) string
 	TxStatus() byte
@@ -347,9 +479,10 @@ type connState interface {
 
 // runOne runs one statement over the simple query protocol, which sends
 // the text unaltered, and collects its command tag, rows affected and
-// result rows (up to rowLimit). In a transaction the encoding check
-// still applies, so a statement that changes client_encoding fails.
-func runOne(ctx context.Context, pgConn *pgconn.PgConn, stmt string, rowLimit int) StatementResult {
+// result rows (up to rowLimit). It returns the error from the server or
+// connection, if any, alongside the result; a changed client_encoding is
+// reported in the result alone.
+func runOne(ctx context.Context, pgConn *pgconn.PgConn, stmt string, rowLimit int) (StatementResult, error) {
 	res := StatementResult{Statement: stmt}
 	start := time.Now()
 	defer func() { res.DurationMS = time.Since(start).Milliseconds() }()
@@ -387,15 +520,14 @@ func runOne(ctx context.Context, pgConn *pgconn.PgConn, stmt string, rowLimit in
 		res.RowsAffected += tag.RowsAffected()
 	}
 	if err := mrr.Close(); err != nil {
-		res.Error = safeExecError(err)
 		res.CommandTag = ""
 		res.RowsAffected = 0
-		return res
+		return res, err
 	}
 	if msg := encodingMessage(pgConn); msg != "" {
 		res.Error = msg
 	}
-	return res
+	return res, nil
 }
 
 // encodingMessage reports a client_encoding change. The classifier reads
@@ -409,9 +541,8 @@ func encodingMessage(c connState) string {
 }
 
 // rollbackQuietly rolls back the open transaction, if any. A failure is
-// only logged: the usual cause is a connection that cancellation already
-// closed, and the server rolls back a transaction whose connection has
-// gone.
+// only logged: the usual cause is a lost connection, and the server rolls
+// back a transaction whose connection has gone.
 func rollbackQuietly(ctx context.Context, exec rollback.SimpleExec) {
 	if err := rollback.Simple(ctx, exec); err != nil {
 		log.Printf("[WARN] Action rollback failed: %v", err)

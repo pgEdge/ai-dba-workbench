@@ -985,6 +985,19 @@ blocked. The Tooltip's wrapping `<span>` carries a stable
 `aria-label` (the run target), because MUI would otherwise put the
 changing tooltip title there and tests query by that label.
 
+Writes never go through `/query` any more: it answers 409 with
+`requires_action`, `RunnableCodeBlock` asks for confirmation and then
+renders `ActionBlock`, which creates a proposed action (`useAction`
+polls it) and shows the supervisor's review and the run's outcome. No
+client code sends a `confirmed` flag. Origin props (`actionOrigin`:
+source, context, alert id, conversation id) flow from the dialogs
+through `MarkdownContent` as primitives, so the `components` map stays
+stable and an in-flight `ActionBlock` is not remounted. In chat, a
+completed `propose_action` call stores its parsed result on the
+activity entry; `ChatMessage` renders the latest passed (or best
+chain-exhausted) one as an `ActionBlock` loaded by id, and `useChat`
+links the ids to the conversation after its first save.
+
 Never split SQL on a raw `;`. `splitSqlStatements` in
 `sqlDetection.ts` tokenises single-quoted literals, quoted
 identifiers, dollar-quoted bodies and line and nested block comments

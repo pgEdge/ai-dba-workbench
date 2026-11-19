@@ -199,6 +199,10 @@ ${analysis}
                 connectionId,
                 databaseName,
                 serverName: connectionName,
+                actionOrigin: {
+                    actionSource: 'query_analysis',
+                    actionContext: `Query analysis of query ${queryId}`,
+                },
             }}
         />
     );

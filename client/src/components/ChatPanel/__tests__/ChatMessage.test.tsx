@@ -44,6 +44,12 @@ vi.mock('../../shared/MarkdownExports', () => ({
     isSqlCodeBlock: (className?: string) => className === 'language-sql',
 }));
 
+vi.mock('../../shared/ActionBlock', () => ({
+    default: (props: Record<string, unknown>) => (
+        <div data-testid="action-block-stub" data-props={JSON.stringify(props)} />
+    ),
+}));
+
 // Stub the SQL block so these tests stay independent of the query
 // runner; it exposes the reply targets it receives through context.
 vi.mock('../ChatSqlCodeBlock', async () => {
@@ -469,5 +475,91 @@ describe('ChatMessage', () => {
                 .toBeInTheDocument();
             expect(screen.getByText('More info follows')).toBeInTheDocument();
         });
+    });
+});
+
+describe('ChatMessage proposed actions', () => {
+    const base = (activity: ChatMessageData['activity']): ChatMessageData => ({
+        role: 'assistant',
+        content: 'Proposed a change',
+        activity,
+    });
+    const blockProps = () =>
+        JSON.parse(
+            screen.getByTestId('action-block-stub').getAttribute('data-props') ?? '{}',
+        );
+
+    it('shows the latest passed proposal as an action block', () => {
+        renderWithTheme(
+            <ChatMessage
+                mode="light"
+                message={base([
+                    {
+                        name: 'propose_action', status: 'completed', connectionId: 3,
+                        databaseName: 'app',
+                        proposal: { action_id: 1, review_status: 'vetoed' },
+                    },
+                    {
+                        name: 'propose_action', status: 'completed', connectionId: 3,
+                        databaseName: 'app',
+                        proposal: { action_id: 2, review_status: 'passed' },
+                    },
+                ])}
+            />,
+        );
+        expect(blockProps()).toMatchObject({
+            actionId: 2, connectionId: 3, databaseName: 'app',
+        });
+    });
+
+    it('shows the best action when the supervisor ran out of attempts', () => {
+        renderWithTheme(
+            <ChatMessage
+                mode="light"
+                message={base([
+                    {
+                        name: 'propose_action', status: 'completed', connectionId: 3,
+                        proposal: {
+                            action_id: 5, review_status: 'vetoed',
+                            chain_exhausted: true, best_action_id: 4,
+                        },
+                    },
+                ])}
+            />,
+        );
+        expect(blockProps().actionId).toBe(4);
+    });
+
+    it('falls back to the last action id when no best one is given', () => {
+        renderWithTheme(
+            <ChatMessage
+                mode="light"
+                message={base([
+                    {
+                        name: 'propose_action', status: 'completed', connectionId: 3,
+                        proposal: {
+                            action_id: 5, review_status: 'vetoed', chain_exhausted: true,
+                        },
+                    },
+                ])}
+            />,
+        );
+        expect(blockProps().actionId).toBe(5);
+    });
+
+    it('shows nothing for a vetoed proposal with attempts left', () => {
+        renderWithTheme(
+            <ChatMessage
+                mode="light"
+                message={base([
+                    {
+                        name: 'propose_action', status: 'completed', connectionId: 3,
+                        proposal: { action_id: 1, review_status: 'vetoed' },
+                    },
+                    { name: 'propose_action', status: 'completed' },
+                ])}
+            />,
+        );
+        expect(screen.queryByTestId('action-block-stub')).toBeNull();
     });
 });

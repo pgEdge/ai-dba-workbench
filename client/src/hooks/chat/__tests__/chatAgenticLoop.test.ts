@@ -285,6 +285,99 @@ describe('chatAgenticLoop', () => {
                 expect(activity[0].status).toBe('completed');
             });
 
+            describe('propose_action', () => {
+                const proposeTool: ToolDefinition = {
+                    name: 'propose_action',
+                    description: 'Propose a write',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {},
+                        required: [],
+                    },
+                };
+                const proposal = {
+                    action_id: 11,
+                    review_status: 'passed',
+                    danger: 'low',
+                    statements: ['UPDATE t SET a = 1'],
+                };
+                const run = async (
+                    resultText: string,
+                    isError = false,
+                    conversationId?: string | null,
+                ) => {
+                    const mockFetch = createMockFetch(
+                        [
+                            createToolUseResponse([
+                                {
+                                    id: 'tool-1',
+                                    name: 'propose_action',
+                                    input: { connection_id: 3 },
+                                },
+                            ]),
+                            createTextResponse('Done'),
+                        ],
+                        new Map([
+                            [
+                                'propose_action',
+                                createToolCallResponse(resultText, isError),
+                            ],
+                        ]),
+                    );
+                    const result = await runAgenticLoop(
+                        createLoopParams({
+                            fetchFn: mockFetch,
+                            availableTools: [proposeTool],
+                            conversationId,
+                        }),
+                    );
+                    return { result, mockFetch };
+                };
+                const callBody = (mockFetch: Mock<FetchFunction>) => {
+                    const call = mockFetch.mock.calls.find(
+                        c => c[0] === '/api/v1/mcp/tools/call',
+                    );
+                    return JSON.parse(call?.[1]?.body as string);
+                };
+
+                it('stores the parsed proposal on the activity', async () => {
+                    const { result } = await run(JSON.stringify(proposal));
+                    expect(result.finalMessage.activity?.[0].proposal).toEqual(
+                        proposal,
+                    );
+                });
+
+                it('leaves the proposal off when the result is not a proposal', async () => {
+                    const { result } = await run('not json');
+                    expect(
+                        result.finalMessage.activity?.[0].proposal,
+                    ).toBeUndefined();
+                });
+
+                it('ignores a proposal in an error result', async () => {
+                    const { result } = await run(JSON.stringify(proposal), true);
+                    expect(
+                        result.finalMessage.activity?.[0].proposal,
+                    ).toBeUndefined();
+                });
+
+                it('sends the conversation id when it is known', async () => {
+                    const { mockFetch } = await run(
+                        JSON.stringify(proposal),
+                        false,
+                        'conv-9',
+                    );
+                    expect(callBody(mockFetch).conversation_id).toBe('conv-9');
+                });
+
+                it('omits the conversation id when it is not known', async () => {
+                    const { mockFetch } = await run(JSON.stringify(proposal));
+                    expect(callBody(mockFetch)).not.toHaveProperty(
+                        'conversation_id',
+                    );
+                });
+            });
+
             it('records the connection and database each tool call targeted', async () => {
                 const toolResponses = new Map([
                     ['query_database', createToolCallResponse('ok')],

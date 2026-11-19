@@ -21,6 +21,7 @@ import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import RunnableCodeBlock from './RunnableCodeBlock';
+import type { ActionOrigin } from '../../types/actions';
 import ConnectionSelectorCodeBlock from './ConnectionSelectorCodeBlock';
 import AnalysisSkeleton from './AnalysisSkeleton';
 import {
@@ -63,6 +64,7 @@ interface MarkdownContentProps {
     databaseName?: string;
     serverName?: string;
     connectionMap?: Map<number, string>;
+    actionOrigin?: ActionOrigin;
 }
 
 const MarkdownContent: React.FC<MarkdownContentProps> = ({
@@ -72,8 +74,16 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
     databaseName,
     serverName,
     connectionMap,
+    actionOrigin,
 }) => {
     const theme = useTheme();
+
+    // Held as primitives: the origin object is usually rebuilt on every
+    // render, and a new components map would remount every code block.
+    const originSource = actionOrigin?.actionSource;
+    const originContext = actionOrigin?.actionContext;
+    const originAlertId = actionOrigin?.alertId;
+    const originConversationId = actionOrigin?.conversationId;
 
     // Memoize markdown components to avoid re-creating on each render
     const components = useMemo<Components>(() => ({
@@ -156,6 +166,10 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                             theme={theme}
                             isSql={true}
                             props={props}
+                            actionSource={originSource}
+                            actionContext={originContext}
+                            alertId={originAlertId}
+                            conversationId={originConversationId}
                         />
                     );
                 }
@@ -182,6 +196,10 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                                 theme={theme}
                                 isSql={true}
                                 props={props}
+                                actionSource={originSource}
+                                actionContext={originContext}
+                                alertId={originAlertId}
+                                conversationId={originConversationId}
                             />
                         );
                     }
@@ -198,6 +216,10 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                             customBackground={customBackground}
                             theme={theme}
                             props={props}
+                            actionSource={originSource}
+                            actionContext={originContext}
+                            alertId={originAlertId}
+                            conversationId={originConversationId}
                         />
                     );
                 }
@@ -270,7 +292,8 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                 </Box>
             </Box>
         ),
-    }), [isDark, theme, connectionId, databaseName, serverName, connectionMap]);
+    }), [isDark, theme, connectionId, databaseName, serverName, connectionMap,
+        originSource, originContext, originAlertId, originConversationId]);
 
     if (!content) {return null;}
 

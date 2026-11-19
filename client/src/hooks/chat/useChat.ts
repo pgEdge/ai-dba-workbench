@@ -29,6 +29,7 @@ import {
     createConversation,
     updateConversation,
     fetchConversation,
+    linkConversationActions,
 } from './chatConversation';
 import {
     NO_MCP_PRIVILEGES_MESSAGE,
@@ -312,6 +313,7 @@ export function useChat(): UseChatReturn {
                         abortSignal: abortController.signal,
                         fetchFn: apiFetch,
                         onToolActivity: setActiveTools,
+                        conversationId: conversationIdRef.current,
                     });
 
                 apiMessagesRef.current = updatedApiMessages;
@@ -335,6 +337,16 @@ export function useChat(): UseChatReturn {
                         );
                         if (newId) {
                             syncConversationId(newId);
+                            // Actions proposed this turn ran before the
+                            // conversation existed; tie them to it now.
+                            const actionIds = (finalMessage.activity ?? [])
+                                .map(a => a.proposal?.action_id)
+                                .filter((id): id is number => id !== undefined);
+                            await linkConversationActions(
+                                newId,
+                                actionIds,
+                                apiFetch,
+                            );
                         }
                     } else {
                         await updateConversation(

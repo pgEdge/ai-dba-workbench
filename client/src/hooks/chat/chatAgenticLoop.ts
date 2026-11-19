@@ -25,6 +25,7 @@ import type {
     ToolCallResponse,
     ToolResult,
 } from '../../types/llm';
+import { parseProposeActionResult } from '../../types/actions';
 import { LLM_CHAT_PATH, buildChatRequestInit } from '../../utils/llmChat';
 import type { APIMessage, ToolDefinition } from './chatTypes';
 
@@ -55,6 +56,11 @@ export interface AgenticLoopParams {
     fetchFn: FetchFunction;
     /** Callback invoked when tool activity updates. */
     onToolActivity: (activities: ToolActivity[]) => void;
+    /**
+     * The saved conversation's ID, when it has one. Sent with each tool
+     * call so an action a tool proposes is tied to the conversation.
+     */
+    conversationId?: string | null;
 }
 
 /**
@@ -166,6 +172,7 @@ export async function runAgenticLoop(
         abortSignal,
         fetchFn,
         onToolActivity,
+        conversationId,
     } = params;
 
     let currentMessages = [...apiMessages];
@@ -306,6 +313,9 @@ export async function runAgenticLoop(
                     body: JSON.stringify({
                         name: toolUse.tool_use?.name,
                         arguments: toolUse.tool_use?.input,
+                        ...(conversationId
+                            ? { conversation_id: conversationId }
+                            : {}),
                     }),
                     signal: abortSignal,
                 });
@@ -326,6 +336,12 @@ export async function runAgenticLoop(
                         : 'No data returned');
 
                 activity.status = toolData.isError ? 'error' : 'completed';
+                if (toolName === 'propose_action' && !toolData.isError) {
+                    const proposal = parseProposeActionResult(resultText);
+                    if (proposal) {
+                        activity.proposal = proposal;
+                    }
+                }
                 onToolActivity([...collectedActivity]);
 
                 toolResults.push({

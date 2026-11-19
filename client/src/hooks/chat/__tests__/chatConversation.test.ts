@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import {
     createConversation,
+    linkConversationActions,
     updateConversation,
     fetchConversation,
     type FetchFunction,
@@ -79,6 +80,45 @@ describe('chatConversation', () => {
 
     afterEach(() => {
         vi.restoreAllMocks();
+    });
+
+    describe('linkConversationActions', () => {
+        it('does nothing for an empty list', async () => {
+            const mockFetch = createMockFetch(true);
+            expect(await linkConversationActions('c1', [], mockFetch)).toBe(true);
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+
+        it('posts the action ids to the link endpoint', async () => {
+            const mockFetch = createMockFetch(true);
+            expect(
+                await linkConversationActions('c1', [4, 5], mockFetch),
+            ).toBe(true);
+            expect(mockFetch).toHaveBeenCalledWith(
+                '/api/v1/conversations/c1/actions/link',
+                expect.objectContaining({
+                    method: 'POST',
+                    body: JSON.stringify({ action_ids: [4, 5] }),
+                }),
+            );
+        });
+
+        it('returns false on a failed response', async () => {
+            const mockFetch = createMockFetch(false);
+            expect(
+                await linkConversationActions('c1', [4], mockFetch),
+            ).toBe(false);
+        });
+
+        it('returns false when the request throws', async () => {
+            vi.spyOn(console, 'error').mockImplementation(() => undefined);
+            const mockFetch = vi.fn<FetchFunction>().mockRejectedValue(
+                new Error('boom'),
+            );
+            expect(
+                await linkConversationActions('c1', [4], mockFetch),
+            ).toBe(false);
+        });
     });
 
     describe('createConversation', () => {

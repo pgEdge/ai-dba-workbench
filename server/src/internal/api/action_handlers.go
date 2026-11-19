@@ -546,14 +546,22 @@ func (h *ActionHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	by := auth.GetUsernameFromContext(ctx)
-	if err := h.store.Approve(ctx, a.ID, approval, by, actorVia(ctx)); err != nil {
-		if errors.Is(err, actions.ErrInvalidState) || errors.Is(err, actions.ErrNotFound) {
-			RespondError(w, http.StatusConflict, "The action has already been approved or started")
+	// An action approved earlier whose start failed or never happened is
+	// retried without approving again, but only by its approver or a
+	// superuser. Anyone else falls through to Approve, which refuses it.
+	retry := !req.Override && a.Approval == "approved" && a.ExecStatus == "not_started" &&
+		(auth.IsSuperuserFromContext(ctx) ||
+			(by != "" && a.ApprovedBy != nil && *a.ApprovedBy == by))
+	if !retry {
+		if err := h.store.Approve(ctx, a.ID, approval, by, actorVia(ctx)); err != nil {
+			if errors.Is(err, actions.ErrInvalidState) || errors.Is(err, actions.ErrNotFound) {
+				RespondError(w, http.StatusConflict, "The action has already been approved or started")
+				return
+			}
+			log.Printf("[ERROR] Approve action %d failed: %v", a.ID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to approve the action")
 			return
 		}
-		log.Printf("[ERROR] Approve action %d failed: %v", a.ID, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to approve the action")
-		return
 	}
 
 	switch err := h.executor.Start(ctx, a.ID); {

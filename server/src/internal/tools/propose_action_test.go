@@ -227,7 +227,7 @@ func TestProposeActionErrorMapping(t *testing.T) {
 		{actions.ErrTimeoutOverride, "lock_timeout"},
 		{fmt.Errorf("wrapped: %w", actions.ErrBadRevision), "revises_action_id"},
 		{actions.ErrChainExhausted, "the decision is theirs"},
-		{errors.New("pq: password=hunter2 host=10.0.0.1"), "could not be recorded"},
+		{errors.New("pq: password=hunter2 host=192.0.2.1"), "could not be recorded"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.want, func(t *testing.T) {
@@ -238,7 +238,7 @@ func TestProposeActionErrorMapping(t *testing.T) {
 			if !resp.IsError || !strings.Contains(text, tc.want) {
 				t.Errorf("expected error containing %q, got %q", tc.want, text)
 			}
-			if strings.Contains(text, "hunter2") || strings.Contains(text, "10.0.0.1") {
+			if strings.Contains(text, "hunter2") || strings.Contains(text, "192.0.2.1") {
 				t.Errorf("internal detail leaked: %q", text)
 			}
 		})

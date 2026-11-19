@@ -1978,8 +1978,22 @@ Every override path calls both `HasWriteAccess` and
 `Service.CheckOverride`; a token override is refused with 403 before
 either, because overrides are session-only. Execute is claimed
 atomically in the store, so a double execute gives one 202 and one 409.
-Tests: `TestExecuteAfterWriteAccessRevoked`,
-`TestOverrideWithTokenRefused`, `TestDoubleExecute`.
+`Store.Approve` is one-shot (`WHERE exec_status = 'not_started' AND
+approval = 'none'`): a lost race or wrong state is `ErrInvalidState`
+(409), a missing row `ErrNotFound`; a vetoed action can still be
+overridden once. Tests: `TestExecuteAfterWriteAccessRevoked`,
+`TestOverrideWithTokenRefused`, `TestDoubleExecute`,
+`TestApproveIsOneShot` (real DB, concurrent).
+
+Create checks what it links: `conversation_id` must be owned by the
+caller (`ownsConversation`, shared with link, 404 otherwise) and
+`alert_id` must exist on the same connection (`alertOnConnection`, 404
+for missing, system or other-connection alerts). Only `pgx.ErrNoRows`
+from `GetConnection` or `GetAlertConnectionID` is a 404; any other error
+is a 500. GET and execute pass the action through `redactFor`, which
+nulls `evidence` and `conversation_id` unless the caller is the proposer
+or a superuser. A failed auto-execute on create keeps 201 and adds
+`execute_error` to the body.
 
 The handler depends on narrow interfaces (`actionStore`,
 `actionService`, `actionExecutor`, `actionConnections`, `actionAccess`),

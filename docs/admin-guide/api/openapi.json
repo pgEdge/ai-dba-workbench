@@ -15,7 +15,7 @@
     "/actions/{id}": {
       "get": {
         "summary": "Get an action",
-        "description": "Returns an action. An action on a connection the caller cannot see is reported as not found.",
+        "description": "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser.",
         "operationId": "getAction",
         "tags": [
           "Actions"
@@ -154,7 +154,7 @@
     "/actions/{id}/execute": {
       "post": {
         "summary": "Approve and execute an action",
-        "description": "Records approval and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens.",
+        "description": "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens.",
         "operationId": "executeAction",
         "tags": [
           "Actions"
@@ -232,7 +232,7 @@
             }
           },
           "409": {
-            "description": "The action has already started, has not passed review, or the server is shutting down",
+            "description": "The action has already been approved or started, or has not passed review",
             "content": {
               "application/json": {
                 "schema": {
@@ -243,6 +243,16 @@
           },
           "500": {
             "description": "Failed to start the action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -4719,7 +4729,7 @@
     "/connections/{id}/actions": {
       "post": {
         "summary": "Propose an action",
-        "description": "Records a proposed change, runs the review and returns the action with the state of its review chain. With execute set and a passing review the action is approved and started at once. Requires write access to the connection.",
+        "description": "Records a proposed change, runs the review and returns the action with the state of its review chain. With execute set and a passing review the action is approved and started at once; if that fails the action is still created, the status stays 201, and the response carries the current exec_status and an execute_error. A conversation_id must name a conversation the caller owns, and an alert_id an alert on this connection; otherwise the answer is 404. Requires write access to the connection.",
         "operationId": "createConnectionAction",
         "tags": [
           "Actions"
@@ -4788,7 +4798,7 @@
             }
           },
           "404": {
-            "description": "Connection not found",
+            "description": "Connection, conversation or alert not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -5113,7 +5123,14 @@
         },
         "responses": {
           "200": {
-            "description": "Result of every statement, in order"
+            "description": "Result of every statement, in order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResponse"
+                }
+              }
+            }
           },
           "400": {
             "description": "Query is required, or the database name is invalid",
@@ -11673,7 +11690,12 @@
           },
           "approval": {
             "type": "string",
-            "description": "Approval state"
+            "description": "Approval state: none until someone approves, approved for a passed review, overridden for a vetoed one",
+            "enum": [
+              "none",
+              "approved",
+              "overridden"
+            ]
           },
           "approved_at": {
             "type": "string",
@@ -11701,7 +11723,7 @@
           },
           "conversation_id": {
             "type": "string",
-            "description": "Linked conversation",
+            "description": "Linked conversation; null for anyone but the proposer or a superuser",
             "nullable": true
           },
           "created_at": {
@@ -11716,11 +11738,20 @@
           },
           "evidence": {
             "type": "object",
-            "description": "Stored context snapshot"
+            "description": "Stored context snapshot; null for anyone but the proposer or a superuser",
+            "nullable": true
           },
           "exec_status": {
             "type": "string",
-            "description": "Execution state, for example not_started, running, succeeded, failed, cancelled or unknown"
+            "description": "Execution state",
+            "enum": [
+              "not_started",
+              "executing",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "unknown"
+            ]
           },
           "executed_at": {
             "type": "string",
@@ -11774,7 +11805,12 @@
           },
           "review_status": {
             "type": "string",
-            "description": "Review state, for example passed or vetoed"
+            "description": "Review state",
+            "enum": [
+              "pending",
+              "passed",
+              "vetoed"
+            ]
           },
           "source": {
             "type": "string",
@@ -11909,6 +11945,10 @@
           "chain_exhausted": {
             "type": "boolean",
             "description": "True when no further attempt may be proposed"
+          },
+          "execute_error": {
+            "type": "string",
+            "description": "Present when execute was set and the action could not be approved or started; the action is still recorded, and exec_status shows where it stands"
           }
         },
         "required": [
@@ -15460,6 +15500,60 @@
         "required": [
           "query"
         ]
+      },
+      "QueryResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "description": "Result of every statement, in order; a failed statement ends the run",
+            "items": {
+              "$ref": "#/components/schemas/QueryStatementResult"
+            }
+          },
+          "total_statements": {
+            "type": "integer",
+            "description": "Number of statements in the request"
+          }
+        }
+      },
+      "QueryStatementResult": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": "array",
+            "description": "Result column names",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string",
+            "description": "Error text; absent on success"
+          },
+          "query": {
+            "type": "string",
+            "description": "The statement that was run"
+          },
+          "row_count": {
+            "type": "integer",
+            "description": "Number of rows returned"
+          },
+          "rows": {
+            "type": "array",
+            "description": "Result rows as text",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the rows were cut short"
+          }
+        }
       },
       "QueryStatsResponse": {
         "type": "object",

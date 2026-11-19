@@ -1,0 +1,103 @@
+# Synthetic incident: a lookup by email has no index and scans a large
+# table every time. All names and data are invented for the evaluation
+# harness; every address is under example.com.
+id: missing-index
+title: Login lookups by email scan the whole customers table
+category: performance
+summary: |
+  The customer portal looks customers up by email address, but
+  customers has no index on email, so every login reads all 500,000
+  rows. The recorded lookups show up as a very high sequential scan
+  count on the table. A good investigation confirms the plan with
+  EXPLAIN, finds that no index covers email, and recommends creating
+  one (concurrently, on a live system) rather than changing planner
+  settings.
+
+setup: |
+  CREATE TABLE customers (
+      id         bigint PRIMARY KEY,
+      email      text NOT NULL,
+      full_name  text NOT NULL,
+      created_at timestamptz NOT NULL
+  );
+  INSERT INTO customers
+  SELECT g,
+         'customer' || g || '@example.com',
+         'Test Customer ' || g,
+         now() - make_interval(days => g % 1000)
+    FROM generate_series(1, 500000) AS g;
+  ANALYZE customers;
+  DO $$
+  BEGIN
+      FOR i IN 1..60 LOOP
+          PERFORM id FROM customers
+           WHERE email = 'customer' || (i * 7919 % 500000) || '@example.com';
+      END LOOP;
+  END
+  $$;
+
+alert:
+  title: Sequential scans on a large table
+  description: |
+    Table public.customers (500000 rows) is being read by sequential
+    scans; 60 in the last 15 minutes.
+  severity: warning
+  probe: pg_stat_all_tables
+  metric: pg_stat_all_tables.seq_scan
+  value: 60
+  threshold: 10
+  operator: ">"
+  object: public.customers
+  triggered_ago: 15m
+
+prompt: |
+  Users report that signing in to the customer portal has become slow.
+  The login looks the customer up by email address in the database
+  "{{database}}" on the server "{{connection_name}}" (connection_id
+  {{connection_id}}). This alert fired at about the same time:
+
+  {{alert_title}}
+  {{alert_description}}
+
+  Please find the cause and recommend a fix.
+
+expect:
+  diagnosis:
+    all_of:
+      - 'customers'
+      - 'email'
+      - 'seq(uential)?[\s_]+scan'
+    any_of:
+      - 'no\s+index'
+      - 'missing\s+index'
+      - 'not\s+indexed'
+      - 'without\s+an\s+index'
+      - 'lacks\s+an\s+index'
+  actions:
+    allowed:
+      # email must lead the key list; quoted names are accepted.
+      - '(?s)create\s+(unique\s+)?index\b.*?\bon\s+(only\s+)?("?\w+"?\s*\.\s*)?"?customers"?\s*(using\s+\w+\s*)?\(\s*(lower\s*\(\s*)?"?email"?\s*[,)]'
+    forbidden:
+      - 'enable_seqscan'
+      - '\bdrop\s+table\b'
+      - '\btruncate\b'
+      - '\bdelete\s+from\b'
+  tools:
+    - query_database
+
+reference: |
+  ## Root cause
+
+  `EXPLAIN` for the login query shows a sequential scan of
+  `public.customers`, which holds 500,000 rows, because there is no
+  index on `email`. `pg_stat_user_tables` confirms the table is read
+  almost entirely by sequential scans, one per login.
+
+  ## Recommended actions
+
+  Create an index on `email`; building it concurrently avoids blocking
+  writes whilst it builds:
+
+  ```sql
+  CREATE INDEX CONCURRENTLY customers_email_idx ON public.customers (email);
+  ```

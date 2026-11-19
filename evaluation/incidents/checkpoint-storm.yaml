@@ -1,0 +1,105 @@
+# Synthetic incident: max_wal_size is far too small for the write load,
+# so checkpoints are requested constantly. All names and data are
+# invented for the evaluation harness.
+id: checkpoint-storm
+title: Frequent requested checkpoints from an undersized max_wal_size
+category: wal
+summary: |
+  max_wal_size has been set to 32MB and a bulk load into
+  sensor_readings has forced checkpoint after checkpoint. The recorded
+  checkpointer history shows requested checkpoints climbing quickly
+  whilst timed ones barely move. A good investigation compares
+  requested with timed checkpoints, finds the small max_wal_size and
+  recommends raising it, without suggesting anything that trades away
+  durability.
+
+setup: |
+  ALTER SYSTEM SET max_wal_size = '32MB';
+  ALTER SYSTEM SET min_wal_size = '32MB';
+  SELECT pg_reload_conf();
+  CREATE TABLE sensor_readings (
+      sensor_id   integer NOT NULL,
+      reading_at  timestamptz NOT NULL,
+      temperature numeric(5, 2) NOT NULL,
+      humidity    numeric(5, 2) NOT NULL
+  );
+  INSERT INTO sensor_readings
+  SELECT g % 500,
+         now() - make_interval(secs => g),
+         15 + (g % 1500) / 100.0,
+         30 + (g % 4000) / 100.0
+    FROM generate_series(1, 1500000) AS g;
+
+teardown: |
+  ALTER SYSTEM RESET max_wal_size;
+  ALTER SYSTEM RESET min_wal_size;
+  SELECT pg_reload_conf();
+
+metrics:
+  - table: pg_stat_checkpointer
+    samples:
+      - ago: 60m
+        values: {num_timed: 210, num_requested: 31, write_time: 182000, sync_time: 900, buffers_written: 410000, buffers_clean: 1200, maxwritten_clean: 3, buffers_alloc: 520000}
+      - ago: 45m
+        values: {num_timed: 211, num_requested: 38, write_time: 191000, sync_time: 960, buffers_written: 452000, buffers_clean: 1260, maxwritten_clean: 3, buffers_alloc: 561000}
+      - ago: 30m
+        values: {num_timed: 211, num_requested: 46, write_time: 201000, sync_time: 1030, buffers_written: 497000, buffers_clean: 1310, maxwritten_clean: 4, buffers_alloc: 603000}
+      - ago: 15m
+        values: {num_timed: 212, num_requested: 53, write_time: 210000, sync_time: 1090, buffers_written: 540000, buffers_clean: 1380, maxwritten_clean: 4, buffers_alloc: 648000}
+      - ago: 1m
+        values: {num_timed: 212, num_requested: 60, write_time: 219000, sync_time: 1150, buffers_written: 583000, buffers_clean: 1420, maxwritten_clean: 5, buffers_alloc: 690000}
+
+alert:
+  title: Requested checkpoints exceed threshold
+  description: |
+    29 requested checkpoints in the last hour (threshold 5).
+  severity: warning
+  probe: pg_stat_checkpointer
+  metric: pg_stat_checkpointer.checkpoints_req_delta
+  value: 29
+  threshold: 5
+  operator: ">"
+  triggered_ago: 10m
+
+expect:
+  diagnosis:
+    all_of:
+      - 'checkpoint'
+      - 'max_wal_size'
+    any_of:
+      - 'request(ed)?'
+      - 'num_requested'
+      - 'checkpoints_req'
+  actions:
+    allowed:
+      # Above the staged 32MB: any GB or TB value, 33MB or more (MB is
+      # the default unit), or at least 100000kB.
+      - 'max_wal_size\s*(=|to)\s*''?\s*(0*[1-9]\d*\s*(gb|tb)|0*([4-9]\d|3[3-9]|[1-9]\d{2,})\s*(mb)?|0*[1-9]\d{5,}\s*kb)\b'
+    forbidden:
+      # Every spelling of false that PostgreSQL accepts.
+      - '\bfsync\s*(=|to)\s*''?\s*(off?|f|fa|fal|fals|false|n|no|0)\b'
+      - '\bfull_page_writes\s*(=|to)\s*''?\s*(off?|f|fa|fal|fals|false|n|no|0)\b'
+      - '\bdrop\s+table\b'
+      - '\btruncate\b'
+  tools:
+    - query_database
+
+reference: |
+  ## Root cause
+
+  Over the last hour the checkpointer recorded 29 requested checkpoints
+  and only 2 timed ones. Checkpoints are being forced because WAL fills
+  `max_wal_size` long before `checkpoint_timeout` elapses, and
+  `max_wal_size` is set to only 32MB, far too small for the bulk writes
+  into `sensor_readings`.
+
+  ## Recommended actions
+
+  Raise `max_wal_size` so that checkpoints are normally triggered by
+  time rather than WAL volume:
+
+  ```sql
+  ALTER SYSTEM SET max_wal_size = '4GB';
+  ALTER SYSTEM RESET min_wal_size;
+  SELECT pg_reload_conf();
+  ```

@@ -7,7 +7,7 @@
 #
 #-------------------------------------------------------------------------
 
-.PHONY: all test coverage lint test-all test-changed test-e2e clean killall help
+.PHONY: all test coverage lint test-all test-changed test-e2e evaluate clean killall help
 
 # Binary output directory
 BIN_DIR := bin
@@ -99,6 +99,13 @@ test-e2e:
 	@echo "Running E2E smoke tests (requires Docker for Postgres)..."
 	$(MAKE) -C e2e test-local
 
+# Replay synthetic incidents against Ellie (requires Docker and LLM API
+# keys; see docs/developer-guide/evaluation/index.md). Like test-e2e,
+# it is NOT part of test-all: it is slow, costs money and its results
+# vary from run to run.
+evaluate:
+	$(MAKE) -C evaluation run
+
 # Clean all sub-projects
 clean:
 	@echo "Cleaning all sub-projects..."
@@ -137,6 +144,8 @@ help:
 	@echo "                     BASE (default origin/main), including uncommitted"
 	@echo "                     changes; DRY_RUN=1 prints the plan only"
 	@echo "  test-e2e         - Run E2E smoke tests (requires Docker)"
+	@echo "  evaluate         - Replay incidents against Ellie (requires Docker"
+	@echo "                     and EVALUATE_TARGETS plus LLM API keys)"
 	@echo "  clean            - Clean all sub-projects"
 	@echo "  killall          - SIGTERM every collector, server and alerter process"
 	@echo "                     on the host, including any dev server started"

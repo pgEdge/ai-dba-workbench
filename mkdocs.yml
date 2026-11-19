@@ -187,6 +187,8 @@ nav:
       - Client Architecture: developer-guide/client/architecture.md
     - End-to-End Testing:
       - End-to-End Smoke Tests: developer-guide/e2e/index.md
+    - Ellie Evaluation:
+      - Ellie Evaluation Harness: developer-guide/evaluation/index.md
     - Design:
       - Node Role Probe Design: developer-guide/design/node-role-probe.md
 

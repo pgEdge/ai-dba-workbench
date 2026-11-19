@@ -158,7 +158,13 @@ const ActionBlock: React.FC<ActionBlockProps> = (props) => {
     useActionBlockStart({ ...props, initialAction, create, load });
 
     const current = selectCurrentAction(polled, initialAction, actionId, sql);
-    const errorRow = error ? <ActionErrorRow>{error}</ActionErrorRow> : null;
+    // With no action to show, the error row is all there is, so it
+    // carries the dismiss control the action header would otherwise.
+    const errorRow = error ? (
+        <ActionErrorRow onDismiss={current ? undefined : props.onDismiss}>
+            {error}
+        </ActionErrorRow>
+    ) : null;
 
     if (sql !== undefined && !source) {
         return (

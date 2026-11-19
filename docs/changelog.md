@@ -12,10 +12,15 @@ project adheres to
 
 ### Added
 
-- Add proposed action endpoints: propose, fetch, execute and cancel a
-  change to a monitored database, and link actions to a conversation.
-  Execution needs write access to the connection, and overriding a
-  failed review is limited to sessions, never API tokens.
+- Add reviewed proposed actions for database writes. A write that Ellie
+  proposes with the new `propose_action` tool, or that you confirm from
+  an AI-generated SQL block, is stored first, reviewed by Ellie's
+  supervisor, and run by the server only from the stored statements. A
+  vetoed action can be overridden only by a signed-in user with write
+  access who types the connection name; API tokens can never override.
+  The new `actions` section of the server configuration file sets the
+  lock timeout, statement timeout, attempt limit and context size. The
+  new action endpoints propose, fetch, execute and cancel an action.
   (#774)
 - Add a top-level `make test-changed` target that runs `test-all` only
   in the sub-projects a branch changes, including those that depend on
@@ -29,6 +34,10 @@ project adheres to
 - Refuse writes sent to `/api/v1/connections/{id}/query` with a 409 and
   `requires_action`; the `confirmed` field is removed, and a write is
   now proposed as an action instead.
+  (#774)
+- Raise the minimum collector schema version to 33. Upgrade and start
+  the collector before the server, because the server refuses to start
+  against an older schema.
   (#774)
 - Reorganise the documentation by task. Configuration reference pages
   for the server, collector, alerter and web client moved from

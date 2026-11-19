@@ -47,8 +47,10 @@ chart's associated database server. Results appear inline below the code block.
 
 ![Executing a Code Block](../../images/execute_code_block.png)
 
-Write statements such as `ALTER SYSTEM` prompt a confirmation dialog before
-executing. Read-only queries execute immediately.
+Write statements such as `ALTER SYSTEM` prompt a confirmation dialog, and the
+Workbench then reviews and runs them as a proposed action, as
+[Reviewed Write Actions](ai-analysis.md#reviewed-write-actions) describes.
+Read-only queries execute immediately.
 
 The Workbench caches chart analysis results on the client side; an amber brain
 icon indicates a cached analysis exists. This caching behavior is described in

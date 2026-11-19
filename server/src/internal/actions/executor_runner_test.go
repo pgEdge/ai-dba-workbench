@@ -117,6 +117,29 @@ func TestRunnerOpenTransactionIsRolledBack(t *testing.T) {
 	}
 }
 
+func TestRunnerStopBetweenStatementsIsNotUnknown(t *testing.T) {
+	t.Parallel()
+	f := newExecFixture(t, "_x_run5", time.Second, time.Minute, 10)
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := f.newRunner(t, stopped, nil)
+	st := &runState{results: newResults([]string{"SELECT 1"})}
+	r.runIndividually(st)
+	if st.unknown || st.results[0].Error != stoppedMessage {
+		t.Fatalf("stop between statements: %+v", st)
+	}
+}
+
+func TestClearAppliedClearsRows(t *testing.T) {
+	t.Parallel()
+	rs := []StatementResult{{Applied: true, CommandTag: "INSERT 0 1", RowsAffected: 1,
+		Columns: []string{"a"}, Rows: [][]string{{"1"}}, Truncated: true}}
+	clearApplied(rs)
+	if rs[0].Applied || rs[0].Columns != nil || rs[0].Rows != nil || rs[0].Truncated || rs[0].CommandTag != "" {
+		t.Fatalf("not cleared: %+v", rs[0])
+	}
+}
+
 func TestRollbackQuietlyLogsFailure(t *testing.T) {
 	t.Parallel()
 	rollbackQuietly(context.Background(), func(context.Context, string) error { return errors.New("gone") })

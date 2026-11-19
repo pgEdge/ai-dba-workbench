@@ -257,6 +257,34 @@ describe('ActionBlock', () => {
             ).toBeInTheDocument();
         });
 
+        it('shows a statement note as a warning line', () => {
+            hook.action = makeAction({
+                approval: 'approved',
+                exec_status: 'failed',
+                results: [
+                    {
+                        statement: "SELECT setval('s', 1)",
+                        error: 'boom',
+                        note: 'Sequence changes are not undone by a rollback',
+                    },
+                ],
+            });
+            renderBlock({ action: makeAction() });
+            expect(screen.getByRole('note')).toHaveTextContent(
+                'Sequence changes are not undone by a rollback',
+            );
+        });
+
+        it('renders no note when the statement has none', () => {
+            hook.action = makeAction({
+                approval: 'approved',
+                exec_status: 'succeeded',
+                results: [{ statement: 'x', rows_affected: 1 }],
+            });
+            renderBlock({ action: makeAction() });
+            expect(screen.queryByRole('note')).not.toBeInTheDocument();
+        });
+
         it('shows Outcome unknown for an unknown state', () => {
             hook.action = makeAction({
                 approval: 'approved',

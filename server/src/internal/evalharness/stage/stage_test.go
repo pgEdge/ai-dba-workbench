@@ -369,8 +369,8 @@ func TestStageFailures(t *testing.T) {
 				strings.ReplaceAll(tc.name, " ", "-"))); n != 1 {
 				t.Errorf("teardown SQL ran %d times", n)
 			}
-			if n := scanInt(t, testConn(t, dsn).QueryRow(context.Background(), "SELECT count(*) FROM pg_database WHERE datname LIKE $1",
-				fmt.Sprintf("eval\\_fail\\_%d\\_%%", i))); n != 0 {
+			if n := scanInt(t, testConn(t, dsn).QueryRow(context.Background(),
+				`SELECT count(*) FROM pg_database WHERE datname LIKE 'eval\_fail\_' || $1::int || '\_%'`, i)); n != 0 {
 				t.Errorf("staged database left behind")
 			}
 		})

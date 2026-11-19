@@ -141,6 +141,7 @@ builtins:
     get_timeline_events: true
     query_datastore: true
     describe_datastore: true
+    propose_action: true
     generate_embedding: true
     search_knowledgebase: true
     store_memory: true

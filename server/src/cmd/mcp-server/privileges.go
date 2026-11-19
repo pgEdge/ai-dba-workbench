@@ -387,6 +387,9 @@ func registerMCPPrivileges(store *auth.AuthStore) {
 		// Datastore Query Tool
 		{"query_datastore", "tool", "Run structured queries against the monitoring datastore, limited to accessible connections", false},
 
+		// Proposed Actions Tool
+		{"propose_action", "tool", "Propose a reviewed write for a monitored database; a person decides whether it runs", false},
+
 		// Resources
 		{"pg://system_info", "resource", "PostgreSQL system information resource", false},
 		{"pg://connection_info", "resource", "Current database connection information resource", false},

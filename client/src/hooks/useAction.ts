@@ -81,36 +81,42 @@ export const useAction = (): UseActionResult => {
         const gen = pollGenRef.current;
         let delay = POLL_INITIAL_MS;
 
-        const schedule = () => {
-            timerRef.current = setTimeout(async () => {
-                timerRef.current = null;
-                try {
-                    const next = await apiGet<Action>(
-                        `/api/v1/actions/${id}`,
-                    );
-                    if (!mountedRef.current || gen !== pollGenRef.current) {
-                        return;
-                    }
-                    setAction(next);
-                    if (isTerminalExecStatus(next.exec_status)) {
-                        return;
-                    }
-                } catch (err) {
-                    if (!mountedRef.current || gen !== pollGenRef.current) {
-                        return;
-                    }
-                    // The action is gone or off limits: nothing to follow.
-                    if (
-                        err instanceof ApiError
-                        && (err.statusCode === 403 || err.statusCode === 404)
-                    ) {
-                        setError(messageOf(err));
-                        return;
-                    }
-                    // Anything else is treated as transient.
+        // Fetch the action once; true means it may still change, so the
+        // next poll should be scheduled.
+        const poll = async (): Promise<boolean> => {
+            try {
+                const next = await apiGet<Action>(`/api/v1/actions/${id}`);
+                if (!mountedRef.current || gen !== pollGenRef.current) {
+                    return false;
                 }
-                delay = Math.min(delay * 2, POLL_MAX_MS);
-                schedule();
+                setAction(next);
+                return !isTerminalExecStatus(next.exec_status);
+            } catch (err) {
+                if (!mountedRef.current || gen !== pollGenRef.current) {
+                    return false;
+                }
+                // The action is gone or off limits: nothing to follow.
+                if (
+                    err instanceof ApiError
+                    && (err.statusCode === 403 || err.statusCode === 404)
+                ) {
+                    setError(messageOf(err));
+                    return false;
+                }
+                // Anything else is treated as transient.
+                return true;
+            }
+        };
+
+        const schedule = () => {
+            timerRef.current = setTimeout(() => {
+                timerRef.current = null;
+                void poll().then((again) => {
+                    if (again) {
+                        delay = Math.min(delay * 2, POLL_MAX_MS);
+                        schedule();
+                    }
+                });
             }, delay);
         };
         schedule();

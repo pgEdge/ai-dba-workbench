@@ -11,7 +11,12 @@ Issue #774. A write is never sent to `/query` for execution.
   `execute: true`, or follows one given by `action` or `actionId`
   (from a `propose_action` tool result in `ChatMessage`). It polls via
   `hooks/useAction.ts` and never resends SQL: execute and cancel take
-  the action id only.
+  the action id only. Its pieces sit beside it: `actionBlockState.ts`
+  (pure helpers: which action to show, the create request, and the
+  permission flags such as `canRetry` and `canOverride`),
+  `useActionBlockStart.ts` (the mount-time create or load and its
+  start guard) and `ActionBlockParts.tsx` (presentational parts).
+  Put new permission logic in `deriveActionFlags`, not the component.
 - UI copy is asserted by tests; keep it in step with the user guide
   (`docs/user-guide/ai/ai-analysis.md`, Reviewed Write Actions):
   "Supervisor reviewing…", "Approved by Ellie's supervisor", "Vetoed

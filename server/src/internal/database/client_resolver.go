@@ -170,7 +170,7 @@ func (r *ClientResolver) ResolveClient(ctx context.Context) (*Client, error) {
 				ConnectionID: session.ConnectionID,
 				DatabaseName: session.DatabaseName,
 			}
-			client, err := r.ClientManager.GetClientForSession(sessionInfo, connStr)
+			client, err := r.ClientManager.GetClientForSession(ctx, sessionInfo, connStr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to connect to selected database: %w", err)
 			}

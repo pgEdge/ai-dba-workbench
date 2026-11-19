@@ -10,8 +10,11 @@
 package database
 
 import (
+	"database/sql"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestLoadMetadataFor_UnknownConnectionHidesConnString checks that the
@@ -281,5 +284,40 @@ func TestClose(t *testing.T) {
 
 	if len(client.connections) != 0 {
 		t.Errorf("After Close(), connections map has %d entries, want 0", len(client.connections))
+	}
+}
+
+func TestVectorColumnInfo(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		typeName sql.NullString
+		dataType string
+		isVector bool
+		dims     int
+	}{
+		{"not vector", sql.NullString{String: "int4", Valid: true}, "integer", false, 0},
+		{"null type name", sql.NullString{}, "vector(3)", false, 0},
+		{"vector with dimensions", sql.NullString{String: "vector", Valid: true}, "vector(1536)", true, 1536},
+		{"vector without dimensions", sql.NullString{String: "vector", Valid: true}, "vector", true, 0},
+		{"dimensions overflow int", sql.NullString{String: "vector", Valid: true}, "vector(99999999999999999999)", true, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			isVector, dims := vectorColumnInfo(tt.typeName, tt.dataType)
+			if isVector != tt.isVector || dims != tt.dims {
+				t.Errorf("vectorColumnInfo(%v, %q) = (%v, %d), want (%v, %d)",
+					tt.typeName, tt.dataType, isVector, dims, tt.isVector, tt.dims)
+			}
+		})
+	}
+}
+
+func TestMetadataLoadFailedReturnsErr(t *testing.T) {
+	t.Parallel()
+	want := errors.New("boom")
+	if got := metadataLoadFailed("postgres://u@192.0.2.1/x", time.Now(), want); got != want {
+		t.Errorf("metadataLoadFailed returned %v, want %v", got, want)
 	}
 }

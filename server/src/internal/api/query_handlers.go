@@ -1502,9 +1502,7 @@ func openQueryPool(ctx context.Context, connStr, appName string, guard database.
 
 	poolConfig.MaxConns = 1
 	poolConfig.MinConns = 0
-	if poolConfig.ConnConfig.RuntimeParams == nil {
-		poolConfig.ConnConfig.RuntimeParams = make(map[string]string)
-	}
+	// ParseConfig always allocates RuntimeParams.
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = appName
 	// The classifier reads the statement text as UTF-8. A startup
 	// parameter overrides any client_encoding default set on the role or
@@ -1514,6 +1512,13 @@ func openQueryPool(ctx context.Context, connStr, appName string, guard database.
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	// Open the pool's connection now, under ConnectMonitored, so that a
+	// failed connect takes the same time to report whatever its cause
+	// (issue #850); the statements then reuse the idle connection.
+	if err := database.ConnectMonitored(ctx, pool.Ping); err != nil {
+		pool.Close()
 		return nil, fmt.Errorf("connect: %w", err)
 	}
 	return pool, nil

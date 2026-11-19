@@ -11,12 +11,14 @@ package database
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -139,13 +141,13 @@ func TestClientManager_MonitoredClientLoadsMetadata(t *testing.T) {
 
 	dbName := "x"
 	session := &SessionInfo{TokenHash: "tok", ConnectionID: 7, DatabaseName: &dbName}
-	client, err := cm.GetClientForSession(session, connStr)
+	client, err := cm.GetClientForSession(context.Background(), session, connStr)
 	if err != nil {
 		t.Fatalf("GetClientForSession: %v", err)
 	}
 	assertMetadata(t, client, schema)
 
-	again, err := cm.GetClientForSession(session, connStr)
+	again, err := cm.GetClientForSession(context.Background(), session, connStr)
 	if err != nil || again != client {
 		t.Fatalf("second request: client %p, %v; want the cached %p", again, err, client)
 	}
@@ -154,7 +156,7 @@ func TestClientManager_MonitoredClientLoadsMetadata(t *testing.T) {
 	if strings.Contains(connStr, "?") {
 		changed = connStr + "&connect_timeout=5"
 	}
-	replaced, err := cm.GetClientForSession(session, changed)
+	replaced, err := cm.GetClientForSession(context.Background(), session, changed)
 	if err != nil {
 		t.Fatalf("changed connection string: %v", err)
 	}
@@ -162,14 +164,98 @@ func TestClientManager_MonitoredClientLoadsMetadata(t *testing.T) {
 		t.Error("a changed connection string did not replace the client")
 	}
 
-	if _, err := cm.GetClientForSession(nil, connStr); err == nil {
+	if _, err := cm.GetClientForSession(context.Background(), nil, connStr); err == nil {
 		t.Error("nil session: want an error")
 	}
-	if _, err := cm.GetClientForSession(session, ""); err == nil {
+	if _, err := cm.GetClientForSession(context.Background(), session, ""); err == nil {
 		t.Error("empty connection string: want an error")
 	}
-	if _, err := cm.GetOrCreateClientWithConnString("", connStr); err == nil {
+	if _, err := cm.GetOrCreateClientWithConnString(context.Background(), "", connStr); err == nil {
 		t.Error("empty key: want an error")
+	}
+	if _, err := cm.GetOrCreateClientWithConnString(context.Background(), "k", ""); err == nil {
+		t.Error("empty connection string: want an error")
+	}
+}
+
+// metadataShadowSQL creates a schema whose pg_class table, reached
+// ahead of pg_catalog through search_path, makes the metadata query
+// fail on a missing column.
+const metadataShadowSQL = `
+DROP SCHEMA IF EXISTS ai_wb_client_meta_shadow CASCADE;
+CREATE SCHEMA ai_wb_client_meta_shadow;
+CREATE TABLE ai_wb_client_meta_shadow.pg_class (x integer);
+`
+
+// metadataShadowDropSQL removes the metadataShadowSQL schema.
+const metadataShadowDropSQL = `DROP SCHEMA IF EXISTS ai_wb_client_meta_shadow CASCADE`
+
+// TestClientManager_MetadataLoadFailure checks that a monitored client
+// whose metadata load fails is closed and not cached.
+func TestClientManager_MetadataLoadFailure(t *testing.T) {
+	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if connStr == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping client metadata integration test")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	if _, err := pool.Exec(ctx, metadataShadowSQL); err != nil {
+		t.Fatalf("create shadow schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), metadataShadowDropSQL); err != nil {
+			t.Errorf("drop shadow schema: %v", err)
+		}
+	})
+
+	u, err := url.Parse(connStr)
+	if err != nil {
+		t.Fatalf("parse %s: %v", SanitizeConnStr(connStr), err)
+	}
+	q := u.Query()
+	q.Set("search_path", "ai_wb_client_meta_shadow,pg_catalog")
+	u.RawQuery = q.Encode()
+
+	cm := NewClientManager(nil)
+	t.Cleanup(func() { _ = cm.CloseAll() })
+	_, err = cm.GetOrCreateClientWithConnString(ctx, "shadow", u.String())
+	if err == nil || !strings.Contains(err.Error(), "failed to load metadata") {
+		t.Fatalf("error = %v, want a metadata load failure", err)
+	}
+	if n := cm.GetClientCount(); n != 0 {
+		t.Errorf("client count = %d, want 0", n)
+	}
+}
+
+// TestLoadMonitoredMetadataIsBounded checks that the metadata load for
+// a monitored connection runs under the connect deadline, so that a
+// server which accepts the connection but never answers cannot hold the
+// load indefinitely. A deadline too short for any query stands in for
+// that server.
+func TestLoadMonitoredMetadataIsBounded(t *testing.T) {
+	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if connStr == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping client metadata integration test")
+	}
+	client := NewClientWithConnectionString(connStr, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(client.Close)
+
+	restore := SetConnectTiming(ConnectTiming{Timeout: time.Nanosecond})
+	err := LoadMonitoredMetadata(context.Background(), client, connStr)
+	restore()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
+	}
+
+	if err := LoadMonitoredMetadata(context.Background(), client, connStr); err != nil {
+		t.Fatalf("load under the default deadline: %v", err)
 	}
 }
 
@@ -251,6 +337,23 @@ func TestClient_ConnectFromEnvironment(t *testing.T) {
 		t.Fatalf("LoadMetadata: %v", err)
 	}
 	assertMetadata(t, c, schema)
+}
+
+// TestClient_ConnectFallback checks that a client with no configuration
+// and no environment connection string falls back to the local default,
+// here pointed at a port nothing listens on through PGPORT.
+func TestClient_ConnectFallback(t *testing.T) {
+	t.Setenv("PGEDGE_POSTGRES_CONNECTION_STRING", "")
+	t.Setenv("PGPORT", "1")
+
+	c := NewClient(nil)
+	defer c.Close()
+	if err := c.Connect(); err == nil {
+		t.Fatal("Connect to the fallback on port 1: want an error")
+	}
+	if got := c.GetDefaultConnection(); got != "postgres://localhost/postgres?sslmode=prefer" {
+		t.Errorf("default connection = %s, want the fallback", got)
+	}
 }
 
 // TestLogger_LevelMethods checks that each level method writes only at

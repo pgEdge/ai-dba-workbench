@@ -94,7 +94,7 @@ moved.
   server the policy is `HostValidator.CheckDialAddr` (the save-time
   rules, judged per address), installed by `Datastore.SetDialPolicy`
   in `initDatastore` and applied by `Datastore.GuardMonitoredConnConfig`
-  in `ClientManager.GetOrCreateClientWithConnString` (via
+  in `connectMonitoredClient` (`client_manager.go`, via
   `Client.dialGuard`), `api.openQueryPool` and `ListDatabases`. A new
   monitored pool path must apply it too. The datastore's own
   connections are deliberately unguarded. The collector has no policy
@@ -124,6 +124,25 @@ moved.
   collector, or a policy that permits internal addresses
   (`allow_internal_networks`, or a server `allowed_hosts` match), can
   reach the rest of it.
+- A failed connect to a monitored server must not show why it failed
+  (issue #850). Timing or text that separates a refused port from a
+  filtered one lets a user who can save a connection scan ports from
+  the server's network. Every server path that connects to a monitored
+  server whilst the caller waits goes through
+  `database.ConnectMonitored`, or `boundedConnect` plus
+  `GetClientForSession`'s hold for `ClientManager` clients. The connect
+  runs under `MonitoredConnectTimeout` (10 s), and a failure returns no
+  sooner than that, timed from the caller's own request.
+  `LoadMonitoredMetadata` applies the same deadline to the metadata
+  load. Failures match `database.ErrConnectFailed`; replies use fixed
+  text (`database.FailedConnectText`, or the HTTP handlers' "Failed to
+  connect to database"), and the cause goes only to the log. Check that
+  a new monitored-connect path uses the helper, and that its reply text
+  does not unwrap or print the error chain. `ClientManager` connects run
+  outside `cm.mu`, with one connect shared per key and connection
+  string, detached from any caller's cancellation. Holding the lock
+  during a connect would let a cache hit's latency show another
+  connect's outcome.
 - Alerter notification deliveries are guarded at the dial, not before
   it: `notifications/dial_guard.go` builds one
   `hostvalidation.GuardedDialContext` (resolves the host itself and

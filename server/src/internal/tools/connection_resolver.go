@@ -253,7 +253,7 @@ func (r *ConnectionResolver) resolveExplicit(
 		resp := mcp.ToolResponse{
 			Content: []mcp.ContentItem{{
 				Type: "text",
-				Text: "Failed to establish database connection",
+				Text: database.FailedConnectText,
 			}},
 			IsError: true,
 		}
@@ -278,13 +278,13 @@ func (r *ConnectionResolver) resolveExplicit(
 		DatabaseName: dbNamePtr,
 	}
 
-	client, err := r.clientManager.GetClientForSession(sessionInfo, connStr)
+	client, err := r.clientManager.GetClientForSession(ctx, sessionInfo, connStr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: connection_resolver: failed to connect to connection %d: %v\n", ca.ConnectionID, err)
 		resp := mcp.ToolResponse{
 			Content: []mcp.ContentItem{{
 				Type: "text",
-				Text: "Failed to establish database connection",
+				Text: database.FailedConnectText,
 			}},
 			IsError: true,
 		}
@@ -293,7 +293,7 @@ func (r *ConnectionResolver) resolveExplicit(
 
 	// Ensure metadata is loaded for this connection string.
 	if !client.IsMetadataLoadedFor(connStr) {
-		_ = client.LoadMetadataFor(connStr) //nolint:errcheck // metadata loading failure is non-fatal
+		_ = database.LoadMonitoredMetadata(ctx, client, connStr) //nolint:errcheck // metadata loading failure is non-fatal
 	}
 
 	pool := client.GetPoolFor(connStr)
@@ -302,7 +302,7 @@ func (r *ConnectionResolver) resolveExplicit(
 		resp := mcp.ToolResponse{
 			Content: []mcp.ContentItem{{
 				Type: "text",
-				Text: "Failed to establish database connection",
+				Text: database.FailedConnectText,
 			}},
 			IsError: true,
 		}

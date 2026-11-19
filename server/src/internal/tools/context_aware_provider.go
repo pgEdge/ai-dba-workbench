@@ -580,25 +580,14 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 	// Get the appropriate database client for this request
 	dbClient, err := p.getClient(ctx)
 	if err != nil {
-		// Extract the root cause error for cleaner display
-		rootErr := err
-		for {
-			if unwrapped := errors.Unwrap(rootErr); unwrapped != nil {
-				rootErr = unwrapped
-			} else {
-				break
-			}
-		}
-
 		// Log the full error chain for debugging
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to get database client for tool '%s': %v\n", name, err)
 
-		// Show the root cause to the client for actionable feedback
 		return logAndReturn(mcp.ToolResponse{
 			Content: []mcp.ContentItem{
 				{
 					Type: "text",
-					Text: fmt.Sprintf("Database connection error: %v", rootErr),
+					Text: clientErrorText(err),
 				},
 			},
 			IsError: true,
@@ -612,6 +601,23 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 	// Execute the tool using the client-specific registry
 	response, err := registry.Execute(ctx, name, args)
 	return logAndReturn(response, err)
+}
+
+// clientErrorText is the reply to a tool call whose database client
+// could not be resolved. A failed connect to the selected server gets
+// fixed text, since the cause's text tells a refused port from a
+// filtered one (issue #850); any other failure, such as no connection
+// being selected or access being denied, does not depend on the target
+// and shows its root cause, which tells the user what to do.
+func clientErrorText(err error) string {
+	if errors.Is(err, database.ErrConnectFailed) {
+		return database.FailedConnectText
+	}
+	rootErr := err
+	for unwrapped := errors.Unwrap(rootErr); unwrapped != nil; unwrapped = errors.Unwrap(rootErr) {
+		rootErr = unwrapped
+	}
+	return fmt.Sprintf("Database connection error: %v", rootErr)
 }
 
 // getClient returns the appropriate database client based on authentication state

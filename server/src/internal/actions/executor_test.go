@@ -62,6 +62,9 @@ func (f *execFixture) propose(t *testing.T, stmts ...string) int64 {
 	if err := f.store.SetReview(ctx, a.ID, "passed", Verdict{Decision: "pass", Danger: "low", Reviewer: "test"}); err != nil {
 		t.Fatalf("set review: %v", err)
 	}
+	if err := f.store.Approve(ctx, a.ID, "approved", "tester", "session"); err != nil {
+		t.Fatal(err)
+	}
 	return a.ID
 }
 
@@ -469,6 +472,9 @@ func TestExecuteOpenerFailure(t *testing.T) {
 	if err := store.SetReview(ctx, a.ID, "passed", Verdict{Decision: "pass", Danger: "low", Reviewer: "t"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.Approve(ctx, a.ID, "approved", "tester", "session"); err != nil {
+		t.Fatal(err)
+	}
 	if err := e.Start(ctx, a.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -532,6 +538,9 @@ func runWithOpener(t *testing.T, suffix string, opener Opener, rowLimit int) *Ac
 		t.Fatal(err)
 	}
 	if err := store.SetReview(ctx, a.ID, "passed", Verdict{Decision: "pass", Danger: "low", Reviewer: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Approve(ctx, a.ID, "approved", "tester", "session"); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.Start(ctx, a.ID); err != nil {

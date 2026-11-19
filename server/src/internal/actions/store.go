@@ -213,7 +213,10 @@ func (s *Store) Approve(ctx context.Context, id int64, approval, by, via string)
 }
 
 // ClaimForExecution atomically moves a not-started action that has
-// either passed review or been overridden to executing, recording the
+// a recorded decision to executing: it passed review and was approved,
+// or was vetoed and then overridden. A passed but unapproved action is
+// never claimable, so the database is the final gate whatever the
+// callers do. recording the
 // start time in executed_at. It returns true for exactly one caller
 // however many race for the same action; every other caller, and any
 // action not eligible, gets false.
@@ -224,7 +227,8 @@ func (s *Store) ClaimForExecution(ctx context.Context, id int64) (bool, error) {
                updated_at = now()
          WHERE id = $1
            AND exec_status = 'not_started'
-           AND (review_status = 'passed' OR approval = 'overridden')`, id)
+           AND ((review_status = 'passed' AND approval = 'approved')
+                OR (review_status = 'vetoed' AND approval = 'overridden'))`, id)
 	if err != nil {
 		return false, fmt.Errorf("claim action: %w", err)
 	}

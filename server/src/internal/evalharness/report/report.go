@@ -242,11 +242,18 @@ func WriteMarkdown(w io.Writer, res Results) error {
 	}
 	p.line("")
 
+	writeFailedRuns(p, res.Runs)
+	return p.err
+}
+
+// writeFailedRuns lists each failed run with the checks it failed and an
+// excerpt of its final report.
+func writeFailedRuns(p *printer, runs []Run) {
 	p.line("## Failed runs")
 	p.line("")
 	failed := 0
-	for i := range res.Runs {
-		r := &res.Runs[i]
+	for i := range runs {
+		r := &runs[i]
 		if r.Result.Passed {
 			continue
 		}
@@ -276,7 +283,6 @@ func WriteMarkdown(w io.Writer, res Results) error {
 	if failed == 0 {
 		p.line("None.")
 	}
-	return p.err
 }
 
 // Labeled is one results file in a comparison.

@@ -83,8 +83,7 @@ project adheres to
   of servers. (#833)
 - Count only active alerts on the estate's servers in the estate
   dashboard's Active Alerts tile, which stopped at 200 and included
-  acknowledged alerts, system alerts and alerts on other servers; it
-  now matches the cluster cards. (#834)
+  acknowledged alerts, system alerts and alerts on other servers. (#834)
 
 ## [2.0.0-beta1] - 2026-11-12
 

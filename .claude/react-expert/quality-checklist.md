@@ -605,8 +605,9 @@ are not capped, and are usually sent whole; `KpiTilesSection` reuses its
 performance batches for the alert count and sums each response's
 `total`. Count alerts from `total` with `status=active` and the scope's
 `connection_ids` (which also excludes system alerts), never from the
-length of one page, so the figure matches the cluster cards'
-`active_alert_count`.
+length of one page, so the figure uses the cluster cards' definition
+of `active_alert_count`; the tile still counts offline servers' alerts,
+which the cards omit.
 
 ## Sortable and Searchable Dashboard Tables
 

@@ -128,8 +128,9 @@ The pane includes the following tiles:
   its rate in the most recent interval of the selected time range, not its
   average across the range.
 - The `ACTIVE ALERTS` tile shows the number of active alerts on the estate's
-  servers, which excludes acknowledged alerts and system alerts, and matches
-  the alert counts on the cluster tiles.
+  servers, which excludes acknowledged alerts and system alerts. The tile
+  counts the alerts on offline servers, which the cluster card badges omit, so
+  the tile can exceed the sum of the badges.
 
 The `TRANSACTION RATE` and `TOTAL CONNECTIONS` tiles follow the dashboard time
 range selector. The `TOTAL SERVERS` and `ACTIVE ALERTS` tiles report the

@@ -215,7 +215,8 @@ table lists the ranges that the server treats as internal:
 An IPv4-mapped IPv6 address, such as `::ffff:10.0.0.1`, counts as the IPv4
 address that it carries. Neither `allow_internal_networks` nor `allowed_hosts`
 lets the server connect to an unspecified, link-local or cloud metadata
-address, although a connection that names one can still be saved; see
+address, and a save request that supplies such a `host` or `hostaddr` is
+refused; see
 [Checking Addresses at Connect Time](#checking-addresses-at-connect-time).
 That refusal also covers an address in `::/96`, `::ffff:0:0:0/96`,
 `64:ff9b::/96` or `2002::/16` that embeds an unspecified, link-local or cloud
@@ -264,7 +265,10 @@ an address that `allowed_hosts` covers can permit the whole host name,
 including the name's other addresses. Each time the server connects to a
 monitored database, the server resolves the host name again and checks each
 address on its own, so a host name that later resolves to a refused address
-cannot reach that address; this check defeats DNS rebinding.
+cannot reach that address; this check defeats DNS rebinding. When the
+connection has a `hostaddr`, the server connects to that address instead and
+checks only that address; the server still checks the syntax of the stored
+`host`, but does not resolve it.
 
 At connect time, the server checks each resolved address in the following
 order, and the first rule that matches decides:
@@ -282,13 +286,18 @@ order, and the first rule that matches decides:
    `true`, and permits any other address.
 
 An address that an `allowed_hosts` range covers permits only that address, and
-the server connects only to the permitted addresses. The save-time check does
-not apply the always-refused addresses first, so a connection to a link-local
-address can be saved under `allow_internal_networks` or an `allowed_hosts`
-entry but never connects. When no resolved address is permitted, the connection
-attempt fails with an error that says the host resolves only to addresses that
-connections are not permitted to. The server's own connection to the datastore
-is not checked.
+the server connects only to the permitted addresses. The save-time check also
+refuses the always-refused addresses first, whether a `host` or `hostaddr` that
+the request supplies is such an address or a supplied `host` name resolves to
+one; a name is refused when any of its addresses is always refused, even if the
+server could connect to another of them. An update that supplies neither value
+is not checked, so a stored connection that names such an address can still be
+edited, and the connect-time checks decide whether it connects. A host name
+that `allowed_hosts` lists is not resolved at save time and meets this check
+only when the server connects. When no resolved address is permitted, the
+connection attempt fails with an error that says the host resolves only to
+addresses that connections are not permitted to. The server's own connection
+to the datastore is not checked.
 
 The collector applies a fixed check of its own when the collector connects;
 see

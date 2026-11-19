@@ -10,10 +10,13 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
@@ -39,6 +42,10 @@ type HostValidator struct {
 
 	// parsedBlocked contains parsed CIDR networks from BlockedHosts
 	parsedBlocked []*net.IPNet
+
+	// lookupIP resolves a host name for ValidateHost; nil is
+	// net.LookupIP. Tests set it to stand in for DNS.
+	lookupIP func(host string) ([]net.IP, error)
 }
 
 // parseHostsToCIDR parses a slice of host strings into CIDR networks.
@@ -110,6 +117,15 @@ func (v *HostValidator) ValidateHost(host string) error {
 	// Normalize the host (remove any trailing dots, lowercase)
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
 
+	// Refuse an address that every connect path refuses before the
+	// blocklist and allowlist are consulted, so that neither an
+	// allowed_hosts entry nor allow_internal_networks lets a target be
+	// saved that can never be connected to.
+	ip := net.ParseIP(host)
+	if ip != nil && hostvalidation.IsAlwaysBlockedIP(ip) {
+		return fmt.Errorf("IP address '%s': %w", host, ErrAlwaysBlockedHost)
+	}
+
 	// Check explicit blocklist first (hostnames)
 	for _, blocked := range v.BlockedHosts {
 		if strings.EqualFold(blocked, host) {
@@ -124,8 +140,6 @@ func (v *HostValidator) ValidateHost(host string) error {
 		}
 	}
 
-	// Try to parse as IP address
-	ip := net.ParseIP(host)
 	if ip != nil {
 		switch v.classifyIP(ip) {
 		case ipBlocked:
@@ -141,12 +155,25 @@ func (v *HostValidator) ValidateHost(host string) error {
 	// resolve to a different address when the connection is made; the
 	// connect paths re-apply the same rules to the addresses pgx actually
 	// dials (CheckDialAddr, wired in through Datastore.SetDialPolicy).
-	ips, err := net.LookupIP(host)
+	lookup := v.lookupIP
+	if lookup == nil {
+		lookup = net.LookupIP
+	}
+	ips, err := lookup(host)
 	if err != nil {
 		// Can't resolve - block it for security. Allowing unresolvable hosts could
 		// enable SSRF attacks where an attacker uses a hostname that this server
 		// cannot resolve but the target database server can (via internal DNS).
 		return fmt.Errorf("cannot resolve hostname '%s': DNS lookup failed", host)
+	}
+
+	// Check every address against the always-blocked floor before the
+	// loop below, which stops at the first allow-listed address.
+	for _, resolvedIP := range ips {
+		if hostvalidation.IsAlwaysBlockedIP(resolvedIP) {
+			return fmt.Errorf("hostname '%s' resolves to '%s': %w",
+				host, resolvedIP.String(), ErrAlwaysBlockedHost)
+		}
 	}
 
 	for _, resolvedIP := range ips {
@@ -165,6 +192,65 @@ func (v *HostValidator) ValidateHost(host string) error {
 	}
 
 	return nil
+}
+
+// ErrAlwaysBlockedHost is wrapped by ValidateHost and
+// CheckAlwaysBlockedHost when a host is, or resolves to, an address that
+// hostvalidation.IsAlwaysBlockedIP reports. Every connect path refuses
+// such an address whatever the configuration says, so it is refused when
+// a connection or notification channel is saved as well. Its message
+// names neither the host nor the address, so it may be returned to the
+// client.
+var ErrAlwaysBlockedHost = errors.New(
+	"unspecified, link-local and cloud metadata addresses are always blocked")
+
+// alwaysBlockedLookupTimeout bounds the lookup CheckAlwaysBlockedHost
+// makes for a host name.
+const alwaysBlockedLookupTimeout = 5 * time.Second
+
+// CheckAlwaysBlockedHost returns an error wrapping ErrAlwaysBlockedHost
+// when host is an IP literal (optionally bracketed, optionally with an
+// IPv6 zone) that hostvalidation.IsAlwaysBlockedIP reports, or a host
+// name any of whose addresses it reports. A nil lookup is the system
+// resolver. A failed lookup refuses nothing: the check rejects a target
+// that can never be reached, and does not require a name to resolve
+// from this host.
+func CheckAlwaysBlockedHost(ctx context.Context, host string, lookup hostvalidation.LookupFunc) error {
+	host = strings.TrimSuffix(hostvalidation.BareHost(host), ".")
+	if host == "" {
+		return nil
+	}
+	if ip := parseIPLiteral(host); ip != nil {
+		if hostvalidation.IsAlwaysBlockedIP(ip) {
+			return ErrAlwaysBlockedHost
+		}
+		return nil
+	}
+	if lookup == nil {
+		lookup = net.DefaultResolver.LookupHost
+	}
+	ctx, cancel := context.WithTimeout(ctx, alwaysBlockedLookupTimeout)
+	defer cancel()
+	addrs, err := lookup(ctx, host)
+	if err != nil {
+		return nil
+	}
+	for _, addr := range addrs {
+		if ip := parseIPLiteral(addr); ip != nil && hostvalidation.IsAlwaysBlockedIP(ip) {
+			return ErrAlwaysBlockedHost
+		}
+	}
+	return nil
+}
+
+// parseIPLiteral parses s as an IP address, dropping any IPv6 zone, and
+// returns nil when s is not one.
+func parseIPLiteral(s string) net.IP {
+	addr, err := netip.ParseAddr(s)
+	if err != nil {
+		return nil
+	}
+	return net.IP(addr.WithZone("").AsSlice())
 }
 
 // ipClass is classifyIP's verdict on one address.

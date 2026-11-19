@@ -75,7 +75,7 @@ func claimedAction(t *testing.T, store *Store, connID int) int64 {
 
 // TestRecordOutcomeRetries covers the retries of a failed outcome write:
 // a transient failure is retried, a write that landed but reported an
-// error is recognised, a persistent failure gives up after
+// error is taken as written, a persistent failure gives up after
 // finishAttempts, and Shutdown abandons the retries.
 func TestRecordOutcomeRetries(t *testing.T) {
 	t.Parallel()

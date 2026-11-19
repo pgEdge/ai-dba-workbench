@@ -348,6 +348,48 @@ func TestCreateActionExecuteFailuresStillCreate(t *testing.T) {
 	}
 }
 
+// TestCreateActionExecuteAfterWriteAccessRevoked proves the auto-start
+// path checks write access again after the review: a grant removed
+// while the proposal was reviewed leaves the action recorded but neither
+// approved nor started, and the refusal is audited.
+func TestCreateActionExecuteAfterWriteAccessRevoked(t *testing.T) {
+	e := newActionTestEnv(t)
+	a := notStarted(1, "passed")
+	e.b.actions[1] = a
+	e.b.proposeResult = &actions.ProposeResult{Action: a}
+	e.b.revokeAfter = 2
+
+	body := `{"sql":"DELETE FROM t","source":"chat_block","execute":true}`
+	rec := e.do("POST", "/api/v1/connections/7/actions", body, false)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["execute_error"] != connectionWriteDenied ||
+		resp["exec_status"] != "not_started" || resp["approval"] != "none" {
+		t.Errorf("response = %v", resp)
+	}
+	if len(e.b.started) != 0 || len(e.b.approvals) != 0 {
+		t.Error("the action was approved or started after the grant was removed")
+	}
+	if len(e.denials) != 1 || e.denials[0].action != deniedActionActionCreate ||
+		e.denials[0].target != connectionDenialTarget(7) ||
+		e.denials[0].reason != connectionWriteDenied {
+		t.Errorf("denials = %+v", e.denials)
+	}
+
+	// Without a recorder the refusal still stops the run.
+	e.h.SetDenialRecorder(nil)
+	e.b.writeCalls = 0
+	rec = e.do("POST", "/api/v1/connections/7/actions", body, false)
+	if rec.Code != http.StatusCreated || len(e.b.started) != 0 {
+		t.Errorf("status = %d, started = %v", rec.Code, e.b.started)
+	}
+}
+
 // TestCreateActionOwnership covers the conversation and alert a proposal
 // may name: a conversation must belong to the caller, an alert must exist
 // on the connection. Nothing is proposed for a refusal.

@@ -355,6 +355,34 @@ func TestChatLoopCanceled(t *testing.T) {
 	}
 }
 
+func TestChatLoopCanceledAfterCompleting(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := &fakeServer{
+		tools:   []string{"query_database"},
+		replies: []proxy.ChatResponse{{Content: []llm.ContentBlock{text("Root cause")}}},
+	}
+	srv := httptest.NewServer(f.handler(t))
+	defer srv.Close()
+	calls := 0
+	loop := &ChatLoop{
+		Client: wbclient.New(srv.URL, "", 5*time.Second),
+		// The second call, after the loop has finished, cancels ctx.
+		Now: func() time.Time {
+			calls++
+			if calls == 2 {
+				cancel()
+			}
+			return time.Unix(int64(calls), 0)
+		},
+	}
+	tr, err := loop.Investigate(ctx, Request{Prompt: "p", MaxIterations: 5})
+	if err != nil || tr.Outcome != OutcomeCompleted || tr.FinalText != "Root cause" {
+		t.Fatalf("Investigate = %+v, %v", tr, err)
+	}
+}
+
 func TestLoadSystemPromptFromClient(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join("..", "..", "..", "..", "..", ClientPromptFile)

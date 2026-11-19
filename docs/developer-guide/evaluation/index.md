@@ -95,7 +95,8 @@ of each individual check. A final section lists each failed run with
 the checks it failed and an excerpt of its report.
 
 A run passes only when every check passes; its score is the fraction of
-checks that passed, and is 0 when the investigation produced no report.
+checks that passed, and is 0 when the investigation did not finish with a
+report, for example when it failed or reached the iteration limit.
 
 Two commands work with saved results. `ai-dba-evaluate report` prints
 the Markdown report for a `results.json` file again, and
@@ -175,7 +176,7 @@ which load every fixture and check its reference report, then replay
 the new incident a few times against at least one model:
 
 ```bash
-cd server/src && go test ./internal/evalharness/...
+(cd server/src && go test ./internal/evalharness/...)
 make evaluate EVALUATE_ARGS="-only <id> -runs 3"
 ```
 

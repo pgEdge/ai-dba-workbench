@@ -145,6 +145,23 @@ func TestRunErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("failed rollback stops the run", func(t *testing.T) {
+		t.Parallel()
+		stages := 0
+		r := &Runner{
+			Stage: func(context.Context, *incident.Incident) (Staging, error) {
+				stages++
+				return nil, errors.Join(errors.New("seed failed"), &stage.RollbackError{Err: errors.New("reset failed")})
+			},
+			Investigator: &fakeInvestigator{answer: goodTranscript}, Targets: targets, Runs: 3,
+		}
+		runs, err := r.Run(context.Background(), []*incident.Incident{testIncident("a")})
+		if err == nil || !strings.Contains(err.Error(), "staging a: teardown after failed staging: reset failed") ||
+			len(runs) != 1 || stages != 1 || runs[0].Transcript.Outcome != investigate.OutcomeError {
+			t.Errorf("err %v, %d runs, %d stagings", err, len(runs), stages)
+		}
+	})
+
 	t.Run("canceled investigation still tears down", func(t *testing.T) {
 		t.Parallel()
 		ctx, cancel := context.WithCancel(context.Background())

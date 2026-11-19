@@ -36,7 +36,10 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 E2E_SCRIPTS="${REPO_ROOT}/e2e/scripts"
-RUN_DIR="${REPO_ROOT}/evaluation/.runtime"
+# Each invocation gets its own runtime directory, so concurrent runs
+# (with different ports) cannot remove each other's files.
+mkdir -p "${REPO_ROOT}/evaluation/.runtime"
+RUN_DIR="$(mktemp -d "${REPO_ROOT}/evaluation/.runtime/run.XXXXXX")"
 OUT_DIR="${EVALUATE_OUT:-${REPO_ROOT}/evaluation/results}"
 PG_CONTAINER="ai-dba-evaluate-postgres-$$"
 PG_IMAGE="pgvector/pgvector:0.8.7-pg17"
@@ -59,7 +62,6 @@ export E2E_ADMIN_USERNAME=evaluate-admin
 E2E_ADMIN_PASSWORD="$(openssl rand -hex 16)"
 export E2E_ADMIN_PASSWORD
 
-rm -rf "${RUN_DIR}"
 mkdir -p "${RUN_DIR}/logs" "${RUN_DIR}/data" "${OUT_DIR}"
 chmod 700 "${RUN_DIR}"
 
@@ -73,8 +75,9 @@ cleanup() {
     echo "==> Tearing down"
     "${E2E_SCRIPTS}/stop-stack.sh" >/dev/null || true
     docker rm -f "${PG_CONTAINER}" >/dev/null 2>&1 || true
-    # The runtime directory holds the API key files.
-    rm -rf "${RUN_DIR}/keys"
+    # The runtime directory holds the API key files; keep only the logs.
+    rm -rf "${RUN_DIR}/keys" "${RUN_DIR}/data" "${RUN_DIR}/ai-dba-server.secret"
+    echo "  Server log: ${RUN_DIR}/logs/server.log"
 }
 trap cleanup EXIT
 

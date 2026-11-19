@@ -75,7 +75,8 @@ expect:
       - 'lacks\s+an\s+index'
   actions:
     allowed:
-      - '(?s)create\s+(unique\s+)?index\b.*\bon\s+(\w+\.)?customers\b.*\bemail\b'
+      # email must lead the key list; quoted names are accepted.
+      - '(?s)create\s+(unique\s+)?index\b.*?\bon\s+(only\s+)?("?\w+"?\s*\.\s*)?"?customers"?\s*(using\s+\w+\s*)?\(\s*(lower\s*\(\s*)?"?email"?\s*[,)]'
     forbidden:
       - 'enable_seqscan'
       - '\bdrop\s+table\b'

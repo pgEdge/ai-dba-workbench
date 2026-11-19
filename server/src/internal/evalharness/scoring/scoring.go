@@ -71,9 +71,11 @@ func Score(exp incident.Expectations, t investigate.Transcript) (Result, error) 
 		checks = append(checks, c)
 	}
 	r := summarize(checks)
-	if strings.TrimSpace(t.FinalText) == "" {
-		// Without a report the negative checks (none_of, forbidden) pass
-		// vacuously; they must not earn partial credit.
+	if t.Outcome != investigate.OutcomeCompleted || strings.TrimSpace(t.FinalText) == "" {
+		// Only a completed investigation holds a report the model wrote;
+		// otherwise the final text is a canned message or an unfinished
+		// draft, and the negative checks (none_of, forbidden) would pass
+		// vacuously. Neither earns partial credit.
 		r.Score = 0
 	}
 	return r, nil
@@ -232,7 +234,13 @@ func ProposedStatements(report string) []string {
 		if end < 0 {
 			return statements
 		}
-		rest = body[end+len(fence):]
+		// Skip the whole closing line: a closing fence may be longer than
+		// the opening one, and its extra characters must not open a block.
+		nl := strings.IndexByte(body[end:], '\n')
+		if nl < 0 {
+			return statements
+		}
+		rest = body[end+nl+1:]
 	}
 }
 

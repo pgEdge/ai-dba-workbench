@@ -71,8 +71,9 @@ type Runner struct {
 
 // Run replays every incident Runs times against every target and
 // returns one report.Run per replay. It stops early, returning the runs
-// completed so far, when ctx is done or an incident cannot be torn down
-// (since what it left behind could distort the runs after it).
+// completed so far, when ctx is done or an incident cannot be torn down,
+// whether after its investigation or after a failed staging (since what
+// it left behind could distort the runs after it).
 func (r *Runner) Run(ctx context.Context, incidents []*incident.Incident) ([]report.Run, error) {
 	if r.Runs < 1 || len(r.Targets) == 0 {
 		return nil, errors.New("at least one target and one run are required")
@@ -109,6 +110,12 @@ func (r *Runner) replay(ctx context.Context, inc *incident.Incident, target inve
 		run.Transcript = investigate.Transcript{
 			Outcome: investigate.OutcomeError,
 			Error:   "staging: " + err.Error(),
+		}
+		// A failed rollback may have left the incident's changes on the
+		// instance, so stop as a failed teardown does.
+		var rb *stage.RollbackError
+		if errors.As(err, &rb) {
+			return run, errors.Join(r.score(run, inc), fmt.Errorf("staging %s: %w", inc.ID, rb))
 		}
 		return run, r.score(run, inc)
 	}

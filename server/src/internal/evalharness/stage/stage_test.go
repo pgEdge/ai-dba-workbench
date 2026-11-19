@@ -187,6 +187,9 @@ func TestStageAndTeardown(t *testing.T) {
 	if spec.Database != st.Database || spec.SSLMode == "" || spec.Host == "" || spec.Port == 0 || spec.Name != st.ConnectionName {
 		t.Errorf("connection spec %+v", spec)
 	}
+	if want, err := dsnSSLMode(dsn); err != nil || spec.SSLMode != want {
+		t.Errorf("connection sslmode %q, want %q (%v)", spec.SSLMode, want, err)
+	}
 	if spec.Username != st.Role || len(spec.Password) != 32 || !strings.HasPrefix(st.Role, "eval_stage_full_") {
 		t.Errorf("connection role %q, password length %d", spec.Username, len(spec.Password))
 	}
@@ -414,6 +417,61 @@ func TestTeardownReportsErrors(t *testing.T) {
 	}
 	if databaseExists(t, dsn, st.Database) {
 		t.Error("database not dropped despite earlier teardown errors")
+	}
+}
+
+func TestRollbackFailure(t *testing.T) {
+	t.Parallel()
+	dsn := testDSN(t)
+	inc := baseIncident("rollback-fail")
+	inc.Setup = "SELECT no_such_column FROM stock;"
+	inc.Teardown = "SELECT no_such_function();"
+	s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, Registry: &fakeRegistry{}, RollbackTimeout: time.Minute}
+	_, err := s.Stage(context.Background(), inc)
+	var rb *RollbackError
+	if !errors.As(err, &rb) || !strings.Contains(err.Error(), "setup: ") ||
+		!strings.Contains(rb.Error(), "teardown after failed staging: teardown SQL: SELECT no_such_function()") ||
+		rb.Unwrap() == nil {
+		t.Errorf("Stage error = %v", err)
+	}
+}
+
+func TestTeardownSkipsFixtureSQLBeforeSetup(t *testing.T) {
+	t.Parallel()
+	dsn := testDSN(t)
+	inc := baseIncident("no-setup")
+	inc.Teardown = "SELECT no_such_function();"
+	st := &Staged{stager: &Stager{AdminDSN: dsn, Registry: &fakeRegistry{}}, incident: inc}
+	if err := st.Teardown(context.Background()); err != nil {
+		t.Errorf("Teardown ran the fixture's teardown SQL: %v", err)
+	}
+}
+
+func TestDSNSSLMode(t *testing.T) {
+	for _, tc := range []struct {
+		dsn, env, want, err string
+	}{
+		{dsn: "postgres://u@h/db?sslmode=require", want: "require"},
+		{dsn: "postgresql://u@h/db?sslmode=verify-full&x=1", want: "verify-full"},
+		{dsn: "host=h user=u sslmode='verify-ca'", want: "verify-ca"},
+		{dsn: "host=h user=u", env: "allow", want: "allow"},
+		{dsn: "postgres://u@h/db", want: "prefer"},
+		{dsn: "postgres://u@h/db?sslmode=bogus", err: `unsupported sslmode "bogus"`},
+		{dsn: "postgres://%zz", err: "invalid URL escape"},
+	} {
+		t.Run(tc.dsn, func(t *testing.T) {
+			t.Setenv("PGSSLMODE", tc.env)
+			got, err := dsnSSLMode(tc.dsn)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Errorf("error %v, want %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Errorf("got %q, %v; want %q", got, err, tc.want)
+			}
+		})
 	}
 }
 

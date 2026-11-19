@@ -83,6 +83,8 @@ func TestLoadErrors(t *testing.T) {
 		{"bad duration", strings.Replace(validYAML, "triggered_ago: 5m", "triggered_ago: soon", 1), "invalid duration"},
 		{"non-scalar duration", strings.Replace(validYAML, "triggered_ago: 5m", "triggered_ago: [1]", 1), "cannot unmarshal"},
 		{"invalid", strings.Replace(validYAML, "id: sample-one", "id: Bad_ID", 1), "id \"Bad_ID\""},
+		{"two documents", validYAML + "---\n" + validYAML, "more than one YAML document"},
+		{"bad second document", validYAML + "---\nid: [\n", "parse"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -126,6 +128,8 @@ func TestValidate(t *testing.T) {
 		{"bad table", func(i *Incident) { i.Metrics[0].Table = "metrics.x" }, "not a plain table name"},
 		{"no samples", func(i *Incident) { i.Metrics[0].Samples = nil }, "has no samples"},
 		{"empty sample", func(i *Incident) { i.Metrics[0].Samples[0].Values = nil }, "has no values"},
+		{"negative ago", func(i *Incident) { i.Metrics[0].Samples[0].Ago = Duration(-time.Minute) }, "ago must not be negative"},
+		{"negative triggered_ago", func(i *Incident) { i.Alert.TriggeredAgo = Duration(-time.Minute) }, "triggered_ago must not be negative"},
 		{"reserved column", func(i *Incident) { i.Metrics[0].Samples[0].Values["collected_at"] = "x" }, "sets collected_at"},
 		{"alert without description", func(i *Incident) { i.Alert.Description = "" }, "alert needs a title and a description"},
 		{"bad severity", func(i *Incident) { i.Alert.Severity = "fatal" }, "alert.severity \"fatal\""},
@@ -180,8 +184,21 @@ func TestLoadDir(t *testing.T) {
 	if _, err := LoadDir(t.TempDir()); err == nil || !strings.Contains(err.Error(), "no incident files") {
 		t.Errorf("empty dir: err = %v", err)
 	}
-	if _, err := LoadDir("["); err == nil {
-		t.Error("LoadDir accepted a malformed glob")
+	if _, err := LoadDir(filepath.Join(t.TempDir(), "missing")); err == nil || !strings.Contains(err.Error(), "list incidents") {
+		t.Errorf("missing dir: err = %v", err)
+	}
+
+	// Glob metacharacters in the directory name are taken literally.
+	literal := filepath.Join(t.TempDir(), "cases[1]")
+	if err := os.Mkdir(literal, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, literal, "a.yaml", validYAML)
+	if err := os.Mkdir(filepath.Join(literal, "sub.yaml"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := LoadDir(literal); err != nil || len(got) != 1 {
+		t.Errorf("LoadDir(%q) = %d incidents, %v", literal, len(got), err)
 	}
 }
 

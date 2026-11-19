@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS blackout_schedules (
     name TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS proposed_actions (
+    id BIGSERIAL PRIMARY KEY,
+    statements JSONB NOT NULL
+);
+
 CREATE SCHEMA IF NOT EXISTS metrics;
 CREATE TABLE IF NOT EXISTS metrics.pg_settings (
     id BIGSERIAL PRIMARY KEY,
@@ -71,6 +76,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 const healthTestTeardown = `
 DROP TABLE IF EXISTS schema_version CASCADE;
 DROP SCHEMA IF EXISTS metrics CASCADE;
+DROP TABLE IF EXISTS proposed_actions CASCADE;
 DROP TABLE IF EXISTS blackout_schedules CASCADE;
 DROP TABLE IF EXISTS blackouts CASCADE;
 DROP TABLE IF EXISTS alerts CASCADE;
@@ -289,6 +295,7 @@ var criticalRelationDropSQL = map[string]string{
 	"alerts":              `DROP TABLE IF EXISTS "alerts" CASCADE`,
 	"blackouts":           `DROP TABLE IF EXISTS "blackouts" CASCADE`,
 	"blackout_schedules":  `DROP TABLE IF EXISTS "blackout_schedules" CASCADE`,
+	"proposed_actions":    `DROP TABLE IF EXISTS "proposed_actions" CASCADE`,
 	"metrics.pg_settings": `DROP TABLE IF EXISTS "metrics"."pg_settings" CASCADE`,
 }
 

@@ -35,7 +35,10 @@ import (
 // Version 29 adds connections.deleted_at, which every connection query
 // filters on and the background connection purge depends on (issue
 // #669).
-const MinCollectorSchemaVersion = 29
+//
+// Version 33 adds proposed_actions, which the server's action
+// endpoints read and write (issue #774).
+const MinCollectorSchemaVersion = 33
 
 // pgErrCodeUndefinedTable is the SQLSTATE that PostgreSQL returns when
 // a relation referenced in a query does not exist.
@@ -93,6 +96,10 @@ var criticalRelations = []criticalRelation{
 	{
 		name:     "blackout_schedules",
 		probeSQL: `SELECT 1 FROM "blackout_schedules" LIMIT 0`,
+	},
+	{
+		name:     "proposed_actions",
+		probeSQL: `SELECT 1 FROM "proposed_actions" LIMIT 0`,
 	},
 	{
 		name:     "metrics.pg_settings",

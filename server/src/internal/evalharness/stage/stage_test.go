@@ -187,8 +187,8 @@ func TestStageAndTeardown(t *testing.T) {
 	if spec.Database != st.Database || spec.SSLMode == "" || spec.Host == "" || spec.Port == 0 || spec.Name != st.ConnectionName {
 		t.Errorf("connection spec %+v", spec)
 	}
-	if want, err := dsnSSLMode(dsn); err != nil || spec.SSLMode != want {
-		t.Errorf("connection sslmode %q, want %q (%v)", spec.SSLMode, want, err)
+	if cfg, err := pgx.ParseConfig(dsn); err != nil || spec.SSLMode != sslModeOf(cfg) {
+		t.Errorf("connection sslmode %q (%v)", spec.SSLMode, err)
 	}
 	if spec.Username != st.Role || len(spec.Password) != 32 || !strings.HasPrefix(st.Role, "eval_stage_full_") {
 		t.Errorf("connection role %q, password length %d", spec.Username, len(spec.Password))
@@ -447,31 +447,43 @@ func TestTeardownSkipsFixtureSQLBeforeSetup(t *testing.T) {
 	}
 }
 
-func TestDSNSSLMode(t *testing.T) {
+func TestSSLModeOf(t *testing.T) {
 	for _, tc := range []struct {
-		dsn, env, want, err string
+		dsn, env, want string
 	}{
 		{dsn: "postgres://u@h/db?sslmode=require", want: "require"},
-		{dsn: "postgresql://u@h/db?sslmode=verify-full&x=1", want: "verify-full"},
+		{dsn: "postgres://u@h/db?ssl=true", want: "require"},
+		{dsn: "postgresql://u@h/db?sslmode=verify-full&connect_timeout=1", want: "verify-full"},
 		{dsn: "host=h user=u sslmode='verify-ca'", want: "verify-ca"},
+		{dsn: "host=h user=u sslmode = require", want: "require"},
+		{dsn: "host=h user=u password='a sslmode=disable b' sslmode=verify-full", want: "verify-full"},
+		{dsn: "host=h user=u sslmode=disable", want: "disable"},
 		{dsn: "host=h user=u", env: "allow", want: "allow"},
 		{dsn: "postgres://u@h/db", want: "prefer"},
-		{dsn: "postgres://u@h/db?sslmode=bogus", err: `unsupported sslmode "bogus"`},
-		{dsn: "postgres://%zz", err: "invalid URL escape"},
+		{dsn: "postgres://u@h/db?sslnegotiation=direct", want: "require"},
 	} {
 		t.Run(tc.dsn, func(t *testing.T) {
 			t.Setenv("PGSSLMODE", tc.env)
-			got, err := dsnSSLMode(tc.dsn)
-			if tc.err != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.err) {
-					t.Errorf("error %v, want %q", err, tc.err)
-				}
-				return
+			cfg, err := pgx.ParseConfig(tc.dsn)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if err != nil || got != tc.want {
-				t.Errorf("got %q, %v; want %q", got, err, tc.want)
+			if got := sslModeOf(cfg); got != tc.want {
+				t.Errorf("sslModeOf = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestCloseConnHonoursDeadline(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := testConn(t, testDSN(t))
+	dctx, cancel := context.WithTimeout(ctx, time.Hour)
+	defer cancel()
+	closeConn(dctx, conn)
+	if !conn.IsClosed() {
+		t.Error("closeConn left the connection open")
 	}
 }
 

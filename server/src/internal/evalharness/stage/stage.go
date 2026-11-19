@@ -26,8 +26,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -147,43 +145,37 @@ func (s *Stager) Stage(ctx context.Context, inc *incident.Incident) (*Staged, er
 	return st, nil
 }
 
-// validSSLModes are the libpq sslmode values a Workbench connection
-// accepts.
-var validSSLModes = map[string]bool{
-	"disable": true, "allow": true, "prefer": true,
-	"require": true, "verify-ca": true, "verify-full": true,
-}
-
-// dsnSSLMode returns the sslmode the admin DSN asks for, so the staged
-// connection uses the same TLS mode. pgx consumes sslmode while parsing
-// and leaves no trace of it in the parsed configuration, so it is read
-// from the DSN itself, then from PGSSLMODE, defaulting to prefer as
-// libpq and pgx do.
-func dsnSSLMode(dsn string) (string, error) {
-	mode := ""
-	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-		u, err := url.Parse(dsn)
-		if err != nil {
-			return "", err
-		}
-		mode = u.Query().Get("sslmode")
-	} else {
-		for _, field := range strings.Fields(dsn) {
-			if k, v, ok := strings.Cut(field, "="); ok && k == "sslmode" {
-				mode = strings.Trim(v, "'")
-			}
+// sslModeOf returns the libpq sslmode that pgx resolved for cfg, so the
+// staged connection uses the same TLS mode as the admin DSN. pgx keeps
+// no copy of the sslmode string, so it is read back from the TLS
+// configurations pgx built from it; this follows pgx's own parsing of
+// whitespace, quoting, the ssl=true alias, PGSSLMODE, sslrootcert and
+// sslnegotiation, which a separate parser could get wrong and so
+// downgrade TLS.
+func sslModeOf(cfg *pgx.ConnConfig) string {
+	plaintextFallback, tlsFallback := false, false
+	for _, fb := range cfg.Fallbacks {
+		if fb.TLSConfig == nil {
+			plaintextFallback = true
+		} else {
+			tlsFallback = true
 		}
 	}
-	if mode == "" {
-		mode = os.Getenv("PGSSLMODE")
+	tc := cfg.TLSConfig
+	switch {
+	case tc == nil && tlsFallback:
+		return "allow"
+	case tc == nil:
+		return "disable"
+	case plaintextFallback:
+		return "prefer"
+	case !tc.InsecureSkipVerify:
+		return "verify-full"
+	case tc.VerifyPeerCertificate != nil:
+		return "verify-ca"
+	default:
+		return "require"
 	}
-	if mode == "" {
-		mode = "prefer"
-	}
-	if !validSSLModes[mode] {
-		return "", fmt.Errorf("unsupported sslmode %q", mode)
-	}
-	return mode, nil
 }
 
 // createRoleSQL builds the CREATE ROLE for the connection's login role.
@@ -213,10 +205,7 @@ func (st *Staged) stage(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("parse admin DSN: %w", err)
 	}
-	sslMode, err := dsnSSLMode(s.AdminDSN)
-	if err != nil {
-		return fmt.Errorf("admin DSN: %w", err)
-	}
+	sslMode := sslModeOf(adminCfg)
 
 	if err := execGenerated(ctx, adminCfg, "SELECT format('CREATE DATABASE %I', $1::text)", st.Database); err != nil {
 		return fmt.Errorf("create database: %w", err)
@@ -268,7 +257,7 @@ func execGenerated(ctx context.Context, cfg *pgx.ConnConfig, query string, args 
 	if err != nil {
 		return err
 	}
-	defer conn.Close(context.WithoutCancel(ctx))
+	defer closeConn(ctx, conn)
 	var stmt string
 	if err := conn.QueryRow(ctx, query, args...).Scan(&stmt); err != nil {
 		return err
@@ -289,8 +278,25 @@ func runStatements(ctx context.Context, cfg *pgx.ConnConfig, script string) erro
 	if err != nil {
 		return err
 	}
-	defer conn.Close(context.WithoutCancel(ctx))
+	defer closeConn(ctx, conn)
 	return execAll(ctx, conn, statements)
+}
+
+// closeTimeout bounds closing a connection.
+const closeTimeout = 5 * time.Second
+
+// closeConn closes conn even when ctx is already canceled, so the server
+// sees a clean Terminate, but never waits longer than ctx's deadline or
+// closeTimeout, whichever is sooner. pgx closes the socket either way.
+func closeConn(ctx context.Context, conn *pgx.Conn) {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
+	defer cancel()
+	if dl, ok := ctx.Deadline(); ok {
+		var cancelDL context.CancelFunc
+		cctx, cancelDL = context.WithDeadline(cctx, dl)
+		defer cancelDL()
+	}
+	_ = conn.Close(cctx)
 }
 
 func execAll(ctx context.Context, conn *pgx.Conn, statements []string) error {
@@ -354,7 +360,7 @@ func (st *Staged) seedDatastore(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("connect to datastore: %w", err)
 	}
-	defer conn.Close(context.WithoutCancel(ctx))
+	defer closeConn(ctx, conn)
 
 	a := st.incident.Alert
 	triggered := start.Add(-time.Duration(a.TriggeredAgo))
@@ -501,7 +507,7 @@ func (st *Staged) waitForLockWaiters(ctx context.Context, adminCfg *pgx.ConnConf
 	if err != nil {
 		return fmt.Errorf("connect to watch the workload: %w", err)
 	}
-	defer conn.Close(context.WithoutCancel(ctx))
+	defer closeConn(ctx, conn)
 
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()

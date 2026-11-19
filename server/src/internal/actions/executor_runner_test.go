@@ -151,3 +151,68 @@ func TestExecuteMissingAction(t *testing.T) {
 	e := NewExecutor(store, nil, time.Second, time.Minute, 1)
 	e.execute(context.Background(), &runningAction{}, 987654)
 }
+
+// TestRunnerStopWhileSettingTimeouts covers a stop request that arrives
+// after the timeouts are set and before the statement is sent. The
+// backend is idle then, so a cancel request would be lost; instead the
+// statement must not be sent at all.
+func TestRunnerStopWhileSettingTimeouts(t *testing.T) {
+	t.Parallel()
+	f := newExecFixture(t, "_x_run6", time.Second, time.Minute, 10)
+	mustExec(t, f.target, "CREATE TABLE t (id int)")
+	for _, transactional := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(context.Background())
+		r := f.newRunner(t, ctx, nil)
+		stop := context.AfterFunc(ctx, r.cancelInFlight)
+		r.beforeDispatch = cancel
+		st := &runState{results: newResults([]string{"INSERT INTO t VALUES (1)"}), transactional: transactional}
+		r.state = st
+		if transactional {
+			r.runTransaction(st)
+		} else {
+			r.runIndividually(st)
+		}
+		stop()
+		if st.results[0].Error != stoppedMessage || st.results[0].Applied || st.sent || st.unknown {
+			t.Errorf("transactional=%v: %+v sent=%v", transactional, st.results, st.sent)
+		}
+		if n := f.count(t, "t"); n != 0 {
+			t.Errorf("transactional=%v: the statement ran: %d rows", transactional, n)
+		}
+	}
+}
+
+// TestRunnerStopBeforeCommitRollsBack proves a stop request that arrives
+// after the last statement of a transaction, when a cancel request has
+// nothing to cancel, rolls the transaction back rather than committing.
+func TestRunnerStopBeforeCommitRollsBack(t *testing.T) {
+	t.Parallel()
+	f := newExecFixture(t, "_x_run7", time.Second, time.Minute, 10)
+	mustExec(t, f.target, "CREATE TABLE t (id int)")
+	ctx, cancel := context.WithCancel(context.Background())
+	r := f.newRunner(t, ctx, nil)
+	if err := r.exec(context.Background(), "BEGIN"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.exec(context.Background(), "INSERT INTO t VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	st := &runState{results: newResults([]string{"INSERT INTO t VALUES (1)"}), transactional: true}
+	r.commit(st)
+	if len(st.results) != 2 || st.results[1].Error != stoppedBeforeCommitMessage ||
+		st.results[0].Applied || st.unknown {
+		t.Fatalf("results = %+v", st.results)
+	}
+	if n := f.count(t, "t"); n != 0 || r.pgConn.TxStatus() != 'I' {
+		t.Fatalf("rows = %d, tx = %c", n, r.pgConn.TxStatus())
+	}
+}
+
+// TestRunnerCancelInFlightIdle proves cancelInFlight sends nothing when
+// no statement is in flight.
+func TestRunnerCancelInFlightIdle(t *testing.T) {
+	t.Parallel()
+	r := &stmtRunner{}
+	r.cancelInFlight() // a nil connection would panic if it were used
+}

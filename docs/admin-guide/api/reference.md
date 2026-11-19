@@ -221,7 +221,7 @@ The API provides endpoints in the following categories.
 | GET | `/api/v1/metrics/anomaly-comparison` | Compare a metric with its anomaly baselines. |
 | GET | `/api/v1/metrics/anomaly-comparison/metrics` | List the metrics the anomaly comparison accepts. |
 | GET | `/api/v1/metrics/performance-summary` | Get a performance summary. |
-| GET | `/api/v1/metrics/database-summaries` | Get database-level summaries over a time window. |
+| GET | `/api/v1/metrics/database-summaries` | Get database-level summaries over a time window, ordered by database name. |
 | GET | `/api/v1/metrics/top-queries` | Get the top queries by resource usage over a time window. |
 | GET | `/api/v1/metrics/connection-groups` | Get connection counts grouped by user, client, or database. |
 | GET | `/api/v1/metrics/query-stats` | Get period-scoped statistics for a query. |

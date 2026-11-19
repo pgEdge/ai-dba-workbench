@@ -1302,3 +1302,65 @@ func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
 		})
 	}
 }
+
+// TestSortedDatabaseSummaries_OrdersByName verifies that the
+// database-summaries response lists databases by name (issue #875). Go
+// randomizes map iteration order, so the slice is rebuilt many times from
+// fresh maps; an unsorted implementation would almost certainly produce a
+// different order on at least one pass.
+func TestSortedDatabaseSummaries_OrdersByName(t *testing.T) {
+	names := []string{"postgres", "northwind", "ai_workbench", "pgbench",
+		"Zeta", "alpha", "beta2", "beta10"}
+	want := []string{"Zeta", "ai_workbench", "alpha", "beta10", "beta2",
+		"northwind", "pgbench", "postgres"}
+
+	for pass := 0; pass < 50; pass++ {
+		dbMap := make(map[string]*DatabaseSummary, len(names))
+		for _, name := range names {
+			dbMap[name] = &DatabaseSummary{DatabaseName: name}
+		}
+
+		got := sortedDatabaseSummaries(dbMap)
+		if len(got) != len(want) {
+			t.Fatalf("pass %d: got %d summaries, want %d",
+				pass, len(got), len(want))
+		}
+		for i, db := range got {
+			if db.DatabaseName != want[i] {
+				gotNames := make([]string, len(got))
+				for j, d := range got {
+					gotNames[j] = d.DatabaseName
+				}
+				t.Fatalf("pass %d: order = %v, want %v",
+					pass, gotNames, want)
+			}
+		}
+	}
+}
+
+// TestSortedDatabaseSummaries_EmptyTimeSeries verifies that a database with
+// no cache hit samples serializes its time series as an empty array rather
+// than null, and that an empty map yields an empty, non-nil slice.
+func TestSortedDatabaseSummaries_EmptyTimeSeries(t *testing.T) {
+	got := sortedDatabaseSummaries(map[string]*DatabaseSummary{
+		"db": {DatabaseName: "db"},
+	})
+	if len(got) != 1 {
+		t.Fatalf("got %d summaries, want 1", len(got))
+	}
+	if got[0].CacheHitRatio.TimeSeries == nil {
+		t.Errorf("CacheHitRatio.TimeSeries is nil, want empty slice")
+	}
+
+	empty := sortedDatabaseSummaries(map[string]*DatabaseSummary{})
+	if empty == nil || len(empty) != 0 {
+		t.Errorf("empty map: got %#v, want empty non-nil slice", empty)
+	}
+	body, err := json.Marshal(DatabaseSummaryResponse{Databases: empty})
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	if !strings.Contains(string(body), `"databases":[]`) {
+		t.Errorf("empty response = %s, want databases to be []", body)
+	}
+}

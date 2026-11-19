@@ -12,6 +12,7 @@
 
 import type React from 'react';
 import { useContext, useMemo } from 'react';
+import ChatContext from '../../contexts/ChatContext';
 import type { Theme } from '@mui/material/styles';
 import RunnableCodeBlock from '../shared/RunnableCodeBlock';
 import ConnectionSelectorCodeBlock from '../shared/ConnectionSelectorCodeBlock';
@@ -40,6 +41,8 @@ const ChatSqlCodeBlock: React.FC<ChatSqlCodeBlockProps> = ({
 }) => {
     const reply = useContext(ReplyTargetsContext);
     const servers = useKnownServers();
+    // Outside a chat provider there is no conversation to link to.
+    const conversationId = useContext(ChatContext)?.conversationId ?? undefined;
     const plan = useMemo(
         () => planSqlBlock(code, reply, servers),
         [code, reply, servers],
@@ -63,6 +66,7 @@ const ChatSqlCodeBlock: React.FC<ChatSqlCodeBlockProps> = ({
                 serverName={plan.target.serverName}
                 databaseName={plan.target.databaseName}
                 isSql={true}
+                conversationId={conversationId}
             />
         );
     }
@@ -74,6 +78,7 @@ const ChatSqlCodeBlock: React.FC<ChatSqlCodeBlockProps> = ({
                 codeContent={plan.code}
                 options={plan.options}
                 requireSelection={true}
+                conversationId={conversationId}
             />
         );
     }

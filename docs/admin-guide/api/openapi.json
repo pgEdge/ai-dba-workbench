@@ -12,6 +12,263 @@
     }
   ],
   "paths": {
+    "/actions/{id}": {
+      "get": {
+        "summary": "Get an action",
+        "description": "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser.",
+        "operationId": "getAction",
+        "tags": [
+          "Actions"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Action ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Action details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Action"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to load the action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/actions/{id}/cancel": {
+      "post": {
+        "summary": "Cancel a running action",
+        "description": "Asks a running action to stop, answering 202. Requires write access to the connection.",
+        "operationId": "cancelAction",
+        "tags": [
+          "Actions"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Action ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Cancellation requested; the body holds the action id and cancel_requested"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Write access to this connection is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The action is not running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/actions/{id}/execute": {
+      "post": {
+        "summary": "Approve and execute an action",
+        "description": "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens. An action approved or overridden earlier that has not started may be executed again, without a second approval, by whoever approved or overrode it or by a superuser; an overridden action is retried with override and the confirm text again, under the same rules. Anyone else gets 409.",
+        "operationId": "executeAction",
+        "tags": [
+          "Actions"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Action ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional override",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionExecuteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Execution started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Action"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The confirm text does not match",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Write access is required, or an API token tried to override",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The action has already been approved or started, or has not passed review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to start the action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is shutting down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/alert-overrides/context/{connectionId}/{ruleId}": {
       "get": {
         "summary": "Get override context for editing",
@@ -4469,6 +4726,115 @@
         ]
       }
     },
+    "/connections/{id}/actions": {
+      "post": {
+        "summary": "Propose an action",
+        "description": "Records a proposed change, runs the review and returns the action with the state of its review chain. With execute set and a passing review the action is approved and started at once; if that fails the action is still created, the status stays 201, and the response carries the current exec_status and an execute_error. A conversation_id must name a conversation the caller owns, and an alert_id an alert on this connection; otherwise the answer is 404. Requires write access to the connection.",
+        "operationId": "createConnectionAction",
+        "tags": [
+          "Actions"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The change to propose",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Action created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Write access to this connection is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Connection, conversation or alert not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The review chain is exhausted or the proposal conflicts with an earlier one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to create the action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/connections/{id}/cluster": {
       "get": {
         "summary": "Get connection cluster assignment",
@@ -4709,6 +5075,115 @@
           },
           "500": {
             "description": "Failed to list databases",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/connections/{id}/query": {
+      "post": {
+        "summary": "Run read-only SQL",
+        "description": "Runs read-only SQL against the connection. A request that contains any write statement is refused with 409 and requires_action set, and nothing is run; propose the change with POST /connections/{id}/actions instead. Requires read access to the connection.",
+        "operationId": "executeConnectionQuery",
+        "tags": [
+          "Connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "SQL to run",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryExecuteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Result of every statement, in order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Query is required, or the database name is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied: you do not have access to this connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Connection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request contains a write statement and must be proposed as an action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteRefusedResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to run query",
             "content": {
               "application/json": {
                 "schema": {
@@ -5243,6 +5718,88 @@
           },
           "404": {
             "description": "Conversation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/conversations/{id}/actions/link": {
+      "post": {
+        "summary": "Link actions to a conversation",
+        "description": "Attaches the caller's own unlinked actions to a conversation the caller owns.",
+        "operationId": "linkConversationActions",
+        "tags": [
+          "Conversations"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Actions to link",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionLinkRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Actions linked"
+          },
+          "400": {
+            "description": "action_ids is empty, too long or holds a non-positive id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conversation not found, or owned by another user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to link the actions",
             "content": {
               "application/json": {
                 "schema": {
@@ -11114,6 +11671,370 @@
           "alert_id"
         ]
       },
+      "Action": {
+        "type": "object",
+        "properties": {
+          "alert_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Linked alert",
+            "nullable": true
+          },
+          "approval": {
+            "type": "string",
+            "description": "Approval state: none until someone approves, approved for a passed review, overridden for a vetoed one",
+            "enum": [
+              "none",
+              "approved",
+              "overridden"
+            ]
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was approved",
+            "nullable": true
+          },
+          "approved_by": {
+            "type": "string",
+            "description": "Who approved the action",
+            "nullable": true
+          },
+          "approved_via": {
+            "type": "string",
+            "description": "Channel the approval arrived on",
+            "nullable": true
+          },
+          "attempt": {
+            "type": "integer",
+            "description": "Position in the review chain"
+          },
+          "connection_id": {
+            "type": "integer",
+            "description": "Connection the action targets"
+          },
+          "conversation_id": {
+            "type": "string",
+            "description": "Linked conversation; null for anyone but the proposer or a superuser",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation time"
+          },
+          "database_name": {
+            "type": "string",
+            "description": "Database the action runs in",
+            "nullable": true
+          },
+          "evidence": {
+            "type": "object",
+            "description": "Stored context snapshot; null for anyone but the proposer or a superuser",
+            "nullable": true
+          },
+          "exec_status": {
+            "type": "string",
+            "description": "Execution state",
+            "enum": [
+              "not_started",
+              "executing",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "unknown"
+            ]
+          },
+          "executed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When execution started",
+            "nullable": true
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Action ID"
+          },
+          "outcome": {
+            "type": "object",
+            "description": "Recorded outcome",
+            "nullable": true
+          },
+          "parent_action_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Previous attempt in the review chain",
+            "nullable": true
+          },
+          "preview": {
+            "type": "object",
+            "description": "Preview of the change",
+            "nullable": true
+          },
+          "proposed_by": {
+            "type": "string",
+            "description": "Proposer's username"
+          },
+          "proposed_via": {
+            "type": "string",
+            "description": "Channel the proposal arrived on"
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Why the change is proposed",
+            "nullable": true
+          },
+          "results": {
+            "type": "array",
+            "description": "Per-statement results",
+            "items": {
+              "$ref": "#/components/schemas/ActionStatementResult"
+            }
+          },
+          "review": {
+            "$ref": "#/components/schemas/ActionReview"
+          },
+          "review_status": {
+            "type": "string",
+            "description": "Review state",
+            "enum": [
+              "pending",
+              "passed",
+              "vetoed"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "description": "Where the proposal came from",
+            "enum": [
+              "chat_tool",
+              "chat_block",
+              "alert_analysis",
+              "query_analysis",
+              "server_analysis",
+              "chart_analysis"
+            ]
+          },
+          "statements": {
+            "type": "array",
+            "description": "The statements, split by the server",
+            "items": {
+              "type": "string"
+            }
+          },
+          "transactional": {
+            "type": "boolean",
+            "description": "Whether the statements ran in one transaction",
+            "nullable": true
+          },
+          "undo": {
+            "type": "object",
+            "description": "Undo information",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update time"
+          },
+          "verification": {
+            "type": "object",
+            "description": "Verification result",
+            "nullable": true
+          }
+        }
+      },
+      "ActionCreateRequest": {
+        "type": "object",
+        "properties": {
+          "alert_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Alert the proposal relates to"
+          },
+          "context": {
+            "type": "string",
+            "description": "Context snapshot stored as evidence; truncated to the configured limit"
+          },
+          "conversation_id": {
+            "type": "string",
+            "description": "Conversation the proposal belongs to"
+          },
+          "database_name": {
+            "type": "string",
+            "description": "Database to run in; defaults to the connection's database"
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "Approve and start the action at once when the review passes"
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Why the change is proposed"
+          },
+          "source": {
+            "type": "string",
+            "description": "Where the proposal came from; chat_tool is reserved for the propose_action tool",
+            "enum": [
+              "chat_block",
+              "alert_analysis",
+              "query_analysis",
+              "server_analysis",
+              "chart_analysis"
+            ]
+          },
+          "sql": {
+            "type": "string",
+            "description": "SQL to propose; may contain several statements"
+          }
+        },
+        "required": [
+          "sql",
+          "source"
+        ]
+      },
+      "ActionExecuteRequest": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "string",
+            "description": "Confirmation text the override requires"
+          },
+          "override": {
+            "type": "boolean",
+            "description": "Run an action whose review did not pass; session callers only, never API tokens"
+          }
+        }
+      },
+      "ActionLinkRequest": {
+        "type": "object",
+        "properties": {
+          "action_ids": {
+            "type": "array",
+            "description": "Between 1 and 100 action IDs",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        },
+        "required": [
+          "action_ids"
+        ]
+      },
+      "ActionResponse": {
+        "description": "An action together with the state of its review chain: every field of Action at the top level, plus the chain fields.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Action"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "attempts_left": {
+                "type": "integer",
+                "description": "Review attempts remaining in the chain"
+              },
+              "best_attempt": {
+                "$ref": "#/components/schemas/Action"
+              },
+              "chain_exhausted": {
+                "type": "boolean",
+                "description": "True when no further attempt may be proposed"
+              },
+              "execute_error": {
+                "type": "string",
+                "description": "Present when execute was set and the action could not be approved or started, including when write access was removed during the review; the action is still recorded, and exec_status shows where it stands"
+              }
+            },
+            "required": [
+              "attempts_left",
+              "chain_exhausted"
+            ]
+          }
+        ]
+      },
+      "ActionReview": {
+        "type": "object",
+        "properties": {
+          "danger": {
+            "type": "string",
+            "description": "The reviewer's danger rating"
+          },
+          "decision": {
+            "type": "string",
+            "description": "The reviewer's decision"
+          },
+          "reasons": {
+            "type": "array",
+            "description": "Reasons given for the decision",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reviewer": {
+            "type": "string",
+            "description": "Which reviewer produced the verdict"
+          }
+        }
+      },
+      "ActionStatementResult": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Whether the statement's effect was kept"
+          },
+          "columns": {
+            "type": "array",
+            "description": "Result column names, when the statement returned rows",
+            "items": {
+              "type": "string"
+            }
+          },
+          "command_tag": {
+            "type": "string",
+            "description": "Command tag the server returned"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Run time in milliseconds"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error text, empty on success"
+          },
+          "note": {
+            "type": "string",
+            "description": "Warning about an effect the outcome does not show: a sequence change a rollback kept, or an invalid index a failed concurrent build may have left"
+          },
+          "rows": {
+            "type": "array",
+            "description": "Result rows as text",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "rows_affected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows affected"
+          },
+          "statement": {
+            "type": "string",
+            "description": "The statement that was run"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the rows were cut short"
+          }
+        }
+      },
       "AddServerToClusterRequest": {
         "type": "object",
         "properties": {
@@ -13585,9 +14506,21 @@
             "type": "object",
             "description": "Tool arguments"
           },
+          "conversation_id": {
+            "type": "string",
+            "description": "Optional chat conversation the call belongs to; recorded by propose_action"
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional model that produced the call; recorded by propose_action"
+          },
           "name": {
             "type": "string",
             "description": "Tool name to execute"
+          },
+          "provider": {
+            "type": "string",
+            "description": "Optional provider of the model; recorded by propose_action"
           }
         },
         "required": [
@@ -14552,6 +15485,76 @@
             "items": {
               "$ref": "#/components/schemas/ProviderInfo"
             }
+          }
+        }
+      },
+      "QueryExecuteRequest": {
+        "type": "object",
+        "properties": {
+          "database_name": {
+            "type": "string",
+            "description": "Database to run against; defaults to the connection's database"
+          },
+          "query": {
+            "type": "string",
+            "description": "Read-only SQL to run; may contain several statements"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "QueryResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "description": "Result of every statement, in order; a failed statement ends the run",
+            "items": {
+              "$ref": "#/components/schemas/QueryStatementResult"
+            }
+          },
+          "total_statements": {
+            "type": "integer",
+            "description": "Number of statements in the request"
+          }
+        }
+      },
+      "QueryStatementResult": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": "array",
+            "description": "Result column names",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string",
+            "description": "Error text; absent on success"
+          },
+          "query": {
+            "type": "string",
+            "description": "The statement that was run"
+          },
+          "row_count": {
+            "type": "integer",
+            "description": "Number of rows returned"
+          },
+          "rows": {
+            "type": "array",
+            "description": "Result rows as text",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the rows were cut short"
           }
         }
       },
@@ -15555,6 +16558,31 @@
             "description": "New password"
           }
         }
+      },
+      "WriteRefusedResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Why the request was refused"
+          },
+          "requires_action": {
+            "type": "boolean",
+            "description": "Always true: a write must be proposed as an action instead"
+          },
+          "write_statements": {
+            "type": "array",
+            "description": "The statements that were classified as writes",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "error",
+          "requires_action",
+          "write_statements"
+        ]
       }
     },
     "securitySchemes": {

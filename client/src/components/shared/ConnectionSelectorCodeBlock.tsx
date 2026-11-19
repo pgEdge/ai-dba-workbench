@@ -19,6 +19,7 @@ import FormControl from '@mui/material/FormControl';
 import type { Theme } from '@mui/material/styles';
 import type { SelectChangeEvent } from '@mui/material';
 import RunnableCodeBlock from './RunnableCodeBlock';
+import type { ActionOrigin } from '../../types/actions';
 import { sxMonoFont } from './markdownStyles';
 
 /**
@@ -31,7 +32,7 @@ export interface RunTargetOption {
     databaseName?: string;
 }
 
-interface ConnectionSelectorCodeBlockProps {
+interface ConnectionSelectorCodeBlockProps extends ActionOrigin {
     codeContent: string;
     language: string;
     isDark: boolean;
@@ -90,6 +91,10 @@ const ConnectionSelectorCodeBlock: React.FC<ConnectionSelectorCodeBlockProps> = 
     customBackground,
     theme,
     props,
+    actionSource,
+    actionContext,
+    alertId,
+    conversationId,
 }) => {
     const targets = useMemo<RunTargetOption[]>(() => {
         if (options) {
@@ -157,6 +162,10 @@ const ConnectionSelectorCodeBlock: React.FC<ConnectionSelectorCodeBlockProps> = 
                 theme={theme}
                 isSql={hasSelection}
                 props={props}
+                actionSource={actionSource}
+                actionContext={actionContext}
+                alertId={alertId}
+                conversationId={conversationId}
             />
         </Box>
     );

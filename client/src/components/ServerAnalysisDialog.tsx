@@ -165,6 +165,10 @@ const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({
                 serverName:
                     selection?.type === 'server' ? selection.name : undefined,
                 connectionMap,
+                actionOrigin: {
+                    actionSource: 'server_analysis',
+                    actionContext: `${selection?.type === 'cluster' ? 'Cluster' : 'Server'} analysis of ${selection?.name ?? 'unknown'}`,
+                },
             }}
         />
     );

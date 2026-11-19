@@ -32,6 +32,9 @@ import { getCodeBlockButtonGroupSx } from '../shared/markdownStyles';
 import ChatSqlCodeBlock from './ChatSqlCodeBlock';
 import { collectReplyTargets } from './chatSqlTarget';
 import ReplyTargetsContext from './replyTargetsContext';
+import { useKnownServers } from './useKnownServers';
+import ActionBlock from '../shared/ActionBlock';
+import { collectProposedActionBlocks } from './proposedActionBlocks';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -345,6 +348,15 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
         [message.activity],
     );
 
+    // The latest attempt of each proposal chain, passed by the supervisor
+    // or the best one when it ran out of attempts, is shown as a block the
+    // user can follow and approve; earlier attempts are superseded by it.
+    const servers = useKnownServers();
+    const proposed = useMemo(
+        () => collectProposedActionBlocks(message.activity),
+        [message.activity],
+    );
+
     // Memoize markdown components following AlertAnalysisDialog pattern
     const markdownComponents = useMemo(
         () => ({
@@ -612,6 +624,15 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                         {textContent}
                     </ReactMarkdown>
                 </ReplyTargetsContext.Provider>
+                {proposed.map((block) => (
+                    <ActionBlock
+                        key={block.actionId}
+                        actionId={block.actionId}
+                        connectionId={block.connectionId}
+                        databaseName={block.databaseName}
+                        serverName={servers.get(block.connectionId)?.name}
+                    />
+                ))}
                 {renderToolActivity()}
             </Box>
             {message.timestamp && (

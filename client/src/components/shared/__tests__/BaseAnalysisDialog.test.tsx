@@ -17,8 +17,19 @@ import { renderWithTheme } from '../../../test/renderWithTheme';
 
 // Mock the MarkdownContent component to simplify testing
 vi.mock('../MarkdownContent', () => ({
-    MarkdownContent: ({ content }: { content: string }) => (
-        <div data-testid="markdown-content">{content}</div>
+    MarkdownContent: ({
+        content,
+        actionOrigin,
+    }: {
+        content: string;
+        actionOrigin?: unknown;
+    }) => (
+        <div
+            data-testid="markdown-content"
+            data-origin={JSON.stringify(actionOrigin ?? null)}
+        >
+            {content}
+        </div>
     ),
     AnalysisSkeleton: () => (
         <div data-testid="analysis-skeleton">Loading skeleton</div>
@@ -451,6 +462,30 @@ describe('BaseAnalysisDialog', () => {
             );
             // MarkdownContent is mocked, so we just verify it renders
             expect(screen.getByTestId('markdown-content')).toBeInTheDocument();
+        });
+
+        it('forwards the action origin to MarkdownContent', () => {
+            renderWithTheme(
+                <BaseAnalysisDialog
+                    {...defaultProps}
+                    analysis="Test analysis"
+                    markdownContentProps={{
+                        isDark: false,
+                        actionOrigin: {
+                            actionSource: 'server_analysis',
+                            actionContext: 'Server analysis of prod',
+                        },
+                    }}
+                />
+            );
+            expect(
+                JSON.parse(
+                    screen.getByTestId('markdown-content').dataset.origin ?? '',
+                ),
+            ).toEqual({
+                actionSource: 'server_analysis',
+                actionContext: 'Server analysis of prod',
+            });
         });
 
         it('handles undefined optional props', () => {

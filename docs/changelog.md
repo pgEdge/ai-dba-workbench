@@ -12,6 +12,24 @@ project adheres to
 
 ### Added
 
+- Add reviewed proposed actions for database writes. A write that Ellie
+  proposes with the new `propose_action` tool, or that you confirm from
+  an AI-generated SQL block, is stored first, passed through a review
+  step, and run by the server only from the stored statements. The
+  supervisor review itself is not yet implemented (#768): a placeholder
+  reviewer passes every proposal as low danger without inspecting the
+  SQL, so check each statement yourself before you run it. A
+  vetoed action can be overridden only by a signed-in user with write
+  access who types the connection name; API tokens can never override.
+  The new `actions` section of the server configuration file sets the
+  lock timeout, statement timeout, attempt limit and context size. The
+  new action endpoints propose, fetch, execute and cancel an action.
+  An approved action can be retried only by its approver or a
+  superuser, and an overridden one only by the person who overrode it
+  or a superuser. Each round trip to the monitored database has a
+  client-side limit of the statement timeout plus 30 seconds, a stop
+  request before a statement is sent means it never runs, and a failed
+  concurrent index build is flagged as a possible invalid index. (#774)
 - Add a top-level `make test-changed` target that runs `test-all` only
   in the sub-projects a branch changes, including those that depend on
   a changed shared package, collector schema, or example
@@ -21,6 +39,14 @@ project adheres to
 
 ### Changed
 
+- Refuse writes sent to `/api/v1/connections/{id}/query` with a 409 and
+  `requires_action`; the `confirmed` field is removed, and a write is
+  now proposed as an action instead.
+  (#774)
+- Raise the minimum collector schema version to 33. Upgrade and start
+  the collector before the server, because the server refuses to start
+  against an older schema.
+  (#774)
 - Reorganise the documentation by task. Configuration reference pages
   for the server, collector, alerter and web client moved from
   `getting-started/configuration/` to a new top-level Configuration

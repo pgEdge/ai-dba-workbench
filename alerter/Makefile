@@ -22,7 +22,7 @@ BINARY := ai-dba-alerter
 # Postgres major it tested at the time (PG 14 to 18).
 # Raise it whenever a change lifts the total and never lower it.
 # Override for local experiments with `make coverage COVERAGE_MIN=80`.
-COVERAGE_MIN ?= 95.1
+COVERAGE_MIN ?= 95.2
 
 # Get absolute path to output directory
 ABS_BIN_DIR := $(abspath $(BIN_DIR))

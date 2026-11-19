@@ -29,19 +29,21 @@ import (
 // ContextAwareProvider wraps a tool registry and provides per-token database clients
 // This ensures connection isolation in HTTP/HTTPS mode with authentication
 type ContextAwareProvider struct {
-	baseRegistry   *Registry // Registry for tool definitions (List operation)
-	clientManager  *database.ClientManager
-	resourceReg    *resources.ContextAwareRegistry
-	fallbackClient *database.Client         // Fallback client when no session connection is selected
-	cfg            *config.Config           // Server configuration (for embedding settings)
-	authStore      *auth.AuthStore          // Auth store for users and tokens
-	rateLimiter    *auth.RateLimiter        // Rate limiter for authentication attempts
-	datastore      *database.Datastore      // Datastore for monitored connection info
-	rbacChecker    *auth.RBACChecker        // RBAC checker for privilege-based access control
-	memoryStore    *memory.Store            // Memory store for chat memory persistence
-	resolver       *ConnectionResolver      // Resolver for explicit connection_id in tool args
-	clientResolver *database.ClientResolver // Resolver for per-token database clients
-	record         DenialRecorder           // Audits refused tool calls; nil without an auth store
+	baseRegistry     *Registry // Registry for tool definitions (List operation)
+	clientManager    *database.ClientManager
+	resourceReg      *resources.ContextAwareRegistry
+	fallbackClient   *database.Client         // Fallback client when no session connection is selected
+	cfg              *config.Config           // Server configuration (for embedding settings)
+	authStore        *auth.AuthStore          // Auth store for users and tokens
+	rateLimiter      *auth.RateLimiter        // Rate limiter for authentication attempts
+	datastore        *database.Datastore      // Datastore for monitored connection info
+	rbacChecker      *auth.RBACChecker        // RBAC checker for privilege-based access control
+	memoryStore      *memory.Store            // Memory store for chat memory persistence
+	resolver         *ConnectionResolver      // Resolver for explicit connection_id in tool args
+	clientResolver   *database.ClientResolver // Resolver for per-token database clients
+	record           DenialRecorder           // Audits refused tool calls; nil without an auth store
+	proposer         ActionProposer           // Backs propose_action; nil until SetActionProposer is called
+	conversationOwns ConversationOwnership    // Ownership check for propose_action's conversation id
 
 	// Cache of registries per client to avoid re-creating tools on every Execute()
 	mu               sync.RWMutex
@@ -98,6 +100,7 @@ func (p *ContextAwareProvider) registerStatelessTools(registry *Registry) {
 
 // registerDatastoreTools registers tools that query the datastore (metrics database)
 func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
+	p.registerProposeAction(registry)
 	// Datastore tools use the shared datastore pool, not per-token connections
 	if p.datastore != nil {
 		// Register metrics tools if datastore is configured
@@ -185,6 +188,29 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("get_timeline_events", GetTimelineEventsTool(nil, p.rbacChecker, nil, p.record))
 		}
 	}
+}
+
+// SetActionProposer supplies the service behind propose_action, and the
+// conversation ownership check it applies to the call's conversation id,
+// and registers the tool when it is enabled. Until it is called the tool
+// is not offered, because there is nothing to propose to.
+//
+// SetActionProposer takes no lock: it writes the proposer and registers
+// the tool without synchronization, so it must be called exactly once,
+// during startup, before the provider serves any request.
+func (p *ContextAwareProvider) SetActionProposer(proposer ActionProposer, owns ConversationOwnership) {
+	p.proposer = proposer
+	p.conversationOwns = owns
+	p.registerProposeAction(p.baseRegistry)
+}
+
+// registerProposeAction registers propose_action when a proposer is set
+// and the tool is enabled in configuration.
+func (p *ContextAwareProvider) registerProposeAction(registry *Registry) {
+	if p.proposer == nil || !p.cfg.Builtins.Tools.IsToolEnabled("propose_action") {
+		return
+	}
+	registry.Register("propose_action", ProposeActionTool(p.proposer, p.conversationOwns, p.rbacChecker, p.record))
 }
 
 // registerDatabaseTools registers all database-dependent tools
@@ -530,6 +556,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		"get_alert_rules":      true,                 // Datastore tool - uses shared datastore pool
 		"get_metric_baselines": true,                 // Datastore tool - uses shared datastore pool
 		"query_datastore":      true,                 // Datastore tool - uses shared datastore pool
+		"propose_action":       true,                 // Proposes a reviewed write; the proposer owns its own pool
 		"describe_datastore":   true,                 // Datastore tool - uses shared datastore pool
 		"get_blackouts":        true,                 // Datastore tool - uses shared datastore pool
 		"get_timeline_events":  true,                 // Datastore tool - uses full Datastore for typed queries

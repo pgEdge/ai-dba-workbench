@@ -17,6 +17,7 @@ import type { Theme } from '@mui/material/styles';
 import CheckIcon from '@mui/icons-material/CheckCircle';
 import WarningIcon from '@mui/icons-material/Warning';
 import { getToolDisplayName } from '../../utils/toolDisplayNames';
+import type { ProposeActionResult } from '../../types/actions';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,6 +35,13 @@ export interface ToolActivity {
     connectionId?: number;
     /** The `database_name` argument the tool was called with, if any. */
     databaseName?: string;
+    /** The parsed result of a completed `propose_action` call. */
+    proposal?: ProposeActionResult;
+    /**
+     * The `revises_action_id` a `propose_action` call was made with,
+     * which links it to the vetoed attempt it revises.
+     */
+    revisesActionId?: number;
 }
 
 // ---------------------------------------------------------------------------

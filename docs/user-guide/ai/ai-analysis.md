@@ -128,6 +128,12 @@ naming the server, and the database where known, that they will run on. The
 user must click Execute to proceed or Cancel to abort. Running a write
 statement also requires write access to the connection.
 
+Clicking Execute does not run the statements directly. The Workbench records
+them as a proposed action, passes them through a review step, and runs them
+only if the review passes. The review is not yet implemented, so you must check
+each statement yourself before you click Execute;
+[Reviewed Write Actions](#reviewed-write-actions) describes the steps. The query endpoint refuses to run a write itself.
+
 A query that calls a function with side effects beyond its own transaction also
 counts as a write, even though it begins with `SELECT`, because a read-only
 transaction does not stop such a function. The system recognizes these
@@ -155,15 +161,168 @@ such as `t.nextval`, also counts as a write. A view or a user-defined function
 that calls one of these functions is not detected, so review queries against
 unfamiliar views and functions before running them.
 
-Confirmed statements run in order on a single database connection. The
+Approved statements run in order on a single database connection. The
 [SQL extraction](#sql-extraction) step removes `BEGIN`, `COMMIT`, and
 `ROLLBACK` statements before the block runs, so do not rely on them to group
-the block's statements into one transaction or to undo a change. If the
-statements leave a transaction open, the system rolls it back and reports an
-error. The rollback undoes the transaction's database changes, but not effects
-that a rollback cannot reach, such as a sequence advanced with `nextval`, a
-backend signalled with `pg_terminate_backend`, or an action outside the
-database.
+the block's statements into one transaction or to undo a change. Reviewed
+Write Actions explains when the Workbench runs the statements in a single
+transaction of its own and what happens when one of them fails.
+
+### Reviewed Write Actions
+
+Every write that the Workbench runs from an AI-generated code block is stored
+first as a proposed action; nothing changes on the monitored server until the
+action has been through the review step and approved. The same lifecycle
+applies to a write from an analysis dialog, from a chart analysis, from a SQL
+block in one of Ellie's replies, and to a write that Ellie proposes herself in
+chat.
+
+The supervisor review is not yet implemented. In this release the server uses a
+placeholder reviewer that passes every proposal as low danger without
+inspecting the SQL, so a passed review is not an independent danger assessment
+and says nothing about whether the statements are safe. Read each statement
+carefully and decide for yourself whether to run it. A real review by Ellie's
+supervisor is planned for a later release (issue #768). A rollback does not
+undo sequence changes made with `nextval` or `setval`.
+
+The lifecycle of an action has the following steps:
+
+1. Click Execute in the confirmation prompt. The Workbench stores the
+   statements, the server and database, and the analysis text as context.
+2. The block displays Supervisor reviewing… whilst the review step runs. The
+   review rates the danger as low, moderate, high or critical; the placeholder
+   reviewer always rates it low.
+3. When the review passes, the block displays Not yet reviewed, with a low
+   danger rating, because the placeholder reviewer did not assess the
+   statements. Once a real supervisor review exists, a passed review displays
+   Approved by Ellie's supervisor instead. For a block that you have just
+   confirmed, the Workbench then starts the run at once. Your click on Execute
+   is the approval. An action that Ellie proposed in chat waits for you
+   instead; click Execute on the block to run it. That
+   click is a single step, with no further prompt, because a code block from
+   chat is confirmed before the action is created.
+4. The block displays Running… with a Cancel button whilst the statements
+   run. Click Cancel to ask the server to stop the run.
+5. The block displays the outcome: Succeeded with the number of rows
+   affected, Failed with the first error, Cancelled, or Outcome unknown:
+   check the database.
+
+The execution status of an action is one of the following:
+
+| Status | Meaning |
+|--------|---------|
+| Not started | The action has been stored, but nothing has run. |
+| Running | The server is running the statements. |
+| Succeeded | Every statement completed. |
+| Failed | A statement failed; the block shows the error. |
+| Cancelled | The run was cancelled before it completed. |
+| Outcome unknown | The server cannot tell whether the statements took effect. |
+
+The Workbench shows Outcome unknown in the following cases:
+
+- the connection to the monitored server was lost whilst a statement ran or
+  during `COMMIT`.
+- a statement was stopped part way through, which can leave partial work such
+  as an invalid index.
+- the server restarted during a run.
+- an unexpected error interrupted a batch that does not run in a transaction.
+
+When the server shuts down, it waits only a short grace period for running
+actions to record their outcome. An action that actually rolled back can
+therefore be recorded as Outcome unknown. Inspect the database before you
+propose the change again, because some of the statements may have taken
+effect.
+
+If the server cannot record an action's outcome because of a transient error,
+it retries the recording; it never reruns the SQL.
+
+Whilst an action shows under a code block, the Run button of that block stays
+disabled until you dismiss the action. If creating the action fails, the error
+row has a Dismiss button. Confirming a write proposes exactly the SQL that was
+run. An action proposed before a chat is first saved is linked to its
+conversation when the chat is saved, even if that turn failed.
+
+#### Execution Behaviour
+
+The server runs only the statements stored with the action; the browser sends
+just the action identifier when you click Execute. The run uses a lock timeout
+of five seconds and a statement timeout of five minutes by default; the
+`actions` section of the
+[server configuration file](../../configuration/server/configuration_file.md#proposed-actions-properties)
+changes both. When every statement can run in a transaction, the server runs
+them in one transaction and rolls the lot back if any statement fails.
+Statements that cannot run in a transaction, such as `VACUUM`, make the server
+run the whole batch without one; the batch then stops at the first error and
+reports the later statements as not applied, but the statements before the
+error stay in effect.
+
+A failed `CREATE INDEX CONCURRENTLY` or `REINDEX ... CONCURRENTLY` can leave an
+`INVALID` index behind even though the action reports its statements as not
+applied; check for and drop the invalid index before you try again. These
+statements can also need more time than the default five-second lock timeout
+and five-minute statement timeout allow on a large table, so raise the
+timeouts in the `actions` section if they fail for that reason.
+
+Each round trip to the monitored database also has a client-side limit of the
+statement timeout plus 30 seconds; when the limit expires, the server closes
+the connection. Outside a transaction, or during `COMMIT`, the outcome is then
+recorded as unknown. Inside a transaction the statement fails and the
+transaction is not committed.
+
+A stop request that arrives before a statement is sent means the statement is
+never sent; the result reads "the action was stopped before this statement
+ran" and the action is cancelled. A stop request that arrives before `COMMIT`
+rolls the transaction back.
+
+A statement result can carry a note. A sequence change made with `nextval` or
+`setval` is not undone by a rollback; the server detects only calls written in
+the statement text, not the defaults of serial or identity columns. A failed
+`CREATE INDEX CONCURRENTLY` or `REINDEX ... CONCURRENTLY` can leave an invalid
+index, so check `pg_index.indisvalid` and drop or rebuild the index.
+
+The block displays the rows returned by a statement that has a `RETURNING`
+clause, and notes when the display is limited to the first rows.
+
+#### Vetoed Actions
+
+When the supervisor vetoes an action, the block displays Vetoed by Ellie's
+supervisor, the danger rating, and the reasons for the veto, and nothing runs.
+Ellie may revise a vetoed proposal in chat; each revision is a new action
+linked to the previous one, and the server allows three attempts per chain by
+default. When every attempt is vetoed, the chat presents the least dangerous
+one.
+
+A user with write access to the connection can still choose Override and run.
+The Override the supervisor's veto dialog repeats the danger rating and the
+reasons, states that running the change anyway is your decision and is
+recorded against your account, and asks you to type the connection name
+exactly. The Run anyway button stays disabled until the text matches. Only a
+signed-in user session can override a veto; a service token cannot, and the
+server refuses the request without running anything.
+
+#### Retrying and Permissions
+
+When an action has been approved but did not start, the block shows a Retry
+button and the action stays not started. Who sees the button depends on how
+the action was decided:
+
+- an action approved by Ellie's supervisor or by you can be retried by the
+  person who approved it, or by a superuser.
+- an action that someone overrode can be retried only by the person who
+  overrode it, or by a superuser; retrying it means overriding again, so the
+  dialog opens and you must retype the connection name.
+
+Other users see no Retry button. Running an action needs write access to the
+connection at the time of the click, not only when the action was created; the
+server refuses the request, and the action stays not started, if you no longer
+have that access. If write access is revoked whilst an action awaits review,
+the server does not start the action automatically; it stays reviewed but
+unapproved.
+
+The Workbench assumes that one server instance uses a given datastore. When
+the server starts, it marks every action still running as Outcome unknown.
+Running two servers against one datastore can therefore mislabel an action
+that the other server is still running.
 
 ### SQL Extraction
 

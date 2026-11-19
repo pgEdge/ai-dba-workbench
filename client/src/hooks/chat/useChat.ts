@@ -29,6 +29,7 @@ import {
     createConversation,
     updateConversation,
     fetchConversation,
+    linkConversationActions,
 } from './chatConversation';
 import {
     NO_MCP_PRIVILEGES_MESSAGE,
@@ -117,6 +118,12 @@ export function useChat(): UseChatReturn {
     // this before reading availableToolsRef so it always observes
     // the authoritative tool list rather than the initial fallback.
     const toolsFetchRef = useRef<Promise<void> | null>(null);
+    // Actions proposed before this chat had a saved conversation, kept
+    // until a link to the conversation succeeds.
+    const pendingActionIdsRef = useRef<Set<number>>(new Set());
+    // Bumped whenever the chat is replaced, so a turn still running in
+    // the old chat cannot add its actions to the new one.
+    const chatGenerationRef = useRef(0);
 
     // Keep the visible messages ref in sync with React state.
     useEffect(() => {
@@ -189,6 +196,172 @@ export function useChat(): UseChatReturn {
     // Send message (agentic loop orchestrator)
     // ---------------------------------------------------------------
 
+    /** Append a message to the visible conversation. */
+    const appendVisible = useCallback((message: ChatMessageData): void => {
+        // Functional update, so a reply appended before an earlier update
+        // has committed (for example with synchronous test mocks) is not
+        // lost; the ref lets async closures read the result straight away.
+        setMessages(prev => {
+            const updated = [...prev, message];
+            visibleMessagesRef.current = updated;
+            return updated;
+        });
+    }, []);
+
+    /** Record input in history (most recent first, deduped). */
+    const recordInput = useCallback((text: string): void => {
+        setInputHistory(prev => {
+            const updated = [
+                text,
+                ...prev.filter(h => h !== text),
+            ].slice(0, INPUT_HISTORY_MAX);
+            saveInputHistory(updated);
+            return updated;
+        });
+    }, []);
+
+    /**
+     * Link the actions proposed before this chat had a saved
+     * conversation to `conversationId`. They stay pending if the link
+     * fails, so the next save tries again; the server only links actions
+     * that have no conversation yet, so sending one twice is harmless.
+     */
+    const linkPendingActions = useCallback(
+        async (conversationId: string): Promise<void> => {
+            const ids = [...pendingActionIdsRef.current];
+            if (ids.length === 0) {
+                return;
+            }
+            const generation = chatGenerationRef.current;
+            const linked = await linkConversationActions(
+                conversationId,
+                ids,
+                apiFetch,
+            );
+            if (linked && chatGenerationRef.current === generation) {
+                ids.forEach(id => pendingActionIdsRef.current.delete(id));
+            }
+        },
+        [],
+    );
+
+    /** Save the visible conversation, creating it on the first turn. */
+    const persistConversation = useCallback(async (): Promise<void> => {
+        try {
+            let id = conversationIdRef.current;
+            if (id) {
+                await updateConversation(
+                    id,
+                    visibleMessagesRef.current,
+                    apiFetch,
+                );
+            } else {
+                id = await createConversation(
+                    visibleMessagesRef.current,
+                    apiFetch,
+                );
+                if (!id) {
+                    return;
+                }
+                syncConversationId(id);
+            }
+            await linkPendingActions(id);
+        } catch {
+            // Non-fatal: the user can still continue chatting
+        }
+    }, [syncConversationId, linkPendingActions]);
+
+    /** Compact the API history if it has grown too large. */
+    const compactHistory = useCallback(async (): Promise<void> => {
+        try {
+            apiMessagesRef.current = await maybeCompact(
+                apiMessagesRef.current,
+                apiFetch,
+            );
+        } catch {
+            // Compaction failures are non-fatal
+        }
+    }, []);
+
+    /**
+     * Wait for the initial tools fetch to settle, then return the
+     * authoritative tool list. Without the wait, a fast user (or a
+     * synchronous test runner) can invoke sendMessage between the fetch
+     * starting and setAvailableTools committing, causing the closure to
+     * observe the hardcoded CHAT_TOOLS fallback and bypass the empty-list
+     * short circuit even when the server reported zero tools; see issue
+     * #188. The ref is updated synchronously alongside setAvailableTools
+     * so it reflects the latest list immediately.
+     */
+    const resolveTools = useCallback(async (): Promise<ToolDefinition[]> => {
+        if (toolsFetchRef.current) {
+            try {
+                await toolsFetchRef.current;
+            } catch {
+                // Fetch errors are already handled inside the
+                // useEffect; the ref still holds the resolved
+                // (or fallback) tool list.
+            }
+        }
+        return availableToolsRef.current;
+    }, []);
+
+    /**
+     * Reply that the user has no MCP tool privileges. Without this the
+     * agentic loop would invoke the LLM with an empty tool list (or,
+     * worse, with the hardcoded fallback tools the user is forbidden
+     * from calling), and every proposed call would fail with "Access
+     * denied" until `maxIterations` is exhausted; see issue #188.
+     */
+    const replyNoPrivileges = useCallback((): void => {
+        appendVisible({
+            role: 'assistant',
+            content: NO_MCP_PRIVILEGES_MESSAGE,
+            timestamp: new Date().toISOString(),
+            isError: true,
+        });
+        apiMessagesRef.current = [
+            ...apiMessagesRef.current,
+            { role: 'assistant', content: NO_MCP_PRIVILEGES_MESSAGE },
+        ];
+    }, [appendVisible]);
+
+    /** Show a failed turn's error in the conversation. */
+    const reportTurnError = useCallback((err: unknown): void => {
+        const errMessage =
+            (err as Error).message || 'An unexpected error occurred';
+        logger.error('Chat error:', err);
+        setError(errMessage);
+        appendVisible({
+            role: 'assistant',
+            content: `Sorry, an error occurred: ${errMessage}`,
+            timestamp: new Date().toISOString(),
+            isError: true,
+        });
+    }, [appendVisible]);
+
+    /**
+     * Build the callback the agentic loop calls for each action it
+     * proposes. An action proposed before the chat has a saved
+     * conversation is kept pending until one exists, even if the turn
+     * then fails or is aborted. A later chat ignores reports from a turn
+     * started in an earlier one.
+     */
+    const pendingActionRecorder = useCallback(
+        (turnConversationId: string | null) => {
+            const generation = chatGenerationRef.current;
+            return (actionId: number): void => {
+                if (
+                    !turnConversationId
+                    && chatGenerationRef.current === generation
+                ) {
+                    pendingActionIdsRef.current.add(actionId);
+                }
+            };
+        },
+        [],
+    );
+
     const sendMessage = useCallback(
         async (text: string): Promise<void> => {
             if (!text.trim()) {
@@ -196,113 +369,38 @@ export function useChat(): UseChatReturn {
             }
 
             // Cancel any in-flight request
-            if (abortControllerRef.current) {
-                abortControllerRef.current.abort();
-            }
+            abortControllerRef.current?.abort();
             const abortController = new AbortController();
             abortControllerRef.current = abortController;
 
             setIsLoading(true);
             setError(null);
             setActiveTools([]);
-
-            // Record input in history (most recent first, deduped)
-            setInputHistory(prev => {
-                const updated = [
-                    text,
-                    ...prev.filter(h => h !== text),
-                ].slice(0, INPUT_HISTORY_MAX);
-                saveInputHistory(updated);
-                return updated;
-            });
-
-            const timestamp = new Date().toISOString();
-            const userMessage: ChatMessageData = {
+            recordInput(text);
+            appendVisible({
                 role: 'user',
                 content: text,
-                timestamp,
-            };
-
-            // Append to visible messages using functional update to
-            // avoid capturing stale `messages` from the closure.
-            setMessages(prev => {
-                const updated = [...prev, userMessage];
-                visibleMessagesRef.current = updated;
-                return updated;
+                timestamp: new Date().toISOString(),
             });
 
-            // Append to API message history (wire format, no UI fields)
-            const userAPIMessage: APIMessage = {
-                role: 'user',
-                content: text,
-            };
-            // Capture snapshot before modification for rollback on abort
+            // Capture a snapshot before modification for rollback on
+            // abort, then append to the API history (wire format, no UI
+            // fields).
             const apiMessagesAtTurnStart = [...apiMessagesRef.current];
             apiMessagesRef.current = [
                 ...apiMessagesRef.current,
-                userAPIMessage,
+                { role: 'user', content: text },
             ];
 
-            // Wait for the initial tools fetch to settle before
-            // reading the tool list. Without this, a fast user (or a
-            // synchronous test runner) can invoke sendMessage between
-            // the fetch starting and setAvailableTools committing,
-            // causing the closure to observe the hardcoded CHAT_TOOLS
-            // fallback and bypass the empty-list short circuit even
-            // when the server reported zero tools — see issue #188.
-            if (toolsFetchRef.current) {
-                try {
-                    await toolsFetchRef.current;
-                } catch {
-                    // Fetch errors are already handled inside the
-                    // useEffect; the ref still holds the resolved
-                    // (or fallback) tool list.
-                }
-            }
-
-            // Read the authoritative tool list from the ref. The ref
-            // is updated synchronously alongside setAvailableTools so
-            // it reflects the latest list immediately, even if React
-            // has not yet flushed the state update.
-            const currentTools = availableToolsRef.current;
-
-            // Short-circuit when the user has no MCP tool privileges.
-            // Without this guard the agentic loop would invoke the LLM
-            // with an empty tool list (or, worse, with the hardcoded
-            // fallback tools the user is forbidden from calling), and
-            // every proposed call would fail with "Access denied". The
-            // loop would then spin until `maxIterations` is exhausted
-            // — see issue #188. Render a clear permission message and
-            // skip the loop entirely.
-            if (currentTools.length === 0) {
-                const deniedMessage: ChatMessageData = {
-                    role: 'assistant',
-                    content: NO_MCP_PRIVILEGES_MESSAGE,
-                    timestamp: new Date().toISOString(),
-                    isError: true,
-                };
-                setMessages(prev => {
-                    const updated = [...prev, deniedMessage];
-                    visibleMessagesRef.current = updated;
-                    return updated;
-                });
-                apiMessagesRef.current = [
-                    ...apiMessagesRef.current,
-                    {
-                        role: 'assistant',
-                        content: NO_MCP_PRIVILEGES_MESSAGE,
-                    },
-                ];
-                setIsLoading(false);
-                setActiveTools([]);
-                if (abortControllerRef.current === abortController) {
-                    abortControllerRef.current = null;
-                }
-                return;
-            }
+            const currentTools = await resolveTools();
+            const turnConversationId = conversationIdRef.current;
 
             try {
-                // Run the agentic loop with the resolved tool list.
+                if (currentTools.length === 0) {
+                    replyNoPrivileges();
+                    return;
+                }
+
                 const { finalMessage, updatedApiMessages } =
                     await runAgenticLoop({
                         apiMessages: apiMessagesRef.current,
@@ -312,71 +410,22 @@ export function useChat(): UseChatReturn {
                         abortSignal: abortController.signal,
                         fetchFn: apiFetch,
                         onToolActivity: setActiveTools,
+                        conversationId: turnConversationId,
+                        onActionProposed:
+                            pendingActionRecorder(turnConversationId),
                     });
 
                 apiMessagesRef.current = updatedApiMessages;
-
-                // Append the assistant reply to visible messages using
-                // functional update to handle cases where the prior state
-                // update hasn't committed yet (e.g., in tests with sync mocks).
-                setMessages(prev => {
-                    const updated = [...prev, finalMessage];
-                    visibleMessagesRef.current = updated;
-                    return updated;
-                });
-
-                // --- Conversation persistence ---
-                // Use the ref which was updated in the setMessages callback
-                try {
-                    if (!conversationIdRef.current) {
-                        const newId = await createConversation(
-                            visibleMessagesRef.current,
-                            apiFetch,
-                        );
-                        if (newId) {
-                            syncConversationId(newId);
-                        }
-                    } else {
-                        await updateConversation(
-                            conversationIdRef.current,
-                            visibleMessagesRef.current,
-                            apiFetch,
-                        );
-                    }
-                } catch {
-                    // Non-fatal: the user can still continue chatting
-                }
-
-                // --- Compaction ---
-                try {
-                    apiMessagesRef.current = await maybeCompact(
-                        apiMessagesRef.current,
-                        apiFetch,
-                    );
-                } catch {
-                    // Compaction failures are non-fatal
-                }
+                appendVisible(finalMessage);
+                await persistConversation();
+                await compactHistory();
             } catch (err) {
                 if ((err as Error).name === 'AbortError') {
                     // Request was intentionally cancelled; rollback API history
                     apiMessagesRef.current = apiMessagesAtTurnStart;
                     return;
                 }
-
-                const errMessage =
-                    (err as Error).message ||
-                    'An unexpected error occurred';
-                logger.error('Chat error:', err);
-                setError(errMessage);
-
-                // Add an error message to the visible conversation
-                const errorAssistantMessage: ChatMessageData = {
-                    role: 'assistant',
-                    content: `Sorry, an error occurred: ${errMessage}`,
-                    timestamp: new Date().toISOString(),
-                    isError: true,
-                };
-                setMessages(prev => [...prev, errorAssistantMessage]);
+                reportTurnError(err);
             } finally {
                 setIsLoading(false);
                 setActiveTools([]);
@@ -388,12 +437,31 @@ export function useChat(): UseChatReturn {
         // The tool list is read through availableToolsRef rather than
         // captured via closure, so availableTools is intentionally not
         // a dependency here.
-        [maxIterations, syncConversationId],
+        [
+            maxIterations,
+            recordInput,
+            appendVisible,
+            resolveTools,
+            replyNoPrivileges,
+            pendingActionRecorder,
+            persistConversation,
+            compactHistory,
+            reportTurnError,
+        ],
     );
 
     // ---------------------------------------------------------------
     // New chat
     // ---------------------------------------------------------------
+
+    /**
+     * Forget the current chat's unlinked actions, and ignore any still
+     * reported by a turn started in it.
+     */
+    const resetPendingActions = useCallback((): void => {
+        chatGenerationRef.current += 1;
+        pendingActionIdsRef.current = new Set();
+    }, []);
 
     const newChat = useCallback((): void => {
         // Cancel any in-flight request
@@ -408,10 +476,11 @@ export function useChat(): UseChatReturn {
         setIsLoading(false);
         setConversationTitle('New Chat');
         syncConversationId(null);
+        resetPendingActions();
         apiMessagesRef.current = [];
         visibleMessagesRef.current = [];
         // Intentionally preserve inputHistory across conversations
-    }, [syncConversationId]);
+    }, [syncConversationId, resetPendingActions]);
 
     // ---------------------------------------------------------------
     // Load existing conversation
@@ -428,6 +497,7 @@ export function useChat(): UseChatReturn {
             setIsLoading(true);
             setError(null);
             setActiveTools([]);
+            resetPendingActions();
 
             try {
                 const data = await fetchConversation(id, apiFetch);
@@ -453,7 +523,7 @@ export function useChat(): UseChatReturn {
                 setIsLoading(false);
             }
         },
-        [syncConversationId],
+        [syncConversationId, resetPendingActions],
     );
 
     // ---------------------------------------------------------------

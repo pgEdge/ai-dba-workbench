@@ -47,6 +47,15 @@ upgrade` keeps packages back when an upgrade needs a new package;
 use `apt upgrade`, `apt-get dist-upgrade` or `apt-get install
 pgedge-ai-dba-server` for that first upgrade instead.
 
+## Upgrading the Collector Before the Server
+
+The collector owns the datastore schema, and the server refuses to start
+against a schema older than the minimum version it needs. This release raises
+the minimum schema version to 33, which adds the `proposed_actions` table that
+records reviewed write actions. Upgrade and start the collector first, so that
+it migrates the schema, and then upgrade the server. A server started against
+an older schema stops with an error naming the version it needs.
+
 ## Checking a Configuration by Hand
 
 Run the server with the `-check-config` flag to validate a

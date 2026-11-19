@@ -99,6 +99,7 @@ type OpenAPISchema struct {
 	AdditionalProperties *OpenAPISchema            `json:"additionalProperties,omitempty"`
 	Required             []string                  `json:"required,omitempty"`
 	Ref                  string                    `json:"$ref,omitempty"`
+	AllOf                []*OpenAPISchema          `json:"allOf,omitempty"`
 	Enum                 []string                  `json:"enum,omitempty"`
 	Default              any                       `json:"default,omitempty"`
 	Nullable             bool                      `json:"nullable,omitempty"`
@@ -1794,8 +1795,11 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type:     "object",
 			Required: []string{"name"},
 			Properties: map[string]*OpenAPISchema{
-				"name":      {Type: "string", Description: "Tool name to execute"},
-				"arguments": {Type: "object", Description: "Tool arguments"},
+				"name":            {Type: "string", Description: "Tool name to execute"},
+				"arguments":       {Type: "object", Description: "Tool arguments"},
+				"conversation_id": {Type: "string", Description: "Optional chat conversation the call belongs to; recorded by propose_action"},
+				"model":           {Type: "string", Description: "Optional model that produced the call; recorded by propose_action"},
+				"provider":        {Type: "string", Description: "Optional provider of the model; recorded by propose_action"},
 			},
 		},
 		"MCPToolCallResponse": {
@@ -2012,6 +2016,143 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"mcp_privileges":    {Type: "array", Items: &OpenAPISchema{Type: "integer", Format: "int64"}, Description: "MCP privilege IDs"},
 				"admin_permissions": {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Admin permission names"},
 			},
+		},
+		"QueryExecuteRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"query":         {Type: "string", Description: "Read-only SQL to run; may contain several statements"},
+				"database_name": {Type: "string", Description: "Database to run against; defaults to the connection's database"},
+			},
+			Required: []string{"query"},
+		},
+		"WriteRefusedResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"error":            {Type: "string", Description: "Why the request was refused"},
+				"requires_action":  {Type: "boolean", Description: "Always true: a write must be proposed as an action instead"},
+				"write_statements": {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "The statements that were classified as writes"},
+			},
+			Required: []string{"error", "requires_action", "write_statements"},
+		},
+		"QueryStatementResult": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"columns":   {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Result column names"},
+				"rows":      {Type: "array", Items: &OpenAPISchema{Type: "array", Items: &OpenAPISchema{Type: "string"}}, Description: "Result rows as text"},
+				"row_count": {Type: "integer", Description: "Number of rows returned"},
+				"truncated": {Type: "boolean", Description: "True when the rows were cut short"},
+				"query":     {Type: "string", Description: "The statement that was run"},
+				"error":     {Type: "string", Description: "Error text; absent on success"},
+			},
+		},
+		"QueryResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"results":          {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/QueryStatementResult"}, Description: "Result of every statement, in order; a failed statement ends the run"},
+				"total_statements": {Type: "integer", Description: "Number of statements in the request"},
+			},
+		},
+		"ActionReview": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"decision": {Type: "string", Description: "The reviewer's decision"},
+				"danger":   {Type: "string", Description: "The reviewer's danger rating"},
+				"reasons":  {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Reasons given for the decision"},
+				"reviewer": {Type: "string", Description: "Which reviewer produced the verdict"},
+			},
+		},
+		"ActionStatementResult": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"statement":     {Type: "string", Description: "The statement that was run"},
+				"command_tag":   {Type: "string", Description: "Command tag the server returned"},
+				"rows_affected": {Type: "integer", Format: "int64", Description: "Rows affected"},
+				"duration_ms":   {Type: "integer", Format: "int64", Description: "Run time in milliseconds"},
+				"error":         {Type: "string", Description: "Error text, empty on success"},
+				"applied":       {Type: "boolean", Description: "Whether the statement's effect was kept"},
+				"columns":       {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Result column names, when the statement returned rows"},
+				"rows":          {Type: "array", Items: &OpenAPISchema{Type: "array", Items: &OpenAPISchema{Type: "string"}}, Description: "Result rows as text"},
+				"truncated":     {Type: "boolean", Description: "True when the rows were cut short"},
+				"note":          {Type: "string", Description: "Warning about an effect the outcome does not show: a sequence change a rollback kept, or an invalid index a failed concurrent build may have left"},
+			},
+		},
+		"Action": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":               {Type: "integer", Format: "int64", Description: "Action ID"},
+				"connection_id":    {Type: "integer", Description: "Connection the action targets"},
+				"database_name":    {Type: "string", Nullable: true, Description: "Database the action runs in"},
+				"statements":       {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "The statements, split by the server"},
+				"source":           {Type: "string", Enum: []string{"chat_tool", "chat_block", "alert_analysis", "query_analysis", "server_analysis", "chart_analysis"}, Description: "Where the proposal came from"},
+				"proposed_by":      {Type: "string", Description: "Proposer's username"},
+				"proposed_via":     {Type: "string", Description: "Channel the proposal arrived on"},
+				"conversation_id":  {Type: "string", Nullable: true, Description: "Linked conversation; null for anyone but the proposer or a superuser"},
+				"alert_id":         {Type: "integer", Format: "int64", Nullable: true, Description: "Linked alert"},
+				"parent_action_id": {Type: "integer", Format: "int64", Nullable: true, Description: "Previous attempt in the review chain"},
+				"attempt":          {Type: "integer", Description: "Position in the review chain"},
+				"rationale":        {Type: "string", Nullable: true, Description: "Why the change is proposed"},
+				"evidence":         {Type: "object", Nullable: true, Description: "Stored context snapshot; null for anyone but the proposer or a superuser"},
+				"review_status":    {Type: "string", Enum: []string{"pending", "passed", "vetoed"}, Description: "Review state"},
+				"review":           {Ref: "#/components/schemas/ActionReview"},
+				"approval":         {Type: "string", Enum: []string{"none", "approved", "overridden"}, Description: "Approval state: none until someone approves, approved for a passed review, overridden for a vetoed one"},
+				"approved_by":      {Type: "string", Nullable: true, Description: "Who approved the action"},
+				"approved_via":     {Type: "string", Nullable: true, Description: "Channel the approval arrived on"},
+				"approved_at":      {Type: "string", Format: "date-time", Nullable: true, Description: "When it was approved"},
+				"exec_status":      {Type: "string", Enum: []string{"not_started", "executing", "succeeded", "failed", "cancelled", "unknown"}, Description: "Execution state"}, //nolint:misspell // value fixed by the table CHECK
+				"transactional":    {Type: "boolean", Nullable: true, Description: "Whether the statements ran in one transaction"},
+				"results":          {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/ActionStatementResult"}, Description: "Per-statement results"},
+				"preview":          {Type: "object", Nullable: true, Description: "Preview of the change"},
+				"undo":             {Type: "object", Nullable: true, Description: "Undo information"},
+				"verification":     {Type: "object", Nullable: true, Description: "Verification result"},
+				"outcome":          {Type: "object", Nullable: true, Description: "Recorded outcome"},
+				"created_at":       {Type: "string", Format: "date-time", Description: "Creation time"},
+				"updated_at":       {Type: "string", Format: "date-time", Description: "Last update time"},
+				"executed_at":      {Type: "string", Format: "date-time", Nullable: true, Description: "When execution started"},
+			},
+		},
+		"ActionResponse": {
+			Description: "An action together with the state of its review chain: every field of Action at the top level, plus the chain fields.",
+			AllOf: []*OpenAPISchema{
+				{Ref: "#/components/schemas/Action"},
+				{
+					Type: "object",
+					Properties: map[string]*OpenAPISchema{
+						"attempts_left":   {Type: "integer", Description: "Review attempts remaining in the chain"},
+						"chain_exhausted": {Type: "boolean", Description: "True when no further attempt may be proposed"},
+						"best_attempt":    {Ref: "#/components/schemas/Action"},
+						"execute_error":   {Type: "string", Description: "Present when execute was set and the action could not be approved or started, including when write access was removed during the review; the action is still recorded, and exec_status shows where it stands"},
+					},
+					Required: []string{"attempts_left", "chain_exhausted"},
+				},
+			},
+		},
+		"ActionCreateRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"sql":             {Type: "string", Description: "SQL to propose; may contain several statements"},
+				"database_name":   {Type: "string", Description: "Database to run in; defaults to the connection's database"},
+				"rationale":       {Type: "string", Description: "Why the change is proposed"},
+				"source":          {Type: "string", Enum: []string{"chat_block", "alert_analysis", "query_analysis", "server_analysis", "chart_analysis"}, Description: "Where the proposal came from; chat_tool is reserved for the propose_action tool"},
+				"context":         {Type: "string", Description: "Context snapshot stored as evidence; truncated to the configured limit"},
+				"alert_id":        {Type: "integer", Format: "int64", Description: "Alert the proposal relates to"},
+				"conversation_id": {Type: "string", Description: "Conversation the proposal belongs to"},
+				"execute":         {Type: "boolean", Description: "Approve and start the action at once when the review passes"},
+			},
+			Required: []string{"sql", "source"},
+		},
+		"ActionExecuteRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"override": {Type: "boolean", Description: "Run an action whose review did not pass; session callers only, never API tokens"},
+				"confirm":  {Type: "string", Description: "Confirmation text the override requires"},
+			},
+		},
+		"ActionLinkRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"action_ids": {Type: "array", Items: &OpenAPISchema{Type: "integer", Format: "int64"}, Description: "Between 1 and 100 action IDs"},
+			},
+			Required: []string{"action_ids"},
 		},
 		"QueryValidateRequest": {
 			Type: "object",
@@ -2281,6 +2422,124 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"403": jsonResponse("ErrorResponse", "Permission denied: you do not have access to this connection"),
 					"404": jsonResponse("ErrorResponse", "Connection not found"),
 					"500": jsonResponse("ErrorResponse", "Failed to validate query"),
+				},
+			},
+		},
+
+		"/connections/{id}/query": {
+			Post: &OpenAPIOperation{
+				Summary:     "Run read-only SQL",
+				Description: "Runs read-only SQL against the connection. A request that contains any write statement is refused with 409 and requires_action set, and nothing is run; propose the change with POST /connections/{id}/actions instead. Requires read access to the connection.",
+				OperationID: "executeConnectionQuery",
+				Tags:        []string{"Connections"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Connection ID")},
+				RequestBody: jsonRequestBody("QueryExecuteRequest", "SQL to run", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("QueryResponse", "Result of every statement, in order"),
+					"400": jsonResponse("ErrorResponse", "Query is required, or the database name is invalid"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied: you do not have access to this connection"),
+					"404": jsonResponse("ErrorResponse", "Connection not found"),
+					"409": jsonResponse("WriteRefusedResponse", "The request contains a write statement and must be proposed as an action"),
+					"500": jsonResponse("ErrorResponse", "Failed to run query"),
+				},
+			},
+		},
+
+		"/connections/{id}/actions": {
+			Post: &OpenAPIOperation{
+				Summary:     "Propose an action",
+				Description: "Records a proposed change, runs the review and returns the action with the state of its review chain. With execute set and a passing review the action is approved and started at once; if that fails the action is still created, the status stays 201, and the response carries the current exec_status and an execute_error. A conversation_id must name a conversation the caller owns, and an alert_id an alert on this connection; otherwise the answer is 404. Requires write access to the connection.",
+				OperationID: "createConnectionAction",
+				Tags:        []string{"Actions"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Connection ID")},
+				RequestBody: jsonRequestBody("ActionCreateRequest", "The change to propose", true),
+				Responses: map[string]OpenAPIResponse{
+					"201": jsonResponse("ActionResponse", "Action created"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Write access to this connection is required"),
+					"404": jsonResponse("ErrorResponse", "Connection, conversation or alert not found"),
+					"409": jsonResponse("ErrorResponse", "The review chain is exhausted or the proposal conflicts with an earlier one"),
+					"500": jsonResponse("ErrorResponse", "Failed to create the action"),
+				},
+			},
+		},
+
+		"/actions/{id}": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get an action",
+				Description: "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser.",
+				OperationID: "getAction",
+				Tags:        []string{"Actions"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Action ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("Action", "Action details"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Action not found"),
+					"500": jsonResponse("ErrorResponse", "Failed to load the action"),
+				},
+			},
+		},
+
+		"/actions/{id}/execute": {
+			Post: &OpenAPIOperation{
+				Summary:     "Approve and execute an action",
+				Description: "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens. An action approved or overridden earlier that has not started may be executed again, without a second approval, by whoever approved or overrode it or by a superuser; an overridden action is retried with override and the confirm text again, under the same rules. Anyone else gets 409.",
+				OperationID: "executeAction",
+				Tags:        []string{"Actions"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Action ID")},
+				RequestBody: jsonRequestBody("ActionExecuteRequest", "Optional override", false),
+				Responses: map[string]OpenAPIResponse{
+					"202": jsonResponse("Action", "Execution started"),
+					"400": jsonResponse("ErrorResponse", "The confirm text does not match"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Write access is required, or an API token tried to override"),
+					"404": jsonResponse("ErrorResponse", "Action not found"),
+					"409": jsonResponse("ErrorResponse", "The action has already been approved or started, or has not passed review"),
+					"500": jsonResponse("ErrorResponse", "Failed to start the action"),
+					"503": jsonResponse("ErrorResponse", "The server is shutting down"),
+				},
+			},
+		},
+
+		"/actions/{id}/cancel": {
+			Post: &OpenAPIOperation{
+				Summary:     "Cancel a running action",
+				Description: "Asks a running action to stop, answering 202. Requires write access to the connection.",
+				OperationID: "cancelAction",
+				Tags:        []string{"Actions"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Action ID")},
+				Responses: map[string]OpenAPIResponse{
+					"202": {Description: "Cancellation requested; the body holds the action id and cancel_requested"},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Write access to this connection is required"),
+					"404": jsonResponse("ErrorResponse", "Action not found"),
+					"409": jsonResponse("ErrorResponse", "The action is not running"),
+				},
+			},
+		},
+
+		"/conversations/{id}/actions/link": {
+			Post: &OpenAPIOperation{
+				Summary:     "Link actions to a conversation",
+				Description: "Attaches the caller's own unlinked actions to a conversation the caller owns.",
+				OperationID: "linkConversationActions",
+				Tags:        []string{"Conversations"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamString("id", "Conversation ID")},
+				RequestBody: jsonRequestBody("ActionLinkRequest", "Actions to link", true),
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Actions linked"},
+					"400": jsonResponse("ErrorResponse", "action_ids is empty, too long or holds a non-positive id"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Conversation not found, or owned by another user"),
+					"500": jsonResponse("ErrorResponse", "Failed to link the actions"),
 				},
 			},
 		},

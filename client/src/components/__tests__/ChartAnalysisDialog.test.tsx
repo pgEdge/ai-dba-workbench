@@ -60,6 +60,12 @@ vi.mock('../shared/BaseAnalysisDialog', () => ({
                 <div data-testid="toolbar">
                     {props.toolbarContent as React.ReactNode}
                 </div>
+                <div data-testid="md-origin">
+                    {JSON.stringify(
+                        (props.markdownContentProps as Record<string, unknown>)
+                            .actionOrigin,
+                    )}
+                </div>
                 <div data-testid="markdown">
                     {String(props.markdownContent ?? '')}
                 </div>
@@ -169,6 +175,16 @@ describe('ChartAnalysisDialog', () => {
                 data: baseChartData,
             }),
         );
+    });
+
+    it('records writes run from the analysis as chart analysis', () => {
+        renderDialog();
+        expect(
+            JSON.parse(screen.getByTestId('md-origin').textContent ?? ''),
+        ).toMatchObject({
+            actionSource: 'chart_analysis',
+            actionContext: 'Chart analysis: CPU usage',
+        });
     });
 
     it('does not re-trigger analyze() on subsequent renders while open', () => {

@@ -47,6 +47,12 @@ func (h *MCPToolHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(htt
 type toolCallRequest struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
+
+	// ConversationID, Model and Provider are optional provenance the
+	// chat client supplies; tools such as propose_action record them.
+	ConversationID string `json:"conversation_id,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Provider       string `json:"provider,omitempty"`
 }
 
 // toolListResponse represents the response body for listing MCP tools.
@@ -86,7 +92,12 @@ func (h *MCPToolHandler) handleCallTool(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	response, err := h.provider.Execute(r.Context(), req.Name, req.Arguments)
+	ctx := mcp.WithCallMeta(r.Context(), mcp.CallMeta{
+		ConversationID: req.ConversationID,
+		Model:          req.Model,
+		Provider:       req.Provider,
+	})
+	response, err := h.provider.Execute(ctx, req.Name, req.Arguments)
 	if err != nil {
 		log.Printf("[ERROR] MCP tool execution failed for '%s': %v", req.Name, err)
 		RespondError(w, http.StatusInternalServerError, "Tool execution failed")

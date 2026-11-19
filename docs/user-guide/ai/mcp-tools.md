@@ -340,6 +340,17 @@ These tools query alert data from the monitoring system.
 | `get_blackouts` | Queries blackout periods and recurring schedules for monitored connections. |
 | `get_timeline_events` | Queries the unified incident-investigation timeline of configuration changes, restarts, extension changes, alerts, and blackouts. |
 
+## Proposed Action Tool
+
+| Tool | Description |
+|------|-------------|
+| `propose_action` | Proposes a write to a monitored database for review. Nothing runs when the tool is called: an automated reviewer rates the proposal and a person decides whether it runs. The caller needs write access to the connection. A vetoed proposal can be revised, up to the configured number of attempts. |
+
+The `propose_action` tool takes `connection_id`, `sql` and `rationale`, and
+optionally `database_name` and `revises_action_id` (the vetoed action being
+revised). The SQL must contain at least one write and must not contain
+transaction control or change `lock_timeout` or `statement_timeout`.
+
 ## Memory Tools
 
 These tools manage persistent memories that the AI assistant can store and

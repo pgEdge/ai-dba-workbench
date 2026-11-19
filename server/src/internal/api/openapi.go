@@ -1794,8 +1794,11 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type:     "object",
 			Required: []string{"name"},
 			Properties: map[string]*OpenAPISchema{
-				"name":      {Type: "string", Description: "Tool name to execute"},
-				"arguments": {Type: "object", Description: "Tool arguments"},
+				"name":            {Type: "string", Description: "Tool name to execute"},
+				"arguments":       {Type: "object", Description: "Tool arguments"},
+				"conversation_id": {Type: "string", Description: "Optional chat conversation the call belongs to; recorded by propose_action"},
+				"model":           {Type: "string", Description: "Optional model that produced the call; recorded by propose_action"},
+				"provider":        {Type: "string", Description: "Optional provider of the model; recorded by propose_action"},
 			},
 		},
 		"MCPToolCallResponse": {

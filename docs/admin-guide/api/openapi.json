@@ -13593,9 +13593,21 @@
             "type": "object",
             "description": "Tool arguments"
           },
+          "conversation_id": {
+            "type": "string",
+            "description": "Optional chat conversation the call belongs to; recorded by propose_action"
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional model that produced the call; recorded by propose_action"
+          },
           "name": {
             "type": "string",
             "description": "Tool name to execute"
+          },
+          "provider": {
+            "type": "string",
+            "description": "Optional provider of the model; recorded by propose_action"
           }
         },
         "required": [

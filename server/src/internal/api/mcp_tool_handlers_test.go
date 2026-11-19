@@ -401,3 +401,24 @@ func TestMCPToolHandler_RegisterRoutes(t *testing.T) {
 		})
 	}
 }
+
+// TestMCPToolHandlerPassesCallMeta checks that the optional conversation,
+// model and provider fields in the body reach the tool context.
+func TestMCPToolHandlerPassesCallMeta(t *testing.T) {
+	provider := &mockToolProvider{}
+	handler := NewMCPToolHandler(provider)
+
+	body := `{"name":"propose_action","arguments":{},"conversation_id":"conv-1","model":"m","provider":"p"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/tools/call", bytes.NewReader([]byte(body)))
+	rec := httptest.NewRecorder()
+	handler.handleCallTool(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	got := mcp.CallMetaFromContext(provider.lastCtx)
+	want := mcp.CallMeta{ConversationID: "conv-1", Model: "m", Provider: "p"}
+	if got != want {
+		t.Errorf("call meta = %+v, want %+v", got, want)
+	}
+}

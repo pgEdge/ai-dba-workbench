@@ -55,6 +55,8 @@ export interface ActionStatementResult {
     columns?: string[];
     rows?: string[][];
     truncated?: boolean;
+    /** Server caveat, e.g. a sequence change a rollback did not undo. */
+    note?: string;
 }
 
 export interface Action {

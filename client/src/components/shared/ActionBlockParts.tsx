@@ -257,23 +257,42 @@ const ResultTable: React.FC<{ columns: string[]; rows: string[][] }> = ({
     );
 };
 
-/** The rows any statement returned, one table per statement. */
+/** A server caveat about one statement, shown as a warning line. */
+const StatementNote: React.FC<{ note: string }> = ({ note }) => (
+    <Typography
+        variant="body2"
+        role="note"
+        sx={{ color: 'warning.main', wordBreak: 'break-word' }}
+    >
+        {note}
+    </Typography>
+);
+
+const StatementRows: React.FC<{ result: ActionStatementResult }> = ({
+    result,
+}) =>
+    result.columns && result.rows ? (
+        <Box sx={{ overflowX: 'auto' }}>
+            <ResultTable columns={result.columns} rows={result.rows} />
+            {result.truncated && (
+                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                    Results limited to {pluralise(result.rows.length, 'row')}
+                </Typography>
+            )}
+        </Box>
+    ) : null;
+
+/** The rows and notes any statement returned, in statement order. */
 export const ActionResults: React.FC<{
     results?: ActionStatementResult[] | null;
 }> = ({ results }) => (
     <>
-        {(results ?? []).map((result, idx) =>
-            result.columns && result.rows ? (
-                <Box key={idx} sx={{ overflowX: 'auto' }}>
-                    <ResultTable columns={result.columns} rows={result.rows} />
-                    {result.truncated && (
-                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                            Results limited to {pluralise(result.rows.length, 'row')}
-                        </Typography>
-                    )}
-                </Box>
-            ) : null,
-        )}
+        {(results ?? []).map((result, idx) => (
+            <Box key={idx}>
+                <StatementRows result={result} />
+                {result.note && <StatementNote note={result.note} />}
+            </Box>
+        ))}
     </>
 );
 

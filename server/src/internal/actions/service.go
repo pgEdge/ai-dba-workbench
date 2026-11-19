@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -219,13 +220,15 @@ func (s *Service) Propose(ctx context.Context, req ProposeRequest) (*ProposeResu
 
 // bestAttempt walks the chain back from last and returns the attempt with
 // the lowest danger, the latest on a tie. If an ancestor cannot be read it
-// settles for what it has seen so far.
+// logs the failure and settles for what it has seen so far.
 func (s *Service) bestAttempt(ctx context.Context, last *Action) *Action {
 	best := last
 	cur := last
 	for cur.ParentActionID != nil {
 		p, err := s.store.Get(ctx, *cur.ParentActionID)
 		if err != nil {
+			log.Printf("[WARN] Best attempt for action %d: reading action %d failed: %v",
+				last.ID, *cur.ParentActionID, err)
 			break
 		}
 		if attemptRank(p) < attemptRank(best) {

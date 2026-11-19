@@ -512,6 +512,33 @@ describe('ChatMessage proposed actions', () => {
         });
     });
 
+    it('shows one block for each revision chain', () => {
+        renderWithTheme(
+            <ChatMessage
+                mode="light"
+                message={base([
+                    {
+                        name: 'propose_action', status: 'completed', connectionId: 3,
+                        proposal: { action_id: 1, review_status: 'vetoed' },
+                    },
+                    {
+                        name: 'propose_action', status: 'completed', connectionId: 3,
+                        proposal: { action_id: 10, review_status: 'passed' },
+                    },
+                    {
+                        name: 'propose_action', status: 'completed', connectionId: 3,
+                        revisesActionId: 1,
+                        proposal: { action_id: 2, review_status: 'passed' },
+                    },
+                ])}
+            />,
+        );
+        const ids = screen.getAllByTestId('action-block-stub').map(
+            (el) => JSON.parse(el.getAttribute('data-props') ?? '{}').actionId,
+        );
+        expect(ids).toEqual([2, 10]);
+    });
+
     it('shows the best action when the supervisor ran out of attempts', () => {
         renderWithTheme(
             <ChatMessage

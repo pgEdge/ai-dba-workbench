@@ -34,6 +34,7 @@ import { collectReplyTargets } from './chatSqlTarget';
 import ReplyTargetsContext from './replyTargetsContext';
 import { useKnownServers } from './useKnownServers';
 import ActionBlock from '../shared/ActionBlock';
+import { collectProposedActionBlocks } from './proposedActionBlocks';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -347,30 +348,14 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
         [message.activity],
     );
 
-    // The latest action the supervisor passed, or the best one when the
-    // supervisor ran out of attempts, is shown as a block the user can
-    // follow and approve; earlier attempts are superseded by it.
+    // The latest attempt of each proposal chain, passed by the supervisor
+    // or the best one when it ran out of attempts, is shown as a block the
+    // user can follow and approve; earlier attempts are superseded by it.
     const servers = useKnownServers();
-    const proposed = useMemo(() => {
-        const calls = message.activity ?? [];
-        for (let i = calls.length - 1; i >= 0; i--) {
-            const call = calls[i];
-            const result = call.proposal;
-            if (!result || call.connectionId === undefined) {
-                continue;
-            }
-            if (result.review_status === 'passed' || result.chain_exhausted) {
-                return {
-                    actionId: result.chain_exhausted
-                        ? (result.best_action_id ?? result.action_id)
-                        : result.action_id,
-                    connectionId: call.connectionId,
-                    databaseName: call.databaseName,
-                };
-            }
-        }
-        return null;
-    }, [message.activity]);
+    const proposed = useMemo(
+        () => collectProposedActionBlocks(message.activity),
+        [message.activity],
+    );
 
     // Memoize markdown components following AlertAnalysisDialog pattern
     const markdownComponents = useMemo(
@@ -639,14 +624,15 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                         {textContent}
                     </ReactMarkdown>
                 </ReplyTargetsContext.Provider>
-                {proposed && (
+                {proposed.map((block) => (
                     <ActionBlock
-                        actionId={proposed.actionId}
-                        connectionId={proposed.connectionId}
-                        databaseName={proposed.databaseName}
-                        serverName={servers.get(proposed.connectionId)?.name}
+                        key={block.actionId}
+                        actionId={block.actionId}
+                        connectionId={block.connectionId}
+                        databaseName={block.databaseName}
+                        serverName={servers.get(block.connectionId)?.name}
                     />
-                )}
+                ))}
                 {renderToolActivity()}
             </Box>
             {message.timestamp && (

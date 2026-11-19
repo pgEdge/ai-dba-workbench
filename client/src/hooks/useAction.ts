@@ -37,7 +37,7 @@ export interface UseActionResult {
     execute: (id: number, override?: ActionOverride) => Promise<boolean>;
     cancel: (id: number) => Promise<boolean>;
     /** Fetch an existing action and follow it while it runs. */
-    load: (id: number) => Promise<Action | null>;
+    load: (id: number, keepError?: boolean) => Promise<Action | null>;
 }
 
 const messageOf = (err: unknown): string =>
@@ -161,8 +161,13 @@ export const useAction = (): UseActionResult => {
         }
     }, [followIfActive]);
 
-    const load = useCallback(async (id: number): Promise<Action | null> => {
-        setError(null);
+    const load = useCallback(async (
+        id: number,
+        keepError = false,
+    ): Promise<Action | null> => {
+        if (!keepError) {
+            setError(null);
+        }
         try {
             const loaded = await apiGet<Action>(`/api/v1/actions/${id}`);
             if (!mountedRef.current) {
@@ -172,7 +177,7 @@ export const useAction = (): UseActionResult => {
             followIfActive(loaded);
             return loaded;
         } catch (err) {
-            if (mountedRef.current) {
+            if (mountedRef.current && !keepError) {
                 setError(messageOf(err));
             }
             return null;
@@ -216,10 +221,7 @@ export const useAction = (): UseActionResult => {
                 && (err.statusCode === 409 || err.statusCode === 503)
                 && mountedRef.current
             ) {
-                await load(id);
-                if (mountedRef.current) {
-                    setError(messageOf(err));
-                }
+                await load(id, true);
             }
             return false;
         } finally {
@@ -241,7 +243,6 @@ export const useAction = (): UseActionResult => {
             return false;
         }
     }, []);
-
 
     return { action, busy, error, create, execute, cancel, load };
 };

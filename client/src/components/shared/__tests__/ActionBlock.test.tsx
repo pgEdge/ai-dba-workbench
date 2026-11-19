@@ -277,16 +277,92 @@ describe('ActionBlock', () => {
             expect(screen.getByText('Cancelled')).toBeInTheDocument();
         });
 
-        it('offers Retry for an approved action that has not started', async () => {
+        it('offers Retry to the approver of an action that has not started', async () => {
             const user = userEvent.setup();
             hook.action = makeAction({
                 approval: 'approved',
+                approved_by: 'testuser',
                 exec_status: 'not_started',
             });
             renderBlock({ action: makeAction() });
 
             await user.click(screen.getByRole('button', { name: 'Retry' }));
             expect(hook.execute).toHaveBeenCalledWith(7);
+        });
+
+        it('offers Retry for an approved action to a superuser', () => {
+            hook.action = makeAction({
+                approval: 'approved',
+                approved_by: 'someone-else',
+                exec_status: 'not_started',
+            });
+            renderBlock({ action: makeAction() }, auth('root', true));
+            expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+        });
+
+        it('hides Retry from a user who did not approve the action', () => {
+            hook.action = makeAction({
+                approval: 'approved',
+                approved_by: 'someone-else',
+                exec_status: 'not_started',
+            });
+            renderBlock({ action: makeAction() });
+            expect(
+                screen.queryByRole('button', { name: 'Retry' }),
+            ).not.toBeInTheDocument();
+        });
+
+        it('retries an override through the typed-name dialog', async () => {
+            const user = userEvent.setup();
+            hook.action = makeAction({
+                review_status: 'vetoed',
+                review: { reviewer: 'supervisor', danger: 'high', reasons: ['Risky'] },
+                approval: 'overridden',
+                approved_by: 'testuser',
+                exec_status: 'not_started',
+            });
+            renderBlock({ action: makeAction() });
+
+            expect(
+                screen.queryByRole('button', { name: 'Override and run' }),
+            ).not.toBeInTheDocument();
+            await user.click(screen.getByRole('button', { name: 'Retry' }));
+            expect(hook.execute).not.toHaveBeenCalled();
+            await user.type(
+                screen.getByRole('textbox', { name: 'Connection name' }),
+                'prod-1',
+            );
+            await user.click(screen.getByRole('button', { name: 'Run anyway' }));
+            expect(hook.execute).toHaveBeenCalledWith(7, { confirm: 'prod-1' });
+        });
+
+        it('hides the override retry from another user and without a name', () => {
+            hook.action = makeAction({
+                review_status: 'vetoed',
+                approval: 'overridden',
+                approved_by: 'someone-else',
+                exec_status: 'not_started',
+            });
+            const { unmount } = renderWithTheme(
+                <AuthContext.Provider value={auth()}>
+                    <ActionBlock {...baseProps} action={makeAction()} />
+                </AuthContext.Provider>,
+            );
+            expect(
+                screen.queryByRole('button', { name: 'Retry' }),
+            ).not.toBeInTheDocument();
+            unmount();
+
+            hook.action = makeAction({
+                review_status: 'vetoed',
+                approval: 'overridden',
+                approved_by: 'testuser',
+                exec_status: 'not_started',
+            });
+            renderBlock({ action: makeAction(), serverName: undefined });
+            expect(
+                screen.queryByRole('button', { name: 'Retry' }),
+            ).not.toBeInTheDocument();
         });
 
         it('shows a request error', () => {
@@ -298,7 +374,44 @@ describe('ActionBlock', () => {
         });
     });
 
+    describe('sql without a source', () => {
+        it('shows an error instead of waiting forever', () => {
+            renderBlock({ sql: 'DELETE FROM t', source: undefined });
+            expect(screen.getByRole('alert')).toHaveTextContent(
+                'origin is unknown',
+            );
+            expect(hook.create).not.toHaveBeenCalled();
+        });
+    });
+
     describe('loading by id', () => {
+        it('loads again when the action id changes, but not on a re-render', () => {
+            const { rerender } = renderWithTheme(
+                <AuthContext.Provider value={auth()}>
+                    <ActionBlock {...baseProps} actionId={7} />
+                </AuthContext.Provider>,
+            );
+            rerender(
+                <AuthContext.Provider value={auth()}>
+                    <ActionBlock {...baseProps} actionId={7} />
+                </AuthContext.Provider>,
+            );
+            expect(hook.load).toHaveBeenCalledTimes(1);
+            rerender(
+                <AuthContext.Provider value={auth()}>
+                    <ActionBlock {...baseProps} actionId={8} />
+                </AuthContext.Provider>,
+            );
+            expect(hook.load).toHaveBeenCalledTimes(2);
+            expect(hook.load).toHaveBeenLastCalledWith(8);
+        });
+
+        it('ignores a stale action for a different id', () => {
+            hook.action = makeAction({ id: 7, exec_status: 'succeeded' });
+            renderBlock({ actionId: 8 });
+            expect(screen.queryByText('Succeeded')).not.toBeInTheDocument();
+        });
+
         it('loads the action when only an id is given', () => {
             renderBlock({ actionId: 7 });
             expect(hook.load).toHaveBeenCalledWith(7);

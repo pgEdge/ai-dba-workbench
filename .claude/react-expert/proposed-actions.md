@@ -23,3 +23,17 @@ Issue #774. A write is never sent to `/query` for execution.
 - Status values mirror the server: `review_status` pending, passed,
   vetoed; `approval` none, approved, overridden; `exec_status`
   not_started, executing, succeeded, failed, cancelled, unknown.
+- `ChatMessage` shows one `ActionBlock` per revision chain, keyed by
+  action id (`ChatPanel/proposedActionBlocks.ts`). Chains are linked by
+  `ToolActivity.revisesActionId`, recorded from the `propose_action`
+  call's `revises_action_id` argument in `chatAgenticLoop.ts`.
+  `ActionBlock` keys its start guard by the action id, so a changed id
+  loads afresh and a stale polled action for another id is ignored.
+- Retry is offered only where the server accepts it: `approval` is
+  `approved` and the user is `approved_by` or a superuser, or
+  `overridden` (`approved_by` is the overrider) with the same test, in
+  which case Retry reopens `OverrideActionDialog` and sends the typed
+  confirm with `override`. "Override and run" is for `approval: none`.
+- `useAction.execute` keeps the refusal error shown while it re-fetches
+  after a 409 or 503 (`load(id, true)`); `ActionBlock` shows an error
+  for `sql` given without a `source`.

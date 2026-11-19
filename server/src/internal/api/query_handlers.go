@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/pgexec"
 	"github.com/pgedge/ai-workbench/server/internal/sqllex"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
@@ -32,7 +33,6 @@ import (
 type queryRequest struct {
 	Query        string `json:"query"`
 	DatabaseName string `json:"database_name,omitempty"`
-	Confirmed    bool   `json:"confirmed,omitempty"`
 }
 
 // statementResult holds the result of executing a single SQL statement.
@@ -50,12 +50,25 @@ type statementResult struct {
 // multiQueryResponse is the JSON response for query execution containing
 // results from one or more SQL statements
 type multiQueryResponse struct {
-	Results              []statementResult `json:"results,omitempty"`
-	TotalStatements      int               `json:"total_statements,omitempty"`
-	RequiresConfirmation bool              `json:"requires_confirmation,omitempty"`
-	WriteStatements      []string          `json:"write_statements,omitempty"`
-	ConfirmationMessage  string            `json:"confirmation_message,omitempty"`
+	Results         []statementResult `json:"results,omitempty"`
+	TotalStatements int               `json:"total_statements,omitempty"`
 }
+
+// writeRefusedResponse is the 409 body for a batch that contains a write
+// statement. The endpoint runs read-only statements only; writes go
+// through a proposed action, which is reviewed and then run by the
+// action executor.
+type writeRefusedResponse struct {
+	Error           string   `json:"error"`
+	RequiresAction  bool     `json:"requires_action"`
+	WriteStatements []string `json:"write_statements"`
+}
+
+// queryWriteRefused is the message returned, and the reason recorded in
+// the audit log, when a batch with a write statement is sent to the
+// query endpoint.
+const queryWriteRefused = "This request contains write statements. " +
+	"Propose them as an action instead of running them here"
 
 // defaultRowLimit is the default maximum number of rows returned
 const defaultRowLimit = 500
@@ -136,39 +149,27 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Determine whether any statement is a write operation
+	// This endpoint runs read-only statements only. A batch with any
+	// write statement is refused whatever the caller's access, and the
+	// caller is pointed at proposed actions, which are reviewed before
+	// they run.
 	var writeStatements []string
-	allReadOnly := true
 	for _, stmt := range statements {
 		if !isReadOnlyStatement(stmt) {
-			allReadOnly = false
 			writeStatements = append(writeStatements, stmt)
 		}
 	}
-
-	// If write statements are present but not confirmed, return a
-	// confirmation prompt so the frontend can ask the user to proceed.
-	if !allReadOnly && !req.Confirmed {
-		resp := multiQueryResponse{
-			RequiresConfirmation: true,
-			WriteStatements:      writeStatements,
-			ConfirmationMessage: fmt.Sprintf(
-				"This request contains %d write statement(s) that will "+
-					"modify the database. Please confirm to proceed.",
-				len(writeStatements)),
+	if len(writeStatements) > 0 {
+		if h.denialRecorder != nil {
+			h.denialRecorder(withDeniedTarget(r, deniedActionConnectionQueryWrite,
+				connectionDenialTarget(connectionID)), queryWriteRefused)
 		}
-		RespondJSON(w, http.StatusOK, resp)
+		RespondJSON(w, http.StatusConflict, writeRefusedResponse{
+			Error:           queryWriteRefused,
+			RequiresAction:  true,
+			WriteStatements: writeStatements,
+		})
 		return
-	}
-
-	// For write statements, enforce RBAC write access
-	if !allReadOnly {
-		if !h.rbacChecker.HasWriteAccess(r.Context(), connectionID) {
-			h.denialRecorder.refuseTarget(w, r, deniedActionConnectionQueryWrite,
-				connectionDenialTarget(connectionID), connectionWriteDenied,
-				connectionWriteDenied)
-			return
-		}
 	}
 
 	// Create a context with timeout for the entire operation
@@ -211,10 +212,9 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	// pgx.Conn.Query always parses $N as bind parameters even in
 	// simple protocol mode, but pgconn.Exec sends SQL text as-is.
 	//
-	// The confirmation prompt and the write-access gate above have
-	// already run for these statements, and runSimpleStatements applies
+	// The write refusal above has already run for these statements, and runSimpleStatements applies
 	// the same read-only transaction the pgx path uses, so this branch
-	// is no shortcut past either check (issue #530). The classification
+	// is no shortcut past that check (issue #530). The classification
 	// above is what decides whether a statement is treated as a write;
 	// the read-only transaction narrows what a misclassified statement
 	// can do, but it does not catch every case (see
@@ -231,10 +231,7 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 
 		pgConn := poolConn.Conn().PgConn()
 		results := runSimpleStatements(ctx, pgConn, statements, limit,
-			connectionID, allReadOnly)
-		if !allReadOnly {
-			results = endOpenTransaction(ctx, pgConn, results, connectionID)
-		}
+			connectionID, true)
 
 		RespondJSON(w, http.StatusOK, multiQueryResponse{
 			Results:         results,
@@ -245,103 +242,60 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 
 	results := make([]statementResult, 0, len(statements))
 
-	if allReadOnly {
-		// Read-only path: execute inside a read-only transaction
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			log.Printf("[ERROR] Failed to begin transaction for query: %v", err)
+	// Read-only path: execute inside a read-only transaction
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to begin transaction for query: %v", err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to execute query")
+		return
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = rollback.Tx(ctx, tx) //nolint:errcheck // see pkg/rollback
+		}
+	}()
+
+	// Enforce read-only transaction
+	_, err = tx.Exec(ctx, "SET TRANSACTION READ ONLY")
+	if err != nil {
+		log.Printf("[ERROR] Failed to set transaction read-only: %v", err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to execute query")
+		return
+	}
+
+	for _, stmt := range statements {
+		result := runStatement(ctx, tx, stmt, limit, connectionID)
+		result = requireUTF8(tx.Conn().PgConn(), result, connectionID)
+		results = append(results, result)
+
+		// Stop on first error
+		if result.Error != "" {
+			break
+		}
+	}
+
+	// If any statement errored, the transaction is aborted in
+	// PostgreSQL so we must rollback.  Otherwise commit cleanly.
+	hasError := false
+	for _, r := range results {
+		if r.Error != "" {
+			hasError = true
+			break
+		}
+	}
+
+	if !hasError {
+		if err := tx.Commit(ctx); err != nil {
+			log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)
 			RespondError(w, http.StatusInternalServerError,
 				"Failed to execute query")
 			return
 		}
-
-		committed := false
-		defer func() {
-			if !committed {
-				_ = rollback.Tx(ctx, tx) //nolint:errcheck // see pkg/rollback
-			}
-		}()
-
-		// Enforce read-only transaction
-		_, err = tx.Exec(ctx, "SET TRANSACTION READ ONLY")
-		if err != nil {
-			log.Printf("[ERROR] Failed to set transaction read-only: %v", err)
-			RespondError(w, http.StatusInternalServerError,
-				"Failed to execute query")
-			return
-		}
-
-		for _, stmt := range statements {
-			result := runStatement(ctx, tx, stmt, limit, connectionID)
-			result = requireUTF8(tx.Conn().PgConn(), result, connectionID)
-			results = append(results, result)
-
-			// Stop on first error
-			if result.Error != "" {
-				break
-			}
-		}
-
-		// If any statement errored, the transaction is aborted in
-		// PostgreSQL so we must rollback.  Otherwise commit cleanly.
-		hasError := false
-		for _, r := range results {
-			if r.Error != "" {
-				hasError = true
-				break
-			}
-		}
-
-		if !hasError {
-			if err := tx.Commit(ctx); err != nil {
-				log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)
-				RespondError(w, http.StatusInternalServerError,
-					"Failed to execute query")
-				return
-			}
-			committed = true
-		}
-	} else {
-		// Write path: execute each statement individually outside a
-		// transaction so that statements like ALTER SYSTEM work. Every
-		// statement runs on the one acquired connection so that
-		// requireUTF8 can read the client_encoding it left behind.
-		poolConn, err := pool.Acquire(ctx)
-		if err != nil {
-			log.Printf("[ERROR] Failed to acquire connection for query: %v", err)
-			RespondError(w, http.StatusInternalServerError,
-				"Failed to connect to database")
-			return
-		}
-		defer poolConn.Release()
-		pgConn := poolConn.Conn().PgConn()
-
-		for _, stmt := range statements {
-			var result statementResult
-			if isReadOnlyStatement(stmt) {
-				result = runStatement(ctx, poolConn, stmt, limit, connectionID)
-			} else if _, err := poolConn.Exec(ctx, stmt); err != nil {
-				log.Printf("[ERROR] Write statement failed (connection=%d): %v",
-					connectionID, err)
-				result = statementResult{
-					Query: stmt,
-					Error: safeQueryError("Execution error", err),
-				}
-			} else {
-				result = statementResult{
-					Query:    stmt,
-					Columns:  []string{"result"},
-					Rows:     [][]string{{"Statement executed successfully"}},
-					RowCount: 1,
-				}
-			}
-			result = requireUTF8(pgConn, result, connectionID)
-			results = append(results, result)
-			if result.Error != "" {
-				break
-			}
-		}
-		results = endOpenTransaction(ctx, pgConn, results, connectionID)
+		committed = true
 	}
 
 	resp := multiQueryResponse{
@@ -650,7 +604,7 @@ const clientEncodingChangedError = "Query error: client_encoding must " +
 // statements classified as writes, so a write hidden in a statement
 // lexed under the new encoding would otherwise run without being listed.
 func requireUTF8(pgConn *pgconn.PgConn, result statementResult, connectionID int) statementResult {
-	if result.Error != "" || pgConn.ParameterStatus("client_encoding") == "UTF8" {
+	if result.Error != "" || pgexec.EncodingIsUTF8(pgConn) {
 		return result
 	}
 	log.Printf("[WARN] Query stopped: client_encoding changed to %q (connection=%d)",
@@ -659,40 +613,6 @@ func requireUTF8(pgConn *pgconn.PgConn, result statementResult, connectionID int
 		Query: result.Query,
 		Error: clientEncodingChangedError,
 	}
-}
-
-// openTransactionError is the error reported for a confirmed batch that
-// left a transaction open.
-const openTransactionError = "Transaction error: the statements left " +
-	"a transaction open, so it was rolled back and nothing done inside it " +
-	"was kept; end the transaction with COMMIT or ROLLBACK in the same request"
-
-// endOpenTransaction rolls back a transaction that a confirmed batch
-// opened and did not close, and adds a result saying so. The write path
-// runs every statement on one connection, so a BEGIN in the batch
-// carries over to the statements after it, and the connection goes back
-// to a pool that destroys a connection released mid-transaction, which
-// discards that work. Without this result the batch would report each
-// statement as having succeeded although none of its work in the
-// transaction was kept.
-func endOpenTransaction(
-	ctx context.Context,
-	pgConn *pgconn.PgConn,
-	results []statementResult,
-	connectionID int,
-) []statementResult {
-	if pgConn.TxStatus() == 'I' {
-		return results
-	}
-	log.Printf("[WARN] Query left a transaction open; rolling it back (connection=%d)",
-		connectionID)
-	rollbackSimple(ctx, func(execCtx context.Context, sql string) error {
-		return pgConn.Exec(execCtx, sql).Close()
-	}, connectionID)
-	return append(results, statementResult{
-		Query: "ROLLBACK",
-		Error: openTransactionError,
-	})
 }
 
 // runSimpleStatements executes statements over the simple query
@@ -903,30 +823,9 @@ func (rs *simpleResultSet) readResult(rr *pgconn.ResultReader) {
 		}
 	}
 
-	for rr.NextRow() {
-		if len(rs.rows) >= rs.limit {
-			// Keep reading so the reader closes cleanly, but stop
-			// buffering: an unbounded EXPLAIN or SELECT would
-			// otherwise hold the whole result set in memory.
-			rs.truncated = true
-			continue
-		}
-		rs.rows = append(rs.rows, simpleRowValues(rr.Values()))
-	}
-}
-
-// simpleRowValues renders one simple-protocol row as strings, with a
-// NULL column reported as the text NULL, matching the pgx path.
-func simpleRowValues(row [][]byte) []string {
-	values := make([]string, len(row))
-	for i, col := range row {
-		if col == nil {
-			values[i] = "NULL"
-		} else {
-			values[i] = string(col)
-		}
-	}
-	return values
+	var truncated bool
+	rs.rows, truncated = pgexec.AppendRows(rs.rows, rr, rs.limit)
+	rs.truncated = rs.truncated || truncated
 }
 
 // formatValueForJSON converts a database value to a string for JSON

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pgedge/ai-workbench/server/internal/actions"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/conversations"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -217,10 +218,15 @@ func TestSetupHandlersWiresDenialRecorders(t *testing.T) {
 	}
 	t.Cleanup(func() { denialRecorderWired = nil })
 
+	actionStore := actions.NewStore(nil)
 	deps := &HandlerDependencies{
 		AuthStore: store,
 		Datastore: database.NewTestDatastore(nil),
 		Config:    &config.Config{},
+
+		ActionStore:    actionStore,
+		ActionService:  actions.NewService(actionStore, actions.StubReviewer{}, 3),
+		ActionExecutor: actions.NewExecutor(actionStore, nil, 0, 0, 0),
 	}
 	captureStderr(t, func() {
 		if err := SetupHandlers(deps)(http.NewServeMux()); err != nil {
@@ -229,6 +235,7 @@ func TestSetupHandlersWiresDenialRecorders(t *testing.T) {
 	})
 
 	want := []string{
+		"*api.ActionHandler",
 		"*api.AlertHandler",
 		"*api.AlertOverrideHandler",
 		"*api.AlertRuleHandler",

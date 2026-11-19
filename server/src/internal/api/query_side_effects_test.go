@@ -37,16 +37,16 @@ func TestSideEffectingFunction_RequiresConfirmation(t *testing.T) {
 
 	handler.executeQuery(rec, req, 1)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d (body %q)",
-			rec.Code, http.StatusOK, rec.Body.String())
+			rec.Code, http.StatusConflict, rec.Body.String())
 	}
-	var resp multiQueryResponse
+	var resp writeRefusedResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if !resp.RequiresConfirmation {
-		t.Fatal("expected requires_confirmation for pg_terminate_backend")
+	if !resp.RequiresAction {
+		t.Fatal("expected requires_action for pg_terminate_backend")
 	}
 	if len(resp.WriteStatements) != 1 ||
 		!strings.Contains(resp.WriteStatements[0], "pg_terminate_backend") {

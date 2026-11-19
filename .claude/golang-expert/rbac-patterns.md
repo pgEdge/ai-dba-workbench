@@ -1964,3 +1964,25 @@ connection that joins in between inherits the override anyway, and only
 a caller who can see it can move it in. The 403 tells a permission
 holder that at least one member is hidden, which is inherent in the
 rule; it never says which or how many.
+
+## Action Endpoints (Issue #774)
+
+`ActionHandler` (`internal/api/action_handlers.go`) gates every route on
+`HasWriteAccess` for the action's connection, and answers a connection
+or action the caller cannot see exactly as a missing one (404, one
+message). Create, execute and cancel record a refusal through the
+denial recorder (`action.create`, `action.execute`, `action.cancel`),
+which `SetupHandlers` wires with the other recorders.
+
+Every override path calls both `HasWriteAccess` and
+`Service.CheckOverride`; a token override is refused with 403 before
+either, because overrides are session-only. Execute is claimed
+atomically in the store, so a double execute gives one 202 and one 409.
+Tests: `TestExecuteAfterWriteAccessRevoked`,
+`TestOverrideWithTokenRefused`, `TestDoubleExecute`.
+
+The handler depends on narrow interfaces (`actionStore`,
+`actionService`, `actionExecutor`, `actionConnections`, `actionAccess`),
+so its tests use fakes with no database. The executor's connection
+helpers (`ConnState`, `TxLeftOpen`, `RowReader`, `AppendRows`) live in
+`internal/pgexec`, shared with `query_handlers.go`.

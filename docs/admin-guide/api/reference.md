@@ -94,6 +94,7 @@ The API provides endpoints in the following categories.
 | PUT | `/api/v1/connections/{id}` | Update a connection. |
 | DELETE | `/api/v1/connections/{id}` | Delete a connection; its metrics are removed in the background. |
 | GET | `/api/v1/connections/{id}/databases` | List databases for a connection. |
+| POST | `/api/v1/connections/{id}/query` | Run read-only SQL; a request containing a write is refused with 409 and `requires_action`. |
 | POST | `/api/v1/connections/{id}/query/validate` | Validate SQL against a connection without executing it. |
 | GET | `/api/v1/connections/current` | Get the current connection. |
 | POST | `/api/v1/connections/current` | Set the current connection. |
@@ -267,6 +268,16 @@ describes the limits.
 | PUT | `/api/v1/conversations/{id}` | Update a conversation. |
 | PATCH | `/api/v1/conversations/{id}` | Rename a conversation. |
 | DELETE | `/api/v1/conversations/{id}` | Delete a conversation. |
+| POST | `/api/v1/conversations/{id}/actions/link` | Link the caller's actions to a conversation. |
+
+### Actions
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/connections/{id}/actions` | Propose an action; with `execute` and a passing review it starts at once. |
+| GET | `/api/v1/actions/{id}` | Get an action. |
+| POST | `/api/v1/actions/{id}/execute` | Approve and execute an action (202). |
+| POST | `/api/v1/actions/{id}/cancel` | Cancel a running action (202). |
 
 ### LLM Proxy
 

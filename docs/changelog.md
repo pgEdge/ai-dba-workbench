@@ -12,6 +12,11 @@ project adheres to
 
 ### Added
 
+- Add proposed action endpoints: propose, fetch, execute and cancel a
+  change to a monitored database, and link actions to a conversation.
+  Execution needs write access to the connection, and overriding a
+  failed review is limited to sessions, never API tokens.
+  (#774)
 - Add a top-level `make test-changed` target that runs `test-all` only
   in the sub-projects a branch changes, including those that depend on
   a changed shared package, collector schema, or example
@@ -21,6 +26,10 @@ project adheres to
 
 ### Changed
 
+- Refuse writes sent to `/api/v1/connections/{id}/query` with a 409 and
+  `requires_action`; the `confirmed` field is removed, and a write is
+  now proposed as an action instead.
+  (#774)
 - Reorganise the documentation by task. Configuration reference pages
   for the server, collector, alerter and web client moved from
   `getting-started/configuration/` to a new top-level Configuration

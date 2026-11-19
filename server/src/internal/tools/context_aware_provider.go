@@ -192,6 +192,10 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 // SetActionProposer supplies the service behind propose_action and
 // registers the tool when it is enabled. Until it is called the tool is
 // not offered, because there is nothing to propose to.
+//
+// SetActionProposer takes no lock: it writes the proposer and registers
+// the tool without synchronization, so it must be called exactly once,
+// during startup, before the provider serves any request.
 func (p *ContextAwareProvider) SetActionProposer(proposer ActionProposer) {
 	p.proposer = proposer
 	p.registerProposeAction(p.baseRegistry)

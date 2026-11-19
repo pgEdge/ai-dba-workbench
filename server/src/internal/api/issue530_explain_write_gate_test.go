@@ -122,11 +122,11 @@ func TestIssue530_NeedsSimpleProtocol(t *testing.T) {
 	}
 }
 
-// TestIssue530_ExplainAnalyzeDeleteRequiresConfirmation proves the
+// TestIssue530_ExplainAnalyzeDeleteRefusedAsWrite proves the
 // issue's payload is now classified as a write, so an unconfirmed caller
 // gets the confirmation prompt instead of a silent DELETE. The handler
 // answers before it reaches the nil datastore.
-func TestIssue530_ExplainAnalyzeDeleteRequiresConfirmation(t *testing.T) {
+func TestIssue530_ExplainAnalyzeDeleteRefusedAsWrite(t *testing.T) {
 	handler := newTestConnectionHandlerWithRBAC(t)
 
 	req := httptest.NewRequest(http.MethodPost,
@@ -136,17 +136,17 @@ func TestIssue530_ExplainAnalyzeDeleteRequiresConfirmation(t *testing.T) {
 
 	handler.executeQuery(rec, req, 1)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d (body %q)",
-			rec.Code, http.StatusOK, rec.Body.String())
+			rec.Code, http.StatusConflict, rec.Body.String())
 	}
 
-	var resp multiQueryResponse
+	var resp writeRefusedResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode response: %v (body %q)", err, rec.Body.String())
 	}
-	if !resp.RequiresConfirmation {
-		t.Fatal("expected requires_confirmation for EXPLAIN ANALYZE DELETE")
+	if !resp.RequiresAction {
+		t.Fatal("expected requires_action for EXPLAIN ANALYZE DELETE")
 	}
 	if len(resp.WriteStatements) != 1 {
 		t.Fatalf("write statements = %v, want 1", resp.WriteStatements)
@@ -157,11 +157,11 @@ func TestIssue530_ExplainAnalyzeDeleteRequiresConfirmation(t *testing.T) {
 	}
 }
 
-// TestIssue530_ExplainAnalyzeDeleteRequiresWriteAccess proves that a
+// TestIssue530_ExplainAnalyzeDeleteRefusedForReadOnlyCaller proves that a
 // caller with read-only access to the connection is refused even when it
 // confirms, so the payload can no longer reach execution through the
 // simple-protocol branch.
-func TestIssue530_ExplainAnalyzeDeleteRequiresWriteAccess(t *testing.T) {
+func TestIssue530_ExplainAnalyzeDeleteRefusedForReadOnlyCaller(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAlertOverrides(t)
 	defer cleanup()
 
@@ -185,17 +185,16 @@ func TestIssue530_ExplainAnalyzeDeleteRequiresWriteAccess(t *testing.T) {
 
 	handler.executeQuery(rec, req, connID)
 
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d (body %q)",
-			rec.Code, http.StatusForbidden, rec.Body.String())
+			rec.Code, http.StatusConflict, rec.Body.String())
 	}
-	want := "Permission denied: you do not have write access to this connection"
-	var resp ErrorResponse
+	var resp writeRefusedResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to decode error: %v (body %q)", err, rec.Body.String())
+		t.Fatalf("failed to decode refusal: %v (body %q)", err, rec.Body.String())
 	}
-	if resp.Error != want {
-		t.Errorf("error = %q, want %q", resp.Error, want)
+	if !resp.RequiresAction {
+		t.Errorf("requires_action = false, want true (body %q)", rec.Body.String())
 	}
 }
 
@@ -543,12 +542,12 @@ func TestIssue530_ContainsDollarParamEitherReading(t *testing.T) {
 	}
 }
 
-// TestIssue530_StandardConformingStringsOffRequiresConfirmation proves
+// TestIssue530_StandardConformingStringsOffRefusedAsWrite proves
 // that the round-four payload, which turns standard_conforming_strings
 // off and then hides a DELETE CTE behind '\”, now yields the
 // confirmation prompt. The handler answers before it reaches the nil
 // datastore.
-func TestIssue530_StandardConformingStringsOffRequiresConfirmation(t *testing.T) {
+func TestIssue530_StandardConformingStringsOffRefusedAsWrite(t *testing.T) {
 	handler := newTestConnectionHandlerWithRBAC(t)
 
 	query := `SELECT set_config('standard_conforming_strings', 'off', false); ` +
@@ -566,16 +565,16 @@ func TestIssue530_StandardConformingStringsOffRequiresConfirmation(t *testing.T)
 
 	handler.executeQuery(rec, req, 1)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d (body %q)",
-			rec.Code, http.StatusOK, rec.Body.String())
+			rec.Code, http.StatusConflict, rec.Body.String())
 	}
-	var resp multiQueryResponse
+	var resp writeRefusedResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode response: %v (body %q)", err, rec.Body.String())
 	}
-	if !resp.RequiresConfirmation {
-		t.Fatal("expected requires_confirmation for the hidden DELETE CTE")
+	if !resp.RequiresAction {
+		t.Fatal("expected requires_action for the hidden DELETE CTE")
 	}
 	// The set_config call is a write in its own right (issue #646), so
 	// both statements are listed; the point here is that the hidden
@@ -756,61 +755,6 @@ func createSetClientEncodingWrapper(t *testing.T, pool *pgxpool.Pool) func() {
 	}
 }
 
-// TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch proves that
-// the confirmed write path also ends the batch once a statement moves
-// the connection off UTF8, so a statement after it is never lexed under
-// the new encoding. The confirmation prompt lists only the statements
-// classified as writes, so without this a write hidden that way would
-// run without being listed.
-func TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch(t *testing.T) {
-	h, pool, target, cleanup := newQueryExecTestHandler(t)
-	defer cleanup()
-
-	defer createSetClientEncodingWrapper(t, pool)()
-
-	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
-
-	tests := []struct {
-		name  string
-		query string
-		want  int
-	}{
-		{"write statement changes the encoding",
-			"SET client_encoding = 'SJIS'; SELECT 1", 1},
-		{"read statement changes the encoding",
-			"CREATE TEMP TABLE issue530_enc (a int); " +
-				"SELECT issue530_set_client_encoding(false); SELECT 1", 2},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body, err := json.Marshal(queryRequest{Query: tt.query,
-				Confirmed: true})
-			if err != nil {
-				t.Fatalf("failed to encode the request: %v", err)
-			}
-			rec := postQuery(t, h, connID, string(body))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d (body %q)",
-					rec.Code, http.StatusOK, rec.Body.String())
-			}
-			resp := decodeMultiQuery(t, rec)
-			if len(resp.Results) != tt.want {
-				t.Fatalf("results = %+v, want %d (the batch stops at the change)",
-					resp.Results, tt.want)
-			}
-			for _, r := range resp.Results[:tt.want-1] {
-				if r.Error != "" {
-					t.Errorf("unexpected error before the change: %q", r.Error)
-				}
-			}
-			if got := resp.Results[tt.want-1].Error; got != clientEncodingChangedError {
-				t.Errorf("error = %q, want %q", got, clientEncodingChangedError)
-			}
-		})
-	}
-}
-
 // TestIssue530_ClientEncodingPinnedAtStartup proves that the query
 // connection starts on UTF8 even when the database's own default says
 // otherwise, because the startup parameter takes precedence over it.
@@ -847,104 +791,5 @@ func TestIssue530_ClientEncodingPinnedAtStartup(t *testing.T) {
 	}
 	if got := resp.Results[0].Rows; len(got) != 1 || got[0][0] != "UTF8" {
 		t.Errorf("client_encoding = %q, want UTF8", got)
-	}
-}
-
-// TestIssue530_ConfirmedBatchLeavingTransactionOpen proves that a
-// confirmed batch which opens a transaction and does not close it is
-// rolled back and reported as such, rather than listing each statement
-// as a success whilst the pool discards the work, and that a batch
-// which does close its transaction keeps what it did. Both the pgx
-// write path and the simple-protocol branch are covered; the
-// GENERIC_PLAN EXPLAIN routes a batch onto the latter. It needs
-// PostgreSQL 16 or later to succeed, so the one case that depends on it
-// succeeding is skipped on an older server, where it errors and the
-// transaction is rolled back like the open cases.
-func TestIssue530_ConfirmedBatchLeavingTransactionOpen(t *testing.T) {
-	h, pool, target, cleanup := newQueryExecTestHandler(t)
-	defer cleanup()
-
-	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
-
-	ctx := context.Background()
-	var serverVersion int
-	if err := pool.QueryRow(ctx,
-		"SELECT current_setting('server_version_num')::int").Scan(&serverVersion); err != nil {
-		t.Fatalf("failed to read the server version: %v", err)
-	}
-	const explain = "EXPLAIN (GENERIC_PLAN) SELECT 1 WHERE 1 = $1"
-	tests := []struct {
-		name      string
-		query     string
-		results   int
-		openError bool
-		rowsLeft  int
-		needsPG16 bool
-	}{
-		{"open transaction on the write path",
-			"BEGIN; DELETE FROM issue530_txn", 3, true, 2, false},
-		{"closed transaction on the write path",
-			"BEGIN; DELETE FROM issue530_txn; COMMIT", 3, false, 0, false},
-		{"open transaction on the simple-protocol branch",
-			"BEGIN; DELETE FROM issue530_txn; " + explain, 4, true, 2, false},
-		{"closed transaction on the simple-protocol branch",
-			"BEGIN; DELETE FROM issue530_txn; " + explain + "; COMMIT",
-			4, false, 0, true},
-		{"failed statement inside an open transaction",
-			"BEGIN; DELETE FROM issue530_txn; SELECT 1/0", 4, true, 2, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.needsPG16 && serverVersion < 160000 {
-				t.Skipf("GENERIC_PLAN needs PostgreSQL 16 or later (server %d)",
-					serverVersion)
-			}
-			if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS issue530_txn;
-				CREATE TABLE issue530_txn (a int);
-				INSERT INTO issue530_txn VALUES (1), (2)`); err != nil {
-				t.Fatalf("failed to create the probe table: %v", err)
-			}
-			defer func() {
-				_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS issue530_txn")
-			}()
-
-			body, err := json.Marshal(queryRequest{Query: tt.query,
-				Confirmed: true})
-			if err != nil {
-				t.Fatalf("failed to encode the request: %v", err)
-			}
-			rec := postQuery(t, h, connID, string(body))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d (body %q)",
-					rec.Code, http.StatusOK, rec.Body.String())
-			}
-			resp := decodeMultiQuery(t, rec)
-			if len(resp.Results) != tt.results {
-				t.Fatalf("results = %+v, want %d", resp.Results, tt.results)
-			}
-			last := resp.Results[len(resp.Results)-1]
-			if tt.openError {
-				if last.Query != "ROLLBACK" || last.Error != openTransactionError {
-					t.Errorf("last result = %+v, want the open-transaction error",
-						last)
-				}
-			} else {
-				for _, r := range resp.Results {
-					if r.Error != "" {
-						t.Errorf("unexpected error for %q: %q", r.Query, r.Error)
-					}
-				}
-			}
-
-			var rows int
-			if err := pool.QueryRow(ctx,
-				"SELECT count(*) FROM issue530_txn").Scan(&rows); err != nil {
-				t.Fatalf("failed to count the probe rows: %v", err)
-			}
-			if rows != tt.rowsLeft {
-				t.Errorf("rows left = %d, want %d", rows, tt.rowsLeft)
-			}
-		})
 	}
 }

@@ -14,8 +14,11 @@ project adheres to
 
 - Add reviewed proposed actions for database writes. A write that Ellie
   proposes with the new `propose_action` tool, or that you confirm from
-  an AI-generated SQL block, is stored first, reviewed by Ellie's
-  supervisor, and run by the server only from the stored statements. A
+  an AI-generated SQL block, is stored first, passed through a review
+  step, and run by the server only from the stored statements. The
+  supervisor review itself is not yet implemented (#768): a placeholder
+  reviewer passes every proposal as low danger without inspecting the
+  SQL, so check each statement yourself before you run it. A
   vetoed action can be overridden only by a signed-in user with write
   access who types the connection name; API tokens can never override.
   The new `actions` section of the server configuration file sets the

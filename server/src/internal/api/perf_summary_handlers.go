@@ -1074,6 +1074,20 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 		log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)
 	}
 
+	RespondJSON(w, http.StatusOK, DatabaseSummaryResponse{
+		Databases: sortedDatabaseSummaries(dbMap),
+	})
+}
+
+// sortedDatabaseSummaries flattens dbMap into a slice ordered by database
+// name, so the response (and the dashboard cards built from it) is the
+// same on every request; Go's map iteration order is randomized. The order
+// matches the ORDER BY datname used by the other per-database queries. A
+// nil cache hit time series is replaced with an empty slice so that it
+// serializes as [] rather than null.
+func sortedDatabaseSummaries(
+	dbMap map[string]*DatabaseSummary,
+) []DatabaseSummary {
 	databases := make([]DatabaseSummary, 0, len(dbMap))
 	for _, db := range dbMap {
 		if db.CacheHitRatio.TimeSeries == nil {
@@ -1081,10 +1095,10 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 		}
 		databases = append(databases, *db)
 	}
-
-	RespondJSON(w, http.StatusOK, DatabaseSummaryResponse{
-		Databases: databases,
+	sort.Slice(databases, func(i, j int) bool {
+		return databases[i].DatabaseName < databases[j].DatabaseName
 	})
+	return databases
 }
 
 // collectDatabaseSummaries runs the five database-summaries sub-queries in

@@ -78,6 +78,11 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+- List the cards in the server dashboard's Database Summaries section
+  in database name order. The `/api/v1/metrics/database-summaries`
+  endpoint returned the databases in a random order, so the cards
+  could move each time the dashboard loaded; it now sorts them by
+  name. (#875)
 
 ## [2.0.0-beta1] - 2026-11-12
 

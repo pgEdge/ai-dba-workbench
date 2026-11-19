@@ -394,6 +394,21 @@ func TestCreateActionOwnership(t *testing.T) {
 
 // TestActionRedaction proves the proposer's context and conversation id
 // reach only the proposer and a superuser, on GET and on execute.
+// TestProposeRequestDatabaseName checks that a create request's database
+// name reaches the service request, and that an empty one stays unset.
+func TestProposeRequestDatabaseName(t *testing.T) {
+	t.Parallel()
+	h := &ActionHandler{}
+	got := h.proposeRequest(&createActionRequest{SQL: "SELECT 1", DatabaseName: "app"}, 7)
+	if got.ConnectionID != 7 || got.SQL != "SELECT 1" ||
+		got.DatabaseName == nil || *got.DatabaseName != "app" {
+		t.Errorf("proposeRequest = %+v, want connection 7 and database app", got)
+	}
+	if got := h.proposeRequest(&createActionRequest{SQL: "SELECT 1"}, 7); got.DatabaseName != nil {
+		t.Errorf("DatabaseName = %q, want nil", *got.DatabaseName)
+	}
+}
+
 func TestActionRedaction(t *testing.T) {
 	conv := "conv-1"
 	tests := []struct {

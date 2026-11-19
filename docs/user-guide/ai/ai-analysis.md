@@ -179,14 +179,17 @@ The lifecycle of an action has the following steps:
 
 1. Click Execute in the confirmation prompt. The Workbench stores the
    statements, the server and database, and the analysis text as context.
-2. The block displays Supervisor reviewing... whilst Ellie's supervisor
+2. The block displays Supervisor reviewing… whilst Ellie's supervisor
    checks the statements and rates the danger as low, moderate, high or
    critical.
 3. When the review passes, the block displays Approved by Ellie's supervisor
    and, for a block that you have just confirmed, starts the run at once.
    Your click on Execute is the approval. An action that Ellie proposed in
-   chat waits for you instead; click Execute on the block to run it.
-4. The block displays Running... with a Cancel button whilst the statements
+   chat waits for you instead; click Execute on the block to run it. That
+   click is a single step, with no further prompt, because the supervisor has
+   already reviewed the action and a code block from chat is confirmed before
+   the action is created.
+4. The block displays Running… with a Cancel button whilst the statements
    run. Click Cancel to ask the server to stop the run.
 5. The block displays the outcome: Succeeded with the number of rows
    affected, Failed with the first error, Cancelled, or Outcome unknown:
@@ -203,10 +206,20 @@ The execution status of an action is one of the following:
 | Cancelled | The run was cancelled before it completed. |
 | Outcome unknown | The server cannot tell whether the statements took effect. |
 
-The Workbench shows Outcome unknown when the server stopped or restarted
-during a run, or when an unexpected error interrupted a batch that does not
-run in a transaction. Inspect the database before you propose the
-change again, because some of the statements may have taken effect.
+The Workbench shows Outcome unknown in the following cases:
+
+- the connection to the monitored server was lost whilst a statement ran or
+  during `COMMIT`.
+- a statement was stopped part way through, which can leave partial work such
+  as an invalid index.
+- the server restarted during a run.
+- an unexpected error interrupted a batch that does not run in a transaction.
+
+When the server shuts down, it waits only a short grace period for running
+actions to record their outcome. An action that actually rolled back can
+therefore be recorded as Outcome unknown. Inspect the database before you
+propose the change again, because some of the statements may have taken
+effect.
 
 #### Execution Behaviour
 
@@ -221,6 +234,13 @@ Statements that cannot run in a transaction, such as `VACUUM`, make the server
 run the whole batch without one; the batch then stops at the first error and
 reports the later statements as not applied, but the statements before the
 error stay in effect.
+
+A failed `CREATE INDEX CONCURRENTLY` or `REINDEX ... CONCURRENTLY` can leave an
+`INVALID` index behind even though the action reports its statements as not
+applied; check for and drop the invalid index before you try again. These
+statements can also need more time than the default five-second lock timeout
+and five-minute statement timeout allow on a large table, so raise the
+timeouts in the `actions` section if they fail for that reason.
 
 The block displays the rows returned by a statement that has a `RETURNING`
 clause, and notes when the display is limited to the first rows.
@@ -244,12 +264,20 @@ server refuses the request without running anything.
 
 #### Retrying and Permissions
 
-When you have approved an action but it did not start, the block shows a Retry
-button and the action stays not started. Running an action needs write access
-to the connection at the time of the click, not only when the action was
-created; the server
-refuses the request, and the action stays not started, if you no longer have
-that access.
+When an action has been approved but did not start, the block shows a Retry
+button and the action stays not started. Who sees the button depends on how
+the action was decided:
+
+- an action approved by Ellie's supervisor or by you can be retried by the
+  person who approved it, or by a superuser.
+- an action that someone overrode can be retried only by the person who
+  overrode it, or by a superuser; retrying it means overriding again, so the
+  dialog opens and you must retype the connection name.
+
+Other users see no Retry button. Running an action needs write access to the
+connection at the time of the click, not only when the action was created; the
+server refuses the request, and the action stays not started, if you no longer
+have that access.
 
 The Workbench assumes that one server instance uses a given datastore. When
 the server starts, it marks every action still running as Outcome unknown.

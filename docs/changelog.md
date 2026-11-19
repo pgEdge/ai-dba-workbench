@@ -57,6 +57,11 @@ project adheres to
 
 ### Fixed
 
+- Show an error in the Event Timeline when its events cannot be loaded.
+  A failed request previously displayed `No events in this time range`,
+  so a failure looked like a range with no events; the pane now reads
+  `Failed to load timeline events` with the error, or `Reconnecting…`
+  while an automatic retry is pending. (#874)
 - Apply the documented datastore defaults to a `database` section in
   the server configuration file. A section that omitted `host`, `port`,
   `database`, or `sslmode` previously left that field empty, so an

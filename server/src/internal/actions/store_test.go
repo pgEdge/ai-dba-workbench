@@ -208,6 +208,42 @@ func TestStoreLifecycle(t *testing.T) {
 	}
 }
 
+func TestClaimRequiresRecordedDecision(t *testing.T) {
+	s, pool, connID := newTestStore(t, "_act_dec")
+	ctx := context.Background()
+
+	cases := []struct {
+		name     string
+		review   string
+		approval string // set directly so impossible combinations are covered
+		want     bool
+	}{
+		{"passed, no approval", "passed", "none", false},
+		{"vetoed, no approval", "vetoed", "none", false},
+		{"pending, approved", "pending", "approved", false},
+		{"vetoed, approved", "vetoed", "approved", false},
+		{"passed, overridden", "passed", "overridden", false},
+		{"pending, overridden", "pending", "overridden", false},
+		{"passed, approved", "passed", "approved", true},
+		{"vetoed, overridden", "vetoed", "overridden", true},
+	}
+	for _, tc := range cases {
+		a, err := s.Create(ctx, sampleAction(connID, "alice"))
+		if err != nil {
+			t.Fatalf("%s: create: %v", tc.name, err)
+		}
+		if _, err := pool.Exec(ctx,
+			`UPDATE proposed_actions SET review_status = $2, approval = $3 WHERE id = $1`,
+			a.ID, tc.review, tc.approval); err != nil {
+			t.Fatalf("%s: set state: %v", tc.name, err)
+		}
+		ok, err := s.ClaimForExecution(ctx, a.ID)
+		if err != nil || ok != tc.want {
+			t.Errorf("%s: claim ok=%v err=%v, want %v", tc.name, ok, err, tc.want)
+		}
+	}
+}
+
 func TestClaimForExecutionConcurrent(t *testing.T) {
 	s, _, connID := newTestStore(t, "_act_claim")
 	ctx := context.Background()
@@ -216,6 +252,9 @@ func TestClaimForExecutionConcurrent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.SetReview(ctx, a.ID, "passed", Verdict{Decision: "pass", Danger: "low"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Approve(ctx, a.ID, "approved", "bob", "session"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -263,6 +302,9 @@ func TestMarkInterruptedUnknown(t *testing.T) {
 	}
 	running, idle := mk(), mk()
 	if err := s.SetReview(ctx, running.ID, "passed", Verdict{Decision: "pass", Danger: "low"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Approve(ctx, running.ID, "approved", "bob", "session"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := s.ClaimForExecution(ctx, running.ID); err != nil || !ok {

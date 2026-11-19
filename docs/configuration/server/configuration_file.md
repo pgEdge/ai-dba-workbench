@@ -265,7 +265,10 @@ an address that `allowed_hosts` covers can permit the whole host name,
 including the name's other addresses. Each time the server connects to a
 monitored database, the server resolves the host name again and checks each
 address on its own, so a host name that later resolves to a refused address
-cannot reach that address; this check defeats DNS rebinding.
+cannot reach that address; this check defeats DNS rebinding. When the
+connection has a `hostaddr`, the server connects to that address instead and
+checks only that address; the server still checks the syntax of the stored
+`host`, but does not resolve it.
 
 At connect time, the server checks each resolved address in the following
 order, and the first rule that matches decides:
@@ -289,11 +292,12 @@ the request supplies is such an address or a supplied `host` name resolves to
 one; a name is refused when any of its addresses is always refused, even if the
 server could connect to another of them. An update that supplies neither value
 is not checked, so a stored connection that names such an address can still be
-edited, and the connect-time checks decide whether it connects. A host name that `allowed_hosts` lists is not resolved at save time and
-meets this check only when the server connects. When no resolved address is
-permitted, the connection attempt fails with an error that says the host
-resolves only to addresses that connections are not permitted to. The server's
-own connection to the datastore is not checked.
+edited, and the connect-time checks decide whether it connects. A host name
+that `allowed_hosts` lists is not resolved at save time and meets this check
+only when the server connects. When no resolved address is permitted, the
+connection attempt fails with an error that says the host resolves only to
+addresses that connections are not permitted to. The server's own connection
+to the datastore is not checked.
 
 The collector applies a fixed check of its own when the collector connects;
 see

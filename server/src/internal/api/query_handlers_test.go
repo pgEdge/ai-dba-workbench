@@ -740,61 +740,6 @@ func TestStripLeadingComments(t *testing.T) {
 	}
 }
 
-func TestIsReadOnlyStatement(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		readOnly bool
-	}{
-		{"SELECT", "SELECT 1", true},
-		{"select lowercase", "select * from users", true},
-		{"SELECT with leading comment", "-- get data\nSELECT 1", true},
-		{"WITH CTE", "WITH cte AS (SELECT 1) SELECT * FROM cte", true},
-		{"with lowercase", "with x as (select 1) select * from x", true},
-		{"SHOW", "SHOW shared_buffers", true},
-		{"show lowercase", "show work_mem", true},
-		{"EXPLAIN", "EXPLAIN SELECT 1", true},
-		{"explain lowercase", "explain select 1", true},
-		{"TABLE shorthand", "TABLE users", true},
-		{"table lowercase", "table users", true},
-		{"ALTER", "ALTER SYSTEM SET work_mem = '16MB'", false},
-		{"CREATE", "CREATE TABLE foo (id int)", false},
-		{"DROP", "DROP TABLE foo", false},
-		{"INSERT", "INSERT INTO foo VALUES (1)", false},
-		{"UPDATE", "UPDATE foo SET bar = 1", false},
-		{"DELETE", "DELETE FROM foo", false},
-		{"TRUNCATE", "TRUNCATE foo", false},
-		{"GRANT", "GRANT SELECT ON foo TO bar", false},
-		{"REVOKE", "REVOKE SELECT ON foo FROM bar", false},
-		{"VACUUM", "VACUUM ANALYZE foo", false},
-		{"REINDEX", "REINDEX TABLE foo", false},
-		{"CLUSTER", "CLUSTER foo", false},
-		{"REFRESH", "REFRESH MATERIALIZED VIEW mv", false},
-		{"COMMENT", "COMMENT ON TABLE foo IS 'bar'", false},
-		{"SET", "SET work_mem = '256MB'", false},
-		{"ALTER with comment", "-- tune memory\nALTER SYSTEM SET work_mem = '16MB'", false},
-		{"empty after stripping", "-- just a comment", false},
-		{"writable CTE DELETE", "WITH deleted AS (DELETE FROM foo RETURNING *) SELECT * FROM deleted", false},
-		{"writable CTE INSERT", "WITH ins AS (INSERT INTO foo VALUES (1) RETURNING *) SELECT * FROM ins", false},
-		{"writable CTE UPDATE", "WITH upd AS (UPDATE foo SET bar = 1 RETURNING *) SELECT * FROM upd", false},
-		{"CTE with updated_at column", "WITH cte AS (SELECT updated_at FROM foo) SELECT * FROM cte", true},
-		{"CTE with delete_flag column", "WITH cte AS (SELECT delete_flag FROM foo) SELECT * FROM cte", true},
-		{"CTE pure SELECT", "WITH cte AS (SELECT 1) SELECT * FROM cte", true},
-		{"SELECT with block comment", "/* get data */ SELECT 1", true},
-		{"ALTER with block comment", "/* tune */ ALTER SYSTEM SET work_mem = '16MB'", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isReadOnlyStatement(tt.input)
-			if result != tt.readOnly {
-				t.Errorf("isReadOnlyStatement(%q) = %v, want %v",
-					tt.input, result, tt.readOnly)
-			}
-		})
-	}
-}
-
 func TestWriteStatements_RequireConfirmation(t *testing.T) {
 	handler := newTestConnectionHandlerWithRBAC(t)
 

@@ -1,0 +1,142 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+package sqllex
+
+import "testing"
+
+// TestRequiresNoTransaction pins the statements PostgreSQL 18 refuses
+// inside a transaction block (each was confirmed against a live server).
+func TestRequiresNoTransaction(t *testing.T) {
+	tests := []struct {
+		name string
+		stmt string
+		want bool
+	}{
+		{"vacuum", "VACUUM", true},
+		{"vacuum full", "VACUUM FULL t", true},
+		{"vacuum options lowercase", "vacuum (analyze) t", true},
+		{"create index concurrently", "CREATE INDEX CONCURRENTLY i ON t (a)", true},
+		{"create unique index concurrently", "CREATE UNIQUE INDEX CONCURRENTLY i ON t (a)", true},
+		{"drop index concurrently", "DROP INDEX CONCURRENTLY i", true},
+		{"reindex table concurrently", "REINDEX TABLE CONCURRENTLY t", true},
+		{"reindex option concurrently", "REINDEX (CONCURRENTLY) INDEX i", true},
+		{"reindex database", "REINDEX DATABASE d", true},
+		{"reindex schema", "REINDEX SCHEMA public", true},
+		{"reindex system", "REINDEX SYSTEM d", true},
+		{"alter system", "ALTER SYSTEM SET work_mem = '4MB'", true},
+		{"create database", "CREATE DATABASE d", true},
+		{"drop database", "DROP DATABASE d", true},
+		{"create tablespace", "CREATE TABLESPACE s LOCATION '/x'", true},
+		{"drop tablespace", "DROP TABLESPACE s", true},
+		{"alter database set tablespace", "ALTER DATABASE d SET TABLESPACE s", true},
+		{"cluster bare", "CLUSTER", true},
+		{"cluster bare semicolon", "CLUSTER;", true},
+		{"cluster verbose", "CLUSTER VERBOSE", true},
+		{"cluster options", "CLUSTER (VERBOSE)", true},
+		{"cluster options verbose", "CLUSTER (VERBOSE) /* c */ ", true},
+		{"discard all", "DISCARD ALL", true},
+		{"create subscription", "CREATE SUBSCRIPTION s CONNECTION 'x' PUBLICATION p", true},
+		{"drop subscription", "DROP SUBSCRIPTION s", true},
+		{"detach concurrently", "ALTER TABLE t DETACH PARTITION p CONCURRENTLY", true},
+		{"leading comments and mixed case", "-- note\n/* x */ Create Index Concurrently i ON t (a)", true},
+
+		{"empty", "", false},
+		{"comment only", "-- nothing", false},
+		{"update", "UPDATE t SET a = 1", false},
+		{"create index", "CREATE INDEX i ON t (a)", false},
+		{"alter table", "ALTER TABLE t ADD COLUMN c int", false},
+		{"detach without concurrently", "ALTER TABLE t DETACH PARTITION p", false},
+		{"alter database set parameter", "ALTER DATABASE d SET work_mem = '4MB'", false},
+		{"reindex table", "REINDEX TABLE t", false},
+		{"cluster table", "CLUSTER t USING i", false},
+		{"cluster quoted table", `CLUSTER "t"`, false},
+		{"cluster option table", "CLUSTER (VERBOSE) t", false},
+		{"cluster verbose table", "CLUSTER VERBOSE t", false},
+		{"cluster unbalanced options", "CLUSTER (VERBOSE", false},
+		{"discard plans", "DISCARD PLANS", false},
+		{"alter type add value", "ALTER TYPE e ADD VALUE 'b'", false},
+		{"alter type rename", "ALTER TYPE e RENAME TO f", false},
+		{"keyword inside literal", "SELECT 'VACUUM'", false},
+		{"keyword inside comment", "SELECT 1 -- CREATE DATABASE", false},
+		{"create table named concurrently", "CREATE TABLE concurrently (a int)", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RequiresNoTransaction(tt.stmt); got != tt.want {
+				t.Errorf("RequiresNoTransaction(%q) = %v, want %v",
+					tt.stmt, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExplainExecutes(t *testing.T) {
+	tests := []struct {
+		body string
+		want bool
+	}{
+		{"EXPLAIN SELECT 1", false},
+		{"EXPLAIN VERBOSE SELECT 1", false},
+		{"EXPLAIN ANALYZE SELECT 1", true},
+		{"EXPLAIN (ANALYZE) SELECT 1", true},
+		{"EXPLAIN (VERBOSE, COSTS OFF) SELECT 1", false},
+		{"EXPLAIN (VERBOSE SELECT 1", true},
+	}
+	for _, tt := range tests {
+		if got := ExplainExecutes(tt.body); got != tt.want {
+			t.Errorf("ExplainExecutes(%q) = %v, want %v", tt.body, got, tt.want)
+		}
+	}
+}
+
+func TestIsTransactionControl(t *testing.T) {
+	tests := []struct {
+		name string
+		stmt string
+		want bool
+	}{
+		{"begin", "BEGIN", true},
+		{"begin options", "BEGIN ISOLATION LEVEL SERIALIZABLE", true},
+		{"start transaction", "START TRANSACTION", true},
+		{"start transaction lowercase", "start  transaction read only", true},
+		{"commit", "COMMIT", true},
+		{"commit prepared", "COMMIT PREPARED 'x'", true},
+		{"end", "END", true},
+		{"rollback", "ROLLBACK", true},
+		{"rollback to", "ROLLBACK TO SAVEPOINT s", true},
+		{"rollback prepared", "ROLLBACK PREPARED 'x'", true},
+		{"abort", "ABORT", true},
+		{"savepoint", "SAVEPOINT s", true},
+		{"release", "RELEASE SAVEPOINT s", true},
+		{"prepare transaction", "PREPARE TRANSACTION 'x'", true},
+		{"leading comment", "/* c */ -- d\nCommit", true},
+
+		{"empty", "", false},
+		{"select", "SELECT 1", false},
+		{"update", "UPDATE t SET a = 1", false},
+		{"prepare statement", "PREPARE p AS SELECT 1", false},
+		{"start alone", "START", false},
+		{"set transaction", "SET TRANSACTION READ ONLY", false},
+		{"keyword in literal", "SELECT 'COMMIT'", false},
+		{"begin as identifier prefix", "BEGINNING", false},
+		{"parenthesised", "(SELECT 1)", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsTransactionControl(tt.stmt); got != tt.want {
+				t.Errorf("IsTransactionControl(%q) = %v, want %v",
+					tt.stmt, got, tt.want)
+			}
+		})
+	}
+}

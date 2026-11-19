@@ -78,6 +78,7 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+
 ### Security
 
 - Check the supplied password against the stored hash on a failed

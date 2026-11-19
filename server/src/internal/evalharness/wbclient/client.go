@@ -91,7 +91,12 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
+	return readResponse(resp, method, path, out)
+}
 
+// readResponse turns an error status into an HTTPError, and otherwise
+// decodes the body into out or discards it.
+func readResponse(resp *http.Response, method, path string, out any) error {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		data, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 		body := string(data)

@@ -110,23 +110,31 @@ func (r *fakeRegistry) Delete(_ context.Context, id int) error {
 	return r.deleteErr
 }
 
-func queryInt(t *testing.T, dsn, sql string, args ...any) int {
+// testConn connects to dsn for the length of the test. Callers run their
+// literal queries on it directly.
+func testConn(t *testing.T, dsn string) *pgx.Conn {
 	t.Helper()
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close(ctx)
+	t.Cleanup(func() { _ = conn.Close(ctx) })
+	return conn
+}
+
+// scanInt reads a single integer from row.
+func scanInt(t *testing.T, row pgx.Row) int {
+	t.Helper()
 	var n int
-	if err := conn.QueryRow(ctx, sql, args...).Scan(&n); err != nil {
-		t.Fatalf("%s: %v", sql, err)
+	if err := row.Scan(&n); err != nil {
+		t.Fatal(err)
 	}
 	return n
 }
 
 func databaseExists(t *testing.T, dsn, name string) bool {
-	return queryInt(t, dsn, "SELECT count(*) FROM pg_database WHERE datname = $1", name) == 1
+	return scanInt(t, testConn(t, dsn).QueryRow(context.Background(), "SELECT count(*) FROM pg_database WHERE datname = $1", name)) == 1
 }
 
 func float(v float64) *float64 { return &v }
@@ -182,10 +190,10 @@ func TestStageAndTeardown(t *testing.T) {
 	if spec.Username != st.Role || len(spec.Password) != 32 || !strings.HasPrefix(st.Role, "eval_stage_full_") {
 		t.Errorf("connection role %q, password length %d", spec.Username, len(spec.Password))
 	}
-	if n := queryInt(t, dsn, `SELECT count(*) FROM pg_roles r
+	if n := scanInt(t, testConn(t, dsn).QueryRow(context.Background(), `SELECT count(*) FROM pg_roles r
         WHERE r.rolname = $1 AND r.rolcanlogin AND NOT r.rolsuper
           AND pg_has_role(r.oid, 'pg_monitor', 'MEMBER')
-          AND pg_has_role(r.oid, 'pg_read_all_data', 'MEMBER')`, st.Role); n != 1 {
+          AND pg_has_role(r.oid, 'pg_read_all_data', 'MEMBER')`, st.Role)); n != 1 {
 		t.Errorf("found %d matching login roles", n)
 	}
 	if pd := st.PromptData(); pd.ConnectionID != st.ConnectionID || pd.ConnectionName != st.ConnectionName || pd.Database != st.Database {
@@ -193,21 +201,21 @@ func TestStageAndTeardown(t *testing.T) {
 	}
 	id := st.ConnectionID
 
-	if n := queryInt(t, dsn, `SELECT count(*) FROM alerts WHERE connection_id = $1 AND database_name = $2
+	if n := scanInt(t, testConn(t, dsn).QueryRow(context.Background(), `SELECT count(*) FROM alerts WHERE connection_id = $1 AND database_name = $2
         AND description = '2 blocked' AND status = 'active' AND metric_name IS NULL
-        AND triggered_at = $3`, id, st.Database, now.Add(-5*time.Minute)); n != 1 {
+        AND triggered_at = $3`, id, st.Database, now.Add(-5*time.Minute))); n != 1 {
 		t.Errorf("found %d matching alerts", n)
 	}
-	if n := queryInt(t, dsn, `SELECT count(*) FROM metrics.part_metric WHERE connection_id = $1
+	if n := scanInt(t, testConn(t, dsn).QueryRow(context.Background(), `SELECT count(*) FROM metrics.part_metric WHERE connection_id = $1
         AND ((value = 4 AND collected_at = $2) OR (value = 9 AND collected_at = $3))`,
-		id, now.Add(-30*time.Minute), now.Add(-time.Minute)); n != 2 {
+		id, now.Add(-30*time.Minute), now.Add(-time.Minute))); n != 2 {
 		t.Errorf("found %d partitioned metric rows", n)
 	}
-	if n := queryInt(t, dsn, "SELECT count(*) FROM metrics.plain_metric WHERE connection_id = $1 AND label = 'x'", id); n != 1 {
+	if n := scanInt(t, testConn(t, dsn).QueryRow(context.Background(), "SELECT count(*) FROM metrics.plain_metric WHERE connection_id = $1 AND label = 'x'", id)); n != 1 {
 		t.Errorf("found %d plain metric rows", n)
 	}
-	if n := queryInt(t, dsn, `SELECT count(*) FROM pg_stat_activity
-        WHERE datname = $1 AND state = 'idle in transaction' AND application_name = 'holder'`, st.Database); n != 1 {
+	if n := scanInt(t, testConn(t, dsn).QueryRow(context.Background(), `SELECT count(*) FROM pg_stat_activity
+        WHERE datname = $1 AND state = 'idle in transaction' AND application_name = 'holder'`, st.Database)); n != 1 {
 		t.Errorf("found %d idle-in-transaction holders", n)
 	}
 
@@ -217,13 +225,13 @@ func TestStageAndTeardown(t *testing.T) {
 	if databaseExists(t, dsn, st.Database) {
 		t.Error("staged database still exists")
 	}
-	if n := queryInt(t, dsn, "SELECT count(*) FROM pg_roles WHERE rolname = $1", st.Role); n != 0 {
+	if n := scanInt(t, testConn(t, dsn).QueryRow(context.Background(), "SELECT count(*) FROM pg_roles WHERE rolname = $1", st.Role)); n != 0 {
 		t.Error("login role still exists")
 	}
 	if len(reg.deleted) != 1 || reg.deleted[0] != id {
 		t.Errorf("deleted connections %v, want [%d]", reg.deleted, id)
 	}
-	if n := queryInt(t, dsn, "SELECT count(*) FROM teardown_log WHERE note = 'stage-full'"); n != 1 {
+	if n := scanInt(t, testConn(t, dsn).QueryRow(context.Background(), "SELECT count(*) FROM teardown_log WHERE note = 'stage-full'")); n != 1 {
 		t.Errorf("teardown SQL ran %d times", n)
 	}
 	// A second teardown has nothing left to do but the fixture's SQL.
@@ -357,12 +365,12 @@ func TestStageFailures(t *testing.T) {
 			if got := len(reg.deleted) == 1; got != tc.registers {
 				t.Errorf("connection deleted = %v, want %v (deleted %v)", got, tc.registers, reg.deleted)
 			}
-			if n := queryInt(t, dsn, "SELECT count(*) FROM teardown_log WHERE note = $1",
-				strings.ReplaceAll(tc.name, " ", "-")); n != 1 {
+			if n := scanInt(t, testConn(t, dsn).QueryRow(context.Background(), "SELECT count(*) FROM teardown_log WHERE note = $1",
+				strings.ReplaceAll(tc.name, " ", "-"))); n != 1 {
 				t.Errorf("teardown SQL ran %d times", n)
 			}
-			if n := queryInt(t, dsn, "SELECT count(*) FROM pg_database WHERE datname LIKE $1",
-				fmt.Sprintf("eval\\_fail\\_%d\\_%%", i)); n != 0 {
+			if n := scanInt(t, testConn(t, dsn).QueryRow(context.Background(), "SELECT count(*) FROM pg_database WHERE datname LIKE $1",
+				fmt.Sprintf("eval\\_fail\\_%d\\_%%", i))); n != 0 {
 				t.Errorf("staged database left behind")
 			}
 		})

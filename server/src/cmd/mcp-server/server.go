@@ -191,13 +191,15 @@ func NewServer(sc *ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
-	s.initActions()
-
+	// The conversation store comes first: initActions hands its
+	// ownership check to the propose_action tool.
 	if err := s.initConversationStore(); err != nil {
 		// Non-fatal - just log warning
 		fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
 		fmt.Fprintf(os.Stderr, "         Conversation history will not be available\n")
 	}
+
+	s.initActions()
 
 	s.startTokenCleanup()
 	s.startOverviewGenerator()

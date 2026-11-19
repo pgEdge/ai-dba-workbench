@@ -22,6 +22,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/conversations"
+	"github.com/pgedge/ai-workbench/server/internal/tools"
 )
 
 // actionShutdownGrace bounds how long shutdown waits for running
@@ -31,9 +32,10 @@ import (
 const actionShutdownGrace = 1500 * time.Millisecond
 
 // initActions builds the proposed action store, review service and
-// executor once, hands the service to the propose_action tool and
-// registers the executor's shutdown. It runs after the tool provider
-// exists and before it serves a request, as SetActionProposer requires.
+// executor once, hands the service and the conversation ownership check
+// to the propose_action tool and registers the executor's shutdown. It
+// runs after the tool provider and the conversation store exist and
+// before the provider serves a request, as SetActionProposer requires.
 func (s *Server) initActions() {
 	pool := s.datastore.GetPool()
 	if pool == nil {
@@ -51,7 +53,8 @@ func (s *Server) initActions() {
 		api.NewActionPoolOpener(s.datastore),
 		cfg.LockTimeoutDuration(), cfg.StatementTimeoutDuration(), 0)
 
-	s.toolProvider.SetActionProposer(s.actionService)
+	s.toolProvider.SetActionProposer(s.actionService,
+		tools.ConversationOwnership(conversationOwnership(s.convStore)))
 
 	s.registerHandlerCloser(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), actionShutdownGrace)
@@ -87,9 +90,9 @@ func reportInterruptedActions(n int64, err error) {
 	}
 }
 
-// conversationOwnership returns the check the link endpoint uses to
-// confirm a conversation belongs to the caller, or nil when
-// conversations are not stored.
+// conversationOwnership returns the check the action endpoints and the
+// propose_action tool use to confirm a conversation belongs to the
+// caller, or nil when conversations are not stored.
 func conversationOwnership(store *conversations.Store) api.ConversationOwnership {
 	if store == nil {
 		return nil

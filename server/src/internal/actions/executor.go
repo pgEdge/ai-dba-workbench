@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/pkg/rollback"
+	"github.com/pgedge/ai-workbench/server/internal/pgexec"
 	"github.com/pgedge/ai-workbench/server/internal/sqllex"
 )
 
@@ -488,18 +489,11 @@ func (r *stmtRunner) runIndividually(st *runState) {
 // openTransactionMessage returns a failure message when a statement left
 // the connection in a transaction, which would carry into the statements
 // after it, and an empty string otherwise.
-func openTransactionMessage(c connState) string {
-	if c.TxStatus() != 'I' {
+func openTransactionMessage(c pgexec.ConnState) string {
+	if pgexec.TxLeftOpen(c) {
 		return "the statement left a transaction open, so it was rolled back; the statements after this one were not run"
 	}
 	return ""
-}
-
-// connState is the part of *pgconn.PgConn that the post-statement checks
-// read.
-type connState interface {
-	ParameterStatus(key string) string
-	TxStatus() byte
 }
 
 // runOne runs one statement over the simple query protocol, which sends
@@ -521,22 +515,9 @@ func runOne(ctx context.Context, pgConn *pgconn.PgConn, stmt string, rowLimit in
 				res.Columns[i] = f.Name
 			}
 		}
-		for rr.NextRow() {
-			if len(res.Rows) >= rowLimit {
-				res.Truncated = true
-				continue
-			}
-			vals := rr.Values()
-			row := make([]string, len(vals))
-			for i, v := range vals {
-				if v == nil {
-					row[i] = "NULL"
-				} else {
-					row[i] = string(v)
-				}
-			}
-			res.Rows = append(res.Rows, row)
-		}
+		var truncated bool
+		res.Rows, truncated = pgexec.AppendRows(res.Rows, rr, rowLimit)
+		res.Truncated = res.Truncated || truncated
 		tag, err := rr.Close()
 		if err != nil {
 			continue // surfaced by mrr.Close below
@@ -558,8 +539,8 @@ func runOne(ctx context.Context, pgConn *pgconn.PgConn, stmt string, rowLimit in
 // encodingMessage reports a client_encoding change. The classifier reads
 // statement text as UTF-8, so a changed encoding stops the run (see
 // requireUTF8 in the query handlers).
-func encodingMessage(c connState) string {
-	if c.ParameterStatus("client_encoding") != "UTF8" {
+func encodingMessage(c pgexec.ConnState) string {
+	if !pgexec.EncodingIsUTF8(c) {
 		return "client_encoding must remain UTF8; the statements after this one were not run"
 	}
 	return ""

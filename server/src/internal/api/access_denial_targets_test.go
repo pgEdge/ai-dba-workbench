@@ -302,9 +302,9 @@ func TestConnectionAccessRefusalReachesAuditLog(t *testing.T) {
 }
 
 // TestQueryWriteRefusalReachesAuditLog checks, end to end, that a
-// caller with only read access to a connection who confirms a write
-// statement is refused, and that the refusal is written to the audit
-// log as connection.query.write on the connection.
+// caller who sends a write statement to the query endpoint is refused
+// with a 409, and that the refusal is written to the audit log as
+// connection.query.write on the connection.
 func TestQueryWriteRefusalReachesAuditLog(t *testing.T) {
 	_, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -324,10 +324,12 @@ func TestQueryWriteRefusalReachesAuditLog(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.executeQuery(rec, r, connID)
-	assertForbiddenMessage(t, rec, connectionWriteDenied)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("Expected status 409, got %d: %s", rec.Code, rec.Body.String())
+	}
 
 	assertDenialRecorded(t, store, deniedActionConnectionQueryWrite,
-		connectionWriteDenied)
+		queryWriteRefused)
 	events, _, err := store.ListAuditEvents(auth.AuditFilter{
 		Action:  deniedActionConnectionQueryWrite,
 		Outcome: string(auth.OutcomeDenied)})

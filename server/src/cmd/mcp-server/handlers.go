@@ -20,6 +20,7 @@ import (
 	"time"
 
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
+	"github.com/pgedge/ai-workbench/server/internal/actions"
 	"github.com/pgedge/ai-workbench/server/internal/api"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/compactor"
@@ -94,6 +95,14 @@ type HandlerDependencies struct {
 	// after marking a connection deleted. It may be nil, in which case
 	// the purge's own interval picks the connection up.
 	ConnectionPurgeNudge func()
+
+	// ActionStore, ActionService and ActionExecutor back the proposed
+	// action endpoints. They are built once by the server and shared
+	// with the propose_action tool; when any is nil the endpoints are
+	// not registered.
+	ActionStore    *actions.Store
+	ActionService  *actions.Service
+	ActionExecutor *actions.Executor
 }
 
 // SetupHandlers configures all HTTP handlers for the server
@@ -319,6 +328,13 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "Memory management: DISABLED (memory not configured)\n")
 		}
 
+		// Proposed action endpoints
+		actionHandler := newActionHandler(deps, rbacChecker)
+		if actionHandler != nil {
+			actionHandler.RegisterRoutes(mux, authWrapper)
+			fmt.Fprintf(os.Stderr, "Proposed actions: ENABLED\n")
+		}
+
 		// RBAC management endpoints
 		if deps.AuthStore != nil {
 			rbacHandler := api.NewRBACHandler(deps.AuthStore, rbacChecker)
@@ -339,7 +355,8 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			// the connection, query, metrics, latest snapshot,
 			// performance summary, server info and alert routes
 			// (issue #675).
-			for _, h := range []interface {
+			// The proposed action endpoints record theirs the same way.
+			recorders := []interface {
 				SetDenialRecorder(func(*http.Request, string))
 			}{
 				connHandler, clusterHandler, alertRuleHandler,
@@ -348,7 +365,11 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 				probeOverrideHandler, channelOverrideHandler,
 				alertHandler, serverInfoHandler, perfHandler,
 				metricsHandler, latestHandler, memoryHandler,
-			} {
+			}
+			if actionHandler != nil {
+				recorders = append(recorders, actionHandler)
+			}
+			for _, h := range recorders {
 				h.SetDenialRecorder(rbacHandler.RecordDenial)
 				if denialRecorderWired != nil {
 					denialRecorderWired(h)

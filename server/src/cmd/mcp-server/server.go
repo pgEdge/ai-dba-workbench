@@ -24,6 +24,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/server/internal/actions"
 	"github.com/pgedge/ai-workbench/server/internal/api"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -57,11 +58,18 @@ type Server struct {
 	overviewHub   *overview.Hub
 	connPurger    *database.ConnectionPurger
 	toolProvider  *tools.ContextAwareProvider
-	ctx           context.Context
-	cancel        context.CancelFunc
-	dataDir       string
-	debug         bool
-	aiEnabled     bool
+
+	// The proposed action store, review service and executor are built
+	// once and shared by the REST handlers and the propose_action tool.
+	actionStore    *actions.Store
+	actionService  *actions.Service
+	actionExecutor *actions.Executor
+
+	ctx       context.Context
+	cancel    context.CancelFunc
+	dataDir   string
+	debug     bool
+	aiEnabled bool
 
 	// oidcProvider is nil whenever federated login is switched off. When
 	// it is non-nil, oidcStateKey holds the 32-byte key the login state
@@ -182,6 +190,8 @@ func NewServer(sc *ServerConfig) (*Server, error) {
 	if err := s.initMCPServer(); err != nil {
 		return nil, err
 	}
+
+	s.initActions()
 
 	if err := s.initConversationStore(); err != nil {
 		// Non-fatal - just log warning
@@ -724,6 +734,10 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 	// handlers are built, so that the delete handler gets its nudge.
 	s.startConnectionPurger()
 
+	// An action left executing by a previous process has an unknown
+	// outcome. This too waits for main's schema verification.
+	s.markInterruptedActions()
+
 	httpConfig := s.newHTTPConfig(reloadableCfg)
 
 	// Log startup information
@@ -833,6 +847,10 @@ func (s *Server) handlerDependencies(ipExtractor *auth.IPExtractor, reloadableCf
 
 		RegisterCloser:       s.registerHandlerCloser,
 		ConnectionPurgeNudge: s.connectionPurgeNudge(),
+
+		ActionStore:    s.actionStore,
+		ActionService:  s.actionService,
+		ActionExecutor: s.actionExecutor,
 	}
 }
 

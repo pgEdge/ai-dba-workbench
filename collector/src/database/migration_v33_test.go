@@ -64,22 +64,32 @@ func TestMigration33ProposedActions(t *testing.T) {
 
 	// Each constrained column rejects an unknown value; a savepoint keeps
 	// the transaction usable after each expected failure.
-	cases := []struct{ name, cols, vals string }{
-		{"review_status", "review_status, source, proposed_via", "'bogus', 'chat_tool', 'session'"},
-		{"source", "review_status, source, proposed_via", "'pending', 'bogus', 'session'"},
-		{"proposed_via", "review_status, source, proposed_via", "'pending', 'chat_tool', 'bogus'"},
-		{"approval", "review_status, source, proposed_via, approval", "'pending', 'chat_tool', 'session', 'bogus'"},
-		{"approved_via", "review_status, source, proposed_via, approved_via", "'pending', 'chat_tool', 'session', 'bogus'"},
-		{"exec_status", "review_status, source, proposed_via, exec_status", "'pending', 'chat_tool', 'session', 'bogus'"},
+	cases := []struct{ name, sql string }{
+		{"review_status", `
+			INSERT INTO proposed_actions (connection_id, statements, proposed_by, review_status, source, proposed_via)
+			VALUES ($1, '["SELECT 1"]'::jsonb, 'tester', 'bogus', 'chat_tool', 'session')`},
+		{"source", `
+			INSERT INTO proposed_actions (connection_id, statements, proposed_by, review_status, source, proposed_via)
+			VALUES ($1, '["SELECT 1"]'::jsonb, 'tester', 'pending', 'bogus', 'session')`},
+		{"proposed_via", `
+			INSERT INTO proposed_actions (connection_id, statements, proposed_by, review_status, source, proposed_via)
+			VALUES ($1, '["SELECT 1"]'::jsonb, 'tester', 'pending', 'chat_tool', 'bogus')`},
+		{"approval", `
+			INSERT INTO proposed_actions (connection_id, statements, proposed_by, review_status, source, proposed_via, approval)
+			VALUES ($1, '["SELECT 1"]'::jsonb, 'tester', 'pending', 'chat_tool', 'session', 'bogus')`},
+		{"approved_via", `
+			INSERT INTO proposed_actions (connection_id, statements, proposed_by, review_status, source, proposed_via, approved_via)
+			VALUES ($1, '["SELECT 1"]'::jsonb, 'tester', 'pending', 'chat_tool', 'session', 'bogus')`},
+		{"exec_status", `
+			INSERT INTO proposed_actions (connection_id, statements, proposed_by, review_status, source, proposed_via, exec_status)
+			VALUES ($1, '["SELECT 1"]'::jsonb, 'tester', 'pending', 'chat_tool', 'session', 'bogus')`},
 	}
 	for _, c := range cases {
 		sp, err := tx.Begin(ctx)
 		if err != nil {
 			t.Fatalf("savepoint: %v", err)
 		}
-		_, err = sp.Exec(ctx, `
-			INSERT INTO proposed_actions (connection_id, statements, proposed_by, `+c.cols+`)
-			VALUES ($1, '["SELECT 1"]'::jsonb, 'tester', `+c.vals+`)`, connID)
+		_, err = sp.Exec(ctx, c.sql, connID)
 		if rbErr := sp.Rollback(ctx); rbErr != nil {
 			t.Fatalf("savepoint rollback: %v", rbErr)
 		}

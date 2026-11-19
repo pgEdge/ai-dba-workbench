@@ -95,10 +95,21 @@ func (f *execFixture) run(t *testing.T, stmts ...string) *Action {
 	return awaitDone(t, f.store, id)
 }
 
+// countQueries maps each table the executor tests count to a constant
+// query, so no SQL is assembled from a variable.
+var countQueries = map[string]string{
+	"t": "SELECT count(*) FROM t",
+	"d": "SELECT count(*) FROM d",
+}
+
 func (f *execFixture) count(t *testing.T, table string) int {
 	t.Helper()
+	query, ok := countQueries[table]
+	if !ok {
+		t.Fatalf("count: no query registered for table %q", table)
+	}
 	var n int
-	if err := f.target.QueryRow(context.Background(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+	if err := f.target.QueryRow(context.Background(), query).Scan(&n); err != nil {
 		t.Fatalf("count %s: %v", table, err)
 	}
 	return n

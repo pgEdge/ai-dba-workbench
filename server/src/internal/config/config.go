@@ -10,6 +10,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -950,9 +951,12 @@ func (a ActionsConfig) StatementTimeoutDuration() time.Duration {
 	return positiveDuration(a.StatementTimeout, DefaultActionsStatementTimeout)
 }
 
-// validate reports an error for any unparsable or non-positive setting.
-// An unset (empty or zero) value is valid: the accessors and the load
-// defaults supply the default for it.
+// validate reports an error for any unparsable setting, and for a
+// timeout below one millisecond: PostgreSQL takes lock_timeout and
+// statement_timeout in whole milliseconds, so a shorter value would be
+// sent as 0 and switch the timeout off. An unset (empty or zero) value
+// is valid: the accessors and the load defaults supply the default for
+// it.
 func (a ActionsConfig) validate() error {
 	for _, f := range []struct{ name, val string }{
 		{"actions.lock_timeout", a.LockTimeout},
@@ -965,15 +969,15 @@ func (a ActionsConfig) validate() error {
 		if err != nil {
 			return fmt.Errorf("%s: %q is not a valid duration", f.name, f.val)
 		}
-		if d <= 0 {
-			return fmt.Errorf("%s must be greater than zero", f.name)
+		if d < time.Millisecond {
+			return fmt.Errorf("%s must be at least 1ms, got %q", f.name, f.val)
 		}
 	}
 	if a.MaxAttempts < 0 {
-		return fmt.Errorf("actions.max_attempts must not be negative")
+		return errors.New("actions.max_attempts must not be negative")
 	}
 	if a.ContextSnapshotLimit < 0 {
-		return fmt.Errorf("actions.context_snapshot_limit must not be negative")
+		return errors.New("actions.context_snapshot_limit must not be negative")
 	}
 	return nil
 }

@@ -546,10 +546,14 @@ func (h *ActionHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	by := auth.GetUsernameFromContext(ctx)
-	// An action approved earlier whose start failed or never happened is
-	// retried without approving again, but only by its approver or a
-	// superuser. Anyone else falls through to Approve, which refuses it.
-	retry := !req.Override && a.Approval == "approved" && a.ExecStatus == "not_started" &&
+	// An action approved or overridden earlier whose start failed or never
+	// happened is retried without deciding again, but only by whoever
+	// decided it or a superuser, and only through the same kind of
+	// request: an overridden action is retried as an override, so the
+	// override rules above have been applied again. Anyone else falls
+	// through to Approve, which refuses it. ClaimForExecution in Start
+	// stays the atomic gate either way.
+	retry := a.Approval == approval && a.ExecStatus == "not_started" &&
 		(auth.IsSuperuserFromContext(ctx) ||
 			(by != "" && a.ApprovedBy != nil && *a.ApprovedBy == by))
 	if !retry {

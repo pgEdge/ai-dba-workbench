@@ -154,7 +154,7 @@
     "/actions/{id}/execute": {
       "post": {
         "summary": "Approve and execute an action",
-        "description": "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens.",
+        "description": "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens. An action approved or overridden earlier that has not started may be executed again, without a second approval, by whoever approved or overrode it or by a superuser; an overridden action is retried with override and the confirm text again, under the same rules. Anyone else gets 409.",
         "operationId": "executeAction",
         "tags": [
           "Actions"
@@ -11748,7 +11748,7 @@
           "executed_at": {
             "type": "string",
             "format": "date-time",
-            "description": "When execution finished",
+            "description": "When execution started",
             "nullable": true
           },
           "id": {

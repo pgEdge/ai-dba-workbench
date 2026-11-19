@@ -324,16 +324,17 @@ func TestCancel(t *testing.T) {
 
 func TestCancelNonTransactional(t *testing.T) {
 	t.Parallel()
-	// The server confirms the cancellation of the sleeping statement, so
-	// the outcome is known: the VACUUM was applied, the sleep was not.
-	// "unknown" is reserved for outcomes the server did not confirm.
+	// A statement stopped part way through may have left partial work
+	// (an invalid index, say), so the outcome is unknown. The VACUUM
+	// completed, and the statement never started stays not applied.
 	f := newExecFixture(t, "_x_cancelnt", time.Second, time.Minute, 100)
 	mustExec(t, f.target, "CREATE TABLE t (a int)")
-	a := f.cancelRunning(t, "pg_sleep(62)", "VACUUM t", "SELECT pg_sleep(62)")
-	if a.ExecStatus != "cancelled" || a.Transactional == nil || *a.Transactional { //nolint:misspell // value fixed by the table CHECK
+	a := f.cancelRunning(t, "pg_sleep(62)", "VACUUM t", "SELECT pg_sleep(62)", "SELECT 3")
+	if a.ExecStatus != "unknown" || a.Transactional == nil || *a.Transactional {
 		t.Fatalf("status = %s transactional=%v", a.ExecStatus, a.Transactional)
 	}
-	if !a.Results[0].Applied || a.Results[1].Applied || a.Results[1].Error == "" {
+	if !a.Results[0].Applied || a.Results[1].Applied || !strings.Contains(a.Results[1].Error, "unknown") ||
+		a.Results[2].Applied || a.Results[2].Error != "" {
 		t.Fatalf("unexpected results: %+v", a.Results)
 	}
 }
@@ -424,10 +425,19 @@ func TestFinalStatusAndPanic(t *testing.T) {
 
 	// A panic part-way through a non-transactional run keeps the partial
 	// results and makes the outcome unknown.
-	nt := &runState{results: []StatementResult{{Statement: "a", Applied: true}, {Statement: "b"}, {Statement: "c"}}}
+	nt := &runState{sent: true, results: []StatementResult{{Statement: "a", Applied: true}, {Statement: "b"}, {Statement: "c"}}}
 	markPanic(nt)
 	if !nt.unknown || !nt.results[0].Applied || nt.results[1].Error == "" || nt.results[2].Error != "" {
 		t.Errorf("non-transactional panic: %+v", nt)
+	}
+	unsent := &runState{results: []StatementResult{{Statement: "a"}}}
+	markPanic(unsent)
+	if unsent.unknown || unsent.results[0].Error == "" || finalStatus(unsent, false) != "failed" {
+		t.Errorf("unsent panic: %+v", unsent)
+	}
+	between := &runState{results: []StatementResult{{Applied: true}, {Error: stoppedMessage}}}
+	if got := finalStatus(between, true); got != "cancelled" { //nolint:misspell // value fixed by the table CHECK
+		t.Errorf("cancel between statements = %s", got)
 	}
 	tx := &runState{transactional: true, results: []StatementResult{{Applied: true}}}
 	markPanic(tx)

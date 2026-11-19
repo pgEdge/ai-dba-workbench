@@ -69,6 +69,8 @@ type runState struct {
 	// connection was lost mid-statement in a non-transactional run, a
 	// COMMIT failed without a server verdict, or the executor panicked.
 	unknown bool
+	// sent is set once a statement has been sent to the database.
+	sent bool
 }
 
 // Executor runs approved actions against their target databases.
@@ -232,6 +234,13 @@ func markPanic(st *runState) {
 		}
 		return
 	}
+	if !st.sent {
+		// Nothing reached the database, so the run simply failed.
+		if !hasError(st.results) {
+			st.results[0].Error = "internal error while executing the action"
+		}
+		return
+	}
 	st.unknown = true
 	for i := range st.results {
 		if !st.results[i].Applied && st.results[i].Error == "" {
@@ -316,6 +325,7 @@ func (e *Executor) runAction(ctx context.Context, a *Action, st *runState) {
 		execCtx:  execCtx,
 		pgConn:   pgConn,
 		rowLimit: e.rowLimit,
+		state:    st,
 		settings: fmt.Sprintf("SET lock_timeout = %d; SET statement_timeout = %d",
 			e.lockTimeout.Milliseconds(), e.statementTimeout.Milliseconds()),
 		exec: func(c context.Context, sql string) error {
@@ -345,6 +355,7 @@ type stmtRunner struct {
 	rowLimit int
 	settings string
 	exec     rollback.SimpleExec
+	state    *runState // may be nil in tests
 }
 
 const stoppedMessage = "the action was stopped before this statement ran"
@@ -362,6 +373,9 @@ func (r *stmtRunner) step(results []StatementResult, i int) (ran bool, err error
 	if err := r.exec(r.execCtx, r.settings); err != nil {
 		results[i].Error = "could not set the timeouts: " + safeExecError(err)
 		return false, nil
+	}
+	if r.state != nil {
+		r.state.sent = true
 	}
 	res, err := runOne(r.execCtx, r.pgConn, results[i].Statement, r.rowLimit)
 	if err != nil {
@@ -426,6 +440,9 @@ func clearApplied(results []StatementResult) {
 		results[i].Applied = false
 		results[i].CommandTag = ""
 		results[i].RowsAffected = 0
+		results[i].Columns = nil
+		results[i].Rows = nil
+		results[i].Truncated = false
 	}
 }
 
@@ -443,6 +460,14 @@ func (r *stmtRunner) runIndividually(st *runState) {
 			st.unknown = true
 			return
 		}
+		// A statement stopped by a cancel request may have left partial
+		// work (an invalid index, say), so its outcome is unknown.
+		if pgErr != nil && pgErr.Code == "57014" && r.ctx.Err() != nil {
+			results[i].Applied = false
+			results[i].Error = "outcome unknown: the statement was stopped part way through"
+			st.unknown = true
+			return
+		}
 		// A statement that ran without a server error took effect, even
 		// if a check on its side effects then stops the batch.
 		results[i].Applied = ran && err == nil
@@ -453,7 +478,7 @@ func (r *stmtRunner) runIndividually(st *runState) {
 		// because transaction control is refused before anything runs.
 		if msg := openTransactionMessage(r.pgConn); msg != "" {
 			rollbackQuietly(r.execCtx, r.exec)
-			results[i].Applied = false
+			clearApplied(results[i : i+1])
 			results[i].Error = msg
 			return
 		}

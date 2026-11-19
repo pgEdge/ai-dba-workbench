@@ -216,8 +216,7 @@ func (s *Store) Approve(ctx context.Context, id int64, approval, by, via string)
 // a recorded decision to executing: it passed review and was approved,
 // or was vetoed and then overridden. A passed but unapproved action is
 // never claimable, so the database is the final gate whatever the
-// callers do. recording the
-// start time in executed_at. It returns true for exactly one caller
+// callers do. The claim records the start time in executed_at. It returns true for exactly one caller
 // however many race for the same action; every other caller, and any
 // action not eligible, gets false.
 func (s *Store) ClaimForExecution(ctx context.Context, id int64) (bool, error) {

@@ -4363,8 +4363,12 @@ func (sm *SchemaManager) registerMigrations() {
 				CREATE INDEX IF NOT EXISTS idx_proposed_actions_conversation
 					ON proposed_actions (conversation_id);
 
-				CREATE INDEX IF NOT EXISTS idx_proposed_actions_parent
-					ON proposed_actions (parent_action_id);
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_proposed_actions_parent
+					ON proposed_actions (parent_action_id)
+					WHERE parent_action_id IS NOT NULL;
+
+				COMMENT ON INDEX idx_proposed_actions_parent IS
+					'Keeps a retry chain linear: an action can be revised only once';
 
 				CREATE INDEX IF NOT EXISTS idx_proposed_actions_executing
 					ON proposed_actions (id) WHERE exec_status = 'executing';

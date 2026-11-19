@@ -50,6 +50,22 @@ const finishTimeout = 30 * time.Second
 // cancelRequestTimeout bounds the cancel request sent to the server.
 const cancelRequestTimeout = 5 * time.Second
 
+// Recording an outcome is retried, with a delay that doubles from
+// finishBackoffBase up to finishBackoffMax, before it is given up. The
+// target has already been changed by then, so only the write to the
+// datastore is repeated, never the statements.
+const (
+	finishAttempts    = 5
+	finishBackoffBase = 200 * time.Millisecond
+	finishBackoffMax  = 5 * time.Second
+)
+
+// outcomeStore is the part of Store used to record an outcome.
+type outcomeStore interface {
+	Get(ctx context.Context, id int64) (*Action, error)
+	FinishExecution(ctx context.Context, id int64, status string, transactional bool, results []StatementResult) error
+}
+
 // Opener opens a single-connection pool on the monitored database an
 // action targets. The executor closes the pool after use. The pool must
 // not set default_transaction_read_only.
@@ -82,6 +98,14 @@ type Executor struct {
 	statementTimeout time.Duration
 	rowLimit         int
 
+	// outcomes records outcomes; it is the store outside tests.
+	outcomes outcomeStore
+	// finishBackoff is the first delay between attempts to record an
+	// outcome.
+	finishBackoff time.Duration
+	// stopping is closed by Shutdown, abandoning outcome retries.
+	stopping chan struct{}
+
 	mu      sync.Mutex
 	closed  bool
 	running map[int64]*runningAction
@@ -100,6 +124,9 @@ func NewExecutor(store *Store, opener Opener, lockTimeout, statementTimeout time
 		lockTimeout:      lockTimeout,
 		statementTimeout: statementTimeout,
 		rowLimit:         rowLimit,
+		outcomes:         store,
+		finishBackoff:    finishBackoffBase,
+		stopping:         make(chan struct{}),
 		running:          make(map[int64]*runningAction),
 	}
 }
@@ -108,6 +135,9 @@ func NewExecutor(store *Store, opener Opener, lockTimeout, statementTimeout time
 // ones and waits for them to record their outcomes, or for ctx to end.
 func (e *Executor) Shutdown(ctx context.Context) error {
 	e.mu.Lock()
+	if !e.closed {
+		close(e.stopping)
+	}
 	e.closed = true
 	for _, run := range e.running {
 		run.stopRequested.Store(true)
@@ -201,12 +231,7 @@ func (e *Executor) execute(ctx context.Context, run *runningAction, id int64) {
 			log.Printf("[ERROR] Action %d executor panicked: %v", id, r)
 			markPanic(st)
 		}
-		status := finalStatus(st, run.stopRequested.Load())
-		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
-		defer cancel()
-		if err := e.store.FinishExecution(finishCtx, id, status, st.transactional, st.results); err != nil {
-			log.Printf("[ERROR] Failed to record outcome of action %d: %v", id, err)
-		}
+		e.recordOutcome(ctx, id, finalStatus(st, run.stopRequested.Load()), st)
 	}()
 
 	action, err := e.store.Get(ctx, id)
@@ -216,6 +241,62 @@ func (e *Executor) execute(ctx context.Context, run *runningAction, id int64) {
 		return
 	}
 	e.runAction(ctx, action, st)
+}
+
+// recordOutcome writes the outcome to the action, retrying a failed
+// write a few times with a growing delay, since losing it would leave the
+// action executing until the next startup marks it unknown. Retries stop
+// at Shutdown.
+func (e *Executor) recordOutcome(ctx context.Context, id int64, status string, st *runState) {
+	delay := e.finishBackoff
+	for attempt := 1; ; attempt++ {
+		err := e.finishOnce(ctx, id, status, st, attempt > 1)
+		if err == nil {
+			return
+		}
+		if errors.Is(err, ErrInvalidState) || attempt == finishAttempts {
+			log.Printf("[ERROR] Failed to record outcome of action %d: %v", id, err)
+			return
+		}
+		log.Printf("[WARN] Recording outcome of action %d failed (attempt %d of %d), retrying: %v",
+			id, attempt, finishAttempts, err)
+		if !e.pause(delay) {
+			log.Printf("[ERROR] Gave up recording outcome of action %d at shutdown: %v", id, err)
+			return
+		}
+		delay = min(2*delay, finishBackoffMax)
+	}
+}
+
+// finishOnce makes one attempt to record the outcome. On a retry, an
+// earlier attempt may have been written even though it reported an
+// error, so ErrInvalidState counts as success when the stored outcome is
+// the one being recorded.
+func (e *Executor) finishOnce(ctx context.Context, id int64, status string, st *runState, retry bool) error {
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	defer cancel()
+	err := e.outcomes.FinishExecution(fctx, id, status, st.transactional, st.results)
+	if retry && errors.Is(err, ErrInvalidState) {
+		a, gerr := e.outcomes.Get(fctx, id)
+		if gerr == nil && a.ExecStatus == status &&
+			a.Transactional != nil && *a.Transactional == st.transactional {
+			return nil
+		}
+	}
+	return err
+}
+
+// pause waits for d and reports true, or reports false at once if
+// Shutdown is called first.
+func (e *Executor) pause(d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-e.stopping:
+		return false
+	}
 }
 
 // markPanic records a panic in st. A non-transactional run may already

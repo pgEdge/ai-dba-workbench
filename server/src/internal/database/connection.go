@@ -165,24 +165,8 @@ func (c *Client) connectTo(ctx context.Context, connStr string) error {
 		LogConnectionDetails(connStr, poolConfigMap)
 	}
 
-	// Apply pool configuration if available
-	if c.dbConfig != nil {
-		// Set pool size limits with bounds checking to prevent overflow
-		if c.dbConfig.PoolMaxConns > 0 && c.dbConfig.PoolMaxConns <= math.MaxInt32 {
-			poolConfig.MaxConns = int32(c.dbConfig.PoolMaxConns) //nolint:gosec // G115: bounds checked above
-		}
-		if c.dbConfig.PoolMinConns > 0 && c.dbConfig.PoolMinConns <= math.MaxInt32 {
-			poolConfig.MinConns = int32(c.dbConfig.PoolMinConns) //nolint:gosec // G115: bounds checked above
-		}
-
-		// Set idle timeout
-		if c.dbConfig.PoolMaxConnIdleTime != "" {
-			idleTime, err := time.ParseDuration(c.dbConfig.PoolMaxConnIdleTime)
-			if err != nil {
-				return fmt.Errorf("invalid pool_max_conn_idle_time: %w", err)
-			}
-			poolConfig.MaxConnIdleTime = idleTime
-		}
+	if err := applyPoolSettings(poolConfig, c.dbConfig); err != nil {
+		return err
 	}
 
 	// Set read-only transaction mode for all connections
@@ -227,6 +211,29 @@ func (c *Client) connectTo(ctx context.Context, connStr string) error {
 	duration := time.Since(startTime)
 	LogConnection(connStr, duration, nil)
 
+	return nil
+}
+
+// applyPoolSettings copies the configured pool size limits and idle
+// timeout, where set, onto poolConfig. A nil dbConfig changes nothing.
+func applyPoolSettings(poolConfig *pgxpool.Config, dbConfig *config.DatabaseConfig) error {
+	if dbConfig == nil {
+		return nil
+	}
+	// Set pool size limits with bounds checking to prevent overflow
+	if dbConfig.PoolMaxConns > 0 && dbConfig.PoolMaxConns <= math.MaxInt32 {
+		poolConfig.MaxConns = int32(dbConfig.PoolMaxConns) //nolint:gosec // G115: bounds checked above
+	}
+	if dbConfig.PoolMinConns > 0 && dbConfig.PoolMinConns <= math.MaxInt32 {
+		poolConfig.MinConns = int32(dbConfig.PoolMinConns) //nolint:gosec // G115: bounds checked above
+	}
+	if dbConfig.PoolMaxConnIdleTime != "" {
+		idleTime, err := time.ParseDuration(dbConfig.PoolMaxConnIdleTime)
+		if err != nil {
+			return fmt.Errorf("invalid pool_max_conn_idle_time: %w", err)
+		}
+		poolConfig.MaxConnIdleTime = idleTime
+	}
 	return nil
 }
 
@@ -344,23 +351,9 @@ func vectorColumnInfo(typeName sql.NullString, dataType string) (isVector bool, 
 	return true, dimensions
 }
 
-// LoadMetadataForContext loads table and column metadata for a specific
-// connection under ctx, so that a caller can bound how long a monitored
-// server may take to answer.
-func (c *Client) LoadMetadataForContext(ctx context.Context, connStr string) error {
-	startTime := time.Now()
-
-	c.mu.RLock()
-	conn, exists := c.connections[connStr]
-	c.mu.RUnlock()
-
-	if !exists {
-		// The connection string carries the password, so it must not
-		// appear in an error that can reach a caller or a log.
-		return errClientConnectionNotFound
-	}
-
-	query := `
+// metadataQuery lists every table and view a monitored connection can see,
+// one row per column, for LoadMetadataForContext.
+const metadataQuery = `
 		WITH table_comments AS (
 			SELECT
 				n.nspname AS schema_name,
@@ -487,9 +480,25 @@ func (c *Client) LoadMetadataForContext(ctx context.Context, connStr string) err
 		LEFT JOIN indexed_columns ix ON ci.schema_name = ix.schema_name AND ci.table_name = ix.table_name AND ci.column_name = ix.column_name
 		LEFT JOIN column_defaults cd ON ci.schema_name = cd.schema_name AND ci.table_name = cd.table_name AND ci.column_name = cd.column_name
 		ORDER BY tc.schema_name, tc.table_name, ci.column_name
-	`
+`
 
-	rows, err := conn.Pool.Query(ctx, query)
+// LoadMetadataForContext loads table and column metadata for a specific
+// connection under ctx, so that a caller can bound how long a monitored
+// server may take to answer.
+func (c *Client) LoadMetadataForContext(ctx context.Context, connStr string) error {
+	startTime := time.Now()
+
+	c.mu.RLock()
+	conn, exists := c.connections[connStr]
+	c.mu.RUnlock()
+
+	if !exists {
+		// The connection string carries the password, so it must not
+		// appear in an error that can reach a caller or a log.
+		return errClientConnectionNotFound
+	}
+
+	rows, err := conn.Pool.Query(ctx, metadataQuery)
 	if err != nil {
 		return metadataLoadFailed(connStr, startTime, fmt.Errorf("failed to query metadata: %w", err))
 	}

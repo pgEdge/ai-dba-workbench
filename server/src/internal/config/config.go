@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
@@ -49,6 +50,9 @@ type Config struct {
 
 	// Built-in tools, resources, and prompts configuration
 	Builtins BuiltinsConfig `yaml:"builtins"`
+
+	// Proposed-action execution configuration
+	Actions ActionsConfig `yaml:"actions"`
 
 	// Secret file path (for encryption key)
 	SecretFile string `yaml:"secret_file"`
@@ -99,6 +103,7 @@ type ToolsConfig struct {
 	StoreMemory         *bool `yaml:"store_memory"`         // Store chat memories for future recall (default: true)
 	RecallMemories      *bool `yaml:"recall_memories"`      // Recall stored chat memories by similarity (default: true)
 	DeleteMemory        *bool `yaml:"delete_memory"`        // Delete a stored chat memory by ID (default: true)
+	ProposeAction       *bool `yaml:"propose_action"`       // Propose a reviewed write for a connection (default: true)
 }
 
 // ResourcesConfig holds configuration for enabling/disabling built-in resources
@@ -164,6 +169,8 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.RecallMemories == nil || *c.RecallMemories
 	case "delete_memory":
 		return c.DeleteMemory == nil || *c.DeleteMemory
+	case "propose_action":
+		return c.ProposeAction == nil || *c.ProposeAction
 	default:
 		return true // Unknown tools are enabled by default
 	}
@@ -892,6 +899,85 @@ func (m MemoryConfig) IsEnabled() bool {
 	return *m.Enabled
 }
 
+// Defaults for the actions block.
+const (
+	DefaultActionsLockTimeout          = 5 * time.Second
+	DefaultActionsStatementTimeout     = 5 * time.Minute
+	DefaultActionsMaxAttempts          = 3
+	DefaultActionsContextSnapshotLimit = 16384
+)
+
+// ActionsConfig governs how reviewed proposed actions execute against a
+// monitored connection.
+type ActionsConfig struct {
+	// LockTimeout is the PostgreSQL lock_timeout applied to the
+	// execution session, as a Go duration string (default: 5s)
+	LockTimeout string `yaml:"lock_timeout"`
+
+	// StatementTimeout is the PostgreSQL statement_timeout applied to
+	// the execution session, as a Go duration string (default: 5m)
+	StatementTimeout string `yaml:"statement_timeout"`
+
+	// MaxAttempts is the maximum number of attempts allowed per
+	// retry chain of an action (default: 3)
+	MaxAttempts int `yaml:"max_attempts"`
+
+	// ContextSnapshotLimit is the maximum size in bytes of the context
+	// snapshot stored with an action (default: 16384)
+	ContextSnapshotLimit int `yaml:"context_snapshot_limit"`
+}
+
+// positiveDuration parses s as a Go duration and returns it only when it
+// is positive; otherwise it returns fallback.
+func positiveDuration(s string, fallback time.Duration) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
+}
+
+// LockTimeoutDuration returns the parsed lock timeout, falling back to
+// the default when the value is unset or invalid (validateConfig rejects
+// invalid values at load time).
+func (a ActionsConfig) LockTimeoutDuration() time.Duration {
+	return positiveDuration(a.LockTimeout, DefaultActionsLockTimeout)
+}
+
+// StatementTimeoutDuration returns the parsed statement timeout, falling
+// back to the default when the value is unset or invalid.
+func (a ActionsConfig) StatementTimeoutDuration() time.Duration {
+	return positiveDuration(a.StatementTimeout, DefaultActionsStatementTimeout)
+}
+
+// validate reports an error for any unparsable or non-positive setting.
+// An unset (empty or zero) value is valid: the accessors and the load
+// defaults supply the default for it.
+func (a ActionsConfig) validate() error {
+	for _, f := range []struct{ name, val string }{
+		{"actions.lock_timeout", a.LockTimeout},
+		{"actions.statement_timeout", a.StatementTimeout},
+	} {
+		if f.val == "" {
+			continue
+		}
+		d, err := time.ParseDuration(f.val)
+		if err != nil {
+			return fmt.Errorf("%s: %q is not a valid duration", f.name, f.val)
+		}
+		if d <= 0 {
+			return fmt.Errorf("%s must be greater than zero", f.name)
+		}
+	}
+	if a.MaxAttempts < 0 {
+		return fmt.Errorf("actions.max_attempts must not be negative")
+	}
+	if a.ContextSnapshotLimit < 0 {
+		return fmt.Errorf("actions.context_snapshot_limit must not be negative")
+	}
+	return nil
+}
+
 // BoolPtr returns a pointer to the given bool value. It exists for the
 // pointer-typed Enabled fields, which distinguish "not set" from an
 // explicit false, so that callers building a configuration in code (tests
@@ -1075,6 +1161,12 @@ func defaultConfig() *Config {
 		},
 		Memory: MemoryConfig{
 			Enabled: boolPtr(true), // Enabled by default
+		},
+		Actions: ActionsConfig{
+			LockTimeout:          "5s",
+			StatementTimeout:     "5m",
+			MaxAttempts:          DefaultActionsMaxAttempts,
+			ContextSnapshotLimit: DefaultActionsContextSnapshotLimit,
 		},
 		SecretFile: "", // Will be set to default path if not specified
 	}
@@ -1497,6 +1589,25 @@ func mergeConfig(dest, src *Config) {
 	if src.Builtins.Tools.DeleteMemory != nil {
 		dest.Builtins.Tools.DeleteMemory = src.Builtins.Tools.DeleteMemory
 	}
+	if src.Builtins.Tools.ProposeAction != nil {
+		dest.Builtins.Tools.ProposeAction = src.Builtins.Tools.ProposeAction
+	}
+
+	// Actions - only override what the source sets. An unset (zero)
+	// value keeps the default; a negative integer or a non-positive
+	// duration reaches validateConfig, which rejects it.
+	if src.Actions.LockTimeout != "" {
+		dest.Actions.LockTimeout = src.Actions.LockTimeout
+	}
+	if src.Actions.StatementTimeout != "" {
+		dest.Actions.StatementTimeout = src.Actions.StatementTimeout
+	}
+	if src.Actions.MaxAttempts != 0 {
+		dest.Actions.MaxAttempts = src.Actions.MaxAttempts
+	}
+	if src.Actions.ContextSnapshotLimit != 0 {
+		dest.Actions.ContextSnapshotLimit = src.Actions.ContextSnapshotLimit
+	}
 	// Resources
 	if src.Builtins.Resources.SystemInfo != nil {
 		dest.Builtins.Resources.SystemInfo = src.Builtins.Resources.SystemInfo
@@ -1745,6 +1856,10 @@ func validateConfig(cfg *Config) error {
 	}
 
 	if err := cfg.LLM.RequestSettings.Validate("llm"); err != nil {
+		return err
+	}
+
+	if err := cfg.Actions.validate(); err != nil {
 		return err
 	}
 

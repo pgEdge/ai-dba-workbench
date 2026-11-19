@@ -146,9 +146,19 @@ builtins:
     store_memory: true
     recall_memories: true
     delete_memory: true
+    propose_action: true
   resources:
     system_info: true
     connection_info: true
+
+#=====================================================
+# PROPOSED ACTIONS
+#=====================================================
+actions:
+  lock_timeout: 5s
+  statement_timeout: 5m
+  max_attempts: 3
+  context_snapshot_limit: 16384
 
 #=====================================================
 # PATHS AND DATA DIRECTORIES

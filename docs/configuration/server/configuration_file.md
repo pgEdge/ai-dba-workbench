@@ -59,6 +59,8 @@ configuration file:
     - [Using the Memory Tool Properties](#using-the-memory-tool-properties)
 - [Built-in Features Properties](#built-in-features-properties)
     - [Using the Datastore Query Tool Properties](#using-the-datastore-query-tool-properties)
+- [Proposed Actions Properties](#proposed-actions-properties)
+    - [Using the propose_action Tool Property](#using-the-propose_action-tool-property)
 - [Paths and Directories](#paths-and-directories)
     - [Using the data_dir Property](#using-the-data_dir-property)
     - [Using the trace_file Property](#using-the-trace_file-property)
@@ -916,6 +918,7 @@ builtins:
     store_memory: true
     recall_memories: true
     delete_memory: true
+    propose_action: true
   resources:
     system_info: true
     connection_info: true
@@ -962,6 +965,47 @@ builtins:
     store_memory: false
     delete_memory: false
     recall_memories: true
+```
+
+## Proposed Actions Properties
+
+The `actions` section controls how a reviewed proposed action runs against a
+monitored connection.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `lock_timeout` | string | `5s` | PostgreSQL `lock_timeout` for the execution session |
+| `statement_timeout` | string | `5m` | PostgreSQL `statement_timeout` for the execution session |
+| `max_attempts` | int | `3` | Maximum attempts per retry chain of an action |
+| `context_snapshot_limit` | int | `16384` | Maximum size in bytes of the context snapshot stored with an action |
+
+The two timeouts accept any Go duration string, such as `10s` or `2m30s`. The
+server refuses to start, and a configuration reload fails, when a timeout
+cannot be parsed or is not greater than zero, or when `max_attempts` or
+`context_snapshot_limit` is negative. Omitting an option, or setting an integer
+option to `0`, keeps the default.
+
+In the following example, the `actions` section shortens the lock timeout and
+allows five attempts per chain:
+
+```yaml
+actions:
+  lock_timeout: 2s
+  statement_timeout: 5m
+  max_attempts: 5
+  context_snapshot_limit: 16384
+```
+
+### Using the propose_action Tool Property
+
+The `propose_action` tool lets the assistant propose a write for a connection.
+The tool defaults to `true`. Set it to `false` in the `builtins.tools` section
+to remove the tool.
+
+```yaml
+builtins:
+  tools:
+    propose_action: false
 ```
 
 ## Paths and Directories

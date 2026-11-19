@@ -166,7 +166,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.StringVar(&f.KeyFile, "key", "", "Path to TLS key file")
 	flag.StringVar(&f.ChainFile, "chain", "", "Path to TLS certificate chain file (optional)")
 	flag.BoolVar(&f.Debug, "debug", false, "Enable debug logging (logs HTTP requests/responses)")
-	flag.StringVar(&f.DataDir, "data-dir", "", "Data directory for auth database and conversations")
+	flag.StringVar(&f.DataDir, "data-dir", "", "Data directory for the authentication database")
 	flag.StringVar(&f.TraceFile, "trace-file", "", "Path to trace file for logging MCP requests/responses")
 	flag.StringVar(&f.OpenAPI, "openapi", "", "Write OpenAPI specification to file and exit")
 	flag.StringVar(&f.HealthCheck, "health-check", "",

@@ -461,7 +461,10 @@ type stmtRunner struct {
 	// is only sent, and inFlight set, under mu after checking ctx, and
 	// cancelInFlight takes mu before deciding whether to send a cancel
 	// request, so a stop either finds the statement not yet sent, and it
-	// is never sent, or finds it in flight and cancels it.
+	// is never sent, or finds it in flight and cancels it. Sending holds
+	// mu until the statement is flushed, so with a large statement and a
+	// slow server a stop can wait up to the round-trip deadline before
+	// its cancel request is sent.
 	mu       sync.Mutex
 	inFlight bool
 }

@@ -78,6 +78,11 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+- Correct the server's `-data-dir` help text and the `data_dir`
+  comments in the example configuration and installation guides, which
+  said the data directory holds conversation history. The directory
+  holds the authentication database (`auth.db`); the server stores
+  conversations in the PostgreSQL datastore. (#876)
 
 ## [2.0.0-beta1] - 2026-11-12
 

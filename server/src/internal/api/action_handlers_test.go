@@ -48,6 +48,7 @@ type fakeActionBackend struct {
 	proposed      []actions.ProposeRequest
 
 	overrideErr     error
+	realOverride    bool // CheckOverride applies the service rules, not overrideErr
 	overrides       int
 	overrideConfirm string
 	overrideConn    string
@@ -136,11 +137,14 @@ func (f *fakeActionBackend) Propose(_ context.Context, req actions.ProposeReques
 	return f.proposeResult, nil
 }
 
-func (f *fakeActionBackend) CheckOverride(_ context.Context, _ *actions.Action, confirm, connectionName string) error {
+func (f *fakeActionBackend) CheckOverride(ctx context.Context, a *actions.Action, confirm, connectionName string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.overrides++
 	f.overrideConfirm, f.overrideConn = confirm, connectionName
+	if f.realOverride {
+		return new(actions.Service).CheckOverride(ctx, a, confirm, connectionName)
+	}
 	return f.overrideErr
 }
 
@@ -733,6 +737,52 @@ func TestExecuteRetryOfApprovedAction(t *testing.T) {
 			}
 			if len(e.b.approvals) != 0 {
 				t.Errorf("retry approved again: %v", e.b.approvals)
+			}
+			if started := len(e.b.started) == 1; started != (tt.status == 202) {
+				t.Errorf("started = %v for status %d", e.b.started, tt.status)
+			}
+		})
+	}
+}
+
+// TestExecuteRetryOfOverriddenAction covers an overridden action whose
+// start failed: it is retried as an override, under the override's own
+// rules (a session, a vetoed review and the connection's name typed
+// again), by the overrider or a superuser, without a second decision.
+func TestExecuteRetryOfOverriddenAction(t *testing.T) {
+	const override = `{"override":true,"confirm":"prod-db"}`
+	tests := []struct {
+		name      string
+		body      string
+		user      string
+		token     bool
+		superuser bool
+		status    int
+	}{
+		{"overrider", override, "alice", false, false, 202},
+		{"superuser", override, "root", false, true, 202},
+		{"other user", override, "bob", false, false, 409},
+		{"token", override, "alice", true, false, 403},
+		{"no override flag", "", "alice", false, false, 409},
+		{"missing confirm", `{"override":true}`, "alice", false, false, 400},
+		{"wrong confirm", `{"override":true,"confirm":"other-db"}`, "alice", false, false, 400},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newActionTestEnv(t)
+			e.b.realOverride = true
+			a := notStarted(1, "vetoed")
+			a.Approval = "overridden"
+			overrider := "alice"
+			a.ApprovedBy = &overrider
+			e.b.actions[1] = a
+
+			rec := e.doAs("POST", "/api/v1/actions/1/execute", tt.body, tt.token, tt.user, tt.superuser)
+			if rec.Code != tt.status {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.status, rec.Body)
+			}
+			if len(e.b.approvals) != 0 {
+				t.Errorf("retry decided again: %v", e.b.approvals)
 			}
 			if started := len(e.b.started) == 1; started != (tt.status == 202) {
 				t.Errorf("started = %v for status %d", e.b.started, tt.status)

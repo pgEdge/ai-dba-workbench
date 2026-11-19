@@ -2105,7 +2105,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"outcome":          {Type: "object", Nullable: true, Description: "Recorded outcome"},
 				"created_at":       {Type: "string", Format: "date-time", Description: "Creation time"},
 				"updated_at":       {Type: "string", Format: "date-time", Description: "Last update time"},
-				"executed_at":      {Type: "string", Format: "date-time", Nullable: true, Description: "When execution finished"},
+				"executed_at":      {Type: "string", Format: "date-time", Nullable: true, Description: "When execution started"},
 			},
 		},
 		"ActionResponse": {
@@ -2481,7 +2481,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/actions/{id}/execute": {
 			Post: &OpenAPIOperation{
 				Summary:     "Approve and execute an action",
-				Description: "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens.",
+				Description: "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens. An action approved or overridden earlier that has not started may be executed again, without a second approval, by whoever approved or overrode it or by a superuser; an overridden action is retried with override and the confirm text again, under the same rules. Anyone else gets 409.",
 				OperationID: "executeAction",
 				Tags:        []string{"Actions"},
 				Security:    bearerAuth,

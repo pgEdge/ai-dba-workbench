@@ -177,3 +177,60 @@ func clusterHasNoTable(stmt string) bool {
 	}
 	return strings.Trim(rest, "; \t\r\n") == ""
 }
+
+// IsTimeoutOverride reports whether stmt could switch off or change the
+// lock_timeout or statement_timeout of the session it runs in: SET,
+// SET SESSION or SET LOCAL of either parameter, RESET of either, RESET
+// ALL, and any DISCARD (DISCARD ALL resets every parameter). The
+// parameter name may be quoted, in any case, and comments may sit
+// between the words. Calls such as set_config() are not detected.
+func IsTimeoutOverride(stmt string) bool {
+	rest := StripLeadingComments(stmt)
+	word, rest := nextParamWord(rest)
+	switch strings.ToUpper(word) {
+	case "DISCARD":
+		return true
+	case "RESET":
+		name, _ := nextParamWord(rest)
+		return isTimeoutParam(name) || strings.EqualFold(name, "ALL")
+	case "SET":
+		name, after := nextParamWord(rest)
+		if strings.EqualFold(name, "SESSION") || strings.EqualFold(name, "LOCAL") {
+			name, _ = nextParamWord(after)
+		}
+		return isTimeoutParam(name)
+	}
+	return false
+}
+
+func isTimeoutParam(name string) bool {
+	return strings.EqualFold(name, "lock_timeout") ||
+		strings.EqualFold(name, "statement_timeout")
+}
+
+// nextParamWord reads one bare word or double-quoted identifier from the
+// start of s, after any whitespace and comments, and returns it (with
+// quotes removed) and the text after it.
+func nextParamWord(s string) (string, string) {
+	s = StripLeadingComments(s)
+	if strings.HasPrefix(s, `"`) {
+		var b strings.Builder
+		for i := 1; i < len(s); i++ {
+			if s[i] == '"' {
+				if i+1 < len(s) && s[i+1] == '"' {
+					b.WriteByte('"')
+					i++
+					continue
+				}
+				return b.String(), s[i+1:]
+			}
+			b.WriteByte(s[i])
+		}
+		return "", ""
+	}
+	i := 0
+	for i < len(s) && IsIdentChar(s[i]) {
+		i++
+	}
+	return s[:i], s[i:]
+}

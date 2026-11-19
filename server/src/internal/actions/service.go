@@ -33,6 +33,10 @@ var (
 	// transactions, which the executor manages itself.
 	ErrTransactionControl = errors.New("proposal must not contain transaction control statements")
 
+	// ErrTimeoutOverride is returned when a statement would change the
+	// executor's lock or statement timeout, or reset session settings.
+	ErrTimeoutOverride = errors.New("proposal must not change lock_timeout or statement_timeout or reset session settings")
+
 	// ErrBadRevision is returned when the revised action is not a vetoed
 	// action on the same connection from the same proposer.
 	ErrBadRevision = errors.New("action cannot be revised")
@@ -113,6 +117,9 @@ func classify(sql string) ([]string, error) {
 			if sqllex.IsTransactionControl(stmt) {
 				return nil, ErrTransactionControl
 			}
+			if sqllex.IsTimeoutOverride(stmt) {
+				return nil, ErrTimeoutOverride
+			}
 			if !sqllex.IsReadOnly(stmt) {
 				allReadOnly = false
 			}
@@ -143,6 +150,11 @@ func (s *Service) Propose(ctx context.Context, req ProposeRequest) (*ProposeResu
 	var parent *Action
 	if req.RevisesActionID != nil {
 		parent, err = s.store.Get(ctx, *req.RevisesActionID)
+		if errors.Is(err, ErrNotFound) {
+			// Indistinguishable from another proposer's action, so ids
+			// cannot be probed.
+			return nil, ErrBadRevision
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -171,6 +183,9 @@ func (s *Service) Propose(ctx context.Context, req ProposeRequest) (*ProposeResu
 		Rationale:      req.Rationale,
 		Evidence:       req.Evidence,
 	})
+	if errors.Is(err, ErrAlreadyRevised) {
+		return nil, ErrBadRevision
+	}
 	if err != nil {
 		return nil, err
 	}

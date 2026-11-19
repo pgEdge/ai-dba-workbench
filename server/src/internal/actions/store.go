@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -28,6 +29,10 @@ var (
 	// ErrInvalidState is returned by FinishExecution when the action is
 	// not currently executing.
 	ErrInvalidState = errors.New("action is not in the required state")
+
+	// ErrAlreadyRevised is returned by Create when the parent action has
+	// already been revised, which would branch the retry chain.
+	ErrAlreadyRevised = errors.New("action has already been revised")
 )
 
 // Store reads and writes the proposed_actions table. The table has no
@@ -121,6 +126,11 @@ func (s *Store) Create(ctx context.Context, n NewAction) (*Action, error) {
 		n.ProposedBy, n.ProposedVia, n.ConversationID, n.AlertID,
 		n.ParentActionID, attempt, rationale, evidence))
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" &&
+			pgErr.ConstraintName == "idx_proposed_actions_parent" {
+			return nil, ErrAlreadyRevised
+		}
 		return nil, fmt.Errorf("create proposed action: %w", err)
 	}
 	return a, nil

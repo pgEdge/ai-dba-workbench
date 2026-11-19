@@ -140,3 +140,38 @@ func TestIsTransactionControl(t *testing.T) {
 		})
 	}
 }
+
+func TestIsTimeoutOverride(t *testing.T) {
+	tests := []struct {
+		stmt string
+		want bool
+	}{
+		{"SET lock_timeout = 0", true},
+		{"set statement_timeout TO 0", true},
+		{"SET SESSION statement_timeout = 0", true},
+		{"SET LOCAL lock_timeout = '1h'", true},
+		{"SET \"Lock_Timeout\" = 0", true},
+		{"/* c */ SET -- x\n SESSION /* y */ \"statement_timeout\" = 0", true},
+		{"RESET lock_timeout", true},
+		{"reset \"statement_timeout\"", true},
+		{"RESET ALL", true},
+		{"DISCARD ALL", true},
+		{"DISCARD PLANS", true},
+		{"discard temp", true},
+		{"SET \"a\"\"b\" = 1", false},
+		{"SET work_mem = '4MB'", false},
+		{"SET lock_timeout_other = 1", false},
+		{"RESET work_mem", false},
+		{"SET search_path = public", false},
+		{"SET \"unterminated", false},
+		{"SET SESSION", false},
+		{"UPDATE t SET lock_timeout = 1", false},
+		{"SELECT 1", false},
+		{"", false},
+	}
+	for _, tc := range tests {
+		if got := IsTimeoutOverride(tc.stmt); got != tc.want {
+			t.Errorf("IsTimeoutOverride(%q) = %v, want %v", tc.stmt, got, tc.want)
+		}
+	}
+}

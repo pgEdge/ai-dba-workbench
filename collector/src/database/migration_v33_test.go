@@ -188,7 +188,8 @@ func assertV33Indexes(t *testing.T, tx pgx.Tx) {
 	for _, want := range []string{
 		"(connection_id, created_at DESC)",
 		"(conversation_id)",
-		"(parent_action_id)",
+		"CREATE UNIQUE INDEX idx_proposed_actions_parent",
+		"(parent_action_id) WHERE (parent_action_id IS NOT NULL)",
 		"WHERE (exec_status = 'executing'::text)",
 	} {
 		found := false

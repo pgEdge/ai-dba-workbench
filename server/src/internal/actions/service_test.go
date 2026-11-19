@@ -30,6 +30,13 @@ func newFakeReviewStore() *fakeReviewStore {
 }
 
 func (f *fakeReviewStore) Create(_ context.Context, n NewAction) (*Action, error) {
+	if n.ParentActionID != nil {
+		for _, o := range f.actions {
+			if o.ParentActionID != nil && *o.ParentActionID == *n.ParentActionID {
+				return nil, ErrAlreadyRevised
+			}
+		}
+	}
 	f.next++
 	attempt := n.Attempt
 	if attempt < 1 {
@@ -124,6 +131,11 @@ func TestProposeClassification(t *testing.T) {
 		{"empty", "  ;  ", ErrEmptyProposal},
 		{"transaction control", "BEGIN; UPDATE t SET a = 1", ErrTransactionControl},
 		{"commit last", "UPDATE t SET a = 1; COMMIT", ErrTransactionControl},
+		{"set lock timeout", "SET lock_timeout = 0; UPDATE t SET a = 1", ErrTimeoutOverride},
+		{"set local statement timeout", "UPDATE t SET a = 1; SET LOCAL \"statement_timeout\" = 0", ErrTimeoutOverride},
+		{"reset all", "UPDATE t SET a = 1; RESET ALL", ErrTimeoutOverride},
+		{"discard", "DISCARD PLANS; UPDATE t SET a = 1", ErrTimeoutOverride},
+		{"read only batch with override", "SELECT 1; SET statement_timeout = 0", ErrTimeoutOverride},
 		{"mixed ok", "SELECT 1; UPDATE t SET a = 1", nil},
 	}
 	for _, tc := range tests {
@@ -262,7 +274,7 @@ func TestProposeBadRevision(t *testing.T) {
 		{"parent passed", func(rq *ProposeRequest, _, passed int64) { rq.RevisesActionID = &passed }, sessionCtx("alice"), ErrBadRevision},
 		{"other connection", func(rq *ProposeRequest, parent, _ int64) { rq.RevisesActionID = &parent; rq.ConnectionID = 2 }, sessionCtx("alice"), ErrBadRevision},
 		{"other proposer", func(rq *ProposeRequest, parent, _ int64) { rq.RevisesActionID = &parent }, sessionCtx("bob"), ErrBadRevision},
-		{"missing parent", func(rq *ProposeRequest, _, _ int64) { id := int64(999); rq.RevisesActionID = &id }, sessionCtx("alice"), ErrNotFound},
+		{"missing parent", func(rq *ProposeRequest, _, _ int64) { id := int64(999); rq.RevisesActionID = &id }, sessionCtx("alice"), ErrBadRevision},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -287,6 +299,24 @@ func TestProposeBadRevision(t *testing.T) {
 				t.Fatal("bad revision must not be stored")
 			}
 		})
+	}
+}
+
+func TestProposeSecondRevisionOfSameParentRefused(t *testing.T) {
+	st := newFakeReviewStore()
+	svc := NewService(st, &scriptedReviewer{verdicts: []Verdict{veto("high")}}, 3)
+	r1, err := svc.Propose(sessionCtx("alice"), req("DROP TABLE t"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := r1.Action.ID
+	rq := req("DELETE FROM t")
+	rq.RevisesActionID = &id
+	if _, err := svc.Propose(sessionCtx("alice"), rq); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Propose(sessionCtx("alice"), rq); !errors.Is(err, ErrBadRevision) {
+		t.Fatalf("got %v want ErrBadRevision", err)
 	}
 }
 

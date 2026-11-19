@@ -15,12 +15,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/pgedge/ai-workbench/server/internal/actions"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -45,8 +47,15 @@ type fakeActionBackend struct {
 	proposeErr    error
 	proposed      []actions.ProposeRequest
 
-	overrideErr error
-	overrides   int
+	overrideErr     error
+	overrides       int
+	overrideConfirm string
+	overrideConn    string
+
+	// alertConn is the connection every alert belongs to; nil makes
+	// them system alerts. alertErr fails the lookup.
+	alertConn *int
+	alertErr  error
 
 	approveErr error
 	approvals  []string
@@ -66,7 +75,9 @@ type fakeActionBackend struct {
 }
 
 func newFakeActionBackend() *fakeActionBackend {
+	seven := 7
 	return &fakeActionBackend{
+		alertConn: &seven,
 		actions:   map[int64]*actions.Action{},
 		canAccess: true,
 		canWrite:  true,
@@ -97,8 +108,11 @@ func (f *fakeActionBackend) Approve(_ context.Context, id int64, approval, _, _ 
 		return f.approveErr
 	}
 	a, ok := f.actions[id]
-	if !ok || a.ExecStatus != "not_started" {
+	if !ok {
 		return actions.ErrNotFound
+	}
+	if a.ExecStatus != "not_started" || a.Approval != "none" {
+		return actions.ErrInvalidState
 	}
 	a.Approval = approval
 	f.approvals = append(f.approvals, approval)
@@ -122,11 +136,19 @@ func (f *fakeActionBackend) Propose(_ context.Context, req actions.ProposeReques
 	return f.proposeResult, nil
 }
 
-func (f *fakeActionBackend) CheckOverride(_ context.Context, _ *actions.Action, _, _ string) error {
+func (f *fakeActionBackend) CheckOverride(_ context.Context, _ *actions.Action, confirm, connectionName string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.overrides++
+	f.overrideConfirm, f.overrideConn = confirm, connectionName
 	return f.overrideErr
+}
+
+func (f *fakeActionBackend) GetAlertConnectionID(context.Context, int64) (*int, error) {
+	if f.alertErr != nil {
+		return nil, f.alertErr
+	}
+	return f.alertConn, nil
 }
 
 func (f *fakeActionBackend) Start(_ context.Context, id int64) error {
@@ -201,9 +223,17 @@ func newActionTestEnv(t *testing.T) *actionTestEnv {
 }
 
 func (e *actionTestEnv) do(method, path, body string, token bool) *httptest.ResponseRecorder {
+	return e.doAs(method, path, body, token, "tester", false)
+}
+
+// doAs is do for a named user, who may be a superuser.
+func (e *actionTestEnv) doAs(method, path, body string, token bool,
+	user string, superuser bool) *httptest.ResponseRecorder {
+
 	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
-	ctx := context.WithValue(req.Context(), auth.UsernameContextKey, "tester")
+	ctx := context.WithValue(req.Context(), auth.UsernameContextKey, user)
 	ctx = context.WithValue(ctx, auth.IsAPITokenContextKey, token)
+	ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, superuser)
 	rec := httptest.NewRecorder()
 	e.mux.ServeHTTP(rec, req.WithContext(ctx))
 	return rec
@@ -271,15 +301,148 @@ func TestCreateActionExecuteFailuresStillCreate(t *testing.T) {
 	e.b.approveErr = errors.New("boom")
 
 	body := `{"sql":"DELETE FROM t","source":"chat_block","execute":true}`
-	if rec := e.do("POST", "/api/v1/connections/7/actions", body, false); rec.Code != http.StatusCreated {
-		t.Fatalf("approve failure: status = %d", rec.Code)
+	create := func(step string) map[string]any {
+		t.Helper()
+		rec := e.do("POST", "/api/v1/connections/7/actions", body, false)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("%s: status = %d", step, rec.Code)
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	resp := create("approve failure")
+	if resp["execute_error"] != "The action could not be approved" ||
+		resp["exec_status"] != "not_started" {
+		t.Errorf("approve failure response = %v", resp)
 	}
 
 	e.b.approveErr = nil
 	e.b.startErr = errors.New("boom")
 	e.b.getErr = errors.New("boom")
-	if rec := e.do("POST", "/api/v1/connections/7/actions", body, false); rec.Code != http.StatusCreated {
-		t.Fatalf("start failure: status = %d", rec.Code)
+	resp = create("start failure")
+	if resp["execute_error"] != "The action was approved but could not be started" ||
+		resp["exec_status"] != "not_started" {
+		t.Errorf("start failure response = %v", resp)
+	}
+
+	e.b.startErr = actions.ErrShuttingDown
+	e.b.actions[1].Approval = "none"
+	resp = create("shutdown")
+	if resp["execute_error"] != "The action was approved but the server is shutting down" {
+		t.Errorf("shutdown response = %v", resp)
+	}
+
+	e.b.startErr, e.b.getErr = nil, nil
+	e.b.actions[1].Approval = "none"
+	resp = create("success")
+	if _, present := resp["execute_error"]; present || resp["exec_status"] != "executing" {
+		t.Errorf("success response = %v", resp)
+	}
+}
+
+// TestCreateActionOwnership covers the conversation and alert a proposal
+// may name: a conversation must belong to the caller, an alert must exist
+// on the connection. Nothing is proposed for a refusal.
+func TestCreateActionOwnership(t *testing.T) {
+	other := 8
+	tests := []struct {
+		name   string
+		body   string
+		setup  func(*fakeActionBackend)
+		status int
+	}{
+		{"own conversation", `{"sql":"x","source":"chat_block","conversation_id":"c1"}`, nil, 201},
+		{"foreign conversation", `{"sql":"x","source":"chat_block","conversation_id":"c1"}`,
+			func(b *fakeActionBackend) { b.ownsConv = false }, 404},
+		{"conversation check fails", `{"sql":"x","source":"chat_block","conversation_id":"c1"}`,
+			func(b *fakeActionBackend) { b.ownsErr = errors.New("db down") }, 500},
+		{"alert on connection", `{"sql":"x","source":"alert_analysis","alert_id":3}`, nil, 201},
+		{"missing alert", `{"sql":"x","source":"alert_analysis","alert_id":3}`,
+			func(b *fakeActionBackend) { b.alertErr = fmt.Errorf("get: %w", pgx.ErrNoRows) }, 404},
+		{"alert lookup fails", `{"sql":"x","source":"alert_analysis","alert_id":3}`,
+			func(b *fakeActionBackend) { b.alertErr = errors.New("db down") }, 500},
+		{"system alert", `{"sql":"x","source":"alert_analysis","alert_id":3}`,
+			func(b *fakeActionBackend) { b.alertConn = nil }, 404},
+		{"alert on another connection", `{"sql":"x","source":"alert_analysis","alert_id":3}`,
+			func(b *fakeActionBackend) { b.alertConn = &other }, 404},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newActionTestEnv(t)
+			e.b.proposeResult = &actions.ProposeResult{Action: notStarted(1, "passed")}
+			if tt.setup != nil {
+				tt.setup(e.b)
+			}
+			rec := e.do("POST", "/api/v1/connections/7/actions", tt.body, false)
+			if rec.Code != tt.status {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.status, rec.Body)
+			}
+			if proposed := len(e.b.proposed) == 1; proposed != (tt.status == 201) {
+				t.Errorf("proposed = %v for status %d", e.b.proposed, tt.status)
+			}
+		})
+	}
+}
+
+// TestActionRedaction proves the proposer's context and conversation id
+// reach only the proposer and a superuser, on GET and on execute.
+func TestActionRedaction(t *testing.T) {
+	conv := "conv-1"
+	tests := []struct {
+		name      string
+		user      string
+		superuser bool
+		visible   bool
+	}{
+		{"proposer", "alice", false, true},
+		{"superuser", "root", true, true},
+		{"other user", "bob", false, false},
+		{"no username", "", false, false},
+	}
+	for _, tt := range tests {
+		for _, call := range []struct{ method, path string }{
+			{"GET", "/api/v1/actions/1"},
+			{"POST", "/api/v1/actions/1/execute"},
+		} {
+			t.Run(tt.name+" "+call.method, func(t *testing.T) {
+				e := newActionTestEnv(t)
+				a := notStarted(1, "passed")
+				a.ProposedBy = "alice"
+				a.ConversationID = &conv
+				a.Evidence = json.RawMessage(`{"context":"secret"}`)
+				e.b.actions[1] = a
+
+				rec := e.doAs(call.method, call.path, "", false, tt.user, tt.superuser)
+				if rec.Code != 200 && rec.Code != 202 {
+					t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+				}
+				var got struct {
+					Evidence       json.RawMessage `json:"evidence"`
+					ConversationID *string         `json:"conversation_id"`
+					Statements     []string        `json:"statements"`
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+					t.Fatal(err)
+				}
+				shown := strings.Contains(string(got.Evidence), "secret") &&
+					got.ConversationID != nil && *got.ConversationID == conv
+				hidden := (len(got.Evidence) == 0 || string(got.Evidence) == "null") &&
+					got.ConversationID == nil
+				if tt.visible && !shown {
+					t.Errorf("proposer fields missing: %s", rec.Body)
+				}
+				if !tt.visible && !hidden {
+					t.Errorf("proposer fields leaked: %s", rec.Body)
+				}
+				if a.ConversationID == nil || len(a.Evidence) == 0 {
+					t.Error("redaction altered the stored action")
+				}
+			})
+		}
 	}
 }
 
@@ -317,7 +480,9 @@ func TestCreateActionStatuses(t *testing.T) {
 		{"invisible connection", "/api/v1/connections/7/actions", goodCreate,
 			func(b *fakeActionBackend) { b.canAccess = false }, 404},
 		{"missing connection", "/api/v1/connections/7/actions", goodCreate,
-			func(b *fakeActionBackend) { b.connErr = errors.New("none") }, 404},
+			func(b *fakeActionBackend) { b.connErr = fmt.Errorf("get: %w", pgx.ErrNoRows) }, 404},
+		{"connection lookup fails", "/api/v1/connections/7/actions", goodCreate,
+			func(b *fakeActionBackend) { b.connErr = errors.New("db down") }, 500},
 		{"no write access", "/api/v1/connections/7/actions", goodCreate,
 			func(b *fakeActionBackend) { b.canWrite = false }, 403},
 		{"bad json", "/api/v1/connections/7/actions", `{`, nil, 400},
@@ -474,12 +639,16 @@ func TestOverrideSession(t *testing.T) {
 	e.b.actions[1] = notStarted(1, "vetoed")
 
 	rec := e.do("POST", "/api/v1/actions/1/execute",
-		`{"override":true,"confirm":"prod-db"}`, false)
+		`{"override":true,"confirm":"typed-name"}`, false)
 	if rec.Code != 202 {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 	}
 	if e.b.overrides != 1 || e.b.approvals[0] != "overridden" {
 		t.Errorf("overrides=%d approvals=%v", e.b.overrides, e.b.approvals)
+	}
+	if e.b.overrideConfirm != "typed-name" || e.b.overrideConn != "prod-db" {
+		t.Errorf("CheckOverride got confirm %q and connection %q, want the typed text and the connection's name",
+			e.b.overrideConfirm, e.b.overrideConn)
 	}
 }
 
@@ -504,7 +673,9 @@ func TestExecuteActionStatuses(t *testing.T) {
 		{"override check fails", "1", `{"override":true}`, "vetoed",
 			func(b *fakeActionBackend) { b.overrideErr = errors.New("x") }, 500},
 		{"override connection gone", "1", `{"override":true}`, "vetoed",
-			func(b *fakeActionBackend) { b.connErr = errors.New("x") }, 404},
+			func(b *fakeActionBackend) { b.connErr = pgx.ErrNoRows }, 404},
+		{"override connection lookup fails", "1", `{"override":true}`, "vetoed",
+			func(b *fakeActionBackend) { b.connErr = errors.New("x") }, 500},
 		{"already started", "1", "", "passed",
 			func(b *fakeActionBackend) { b.actions[1].ExecStatus = "executing" }, 409},
 		{"approve fails", "1", "", "passed",

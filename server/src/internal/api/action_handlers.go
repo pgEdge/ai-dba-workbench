@@ -22,6 +22,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/actions"
 	"github.com/pgedge/ai-workbench/server/internal/apiconst"
@@ -66,6 +67,7 @@ const (
 	actionNotFound       = "Action not found"
 	connectionNotFound   = "Connection not found"
 	conversationNotFound = "Conversation not found"
+	alertNotFound        = "Alert not found"
 )
 
 // actionStore is the part of actions.Store the handler uses.
@@ -90,6 +92,7 @@ type actionExecutor interface {
 // actionConnections looks up a monitored connection.
 type actionConnections interface {
 	GetConnection(ctx context.Context, id int) (*database.MonitoredConnection, error)
+	GetAlertConnectionID(ctx context.Context, alertID int64) (*int, error)
 }
 
 // actionAccess is the part of auth.RBACChecker the handler uses.
@@ -168,6 +171,10 @@ type actionResponse struct {
 	AttemptsLeft   int             `json:"attempts_left"`
 	ChainExhausted bool            `json:"chain_exhausted"`
 	BestAttempt    *actions.Action `json:"best_attempt,omitempty"`
+	// ExecuteError is set when the caller asked for the action to run
+	// on creation and it could not be approved or started; the action
+	// is still recorded and can be executed from its own endpoint.
+	ExecuteError string `json:"execute_error,omitempty"`
 }
 
 // executeActionRequest is the body of an execute request.
@@ -303,7 +310,12 @@ func (h *ActionHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.connections.GetConnection(ctx, connectionID); err != nil {
-		RespondError(w, http.StatusNotFound, connectionNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			RespondError(w, http.StatusNotFound, connectionNotFound)
+			return
+		}
+		log.Printf("[ERROR] Get connection %d failed: %v", connectionID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to read the connection")
 		return
 	}
 	if !h.access.HasWriteAccess(ctx, connectionID) {
@@ -317,6 +329,14 @@ func (h *ActionHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := validateCreate(&req); msg != "" {
 		RespondError(w, http.StatusBadRequest, msg)
+		return
+	}
+
+	if req.ConversationID != nil &&
+		!h.ownsConversation(ctx, w, *req.ConversationID) {
+		return
+	}
+	if req.AlertID != nil && !h.alertOnConnection(ctx, w, *req.AlertID, connectionID) {
 		return
 	}
 
@@ -342,8 +362,9 @@ func (h *ActionHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	action := res.Action
+	executeError := ""
 	if req.Execute && action.ReviewStatus == "passed" {
-		action = h.approveAndStart(ctx, action)
+		action, executeError = h.approveAndStart(ctx, action)
 	}
 
 	RespondJSON(w, http.StatusCreated, actionResponse{
@@ -351,26 +372,99 @@ func (h *ActionHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		AttemptsLeft:   res.AttemptsLeft,
 		ChainExhausted: res.ChainExhausted,
 		BestAttempt:    res.BestAttempt,
+		ExecuteError:   executeError,
 	})
 }
 
+// ownsConversation answers 404 and returns false unless the caller owns
+// the conversation. A conversation that is missing and one that belongs
+// to someone else get the same answer.
+func (h *ActionHandler) ownsConversation(ctx context.Context, w http.ResponseWriter,
+	conversationID string) bool {
+
+	username := auth.GetUsernameFromContext(ctx)
+	if username == "" || conversationID == "" || len(conversationID) > actionMaxConversationID {
+		RespondError(w, http.StatusNotFound, conversationNotFound)
+		return false
+	}
+	owned := false
+	if h.owns != nil {
+		var err error
+		owned, err = h.owns(ctx, conversationID, username)
+		if err != nil {
+			log.Printf("[ERROR] Conversation ownership check failed: %v", err)
+			RespondError(w, http.StatusInternalServerError, "Failed to check the conversation")
+			return false
+		}
+	}
+	if !owned {
+		RespondError(w, http.StatusNotFound, conversationNotFound)
+		return false
+	}
+	return true
+}
+
+// alertOnConnection answers 404 and returns false unless the alert
+// exists and belongs to the connection the action is proposed for. The
+// caller can see that connection, so the alert is visible to them too; a
+// missing alert, a system alert and one on another connection get the
+// same answer.
+func (h *ActionHandler) alertOnConnection(ctx context.Context, w http.ResponseWriter,
+	alertID int64, connectionID int) bool {
+
+	got, err := h.connections.GetAlertConnectionID(ctx, alertID)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		RespondError(w, http.StatusNotFound, alertNotFound)
+		return false
+	case err != nil:
+		log.Printf("[ERROR] Get alert %d failed: %v", alertID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to read the alert")
+		return false
+	case got == nil || *got != connectionID:
+		RespondError(w, http.StatusNotFound, alertNotFound)
+		return false
+	}
+	return true
+}
+
 // approveAndStart records the caller's approval of a reviewed action and
-// starts it, returning the action as it then stands. A failure is
-// logged and leaves the action as proposed: it can still be executed
-// from its own endpoint.
-func (h *ActionHandler) approveAndStart(ctx context.Context, a *actions.Action) *actions.Action {
+// starts it, returning the action as it then stands and, when it could
+// not be approved or started, a short reason for the response. The
+// action is left as proposed (or approved) and can still be executed
+// from its own endpoint where that is allowed.
+func (h *ActionHandler) approveAndStart(ctx context.Context, a *actions.Action) (*actions.Action, string) {
 	by := auth.GetUsernameFromContext(ctx)
+	failure := ""
 	if err := h.store.Approve(ctx, a.ID, "approved", by, actorVia(ctx)); err != nil {
 		log.Printf("[ERROR] Approve action %d failed: %v", a.ID, err)
-		return a
+		return a, "The action could not be approved"
 	}
 	if err := h.executor.Start(ctx, a.ID); err != nil {
 		log.Printf("[ERROR] Start action %d failed: %v", a.ID, err)
+		failure = "The action was approved but could not be started"
+		if errors.Is(err, actions.ErrShuttingDown) {
+			failure = "The action was approved but the server is shutting down"
+		}
 	}
 	if fresh, err := h.store.Get(ctx, a.ID); err == nil {
-		return fresh
+		return fresh, failure
 	}
-	return a
+	return a, failure
+}
+
+// redactFor returns the action as the caller may see it. The evidence
+// holds the context the proposer supplied, and the conversation id links
+// to their private chat, so only the proposer and a superuser get them.
+func redactFor(ctx context.Context, a *actions.Action) *actions.Action {
+	username := auth.GetUsernameFromContext(ctx)
+	if auth.IsSuperuserFromContext(ctx) || (username != "" && username == a.ProposedBy) {
+		return a
+	}
+	c := *a
+	c.Evidence = nil
+	c.ConversationID = nil
+	return &c
 }
 
 // loadVisibleAction reads the action named in the path. It answers 404,
@@ -405,7 +499,7 @@ func (h *ActionHandler) handleGet(w http.ResponseWriter, r *http.Request) {
 	if a == nil {
 		return
 	}
-	RespondJSON(w, http.StatusOK, a)
+	RespondJSON(w, http.StatusOK, redactFor(r.Context(), a))
 }
 
 // decodeOptionalBody decodes a JSON body into dest, accepting an empty
@@ -453,8 +547,8 @@ func (h *ActionHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 
 	by := auth.GetUsernameFromContext(ctx)
 	if err := h.store.Approve(ctx, a.ID, approval, by, actorVia(ctx)); err != nil {
-		if errors.Is(err, actions.ErrNotFound) {
-			RespondError(w, http.StatusConflict, "The action has already been started")
+		if errors.Is(err, actions.ErrInvalidState) || errors.Is(err, actions.ErrNotFound) {
+			RespondError(w, http.StatusConflict, "The action has already been approved or started")
 			return
 		}
 		log.Printf("[ERROR] Approve action %d failed: %v", a.ID, err)
@@ -480,7 +574,7 @@ func (h *ActionHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fresh = a
 	}
-	RespondJSON(w, http.StatusAccepted, fresh)
+	RespondJSON(w, http.StatusAccepted, redactFor(ctx, fresh))
 }
 
 // checkOverride applies the override rules and answers the refusal, so
@@ -504,7 +598,12 @@ func (h *ActionHandler) checkOverride(w http.ResponseWriter, r *http.Request,
 	}
 	conn, err := h.connections.GetConnection(ctx, a.ConnectionID)
 	if err != nil {
-		RespondError(w, http.StatusNotFound, actionNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			RespondError(w, http.StatusNotFound, actionNotFound)
+			return false
+		}
+		log.Printf("[ERROR] Get connection %d failed: %v", a.ConnectionID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to read the connection")
 		return false
 	}
 	switch err := h.service.CheckOverride(ctx, a, confirm, conn.Name); {
@@ -550,22 +649,7 @@ func (h *ActionHandler) handleLink(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	username := auth.GetUsernameFromContext(ctx)
 	conversationID := r.PathValue("id")
-	if username == "" || conversationID == "" || len(conversationID) > actionMaxConversationID {
-		RespondError(w, http.StatusNotFound, conversationNotFound)
-		return
-	}
-	owned := false
-	if h.owns != nil {
-		var err error
-		owned, err = h.owns(ctx, conversationID, username)
-		if err != nil {
-			log.Printf("[ERROR] Conversation ownership check failed: %v", err)
-			RespondError(w, http.StatusInternalServerError, "Failed to check the conversation")
-			return
-		}
-	}
-	if !owned {
-		RespondError(w, http.StatusNotFound, conversationNotFound)
+	if !h.ownsConversation(ctx, w, conversationID) {
 		return
 	}
 

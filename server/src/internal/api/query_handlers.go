@@ -231,7 +231,7 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 
 		pgConn := poolConn.Conn().PgConn()
 		results := runSimpleStatements(ctx, pgConn, statements, limit,
-			connectionID, true)
+			connectionID)
 
 		RespondJSON(w, http.StatusOK, multiQueryResponse{
 			Results:         results,
@@ -600,9 +600,9 @@ const clientEncodingChangedError = "Query error: client_encoding must " +
 // character, but to the classifier 0x5C is a backslash escaping the
 // quote, which hides the code after it. No second reading can cover
 // every such encoding, so the setting is held at UTF8 instead. The write
-// path applies the same check: its confirmation prompt lists only the
-// statements classified as writes, so a write hidden in a statement
-// lexed under the new encoding would otherwise run without being listed.
+// write refusal depends on the same classification: the endpoint answers
+// 409 for any statement classified as a write, so a write hidden in a
+// statement lexed under the new encoding would otherwise slip past it.
 func requireUTF8(pgConn *pgconn.PgConn, result statementResult, connectionID int) statementResult {
 	if result.Error != "" || pgexec.EncodingIsUTF8(pgConn) {
 		return result
@@ -616,12 +616,11 @@ func requireUTF8(pgConn *pgconn.PgConn, result statementResult, connectionID int
 }
 
 // runSimpleStatements executes statements over the simple query
-// protocol. When readOnly is true they run inside a read-only
-// transaction, matching the discipline the pgx path applies (issue
-// #530). A statement error rolls the transaction back and a clean run
-// commits. A failure of the transaction control itself is reported as a
-// result of its own and no statement runs, so a batch classified as
-// read-only never runs outside the transaction it asked for.
+// protocol inside a read-only transaction, matching the discipline the
+// pgx path applies (issue #530). A statement error rolls the transaction
+// back and a clean run commits. A failure of the transaction control
+// itself is reported as a result of its own and no statement runs, so a
+// batch never runs outside the transaction it asked for.
 //
 // SET TRANSACTION READ ONLY prevents writes to database objects within
 // the transaction, so a misclassified INSERT, UPDATE, DELETE, TRUNCATE,
@@ -639,7 +638,6 @@ func runSimpleStatements(
 	statements []string,
 	limit int,
 	connectionID int,
-	readOnly bool,
 ) []statementResult {
 	exec := func(execCtx context.Context, sql string) error {
 		return pgConn.Exec(execCtx, sql).Close()
@@ -648,8 +646,7 @@ func runSimpleStatements(
 		result := runSimpleStatement(runCtx, pgConn, stmt, limit, connectionID)
 		return requireUTF8(pgConn, result, connectionID)
 	}
-	return runSimpleStatementsWith(ctx, exec, run, statements, connectionID,
-		readOnly)
+	return runSimpleStatementsWith(ctx, exec, run, statements, connectionID)
 }
 
 // runSimpleStatementsWith is runSimpleStatements over an injected
@@ -662,21 +659,18 @@ func runSimpleStatementsWith(
 	run func(ctx context.Context, stmt string) statementResult,
 	statements []string,
 	connectionID int,
-	readOnly bool,
 ) []statementResult {
-	if readOnly {
-		if err := exec(ctx, "BEGIN"); err != nil {
-			// No rollback here: a BEGIN that failed part-way leaves the
-			// connection in a transaction that nothing else will use,
-			// because the pool is built per request and pgxpool destroys
-			// a connection released with a non-idle transaction status.
-			return []statementResult{controlFailure("BEGIN", err, connectionID)}
-		}
-		if err := exec(ctx, "SET TRANSACTION READ ONLY"); err != nil {
-			rollbackSimple(ctx, exec, connectionID)
-			return []statementResult{
-				controlFailure("SET TRANSACTION READ ONLY", err, connectionID),
-			}
+	if err := exec(ctx, "BEGIN"); err != nil {
+		// No rollback here: a BEGIN that failed part-way leaves the
+		// connection in a transaction that nothing else will use,
+		// because the pool is built per request and pgxpool destroys
+		// a connection released with a non-idle transaction status.
+		return []statementResult{controlFailure("BEGIN", err, connectionID)}
+	}
+	if err := exec(ctx, "SET TRANSACTION READ ONLY"); err != nil {
+		rollbackSimple(ctx, exec, connectionID)
+		return []statementResult{
+			controlFailure("SET TRANSACTION READ ONLY", err, connectionID),
 		}
 	}
 
@@ -691,14 +685,12 @@ func runSimpleStatementsWith(
 		}
 	}
 
-	if readOnly {
-		if failed {
-			rollbackSimple(ctx, exec, connectionID)
-		} else if err := exec(ctx, "COMMIT"); err != nil {
-			rollbackSimple(ctx, exec, connectionID)
-			results = append(results,
-				controlFailure("COMMIT", err, connectionID))
-		}
+	if failed {
+		rollbackSimple(ctx, exec, connectionID)
+	} else if err := exec(ctx, "COMMIT"); err != nil {
+		rollbackSimple(ctx, exec, connectionID)
+		results = append(results,
+			controlFailure("COMMIT", err, connectionID))
 	}
 
 	return results

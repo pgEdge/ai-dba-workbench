@@ -145,7 +145,7 @@ func TestStoreLifecycle(t *testing.T) {
 	if err := s.Approve(ctx, a.ID, "approved", "bob", "cookie"); err == nil {
 		t.Error("approve with invalid via should fail")
 	}
-	if err := s.Approve(ctx, a.ID, "approved", "bob", "session"); !errors.Is(err, ErrNotFound) {
+	if err := s.Approve(ctx, a.ID, "approved", "bob", "session"); !errors.Is(err, ErrInvalidState) {
 		t.Errorf("approve after execution should be refused: %v", err)
 	}
 	if ok, err := s.ClaimForExecution(ctx, 999999); err != nil || ok {

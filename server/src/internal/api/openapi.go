@@ -2033,6 +2033,24 @@ func buildSchemas() map[string]*OpenAPISchema {
 			},
 			Required: []string{"error", "requires_action", "write_statements"},
 		},
+		"QueryStatementResult": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"columns":   {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Result column names"},
+				"rows":      {Type: "array", Items: &OpenAPISchema{Type: "array", Items: &OpenAPISchema{Type: "string"}}, Description: "Result rows as text"},
+				"row_count": {Type: "integer", Description: "Number of rows returned"},
+				"truncated": {Type: "boolean", Description: "True when the rows were cut short"},
+				"query":     {Type: "string", Description: "The statement that was run"},
+				"error":     {Type: "string", Description: "Error text; absent on success"},
+			},
+		},
+		"QueryResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"results":          {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/QueryStatementResult"}, Description: "Result of every statement, in order; a failed statement ends the run"},
+				"total_statements": {Type: "integer", Description: "Number of statements in the request"},
+			},
+		},
 		"ActionReview": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
@@ -2066,19 +2084,19 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"source":           {Type: "string", Enum: []string{"chat_tool", "chat_block", "alert_analysis", "query_analysis", "server_analysis", "chart_analysis"}, Description: "Where the proposal came from"},
 				"proposed_by":      {Type: "string", Description: "Proposer's username"},
 				"proposed_via":     {Type: "string", Description: "Channel the proposal arrived on"},
-				"conversation_id":  {Type: "string", Nullable: true, Description: "Linked conversation"},
+				"conversation_id":  {Type: "string", Nullable: true, Description: "Linked conversation; null for anyone but the proposer or a superuser"},
 				"alert_id":         {Type: "integer", Format: "int64", Nullable: true, Description: "Linked alert"},
 				"parent_action_id": {Type: "integer", Format: "int64", Nullable: true, Description: "Previous attempt in the review chain"},
 				"attempt":          {Type: "integer", Description: "Position in the review chain"},
 				"rationale":        {Type: "string", Nullable: true, Description: "Why the change is proposed"},
-				"evidence":         {Type: "object", Description: "Stored context snapshot"},
-				"review_status":    {Type: "string", Description: "Review state, for example passed or vetoed"},
+				"evidence":         {Type: "object", Nullable: true, Description: "Stored context snapshot; null for anyone but the proposer or a superuser"},
+				"review_status":    {Type: "string", Enum: []string{"pending", "passed", "vetoed"}, Description: "Review state"},
 				"review":           {Ref: "#/components/schemas/ActionReview"},
-				"approval":         {Type: "string", Description: "Approval state"},
+				"approval":         {Type: "string", Enum: []string{"none", "approved", "overridden"}, Description: "Approval state: none until someone approves, approved for a passed review, overridden for a vetoed one"},
 				"approved_by":      {Type: "string", Nullable: true, Description: "Who approved the action"},
 				"approved_via":     {Type: "string", Nullable: true, Description: "Channel the approval arrived on"},
 				"approved_at":      {Type: "string", Format: "date-time", Nullable: true, Description: "When it was approved"},
-				"exec_status":      {Type: "string", Description: "Execution state, for example not_started, running, succeeded, failed, cancelled or unknown"}, //nolint:misspell // value fixed by the table CHECK
+				"exec_status":      {Type: "string", Enum: []string{"not_started", "executing", "succeeded", "failed", "cancelled", "unknown"}, Description: "Execution state"}, //nolint:misspell // value fixed by the table CHECK
 				"transactional":    {Type: "boolean", Nullable: true, Description: "Whether the statements ran in one transaction"},
 				"results":          {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/ActionStatementResult"}, Description: "Per-statement results"},
 				"preview":          {Type: "object", Nullable: true, Description: "Preview of the change"},
@@ -2097,6 +2115,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"attempts_left":   {Type: "integer", Description: "Review attempts remaining in the chain"},
 				"chain_exhausted": {Type: "boolean", Description: "True when no further attempt may be proposed"},
 				"best_attempt":    {Ref: "#/components/schemas/Action"},
+				"execute_error":   {Type: "string", Description: "Present when execute was set and the action could not be approved or started; the action is still recorded, and exec_status shows where it stands"},
 			},
 			Required: []string{"attempts_left", "chain_exhausted"},
 		},
@@ -2410,7 +2429,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Parameters:  []OpenAPIParameter{pathParamInt("id", "Connection ID")},
 				RequestBody: jsonRequestBody("QueryExecuteRequest", "SQL to run", true),
 				Responses: map[string]OpenAPIResponse{
-					"200": {Description: "Result of every statement, in order"},
+					"200": jsonResponse("QueryResponse", "Result of every statement, in order"),
 					"400": jsonResponse("ErrorResponse", "Query is required, or the database name is invalid"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied: you do not have access to this connection"),
@@ -2424,7 +2443,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/connections/{id}/actions": {
 			Post: &OpenAPIOperation{
 				Summary:     "Propose an action",
-				Description: "Records a proposed change, runs the review and returns the action with the state of its review chain. With execute set and a passing review the action is approved and started at once. Requires write access to the connection.",
+				Description: "Records a proposed change, runs the review and returns the action with the state of its review chain. With execute set and a passing review the action is approved and started at once; if that fails the action is still created, the status stays 201, and the response carries the current exec_status and an execute_error. A conversation_id must name a conversation the caller owns, and an alert_id an alert on this connection; otherwise the answer is 404. Requires write access to the connection.",
 				OperationID: "createConnectionAction",
 				Tags:        []string{"Actions"},
 				Security:    bearerAuth,
@@ -2435,7 +2454,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Write access to this connection is required"),
-					"404": jsonResponse("ErrorResponse", "Connection not found"),
+					"404": jsonResponse("ErrorResponse", "Connection, conversation or alert not found"),
 					"409": jsonResponse("ErrorResponse", "The review chain is exhausted or the proposal conflicts with an earlier one"),
 					"500": jsonResponse("ErrorResponse", "Failed to create the action"),
 				},
@@ -2445,7 +2464,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/actions/{id}": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get an action",
-				Description: "Returns an action. An action on a connection the caller cannot see is reported as not found.",
+				Description: "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser.",
 				OperationID: "getAction",
 				Tags:        []string{"Actions"},
 				Security:    bearerAuth,
@@ -2462,7 +2481,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/actions/{id}/execute": {
 			Post: &OpenAPIOperation{
 				Summary:     "Approve and execute an action",
-				Description: "Records approval and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens.",
+				Description: "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens.",
 				OperationID: "executeAction",
 				Tags:        []string{"Actions"},
 				Security:    bearerAuth,
@@ -2474,8 +2493,9 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Write access is required, or an API token tried to override"),
 					"404": jsonResponse("ErrorResponse", "Action not found"),
-					"409": jsonResponse("ErrorResponse", "The action has already started, has not passed review, or the server is shutting down"),
+					"409": jsonResponse("ErrorResponse", "The action has already been approved or started, or has not passed review"),
 					"500": jsonResponse("ErrorResponse", "Failed to start the action"),
+					"503": jsonResponse("ErrorResponse", "The server is shutting down"),
 				},
 			},
 		},

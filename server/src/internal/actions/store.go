@@ -176,8 +176,12 @@ func (s *Store) SetReview(ctx context.Context, id int64, status string, v Verdic
 }
 
 // Approve records an approval ("approved") or an override of a veto
-// ("overridden") by the named user. It applies only to an action whose
-// execution has not started; otherwise it returns ErrNotFound.
+// ("overridden") by the named user. It is one-shot: it applies only to
+// an action whose execution has not started and that has no approval
+// recorded, so of several concurrent callers exactly one wins and the
+// approver on record is the winner. It returns ErrNotFound when no such
+// action exists and ErrInvalidState when the action is no longer
+// awaiting a decision.
 func (s *Store) Approve(ctx context.Context, id int64, approval, by, via string) error {
 	if approval != "approved" && approval != "overridden" {
 		return fmt.Errorf("invalid approval %q", approval)
@@ -189,15 +193,23 @@ func (s *Store) Approve(ctx context.Context, id int64, approval, by, via string)
         UPDATE proposed_actions
            SET approval = $2, approved_by = $3, approved_via = $4,
                approved_at = now(), updated_at = now()
-         WHERE id = $1 AND exec_status = 'not_started'`,
+         WHERE id = $1 AND exec_status = 'not_started' AND approval = 'none'`,
 		id, approval, by, via)
 	if err != nil {
 		return fmt.Errorf("approve action: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	var exists bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM proposed_actions WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("approve action: %w", err)
+	}
+	if !exists {
 		return ErrNotFound
 	}
-	return nil
+	return ErrInvalidState
 }
 
 // ClaimForExecution atomically moves a not-started action that has

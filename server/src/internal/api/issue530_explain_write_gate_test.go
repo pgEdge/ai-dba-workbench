@@ -124,7 +124,7 @@ func TestIssue530_NeedsSimpleProtocol(t *testing.T) {
 
 // TestIssue530_ExplainAnalyzeDeleteRefusedAsWrite proves the
 // issue's payload is now classified as a write, so an unconfirmed caller
-// gets the confirmation prompt instead of a silent DELETE. The handler
+// gets a 409 refusal instead of a silent DELETE. The handler
 // answers before it reaches the nil datastore.
 func TestIssue530_ExplainAnalyzeDeleteRefusedAsWrite(t *testing.T) {
 	handler := newTestConnectionHandlerWithRBAC(t)
@@ -321,7 +321,6 @@ func TestIssue530_RunSimpleStatementsTransactionDiscipline(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		readOnly  bool
 		failAt    string
 		run       func(context.Context, string) statementResult
 		wantSQL   []string
@@ -329,35 +328,31 @@ func TestIssue530_RunSimpleStatementsTransactionDiscipline(t *testing.T) {
 		wantLast  string
 	}{
 		{
-			name: "read-only run commits", readOnly: true, run: okResult,
+			name: "read-only run commits", run: okResult,
 			wantSQL:   []string{"BEGIN", "SET TRANSACTION READ ONLY", "COMMIT"},
 			wantCount: 2,
 		},
 		{
-			name: "statement failure rolls back", readOnly: true, run: failResult,
+			name: "statement failure rolls back", run: failResult,
 			wantSQL:   []string{"BEGIN", "SET TRANSACTION READ ONLY", "ROLLBACK"},
 			wantCount: 1, wantLast: "SELECT 1",
 		},
 		{
-			name: "begin failure stops before any statement", readOnly: true,
+			name:   "begin failure stops before any statement",
 			failAt: "BEGIN", run: okResult,
 			wantSQL: []string{"BEGIN"}, wantCount: 1, wantLast: "BEGIN",
 		},
 		{
-			name: "read-only failure rolls back", readOnly: true,
+			name:   "read-only failure rolls back",
 			failAt: "SET TRANSACTION READ ONLY", run: okResult,
 			wantSQL:   []string{"BEGIN", "SET TRANSACTION READ ONLY", "ROLLBACK"},
 			wantCount: 1, wantLast: "SET TRANSACTION READ ONLY",
 		},
 		{
-			name: "commit failure rolls back and is reported", readOnly: true,
+			name:   "commit failure rolls back and is reported",
 			failAt: "COMMIT", run: okResult,
 			wantSQL:   []string{"BEGIN", "SET TRANSACTION READ ONLY", "COMMIT", "ROLLBACK"},
 			wantCount: 3, wantLast: "COMMIT",
-		},
-		{
-			name: "confirmed write runs without a transaction", readOnly: false,
-			run: okResult, wantSQL: nil, wantCount: 2,
 		},
 	}
 
@@ -366,7 +361,7 @@ func TestIssue530_RunSimpleStatementsTransactionDiscipline(t *testing.T) {
 			var seen []string
 			results := runSimpleStatementsWith(context.Background(),
 				failOn(tt.failAt, &seen), tt.run,
-				[]string{"SELECT 1", "SELECT 2"}, 1, tt.readOnly)
+				[]string{"SELECT 1", "SELECT 2"}, 1)
 
 			if len(results) != tt.wantCount {
 				t.Fatalf("results = %d, want %d", len(results), tt.wantCount)
@@ -545,7 +540,7 @@ func TestIssue530_ContainsDollarParamEitherReading(t *testing.T) {
 // TestIssue530_StandardConformingStringsOffRefusedAsWrite proves
 // that the round-four payload, which turns standard_conforming_strings
 // off and then hides a DELETE CTE behind '\”, now yields the
-// confirmation prompt. The handler answers before it reaches the nil
+// 409 refusal. The handler answers before it reaches the nil
 // datastore.
 func TestIssue530_StandardConformingStringsOffRefusedAsWrite(t *testing.T) {
 	handler := newTestConnectionHandlerWithRBAC(t)

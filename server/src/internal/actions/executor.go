@@ -43,12 +43,23 @@ var (
 // no positive limit.
 const defaultRowLimit = 1000
 
-// finishTimeout bounds the writes that must complete even after the run
-// has been stopped: recording the outcome and committing.
+// finishTimeout bounds each attempt to record an outcome, which must
+// complete even after the run has been stopped.
 const finishTimeout = 30 * time.Second
 
 // cancelRequestTimeout bounds the cancel request sent to the server.
 const cancelRequestTimeout = 5 * time.Second
+
+// responseGrace is how much longer than statement_timeout the executor
+// waits for the target to answer a round trip. statement_timeout makes
+// the server end a slow statement; this deadline catches a server, or a
+// proxy in front of it, that has stopped answering altogether, which no
+// server setting can.
+const responseGrace = 30 * time.Second
+
+// noResponseMessage is the error text for a round trip the target did
+// not answer before its deadline.
+const noResponseMessage = "the database stopped responding, so the connection was closed"
 
 // Recording an outcome is retried, with a delay that doubles from
 // finishBackoffBase up to finishBackoffMax, before it is given up. The
@@ -105,6 +116,9 @@ type Executor struct {
 	finishBackoff time.Duration
 	// stopping is closed by Shutdown, abandoning outcome retries.
 	stopping chan struct{}
+	// responseGrace is added to statementTimeout to give the deadline
+	// for each round trip to the target.
+	responseGrace time.Duration
 
 	mu      sync.Mutex
 	closed  bool
@@ -127,6 +141,7 @@ func NewExecutor(store *Store, opener Opener, lockTimeout, statementTimeout time
 		outcomes:         store,
 		finishBackoff:    finishBackoffBase,
 		stopping:         make(chan struct{}),
+		responseGrace:    responseGrace,
 		running:          make(map[int64]*runningAction),
 	}
 }
@@ -378,7 +393,10 @@ func (e *Executor) runAction(ctx context.Context, a *Action, st *runState) {
 	}
 	defer pool.Close()
 
-	conn, err := pool.Acquire(ctx)
+	timeout := e.statementTimeout + e.responseGrace
+	actx, cancelAcquire := context.WithTimeout(ctx, timeout)
+	defer cancelAcquire()
+	conn, err := pool.Acquire(actx)
 	if err != nil {
 		log.Printf("[ERROR] Action %d: could not acquire a connection", a.ID)
 		st.results[0].Error = safeExecError(err)
@@ -407,6 +425,7 @@ func (e *Executor) runAction(ctx context.Context, a *Action, st *runState) {
 		execCtx:  execCtx,
 		pgConn:   pgConn,
 		rowLimit: e.rowLimit,
+		timeout:  timeout,
 		state:    st,
 		settings: fmt.Sprintf("SET lock_timeout = %d; SET statement_timeout = %d",
 			e.lockTimeout.Milliseconds(), e.statementTimeout.Milliseconds()),
@@ -438,6 +457,47 @@ type stmtRunner struct {
 	settings string
 	exec     rollback.SimpleExec
 	state    *runState // may be nil in tests
+	// timeout bounds each round trip to the target; zero means none.
+	timeout time.Duration
+	// beforeDispatch, when set, is called after the timeouts are set and
+	// before the statement is sent. It is a hook for tests.
+	beforeDispatch func()
+}
+
+// roundTrip returns the context for one round trip to the target: the
+// never-stopped context, with the response deadline when one is set.
+func (r *stmtRunner) roundTrip() (context.Context, context.CancelFunc) {
+	if r.timeout <= 0 {
+		return r.execCtx, func() {}
+	}
+	return context.WithTimeout(r.execCtx, r.timeout)
+}
+
+// execBounded runs sql through exec within the response deadline.
+func (r *stmtRunner) execBounded(sql string) error {
+	ctx, cancel := r.roundTrip()
+	defer cancel()
+	err := r.exec(ctx, sql)
+	r.closeIfUnresponsive(err)
+	return err
+}
+
+// closeIfUnresponsive closes the connection when err shows the target
+// did not answer in time. pgconn has normally closed it already; closing
+// it here as well makes sure nothing more is sent on it.
+func (r *stmtRunner) closeIfUnresponsive(err error) {
+	if !noResponse(err) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cancelRequestTimeout)
+	defer cancel()
+	_ = r.pgConn.Close(ctx) //nolint:errcheck // the connection is being abandoned
+}
+
+// noResponse reports whether err is a round trip that hit its deadline.
+// Only the response deadline can expire on the never-stopped context.
+func noResponse(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded)
 }
 
 const stoppedMessage = "the action was stopped before this statement ran"
@@ -452,14 +512,20 @@ func (r *stmtRunner) step(results []StatementResult, i int) (ran bool, err error
 		results[i].Error = stoppedMessage
 		return false, nil
 	}
-	if err := r.exec(r.execCtx, r.settings); err != nil {
+	if err := r.execBounded(r.settings); err != nil {
 		results[i].Error = "could not set the timeouts: " + safeExecError(err)
 		return false, nil
+	}
+	if r.beforeDispatch != nil {
+		r.beforeDispatch()
 	}
 	if r.state != nil {
 		r.state.sent = true
 	}
-	res, err := runOne(r.execCtx, r.pgConn, results[i].Statement, r.rowLimit)
+	ctx, cancel := r.roundTrip()
+	defer cancel()
+	res, err := runOne(ctx, r.pgConn, results[i].Statement, r.rowLimit)
+	r.closeIfUnresponsive(err)
 	if err != nil {
 		res.Error = safeExecError(err)
 	}
@@ -473,7 +539,7 @@ func (r *stmtRunner) step(results []StatementResult, i int) (ran bool, err error
 // own.
 func (r *stmtRunner) runTransaction(st *runState) {
 	results := st.results
-	if err := r.exec(r.execCtx, "BEGIN"); err != nil {
+	if err := r.execBounded("BEGIN"); err != nil {
 		results[0].Error = "could not start a transaction: " + safeExecError(err)
 		return
 	}
@@ -491,18 +557,17 @@ func (r *stmtRunner) runTransaction(st *runState) {
 		return
 	}
 
-	// COMMIT must not be abandoned by a stop request, which would leave
-	// its outcome unknown, so it has a bounded context of its own.
-	cctx, cancel := context.WithTimeout(r.execCtx, finishTimeout)
-	defer cancel()
-	if err := r.exec(cctx, "COMMIT"); err != nil {
+	// COMMIT runs on the never-stopped context, so a stop request cannot
+	// abandon it and leave its outcome unknown; only the response
+	// deadline bounds it.
+	if err := r.execBounded("COMMIT"); err != nil {
 		commit := StatementResult{Statement: "COMMIT"}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
 			commit.Error = pgErr.Message
 			rollbackQuietly(r.execCtx, r.exec)
 		} else {
-			commit.Error = "outcome unknown: the connection was lost during COMMIT"
+			commit.Error = "outcome unknown: " + lostDuring(err, "COMMIT")
 			st.unknown = true
 		}
 		results = append(results, commit)
@@ -538,7 +603,7 @@ func (r *stmtRunner) runIndividually(st *runState) {
 		ran, err := r.step(results, i)
 		var pgErr *pgconn.PgError
 		if err != nil && !errors.As(err, &pgErr) {
-			results[i].Error = "outcome unknown: the connection was lost while the statement ran"
+			results[i].Error = "outcome unknown: " + lostDuring(err, "the statement")
 			st.unknown = true
 			return
 		}
@@ -565,6 +630,15 @@ func (r *stmtRunner) runIndividually(st *runState) {
 			return
 		}
 	}
+}
+
+// lostDuring describes a round trip, named by what, that ended without
+// a verdict from the server.
+func lostDuring(err error, what string) string {
+	if noResponse(err) {
+		return noResponseMessage + " while " + what + " ran"
+	}
+	return "the connection was lost while " + what + " ran"
 }
 
 // openTransactionMessage returns a failure message when a statement left
@@ -647,7 +721,7 @@ func safeExecError(err error) string {
 	case errors.Is(err, context.Canceled):
 		return "execution was stopped"
 	case errors.Is(err, context.DeadlineExceeded):
-		return "execution timed out"
+		return noResponseMessage
 	default:
 		return "the database connection failed"
 	}

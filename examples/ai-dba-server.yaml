@@ -696,11 +696,32 @@ builtins:
     generate_embedding: true
     search_knowledgebase: true
 
+    # Proposed actions (the assistant proposes a reviewed write; a
+    # person still has to approve and run it)
+    propose_action: true
+
   resources:
     # PostgreSQL system information
     system_info: true
     # Current connection information
     connection_info: true
+
+#=========================================================================
+# PROPOSED ACTIONS
+#=========================================================================
+#
+# Controls how reviewed proposed actions execute against a monitored
+# connection. Durations are Go duration strings and must be positive.
+#
+actions:
+  # PostgreSQL lock_timeout for the execution session
+  lock_timeout: 5s
+  # PostgreSQL statement_timeout for the execution session
+  statement_timeout: 5m
+  # Maximum attempts per retry chain of an action
+  max_attempts: 3
+  # Maximum size in bytes of the context snapshot stored with an action
+  context_snapshot_limit: 16384
 
 #=========================================================================
 # PATHS AND DATA DIRECTORIES

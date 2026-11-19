@@ -178,3 +178,69 @@ func TestIsTimeoutOverride(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildsIndexConcurrently(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		stmt string
+		want bool
+	}{
+		{"create index concurrently", "CREATE INDEX CONCURRENTLY i ON t (a)", true},
+		{"create unique index concurrently", "create unique index concurrently i on t (a)", true},
+		{"leading comment", "/* c */ CREATE INDEX CONCURRENTLY i ON t (a)", true},
+		{"reindex concurrently", "REINDEX INDEX CONCURRENTLY i", true},
+		{"reindex option", "REINDEX (CONCURRENTLY) TABLE t", true},
+		{"reindex option on", "REINDEX (VERBOSE, CONCURRENTLY ON) TABLE t", true},
+
+		{"create index", "CREATE INDEX i ON t (a)", false},
+		{"create unique index", "CREATE UNIQUE INDEX i ON t (a)", false},
+		{"create table", "CREATE TABLE concurrently (a int)", false},
+		{"reindex", "REINDEX TABLE t", false},
+		{"reindex database", "REINDEX DATABASE d", false},
+		{"reindex option off", "REINDEX (CONCURRENTLY OFF) TABLE t", false},
+		{"reindex unbalanced", "REINDEX (CONCURRENTLY TABLE t", false},
+		{"bare reindex", "REINDEX", false},
+		{"drop index concurrently", "DROP INDEX CONCURRENTLY i", false},
+		{"quoted", `CREATE INDEX "CONCURRENTLY" ON t (a)`, false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := BuildsIndexConcurrently(tt.stmt); got != tt.want {
+				t.Errorf("BuildsIndexConcurrently(%q) = %v, want %v", tt.stmt, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestChangesSequence(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		stmt string
+		want bool
+	}{
+		{"nextval", "SELECT nextval('s')", true},
+		{"setval", "SELECT SetVal('s', 10)", true},
+		{"in insert", "INSERT INTO t VALUES (nextval('s'))", true},
+		{"spaced call", "SELECT nextval ('s')", true},
+		{"either literal reading", `SELECT 'a\'' , nextval('s')`, true},
+
+		{"plain select", "SELECT 1", false},
+		{"in literal", "SELECT 'nextval'", false},
+		{"in comment", "SELECT 1 -- setval", false},
+		{"identifier containing it", "SELECT nextval_count FROM t", false},
+		{"quoted identifier", `SELECT "nextval" FROM t`, false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ChangesSequence(tt.stmt); got != tt.want {
+				t.Errorf("ChangesSequence(%q) = %v, want %v", tt.stmt, got, tt.want)
+			}
+		})
+	}
+}

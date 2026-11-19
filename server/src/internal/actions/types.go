@@ -38,6 +38,10 @@ type StatementResult struct {
 	Columns      []string   `json:"columns,omitempty"`
 	Rows         [][]string `json:"rows,omitempty"`
 	Truncated    bool       `json:"truncated,omitempty"`
+	// Note warns of an effect the outcome does not show, such as a
+	// sequence change a rollback kept or an invalid index a failed
+	// concurrent build left behind.
+	Note string `json:"note,omitempty"`
 }
 
 // Action mirrors a row of the proposed_actions table.

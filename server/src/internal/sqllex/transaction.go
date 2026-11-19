@@ -124,12 +124,19 @@ func createRequiresNoTransaction(words stmtWords) bool {
 	switch words.at(1) {
 	case "DATABASE", "TABLESPACE", "SUBSCRIPTION":
 		return true
-	case "INDEX":
-		return words.at(2) == "CONCURRENTLY"
-	case "UNIQUE":
-		return words.at(2) == "INDEX" && words.at(3) == "CONCURRENTLY"
+	case "INDEX", "UNIQUE":
+		return createsIndexConcurrently(words)
 	}
 	return false
+}
+
+// createsIndexConcurrently reports whether a CREATE statement is
+// CREATE [ UNIQUE ] INDEX CONCURRENTLY.
+func createsIndexConcurrently(words stmtWords) bool {
+	if words.at(1) == "UNIQUE" {
+		words = words[1:]
+	}
+	return words.at(1) == "INDEX" && words.at(2) == "CONCURRENTLY"
 }
 
 // dropRequiresNoTransaction reports whether a DROP statement must run
@@ -176,32 +183,80 @@ func (w stmtWords) follows(first, second string) bool {
 }
 
 // reindexRequiresNoTransaction reads a masked, upper-cased REINDEX
-// statement, REINDEX [ ( option [, ...] ) ] kind [ CONCURRENTLY ] name,
-// and reports whether PostgreSQL refuses it in a transaction block: the
-// kind is DATABASE, SCHEMA or SYSTEM, CONCURRENTLY follows the kind, or
-// the option list turns CONCURRENTLY on. An unbalanced option list is
-// a syntax error PostgreSQL reports either way, so it reads as false.
+// statement and reports whether PostgreSQL refuses it in a transaction
+// block: the kind is DATABASE, SCHEMA or SYSTEM, or the rebuild is
+// concurrent (see parseReindex).
 func reindexRequiresNoTransaction(masked string) bool {
-	rest := strings.TrimSpace(masked)
-	rest = strings.TrimSpace(rest[len("REINDEX"):])
-	concurrentOption := false
-	if strings.HasPrefix(rest, "(") {
-		end := strings.IndexByte(rest, ')')
-		if end < 0 {
-			return false
-		}
-		concurrentOption = reindexOptionsConcurrent(rest[1:end])
-		rest = rest[end+1:]
-	}
-	words := sqlWords(rest)
-	if len(words) == 0 {
-		return false
-	}
-	switch words[0] {
+	kind, concurrent := parseReindex(masked)
+	switch kind {
 	case "DATABASE", "SCHEMA", "SYSTEM":
 		return true
 	}
-	return concurrentOption || (len(words) > 1 && words[1] == "CONCURRENTLY")
+	return concurrent
+}
+
+// parseReindex reads a masked, upper-cased REINDEX statement,
+// REINDEX [ ( option [, ...] ) ] kind [ CONCURRENTLY ] name, and returns
+// the target kind and whether the rebuild is concurrent: CONCURRENTLY
+// follows the kind, or the option list turns it on. An unbalanced option
+// list is a syntax error PostgreSQL reports either way, so it reads as
+// no kind and not concurrent.
+func parseReindex(masked string) (kind string, concurrent bool) {
+	rest := strings.TrimSpace(masked)
+	rest = strings.TrimSpace(rest[len("REINDEX"):])
+	if strings.HasPrefix(rest, "(") {
+		end := strings.IndexByte(rest, ')')
+		if end < 0 {
+			return "", false
+		}
+		concurrent = reindexOptionsConcurrent(rest[1:end])
+		rest = rest[end+1:]
+	}
+	words := stmtWords(sqlWords(rest))
+	if len(words) == 0 {
+		return "", false
+	}
+	return words[0], concurrent || words.at(1) == "CONCURRENTLY"
+}
+
+// BuildsIndexConcurrently reports whether stmt builds an index
+// concurrently: CREATE [ UNIQUE ] INDEX CONCURRENTLY, or REINDEX with
+// CONCURRENTLY after the target kind or in its option list. A failed
+// concurrent build can leave an invalid index behind, which PostgreSQL
+// does not remove. The statement counts if either reading of a plain
+// '...' literal says so.
+func BuildsIndexConcurrently(stmt string) bool {
+	for _, reading := range StringReadings {
+		masked := strings.ToUpper(MaskNonCode(stmt, reading))
+		words := stmtWords(sqlWords(masked))
+		switch words.at(0) {
+		case "CREATE":
+			if createsIndexConcurrently(words) {
+				return true
+			}
+		case "REINDEX":
+			if _, concurrent := parseReindex(masked); concurrent {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ChangesSequence reports whether stmt calls nextval or setval, whose
+// effect on a sequence a rollback does not undo. It matches the
+// function names as words of code, so a column or literal that merely
+// contains the name does not count; a sequence advanced by a column
+// default is not visible in the text and is not matched. The statement
+// counts if either reading of a plain '...' literal says so.
+func ChangesSequence(stmt string) bool {
+	for _, reading := range StringReadings {
+		words := stmtWords(codeWords(stmt, reading))
+		if words.has("NEXTVAL") || words.has("SETVAL") {
+			return true
+		}
+	}
+	return false
 }
 
 // reindexOptionsConcurrent reports whether a REINDEX option list turns

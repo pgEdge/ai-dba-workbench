@@ -2073,6 +2073,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"columns":       {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Result column names, when the statement returned rows"},
 				"rows":          {Type: "array", Items: &OpenAPISchema{Type: "array", Items: &OpenAPISchema{Type: "string"}}, Description: "Result rows as text"},
 				"truncated":     {Type: "boolean", Description: "True when the rows were cut short"},
+				"note":          {Type: "string", Description: "Warning about an effect the outcome does not show: a sequence change a rollback kept, or an invalid index a failed concurrent build may have left"},
 			},
 		},
 		"Action": {

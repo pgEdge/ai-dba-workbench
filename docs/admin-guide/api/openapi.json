@@ -12006,6 +12006,10 @@
             "type": "string",
             "description": "Error text, empty on success"
           },
+          "note": {
+            "type": "string",
+            "description": "Warning about an effect the outcome does not show: a sequence change a rollback kept, or an invalid index a failed concurrent build may have left"
+          },
           "rows": {
             "type": "array",
             "description": "Result rows as text",

@@ -589,18 +589,17 @@ func (r *stmtRunner) runTransaction(st *runState) {
 		results[0].Error = "could not start a transaction: " + safeExecError(err)
 		return
 	}
-	failed := false
 	for i := range results {
-		_, err := r.step(results, i)
+		ran, err := r.step(results, i)
 		if err != nil || results[i].Error != "" {
-			failed = true
-			break
+			if ran {
+				i++
+			}
+			rollbackQuietly(r.execCtx, r.exec)
+			clearApplied(results)
+			noteSequencesKept(results[:i])
+			return
 		}
-	}
-	if failed {
-		rollbackQuietly(r.execCtx, r.exec)
-		clearApplied(results)
-		return
 	}
 	r.commit(st)
 }
@@ -617,7 +616,8 @@ func (r *stmtRunner) commit(st *runState) {
 	results := st.results
 	if r.ctx.Err() != nil {
 		rollbackQuietly(r.execCtx, r.exec)
-		st.results = append(results, StatementResult{Statement: "COMMIT", Error: stoppedBeforeCommitMessage})
+		noteSequencesKept(st.results)
+		st.results = append(st.results, StatementResult{Statement: "COMMIT", Error: stoppedBeforeCommitMessage})
 		clearApplied(st.results)
 		return
 	}
@@ -634,8 +634,8 @@ func (r *stmtRunner) commit(st *runState) {
 			commit.Error = "outcome unknown: " + lostDuring(err, "COMMIT")
 			st.unknown = true
 		}
-		results = append(results, commit)
-		st.results = results
+		noteSequencesKept(st.results)
+		st.results = append(st.results, commit)
 		clearApplied(st.results)
 		return
 	}
@@ -665,6 +665,9 @@ func (r *stmtRunner) runIndividually(st *runState) {
 	results := st.results
 	for i := range results {
 		ran, err := r.step(results, i)
+		if ran && err != nil {
+			noteFailure(&results[i])
+		}
 		var pgErr *pgconn.PgError
 		if err != nil && !errors.As(err, &pgErr) {
 			results[i].Error = "outcome unknown: " + lostDuring(err, "the statement")
@@ -690,9 +693,51 @@ func (r *stmtRunner) runIndividually(st *runState) {
 		if msg := openTransactionMessage(r.pgConn); msg != "" {
 			rollbackQuietly(r.execCtx, r.exec)
 			clearApplied(results[i : i+1])
+			noteSequencesKept(results[i : i+1])
 			results[i].Error = msg
 			return
 		}
+	}
+}
+
+// sequenceNote warns that a statement undone by a rollback may still
+// have moved a sequence, since PostgreSQL never rolls back nextval or
+// setval.
+const sequenceNote = "this statement calls nextval or setval, and a rollback does not undo sequence changes, " +
+	"so the sequence may have advanced or been set even though the statement was not applied"
+
+// invalidIndexNote warns that a failed concurrent index build may have
+// left an invalid index, which PostgreSQL does not remove.
+const invalidIndexNote = "a concurrent index build that fails can leave an invalid index behind; " +
+	"check pg_index.indisvalid and drop or rebuild the index"
+
+// addNote appends note to the result's note.
+func addNote(res *StatementResult, note string) {
+	if res.Note != "" {
+		res.Note += "; "
+	}
+	res.Note += note
+}
+
+// noteSequencesKept notes, on each statement in results that a rollback
+// undid, that the rollback kept any sequence change it made.
+func noteSequencesKept(results []StatementResult) {
+	for i := range results {
+		if sqllex.ChangesSequence(results[i].Statement) {
+			addNote(&results[i], sequenceNote)
+		}
+	}
+}
+
+// noteFailure notes the effects a statement run on its own may have
+// left when it failed after it was sent: a sequence change, or an
+// invalid index from a concurrent build.
+func noteFailure(res *StatementResult) {
+	if sqllex.ChangesSequence(res.Statement) {
+		addNote(res, sequenceNote)
+	}
+	if sqllex.BuildsIndexConcurrently(res.Statement) {
+		addNote(res, invalidIndexNote)
 	}
 }
 

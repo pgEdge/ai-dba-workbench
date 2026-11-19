@@ -1003,6 +1003,11 @@ reload fails, when a timeout cannot be parsed or is shorter than `1ms`, or when
 setting an integer option to `0`, keeps the default; setting
 `context_snapshot_limit` to `0` therefore cannot disable the snapshot.
 
+Each round trip to the monitored database has a client-side limit of
+`statement_timeout` plus 30 seconds; when it expires, the server closes the
+connection and records the outcome as unknown, or fails the statement when it
+runs inside a transaction.
+
 The server reads the `actions` settings at start-up; a `SIGHUP` reload
 validates them but does not apply changes, so restart the server after editing
 this section.

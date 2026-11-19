@@ -4042,7 +4042,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/database-summaries": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get database summaries",
-				Description: "Returns per-database summaries for a connection",
+				Description: "Returns per-database summaries for a connection, ordered by database name",
 				OperationID: "getDatabaseSummaries",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,

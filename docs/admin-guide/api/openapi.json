@@ -6425,7 +6425,7 @@
     "/metrics/database-summaries": {
       "get": {
         "summary": "Get database summaries",
-        "description": "Returns per-database summaries for a connection",
+        "description": "Returns per-database summaries for a connection, ordered by database name",
         "operationId": "getDatabaseSummaries",
         "tags": [
           "Metrics"

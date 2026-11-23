@@ -145,6 +145,36 @@ describe('App', () => {
         expect(await screen.findByText('chat fab')).toBeInTheDocument();
     });
 
+    it('stops the document scrolling behind the main layout', async () => {
+        mockApiGet.mockImplementation(respondAuthenticated);
+
+        const { unmount } = render(<App />);
+
+        await screen.findByText('navigator');
+
+        // Hidden chart tooltips appended to <body> must not make the
+        // document scrollable underneath the fixed layout (#882).
+        expect(getComputedStyle(document.documentElement).overflow)
+            .toBe('hidden');
+        expect(getComputedStyle(document.body).overflow).toBe('hidden');
+
+        unmount();
+
+        expect(getComputedStyle(document.body).overflow).not.toBe('hidden');
+    });
+
+    it('leaves the login page free to scroll', async () => {
+        mockApiGet.mockRejectedValue(new Error('no session'));
+
+        render(<App />);
+
+        await screen.findByLabelText('Probe');
+
+        expect(getComputedStyle(document.documentElement).overflow)
+            .not.toBe('hidden');
+        expect(getComputedStyle(document.body).overflow).not.toBe('hidden');
+    });
+
     it('opens the chat panel from the floating action button', async () => {
         mockApiGet.mockImplementation(respondAuthenticated);
 

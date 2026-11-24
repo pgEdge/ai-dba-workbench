@@ -89,12 +89,17 @@ moved.
   whitespace and a non-IP hostaddr, in both the server's
   `Datastore.BuildConnectionString` (`ErrUnsafeConnectionTarget`) and
   the collector's `buildMonitoredConnectionParams`. pgx v5.12.0 has no
-  `hostaddr` keyword (it would be sent as a startup parameter). The
-  server dials the validated `hostaddr` as `host`; the collector's
-  `createMonitoredPool` (`collector/src/database/monitored_pool.go`)
-  removes it from the runtime parameters, keeps `host` as the TLS
-  server name, and returns the address from `LookupFunc`, which is then
-  wrapped by `GuardedLookup` like any resolved address.
+  `hostaddr` keyword (it would be sent as a startup parameter), so
+  `hostvalidation.TakeHostAddr` removes it from the runtime parameters
+  and returns a `LookupFunc` giving the address, keeping `host` as the
+  TLS server name. The server calls it in `GuardConnConfig`
+  (`server/src/internal/database/dial_guard.go`) and the collector in
+  `createMonitoredPool` (`collector/src/database/monitored_pool.go`);
+  either way the lookup is then wrapped by `GuardedLookup` like any
+  resolved address. With a `hostaddr`, `GuardConnConfig` asks the dial
+  policy about the address under its own name, not the host name pgx
+  looks up, so an `allowed_hosts` name cannot carry a `hostaddr` past
+  `CheckDialAddr`'s block-list and internal-range rules.
 - The internal-range test is `hostvalidation.IsPrivateIP`
   (`pkg/hostvalidation/hostvalidation.go`), shared by the server's
   `HostValidator` and the alerter's delivery dialer. It ORs the

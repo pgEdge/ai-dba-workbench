@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"net"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -69,6 +70,13 @@ func (d *Datastore) GuardMonitoredConnConfig(cfg *pgconn.Config) {
 // handled here rather than at each place one is parsed. A hostaddr that
 // is not an IP address fails every connection attempt rather than
 // falling back to resolving the host.
+//
+// With a hostaddr, policy judges the address as its own name rather
+// than under the host name pgx passes to the lookup. Otherwise an
+// allowed_hosts entry for the host name would let any hostaddr past
+// the block-list and internal-range rules at connect time, whereas the
+// hostaddr was the host, and so was judged as itself, before the
+// connection string kept the host name for TLS.
 func GuardConnConfig(cfg *pgconn.Config, policy hostvalidation.AddrPolicy) {
 	if lookup, ok, err := hostvalidation.TakeHostAddr(cfg.RuntimeParams); ok {
 		if err != nil {
@@ -77,6 +85,13 @@ func GuardConnConfig(cfg *pgconn.Config, policy hostvalidation.AddrPolicy) {
 			}
 		}
 		cfg.LookupFunc = lookup
+		inner := policy
+		if inner == nil {
+			inner = hostvalidation.CheckAlwaysBlocked
+		}
+		policy = func(_ string, ip net.IP) error {
+			return inner(ip.String(), ip)
+		}
 	}
 	cfg.LookupFunc = hostvalidation.GuardedLookup(policy, cfg.LookupFunc)
 }

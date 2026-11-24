@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -142,6 +143,65 @@ func TestGuardConnConfigBadHostAddr(t *testing.T) {
 	addrs, err := cfg.LookupFunc(context.Background(), cfg.Host)
 	if !errors.Is(err, hostvalidation.ErrHostAddrNotIP) || addrs != nil {
 		t.Errorf("lookup = %v, %v; want ErrHostAddrNotIP", addrs, err)
+	}
+}
+
+// TestGuardConnConfigHostAddrJudgedAsItself checks that, with a
+// hostaddr, the dial policy is asked about the address under its own
+// name and not under the host name pgx looks up, so a policy that
+// permits the host name by name (an allowed_hosts entry) cannot carry
+// an address it refuses. Without a hostaddr the host name is still
+// what the policy sees.
+func TestGuardConnConfigHostAddrJudgedAsItself(t *testing.T) {
+	// Permits db.example.com by name, and otherwise only 192.0.2.10.
+	policy := func(host string, ip net.IP) error {
+		if host == "db.example.com" || host == "192.0.2.10" {
+			return nil
+		}
+		return errors.New("refused")
+	}
+	cases := []struct {
+		name   string
+		query  string
+		wantOK bool
+	}{
+		{"refused hostaddr behind allowed name", "&hostaddr=198.51.100.7", false},
+		{"permitted hostaddr", "&hostaddr=192.0.2.10", true},
+		{"allowed name without hostaddr", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := pgconn.ParseConfig(
+				"postgres://user@db.example.com:5432/mydb?sslmode=disable" + tc.query)
+			if err != nil {
+				t.Fatalf("ParseConfig failed: %v", err)
+			}
+			if tc.query == "" {
+				cfg.LookupFunc = func(context.Context, string) ([]string, error) {
+					return []string{"198.51.100.7"}, nil
+				}
+			}
+			GuardConnConfig(cfg, policy)
+			addrs, err := cfg.LookupFunc(context.Background(), cfg.Host)
+			if gotOK := err == nil && len(addrs) == 1; gotOK != tc.wantOK {
+				t.Errorf("lookup = %v, %v; want permitted %v", addrs, err, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestGuardConnConfigHostAddrNilPolicy checks that a nil policy with a
+// hostaddr still applies the always-blocked floor to the address.
+func TestGuardConnConfigHostAddrNilPolicy(t *testing.T) {
+	cfg, err := pgconn.ParseConfig(
+		"postgres://user@db.example.com:5432/mydb?sslmode=disable&hostaddr=169.254.169.254")
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+	GuardConnConfig(cfg, nil)
+	if addrs, err := cfg.LookupFunc(context.Background(), cfg.Host); err == nil {
+		t.Errorf("lookup = %v; want the metadata address refused", addrs)
 	}
 }
 

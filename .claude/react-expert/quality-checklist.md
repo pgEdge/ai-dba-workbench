@@ -1100,3 +1100,19 @@ from that:
 - Any auto-fix pass can strip adjacent `eslint-disable` comments.
   Measure the `npm run lint` warning count before and after, and run
   `npm run format:check`, so the counts match the baseline.
+- Codacy runs Lizard 1.22.2 (cached locally under
+  `~/.cache/codacy/tools/lizard@1.22.2/venv/bin/lizard`), whose TSX
+  parser can lose its place and merge every later component into one,
+  inflating its NLOC or CCN. Known triggers: an inline object type in
+  a generic (`React.FC<{ ... }>`, so name the props interface), a
+  multi-line hyphenated attribute such as `aria-label={...}` placed
+  after other attributes (put it first), and a `data-testid` on a
+  nested tag after a sibling (put it on the outer element). Props
+  spreads do not avoid it. Check that every component is listed
+  separately in that Lizard's output, not just the flagged one.
+- security-node's `detect-unhandled-async-errors` checks only async
+  function declarations, and passes one if any top-level statement is
+  a `return`, a call, or a `try` whose catch parameter is named `e`,
+  `err`, `error`, `Error` or `anySpecificError`; a bare `catch {}` or
+  a `catch (toolErr)` does not count. The rule ships in
+  `/usr/lib/node_modules/@codacy/codacy-mcp/node_modules/eslint-plugin-security-node`.

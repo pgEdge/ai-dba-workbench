@@ -56,6 +56,15 @@ records reviewed write actions. Upgrade and start the collector first, so that
 it migrates the schema, and then upgrade the server. A server started against
 an older schema stops with an error naming the version it needs.
 
+## Running One Server per Datastore
+
+Run only one server against a given datastore. When the server starts, it
+marks every action still recorded as running in the datastore as Outcome
+unknown, whichever server started the action. A second server started
+against the same datastore therefore marks the actions that the first server
+is still running, and those actions can then lose their recorded results.
+During an upgrade, stop the old server before you start the new one.
+
 ## Checking a Configuration by Hand
 
 Run the server with the `-check-config` flag to validate a

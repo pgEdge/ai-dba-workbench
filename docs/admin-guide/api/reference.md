@@ -279,6 +279,14 @@ describes the limits.
 | POST | `/api/v1/actions/{id}/execute` | Approve and execute an action (202). |
 | POST | `/api/v1/actions/{id}/cancel` | Cancel a running action (202). |
 
+The `/api/v1/actions/{id}` endpoint returns an action to any caller who can
+see its connection, but returns the `statements` and `results` unmasked only
+to the user who proposed the action and the user who approved it. For any
+other caller, the statement text and results are masked in the same way as
+query text, as described under [Masked Credentials](#masked-credentials).
+The `evidence` and `conversation_id` fields are returned only to the user who
+proposed the action and to a superuser.
+
 ### LLM Proxy
 
 | Method | Endpoint | Description |

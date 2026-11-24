@@ -132,7 +132,8 @@ Clicking Execute does not run the statements directly. The Workbench records
 them as a proposed action, passes them through a review step, and runs them
 only if the review passes. The review is not yet implemented, so you must check
 each statement yourself before you click Execute;
-[Reviewed Write Actions](#reviewed-write-actions) describes the steps. The query endpoint refuses to run a write itself.
+[Reviewed Write Actions](#reviewed-write-actions) describes the steps. The
+query endpoint refuses to run a write itself.
 
 A query that calls a function with side effects beyond its own transaction also
 counts as a write, even though it begins with `SELECT`, because a read-only
@@ -245,9 +246,12 @@ conversation when the chat is saved, even if that turn failed.
 #### Execution Behaviour
 
 The server runs only the statements stored with the action; the browser sends
-just the action identifier when you click Execute. The run uses a lock timeout
-of five seconds and a statement timeout of five minutes by default; the
-`actions` section of the
+just the action identifier when you click Execute. The server connects to the
+monitored database with the username and password stored for the connection,
+not as the signed-in user, so the statements run with that role's privileges;
+your write access to the connection decides only whether you may start the
+run. The run uses a lock timeout of five seconds and a statement timeout of
+five minutes by default; the `actions` section of the
 [server configuration file](../../configuration/server/configuration_file.md#proposed-actions-properties)
 changes both. When every statement can run in a transaction, the server runs
 them in one transaction and rolls the lot back if any statement fails.

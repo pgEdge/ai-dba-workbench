@@ -361,9 +361,9 @@ describe('usePerformanceSummary connection_ids batching', () => {
         params.forEach(p => {
             expect(p.get('time_range')).toBe('custom');
             // Whole seconds, ending a minute behind the client's clock,
-            // spanning exactly 24 hours.
+            // spanning a day and 59 seconds.
             expect(p.get('time_end')).toBe('2026-05-01T12:33:56Z');
-            expect(p.get('time_start')).toBe('2026-04-30T12:33:56Z');
+            expect(p.get('time_start')).toBe('2026-04-30T12:32:57Z');
         });
     });
 

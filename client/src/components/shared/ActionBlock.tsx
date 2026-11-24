@@ -37,6 +37,7 @@ import {
     ExecStatus,
     StatementList,
     VetoReasons,
+    WriteDeniedNote,
 } from './ActionBlockParts';
 import { useActionBlockStart } from './useActionBlockStart';
 
@@ -91,6 +92,8 @@ interface ActionDetailsProps {
     current: Action;
     flags: ActionFlags;
     busy: boolean;
+    /** The server refused to run the action for lack of write access. */
+    writeDenied: boolean;
     errorRow: React.ReactNode;
     /** Whether the block created the action from SQL it already shows. */
     fromSql: boolean;
@@ -106,6 +109,7 @@ const ActionDetails: React.FC<ActionDetailsProps> = ({
     current,
     flags,
     busy,
+    writeDenied,
     errorRow,
     fromSql,
     serverName,
@@ -127,7 +131,10 @@ const ActionDetails: React.FC<ActionDetailsProps> = ({
                 onCancel={() => { void cancel(current.id); }}
             />
             <ActionResults results={current.results} />
-            {current.exec_status === 'not_started' && (
+            {current.exec_status === 'not_started' && writeDenied && (
+                <WriteDeniedNote />
+            )}
+            {current.exec_status === 'not_started' && !writeDenied && (
                 <ActionButtons
                     flags={flags}
                     busy={busy}
@@ -151,8 +158,9 @@ const ActionDetails: React.FC<ActionDetailsProps> = ({
 
 const ActionBlock: React.FC<ActionBlockProps> = (props) => {
     const { action: initialAction, actionId, sql, serverName, source } = props;
-    const { action: polled, busy, error, create, execute, cancel, load } =
-        useAction();
+    const {
+        action: polled, busy, error, writeDenied, create, execute, cancel, load,
+    } = useAction();
     const [overrideOpen, setOverrideOpen] = useState(false);
     const user = useContext(AuthContext)?.user;
 
@@ -193,6 +201,7 @@ const ActionBlock: React.FC<ActionBlockProps> = (props) => {
                 current={current}
                 flags={deriveActionFlags(current, user, serverName)}
                 busy={busy}
+                writeDenied={writeDenied}
                 errorRow={errorRow}
                 fromSql={sql !== undefined}
                 serverName={serverName}

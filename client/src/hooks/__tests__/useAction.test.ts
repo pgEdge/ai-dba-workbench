@@ -314,8 +314,11 @@ describe('useAction', () => {
         expect(result.current.error).toBe('already approved');
     });
 
-    it('re-fetches the action after a refused execute', async () => {
-        mockPost.mockRejectedValueOnce(new ApiError('busy', 503));
+    it.each([
+        [409, 'already approved'],
+        [503, 'busy'],
+    ])('re-fetches the action after a refused execute (%i)', async (status, message) => {
+        mockPost.mockRejectedValueOnce(new ApiError(message, status));
         mockGet.mockResolvedValueOnce(makeAction({ exec_status: 'succeeded' }));
         const { result } = renderHook(() => useAction());
 
@@ -325,7 +328,23 @@ describe('useAction', () => {
 
         expect(mockGet).toHaveBeenCalledWith('/api/v1/actions/7');
         expect(result.current.action?.exec_status).toBe('succeeded');
-        expect(result.current.error).toBe('busy');
+        expect(result.current.error).toBe(message);
+        expect(result.current.writeDenied).toBe(false);
+    });
+
+    it.each([
+        [403, true],
+        [500, false],
+    ])('does not re-fetch after execute fails with %i, and records a 403 as denied', async (status, denied) => {
+        mockPost.mockRejectedValueOnce(new ApiError('refused', status));
+        const { result } = renderHook(() => useAction());
+
+        await act(async () => {
+            await result.current.execute(7);
+        });
+
+        expect(mockGet).not.toHaveBeenCalled();
+        expect(result.current.writeDenied).toBe(denied);
     });
 
     it('keeps the refusal error when the re-fetch fails, and never clears it', async () => {

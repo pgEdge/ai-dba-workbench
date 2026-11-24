@@ -443,3 +443,15 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
         </Box>
     );
 };
+
+/**
+ * Shown in place of the controls once the server has refused to run the
+ * action for lack of write access, so the user is not left retrying.
+ */
+export const WriteDeniedNote: React.FC = () => (
+    <Typography variant="body2" color="text.secondary">
+        You can review this action, but running it needs write access to
+        this connection. Ask an administrator to grant it, or have someone
+        with access run it.
+    </Typography>
+);

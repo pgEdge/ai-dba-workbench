@@ -26,6 +26,7 @@ const hook: UseActionResult = {
     action: null,
     busy: false,
     error: null,
+    writeDenied: false,
     create: vi.fn(),
     execute: vi.fn(),
     cancel: vi.fn(),
@@ -83,6 +84,7 @@ describe('ActionBlock', () => {
         hook.action = null;
         hook.busy = false;
         hook.error = null;
+        hook.writeDenied = false;
         hook.create = vi.fn().mockResolvedValue(null);
         hook.execute = vi.fn().mockResolvedValue(true);
         hook.cancel = vi.fn().mockResolvedValue(true);
@@ -195,6 +197,31 @@ describe('ActionBlock', () => {
 
             await user.click(screen.getByRole('button', { name: 'Execute' }));
             expect(hook.execute).toHaveBeenCalledWith(7);
+        });
+
+        it.each([
+            ['a passed action', makeAction(), 'Execute'],
+            [
+                'a vetoed action',
+                makeAction({
+                    review_status: 'vetoed',
+                    review: { reviewer: 'supervisor', danger: 'high', reasons: [] },
+                }),
+                'Override and run',
+            ],
+        ])('replaces the controls of %s with an explanation once write access is refused', (
+            _name, action, control,
+        ) => {
+            hook.writeDenied = true;
+            hook.error = 'Permission denied: you do not have write access to this connection';
+            renderBlock({ action, serverName: 'prod-1' });
+
+            expect(
+                screen.queryByRole('button', { name: control }),
+            ).not.toBeInTheDocument();
+            expect(screen.getByText(/running it needs write access/))
+                .toBeInTheDocument();
+            expect(screen.getByRole('alert')).toHaveTextContent('Permission denied');
         });
 
         it('shows Running with a Cancel button that cancels', async () => {

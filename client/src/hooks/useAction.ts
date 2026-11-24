@@ -28,6 +28,13 @@ export interface UseActionResult {
     busy: boolean;
     /** Error from the last request, or the create response's execute_error. */
     error: string | null;
+    /**
+     * True once the server has refused to execute the action with a 403.
+     * The client cannot learn a user's per-connection write access before
+     * asking, so this is the first point at which it knows the action
+     * cannot be run from this session.
+     */
+    writeDenied: boolean;
     /** Create an action, optionally running it at once. */
     create: (
         connectionId: number,
@@ -53,6 +60,7 @@ export const useAction = (): UseActionResult => {
     const [action, setAction] = useState<Action | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [writeDenied, setWriteDenied] = useState(false);
 
     const mountedRef = useRef(true);
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -219,6 +227,9 @@ export const useAction = (): UseActionResult => {
         } catch (err) {
             if (mountedRef.current) {
                 setError(messageOf(err));
+                if (err instanceof ApiError && err.statusCode === 403) {
+                    setWriteDenied(true);
+                }
             }
             // A refusal means the action is not in the state the UI
             // showed, so fetch it again rather than keep a stale button.
@@ -250,7 +261,9 @@ export const useAction = (): UseActionResult => {
         }
     }, []);
 
-    return { action, busy, error, create, execute, cancel, load };
+    return {
+        action, busy, error, writeDenied, create, execute, cancel, load,
+    };
 };
 
 export default useAction;

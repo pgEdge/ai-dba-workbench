@@ -163,18 +163,22 @@ func isUnixSocket(host string) bool {
 func TestRunnerDeadlineWhenTargetStopsResponding(t *testing.T) {
 	t.Parallel()
 	f := newExecFixture(t, "_x_dl", time.Second, time.Minute, 10)
+	mustExec(t, f.target, "CREATE SEQUENCE dl_seq")
 
+	// The statement calls nextval, so its note shows whether the run
+	// claims a rollback (sequenceNote) or an unknown outcome.
 	tests := []struct {
 		name          string
 		transactional bool
 		freezeAt      string // freeze before this exec, or before the statement when empty
 		wantUnknown   bool
 		wantIn        string // where the message is expected: statement or commit
+		wantNote      string
 	}{
-		{"statement outside a transaction", false, "", true, "statement"},
-		{"statement in a transaction", true, "", false, "statement"},
-		{"commit", true, "COMMIT", true, "commit"},
-		{"timeouts", false, "SET", false, "statement"},
+		{"statement outside a transaction", false, "", true, "statement", sequenceUnknownNote},
+		{"statement in a transaction", true, "", false, "statement", sequenceNote},
+		{"commit", true, "COMMIT", true, "commit", sequenceUnknownNote},
+		{"timeouts", false, "SET", false, "statement", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -189,7 +193,7 @@ func TestRunnerDeadlineWhenTargetStopsResponding(t *testing.T) {
 			if tc.freezeAt == "" {
 				r.beforeDispatch = func() { p.frozen.Store(true) }
 			}
-			st := &runState{results: newResults([]string{"SELECT 1"}), transactional: tc.transactional}
+			st := &runState{results: newResults([]string{"SELECT nextval('dl_seq')"}), transactional: tc.transactional}
 			if tc.transactional {
 				r.runTransaction(st)
 			} else {
@@ -207,6 +211,9 @@ func TestRunnerDeadlineWhenTargetStopsResponding(t *testing.T) {
 			}
 			if !strings.Contains(res.Error, "stopped responding") || res.Applied {
 				t.Errorf("result = %+v", res)
+			}
+			if note := st.results[0].Note; note != tc.wantNote {
+				t.Errorf("note = %q, want %q", note, tc.wantNote)
 			}
 			if !r.pgConn.IsClosed() {
 				t.Error("the connection was left open")

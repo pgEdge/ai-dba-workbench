@@ -47,6 +47,11 @@ const defaultRowLimit = 1000
 // complete even after the run has been stopped.
 const finishTimeout = 30 * time.Second
 
+// claimTimeout bounds the claim Start makes. The claim runs on a context
+// detached from the request, so a client that disconnects mid-claim
+// cannot leave the row claimed with no run behind it.
+const claimTimeout = 30 * time.Second
+
 // cancelRequestTimeout bounds the cancel request sent to the server.
 const cancelRequestTimeout = 5 * time.Second
 
@@ -114,8 +119,13 @@ type Executor struct {
 	// finishBackoff is the first delay between attempts to record an
 	// outcome.
 	finishBackoff time.Duration
-	// stopping is closed by Shutdown, abandoning outcome retries.
+	// stopping is closed by Shutdown. Outcome retries then continue only
+	// until shutdownDone is closed.
 	stopping chan struct{}
+	// shutdownDone is the Done channel of the context passed to the first
+	// Shutdown, set before stopping is closed: the end of the graceful
+	// shutdown budget.
+	shutdownDone <-chan struct{}
 	// responseGrace is added to statementTimeout to give the deadline
 	// for each round trip to the target.
 	responseGrace time.Duration
@@ -148,9 +158,12 @@ func NewExecutor(store *Store, opener Opener, lockTimeout, statementTimeout time
 
 // Shutdown stops the executor taking new actions, cancels the running
 // ones and waits for them to record their outcomes, or for ctx to end.
+// A failed outcome write is retried until ctx ends; the statements are
+// never run again.
 func (e *Executor) Shutdown(ctx context.Context) error {
 	e.mu.Lock()
 	if !e.closed {
+		e.shutdownDone = ctx.Done()
 		close(e.stopping)
 	}
 	e.closed = true
@@ -188,7 +201,9 @@ func (e *Executor) Start(ctx context.Context, actionID int64) error {
 	e.wg.Add(1)
 	e.mu.Unlock()
 
-	ok, err := e.store.ClaimForExecution(ctx, actionID)
+	cctx, cancelClaim := context.WithTimeout(context.WithoutCancel(ctx), claimTimeout)
+	ok, err := e.store.ClaimForExecution(cctx, actionID)
+	cancelClaim()
 	if err != nil || !ok {
 		e.wg.Done()
 		if err != nil {
@@ -260,8 +275,8 @@ func (e *Executor) execute(ctx context.Context, run *runningAction, id int64) {
 
 // recordOutcome writes the outcome to the action, retrying a failed
 // write a few times with a growing delay, since losing it would leave the
-// action executing until the next startup marks it unknown. Retries stop
-// at Shutdown.
+// action executing until the next startup marks it unknown. After
+// Shutdown, retries continue only within its context.
 func (e *Executor) recordOutcome(ctx context.Context, id int64, status string, st *runState) {
 	delay := e.finishBackoff
 	for attempt := 1; ; attempt++ {
@@ -301,8 +316,8 @@ func (e *Executor) finishOnce(ctx context.Context, id int64, status string, st *
 	return err
 }
 
-// pause waits for d and reports true, or reports false at once if
-// Shutdown is called first.
+// pause waits for d and reports true, or reports false at once if the
+// context passed to Shutdown ends first.
 func (e *Executor) pause(d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
@@ -310,6 +325,15 @@ func (e *Executor) pause(d time.Duration) bool {
 	case <-t.C:
 		return true
 	case <-e.stopping:
+	}
+	// stopping is closed only after shutdownDone is set, under mu.
+	e.mu.Lock()
+	done := e.shutdownDone
+	e.mu.Unlock()
+	select {
+	case <-t.C:
+		return true
+	case <-done:
 		return false
 	}
 }
@@ -600,7 +624,7 @@ func (r *stmtRunner) runTransaction(st *runState) {
 			}
 			rollbackQuietly(r.execCtx, r.exec)
 			clearApplied(results)
-			noteSequencesKept(results[:i])
+			noteSequencesKept(results[:i], false)
 			return
 		}
 	}
@@ -619,7 +643,7 @@ func (r *stmtRunner) commit(st *runState) {
 	results := st.results
 	if r.ctx.Err() != nil {
 		rollbackQuietly(r.execCtx, r.exec)
-		noteSequencesKept(st.results)
+		noteSequencesKept(st.results, false)
 		st.results = append(st.results, StatementResult{Statement: "COMMIT", Error: stoppedBeforeCommitMessage})
 		clearApplied(st.results)
 		return
@@ -637,7 +661,7 @@ func (r *stmtRunner) commit(st *runState) {
 			commit.Error = "outcome unknown: " + lostDuring(err, "COMMIT")
 			st.unknown = true
 		}
-		noteSequencesKept(st.results)
+		noteSequencesKept(st.results, st.unknown)
 		st.results = append(st.results, commit)
 		clearApplied(st.results)
 		return
@@ -668,11 +692,15 @@ func (r *stmtRunner) runIndividually(st *runState) {
 	results := st.results
 	for i := range results {
 		ran, err := r.step(results, i)
-		if ran && err != nil {
-			noteFailure(&results[i])
-		}
 		var pgErr *pgconn.PgError
-		if err != nil && !errors.As(err, &pgErr) {
+		isPgErr := errors.As(err, &pgErr)
+		if ran && err != nil {
+			// A statement the server did not answer, or stopped part way
+			// through, has an unknown outcome rather than a rolled-back one.
+			stopped := isPgErr && pgErr.Code == "57014" && r.ctx.Err() != nil
+			noteFailure(&results[i], !isPgErr || stopped)
+		}
+		if err != nil && !isPgErr {
 			results[i].Error = "outcome unknown: " + lostDuring(err, "the statement")
 			st.unknown = true
 			return
@@ -696,7 +724,7 @@ func (r *stmtRunner) runIndividually(st *runState) {
 		if msg := openTransactionMessage(r.pgConn); msg != "" {
 			rollbackQuietly(r.execCtx, r.exec)
 			clearApplied(results[i : i+1])
-			noteSequencesKept(results[i : i+1])
+			noteSequencesKept(results[i:i+1], false)
 			results[i].Error = msg
 			return
 		}
@@ -708,6 +736,11 @@ func (r *stmtRunner) runIndividually(st *runState) {
 // setval.
 const sequenceNote = "this statement calls nextval or setval, and a rollback does not undo sequence changes, " +
 	"so the sequence may have advanced or been set even though the statement was not applied"
+
+// sequenceUnknownNote is sequenceNote for a statement whose outcome is
+// unknown, which may or may not have been applied, or rolled back.
+const sequenceUnknownNote = "this statement calls nextval or setval, and its outcome is unknown; sequence changes " +
+	"are never rolled back, so the sequence may have advanced or been set whether or not the statement was applied"
 
 // invalidIndexNote warns that a failed concurrent index build may have
 // left an invalid index, which PostgreSQL does not remove.
@@ -723,21 +756,33 @@ func addNote(res *StatementResult, note string) {
 }
 
 // noteSequencesKept notes, on each statement in results that a rollback
-// undid, that the rollback kept any sequence change it made.
-func noteSequencesKept(results []StatementResult) {
+// undid, that the rollback kept any sequence change it made. With
+// unknown set, whether the statements were applied is not known, and
+// the note says so rather than claiming a rollback.
+func noteSequencesKept(results []StatementResult, unknown bool) {
 	for i := range results {
 		if sqllex.ChangesSequence(results[i].Statement) {
-			addNote(&results[i], sequenceNote)
+			addNote(&results[i], sequenceNoteFor(unknown))
 		}
 	}
 }
 
+// sequenceNoteFor returns the sequence note for a confirmed failure, or
+// for an unknown outcome.
+func sequenceNoteFor(unknown bool) string {
+	if unknown {
+		return sequenceUnknownNote
+	}
+	return sequenceNote
+}
+
 // noteFailure notes the effects a statement run on its own may have
 // left when it failed after it was sent: a sequence change, or an
-// invalid index from a concurrent build.
-func noteFailure(res *StatementResult) {
+// invalid index from a concurrent build. unknown is set when the
+// statement's outcome is not known.
+func noteFailure(res *StatementResult, unknown bool) {
 	if sqllex.ChangesSequence(res.Statement) {
-		addNote(res, sequenceNote)
+		addNote(res, sequenceNoteFor(unknown))
 	}
 	if sqllex.BuildsIndexConcurrently(res.Statement) {
 		addNote(res, invalidIndexNote)

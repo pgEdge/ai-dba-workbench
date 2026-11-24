@@ -12,6 +12,7 @@ package actions
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,12 +83,13 @@ func TestExecuteConcurrentIndexNote(t *testing.T) {
 	}
 }
 
-// TestNoteHelpers covers combining notes on one result and noting only
-// the statements that change a sequence.
+// TestNoteHelpers covers combining notes on one result, noting only the
+// statements that change a sequence, and the wording for an unknown
+// outcome, which must not claim the statement was rolled back.
 func TestNoteHelpers(t *testing.T) {
 	t.Parallel()
 	res := StatementResult{Statement: "SELECT nextval('s')"}
-	noteFailure(&res)
+	noteFailure(&res, false)
 	if res.Note != sequenceNote {
 		t.Errorf("note = %q", res.Note)
 	}
@@ -95,9 +97,19 @@ func TestNoteHelpers(t *testing.T) {
 	if res.Note != sequenceNote+"; "+invalidIndexNote {
 		t.Errorf("combined note = %q", res.Note)
 	}
-	rs := []StatementResult{{Statement: "SELECT 1"}, {Statement: "SELECT setval('s', 2)"}}
-	noteSequencesKept(rs)
-	if rs[0].Note != "" || rs[1].Note != sequenceNote {
-		t.Errorf("results = %+v", rs)
+	res = StatementResult{Statement: "SELECT nextval('s')"}
+	noteFailure(&res, true)
+	if res.Note != sequenceUnknownNote {
+		t.Errorf("unknown note = %q", res.Note)
+	}
+	for _, unknown := range []bool{false, true} {
+		rs := []StatementResult{{Statement: "SELECT 1"}, {Statement: "SELECT setval('s', 2)"}}
+		noteSequencesKept(rs, unknown)
+		if rs[0].Note != "" || rs[1].Note != sequenceNoteFor(unknown) {
+			t.Errorf("unknown = %v: results = %+v", unknown, rs)
+		}
+	}
+	if strings.Contains(sequenceUnknownNote, "rollback does not undo") {
+		t.Error("the unknown-outcome note claims a rollback")
 	}
 }

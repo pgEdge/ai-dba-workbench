@@ -76,23 +76,28 @@ func claimedAction(t *testing.T, store *Store, connID int) int64 {
 // TestRecordOutcomeRetries covers the retries of a failed outcome write:
 // a transient failure is retried, a write that landed but reported an
 // error is taken as written, a persistent failure gives up after
-// finishAttempts, and Shutdown abandons the retries.
+// finishAttempts, and Shutdown lets the retries go on only whilst its
+// context lasts: within the budget a transient failure is still
+// recorded, and a spent budget abandons the retries at once.
 func TestRecordOutcomeRetries(t *testing.T) {
 	t.Parallel()
 	store, _, connID := newTestStore(t, "_x_rec")
 	st := &runState{transactional: true, results: []StatementResult{{Statement: "SELECT 1", Applied: true}}}
 
+	spent, cancel := context.WithCancel(context.Background())
+	cancel()
 	tests := []struct {
 		name       string
 		flaky      *flakyOutcomes
-		shutdown   bool
+		shutdown   context.Context // Shutdown is called with this on the first write, when set
 		wantCalls  int
 		wantStatus string
 	}{
-		{"transient", &flakyOutcomes{fail: 2}, false, 3, "succeeded"},
-		{"landed", &flakyOutcomes{landFirst: true}, false, 2, "succeeded"},
-		{"persistent", &flakyOutcomes{fail: 100}, false, finishAttempts, "executing"},
-		{"shutdown", &flakyOutcomes{fail: 100}, true, 1, "executing"},
+		{"transient", &flakyOutcomes{fail: 2}, nil, 3, "succeeded"},
+		{"landed", &flakyOutcomes{landFirst: true}, nil, 2, "succeeded"},
+		{"persistent", &flakyOutcomes{fail: 100}, nil, finishAttempts, "executing"},
+		{"shutdown within the budget", &flakyOutcomes{fail: 2}, context.Background(), 3, "succeeded"},
+		{"shutdown budget spent", &flakyOutcomes{fail: 100}, spent, 1, "executing"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,8 +106,12 @@ func TestRecordOutcomeRetries(t *testing.T) {
 			e.finishBackoff = time.Millisecond
 			tc.flaky.Store = store
 			e.outcomes = tc.flaky
-			if tc.shutdown {
-				tc.flaky.onCall = func(int) { _ = e.Shutdown(context.Background()) }
+			if tc.shutdown != nil {
+				tc.flaky.onCall = func(call int) {
+					if call == 1 {
+						_ = e.Shutdown(tc.shutdown)
+					}
+				}
 			}
 			e.recordOutcome(context.Background(), id, "succeeded", st)
 			if tc.flaky.calls != tc.wantCalls {

@@ -131,6 +131,10 @@ describe('App', () => {
         expect(
             screen.getByLabelText('Loading application'),
         ).toBeInTheDocument();
+        // Only the main layout locks the document's scrolling (#882).
+        expect(getComputedStyle(document.documentElement).overflow)
+            .not.toBe('hidden');
+        expect(getComputedStyle(document.body).overflow).not.toBe('hidden');
     });
 
     it('renders the main layout for an authenticated user', async () => {

@@ -194,7 +194,7 @@ describe('Chart component', () => {
         expect(instance.dispatchAction).not.toHaveBeenCalled();
     });
 
-        it('renders toolbar with export button when showToolbar and enableExport are true', () => {
+    it('renders toolbar with export button when showToolbar and enableExport are true', () => {
         renderChart({ showToolbar: true, enableExport: true });
         expect(screen.getByLabelText('Export as PNG')).toBeDefined();
     });

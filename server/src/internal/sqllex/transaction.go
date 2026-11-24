@@ -183,11 +183,13 @@ func (w stmtWords) follows(first, second string) bool {
 }
 
 // maskKeepingValues masks s as MaskNonCode does, except that a quoted
-// literal or identifier leaves the word X in its place rather than only
+// literal or identifier leaves a word in its place rather than only
 // spaces, so that an option given a quoted value, such as
-// CONCURRENTLY 'off', still reads as an option with a value. A comment
-// is masked to spaces, as it is whitespace to PostgreSQL. The result has
-// the same length as s.
+// CONCURRENTLY 'off', still reads as an option with a value. The word
+// is 1 when the quoted text is TRUE or ON in any case, which PostgreSQL
+// accepts as a boolean option value however it is quoted ('on', E'on',
+// "ON", $$true$$), and X otherwise. A comment is masked to spaces, as it
+// is whitespace to PostgreSQL. The result has the same length as s.
 func maskKeepingValues(s string, reading StringReading) string {
 	masked := []byte(MaskNonCode(s, reading))
 	for i := 0; i < len(s); {
@@ -198,10 +200,45 @@ func maskKeepingValues(s string, reading StringReading) string {
 		}
 		if !isCommentStart(s, i) && j-i >= 2 {
 			masked[i+1] = 'X'
+			if quotedTurnsOn(s[i:j]) {
+				masked[i+1] = '1'
+			}
 		}
 		i = j
 	}
 	return string(masked)
+}
+
+// quotedTurnsOn reports whether the quoted literal or identifier q reads
+// as TRUE or ON. It strips the E and U& prefixes, the quotes, and a
+// dollar quote's tags, and does not decode escapes: a value spelled with
+// one reads as off, so the statement runs in a transaction block, where
+// PostgreSQL refuses a concurrent rebuild and nothing is applied.
+func quotedTurnsOn(q string) bool {
+	switch {
+	case len(q) > 2 && (q[0] == 'U' || q[0] == 'u') && q[1] == '&':
+		q = q[2:]
+	case len(q) > 1 && (q[0] == 'E' || q[0] == 'e'):
+		q = q[1:]
+	}
+	var body string
+	switch {
+	case q[0] == '$':
+		end := strings.IndexByte(q[1:], '$')
+		if end < 0 {
+			return false
+		}
+		tag := q[:end+2]
+		if len(q) < 2*len(tag) || !strings.HasSuffix(q, tag) {
+			return false
+		}
+		body = q[len(tag) : len(q)-len(tag)]
+	case len(q) >= 2 && (q[0] == '\'' || q[0] == '"') && q[len(q)-1] == q[0]:
+		body = q[1 : len(q)-1]
+	default:
+		return false
+	}
+	return strings.EqualFold(body, "on") || strings.EqualFold(body, "true")
 }
 
 // reindexRequiresNoTransaction reads a masked, upper-cased REINDEX
@@ -302,12 +339,11 @@ func ChangesSequence(stmt string) bool {
 // optional value; the tablespace name in TABLESPACE name is a value,
 // not an option, so a tablespace called concurrently does not count.
 // PostgreSQL applies the options in order, so the last CONCURRENTLY
-// decides. It takes no value or TRUE, ON or 1 to turn it on and FALSE,
-// OFF or 0 to turn it off, and refuses any other value. Any other
-// value, including a quoted one (which maskKeepingValues leaves as X),
+// decides. It takes no value or TRUE, ON or 1 to turn it on (a quoted
+// TRUE or ON, which maskKeepingValues leaves as 1, too) and FALSE, OFF
+// or 0 to turn it off, and refuses any other value. Any other value
 // reads as off, so the statement runs in a transaction block, where
-// PostgreSQL refuses a concurrent rebuild and nothing in the batch is
-// applied.
+// PostgreSQL refuses it and nothing in the batch is applied.
 func reindexOptionsConcurrent(options string) bool {
 	concurrent := false
 	for _, opt := range strings.Split(options, ",") {

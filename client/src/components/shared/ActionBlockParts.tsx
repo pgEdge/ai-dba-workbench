@@ -18,6 +18,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
 import ErrorIcon from '@mui/icons-material/Error';
 import { dangerColour } from '../../types/actions';
@@ -37,6 +38,35 @@ import {
 } from './actionBlockState';
 
 const monoSx = { ...sxMonoFont, wordBreak: 'break-word' as const };
+
+type StatusTone = 'success' | 'error' | 'warning';
+
+/**
+ * Text in a status colour. The palette's `main` shades fall short of
+ * 4.5:1 on the light surface (success 2.28:1, warning 2.15:1, error
+ * 3.76:1), so status text takes the per-mode `chipText` shade instead;
+ * see `.claude/react-expert/color-contrast-guidelines.md`.
+ */
+const statusTextColour = (tone: StatusTone) =>
+    (theme: Theme): string => theme.palette.custom.chipText[tone];
+
+/**
+ * Execute sits on the warning fill, which white text cannot read on
+ * (2.15:1), so its label is the darkest grey in both modes: 8.26:1 on
+ * the fill and 5.57:1 on the hover shade in light mode.
+ */
+const executeButtonSx = {
+    textTransform: 'none',
+    color: (theme: Theme) => theme.palette.grey[900],
+    '&:hover': { color: (theme: Theme) => theme.palette.grey[900] },
+} as const;
+
+/** The outlined error button, with its label and edge in the text shade. */
+const overrideButtonSx = {
+    textTransform: 'none',
+    color: statusTextColour('error'),
+    borderColor: statusTextColour('error'),
+} as const;
 
 export const ActionFrame: React.FC<{ children: React.ReactNode }> = ({
     children,
@@ -97,7 +127,10 @@ export const ActionHeader: React.FC<ActionHeaderProps> = ({
             )}
             <Typography
                 variant="subtitle2"
-                sx={{ color: vetoed ? 'error.main' : 'text.primary', flex: 1 }}
+                sx={{
+                    color: vetoed ? statusTextColour('error') : 'text.primary',
+                    flex: 1,
+                }}
             >
                 {reviewLabelOf(current)}
             </Typography>
@@ -150,12 +183,12 @@ export const StatementList: React.FC<{ statements: string[] }> = ({
 );
 
 const OutcomeHeading: React.FC<{
-    colour: string;
+    tone: StatusTone;
     label: string;
     children?: React.ReactNode;
-}> = ({ colour, label, children }) => (
+}> = ({ tone, label, children }) => (
     <Box>
-        <Typography variant="subtitle2" sx={{ color: colour }}>
+        <Typography variant="subtitle2" sx={{ color: statusTextColour(tone) }}>
             {label}
         </Typography>
         {children}
@@ -188,7 +221,7 @@ export const ExecStatus: React.FC<ExecStatusProps> = ({ current, onCancel }) => 
             );
         case 'succeeded':
             return (
-                <OutcomeHeading colour="success.main" label="Succeeded">
+                <OutcomeHeading tone="success" label="Succeeded">
                     <Typography variant="body2">
                         {pluralise(rowsAffectedOf(current), 'row')} affected
                     </Typography>
@@ -198,7 +231,10 @@ export const ExecStatus: React.FC<ExecStatusProps> = ({ current, onCancel }) => 
             return <FailedOutcome current={current} />;
         case 'unknown':
             return (
-                <Typography variant="subtitle2" sx={{ color: 'warning.main' }}>
+                <Typography
+                    variant="subtitle2"
+                    sx={{ color: statusTextColour('warning') }}
+                >
                     Outcome unknown: check the database
                 </Typography>
             );
@@ -212,7 +248,7 @@ export const ExecStatus: React.FC<ExecStatusProps> = ({ current, onCancel }) => 
 const FailedOutcome: React.FC<{ current: Action }> = ({ current }) => {
     const firstError = (current.results ?? []).find((r) => r.error)?.error;
     return (
-        <OutcomeHeading colour="error.main" label="Failed">
+        <OutcomeHeading tone="error" label="Failed">
             {firstError && (
                 <Typography variant="body2" sx={monoSx}>
                     {firstError}
@@ -262,7 +298,7 @@ const StatementNote: React.FC<{ note: string }> = ({ note }) => (
     <Typography
         variant="body2"
         role="note"
-        sx={{ color: 'warning.main', wordBreak: 'break-word' }}
+        sx={{ color: statusTextColour('warning'), wordBreak: 'break-word' }}
     >
         {note}
     </Typography>
@@ -320,7 +356,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
                     color="warning"
                     disabled={busy}
                     onClick={onExecute}
-                    sx={{ textTransform: 'none' }}
+                    sx={executeButtonSx}
                 >
                     Execute
                 </Button>
@@ -343,7 +379,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
                     color="error"
                     disabled={busy}
                     onClick={onOpenOverride}
-                    sx={{ textTransform: 'none' }}
+                    sx={overrideButtonSx}
                 >
                     Override and run
                 </Button>

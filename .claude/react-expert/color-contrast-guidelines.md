@@ -101,6 +101,18 @@ chip in `components/StatusPanel/AlertChips.tsx` do. The "Service Account"
 chip in the same column still paints `info.main` on
 `alpha(info.main, 0.15)`; that is known debt, not a precedent.
 
+## Status Text And Warning Fills
+
+The same rule holds for status-coloured text off a chip: `success.main`
+(2.28:1), `warning.main` (2.15:1) and `error.main` (3.76:1 light,
+3.89:1 dark) all fail 4.5:1 on `background.paper`, so headings, notes
+and outlined-button labels in a status colour take
+`palette.custom.chipText.<status>` too, as `ActionBlockParts.tsx` does.
+Every `contrastText` in the palette is white, which reads at only 2.15:1
+on the warning fill, so a `variant="contained" color="warning"` button
+needs a dark label (`grey.900`, 8.26:1 on `warning.main` and 5.57:1 on
+the `warning.dark` hover).
+
 Measure rather than eyeball: `client/src/test/contrast.ts` provides
 `compositeOver` and `contrastRatio`, and the tests in
 `client/src/theme/__tests__/pgedgeTheme.test.ts` assert the ratio for

@@ -9,7 +9,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import { ThemeProvider } from '@mui/material/styles';
+import type { PaletteMode } from '@mui/material/styles';
 import userEvent from '@testing-library/user-event';
 import ActionBlock from '../ActionBlock';
 import AuthContext from '../../../contexts/AuthContext';
@@ -17,6 +19,8 @@ import type { AuthContextValue } from '../../../contexts/AuthContext';
 import { renderWithTheme } from '../../../test/renderWithTheme';
 import type { Action } from '../../../types/actions';
 import type { UseActionResult } from '../../../hooks/useAction';
+import { createPgedgeTheme } from '../../../theme/pgedgeTheme';
+import { contrastRatio, WCAG_AA_NORMAL_TEXT } from '../../../test/contrast';
 
 const hook: UseActionResult = {
     action: null,
@@ -591,5 +595,70 @@ describe('ActionBlock', () => {
         expect(
             screen.queryByRole('button', { name: 'Dismiss' }),
         ).not.toBeInTheDocument();
+    });
+
+    describe.each<PaletteMode>(['light', 'dark'])('contrast in %s mode', (mode) => {
+        const theme = createPgedgeTheme(mode);
+        const paper = theme.palette.background.paper;
+
+        /** The computed colour of an element as `#rrggbb`. */
+        const hexOf = (value: string): string => {
+            const channels = value.match(/\d+/g)?.slice(0, 3) ?? [];
+            return `#${channels
+                .map((c) => Number(c).toString(16).padStart(2, '0'))
+                .join('')}`;
+        };
+        const colourOf = (el: HTMLElement) => hexOf(getComputedStyle(el).color);
+
+        const renderThemed = (action: Action) => {
+            hook.action = action;
+            render(
+                <ThemeProvider theme={theme}>
+                    <AuthContext.Provider value={auth()}>
+                        <ActionBlock {...baseProps} action={action} />
+                    </AuthContext.Provider>
+                </ThemeProvider>,
+            );
+        };
+
+        it.each<[string, Partial<Action>]>([
+            ['Succeeded', { approval: 'approved', exec_status: 'succeeded' }],
+            ['Failed', { approval: 'approved', exec_status: 'failed' }],
+            [
+                'Outcome unknown: check the database',
+                { approval: 'approved', exec_status: 'unknown' },
+            ],
+            ['Vetoed by Ellie\'s supervisor', { review_status: 'vetoed' }],
+        ])('gives "%s" at least 4.5:1 on the surface', (label, over) => {
+            renderThemed(makeAction(over));
+            const ratio = contrastRatio(colourOf(screen.getByText(label)), paper);
+            expect(ratio).toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
+        });
+
+        it('gives a statement note at least 4.5:1 on the surface', () => {
+            renderThemed(makeAction({
+                approval: 'approved',
+                exec_status: 'succeeded',
+                results: [{ statement: 'x', note: 'Not undone by a rollback' }],
+            }));
+            const ratio = contrastRatio(colourOf(screen.getByRole('note')), paper);
+            expect(ratio).toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
+        });
+
+        it('gives Override and run at least 4.5:1 on the surface', () => {
+            renderThemed(makeAction({ review_status: 'vetoed' }));
+            const button = screen.getByRole('button', { name: 'Override and run' });
+            const ratio = contrastRatio(colourOf(button), paper);
+            expect(ratio).toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
+        });
+
+        it('gives the Execute label at least 4.5:1 on its fill and hover', () => {
+            renderThemed(makeAction());
+            const label = colourOf(screen.getByRole('button', { name: 'Execute' }));
+            expect(contrastRatio(label, theme.palette.warning.main))
+                .toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
+            expect(contrastRatio(label, theme.palette.warning.dark))
+                .toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
+        });
     });
 });

@@ -38,9 +38,13 @@ func TestExecuteSequenceNoteOnRollback(t *testing.T) {
 			t.Errorf("result %d has a note: %+v", i+1, res)
 		}
 	}
+	// A fresh sequence also reads last_value 1, so is_called is what
+	// shows the rolled-back nextval really advanced it.
 	var last int64
-	if err := f.target.QueryRow(context.Background(), "SELECT last_value FROM s").Scan(&last); err != nil || last != 1 {
-		t.Errorf("last_value = %d, %v", last, err)
+	var called bool
+	if err := f.target.QueryRow(context.Background(),
+		"SELECT last_value, is_called FROM s").Scan(&last, &called); err != nil || last != 1 || !called {
+		t.Errorf("last_value = %d, is_called = %v, %v", last, called, err)
 	}
 
 	a = f.run(t, "SELECT nextval('s')")

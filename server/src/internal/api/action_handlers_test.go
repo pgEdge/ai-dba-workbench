@@ -570,7 +570,10 @@ func TestActionStatementMasking(t *testing.T) {
 				Review:     &actions.Verdict{Decision: "pass", Reasons: []string{"sets PASSWORD '" + secret + "'"}},
 				Results: []actions.StatementResult{{
 					Statement: stmt, Error: "near PASSWORD '" + secret + "'",
-					Columns: []string{"c"}, Rows: [][]string{{"PASSWORD '" + secret + "'"}},
+					// The second cell is a bare value: only its column's
+					// name marks it as a secret.
+					Columns: []string{"c", "user_password"},
+					Rows:    [][]string{{"PASSWORD '" + secret + "'", secret}},
 				}},
 				Preview: json.RawMessage(`{"text":"` + secret + `"}`),
 			}
@@ -581,8 +584,8 @@ func TestActionStatementMasking(t *testing.T) {
 				t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 			}
 			body := rec.Body.String()
-			if got := strings.Count(body, secret); tt.shown && got != 7 {
-				t.Errorf("the secret appears %d times, want 7: %s", got, body)
+			if got := strings.Count(body, secret); tt.shown && got != 8 {
+				t.Errorf("the secret appears %d times, want 8: %s", got, body)
 			} else if !tt.shown && got != 0 {
 				t.Errorf("the secret leaked: %s", body)
 			}
@@ -595,7 +598,7 @@ func TestActionStatementMasking(t *testing.T) {
 				t.Errorf("a masked field was dropped: %s", body)
 			}
 			if a.Statements[0] != stmt || a.Results[0].Statement != stmt ||
-				!strings.Contains(a.Results[0].Rows[0][0], secret) ||
+				!strings.Contains(a.Results[0].Rows[0][0], secret) || a.Results[0].Rows[0][1] != secret ||
 				!strings.Contains(a.Review.Reasons[0], secret) || !strings.Contains(*a.Rationale, secret) {
 				t.Error("masking altered the stored action")
 			}

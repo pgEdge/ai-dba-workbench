@@ -538,9 +538,11 @@ func (h *ActionHandler) viewFor(ctx context.Context, a *actions.Action) *actions
 // with a masked copy, leaving the slices a shared with the stored action
 // untouched. Statement text goes through metrics.RedactStatementText,
 // and free text (the rationale, the review's reasons, the run's errors
-// and result rows) through redact.Text. The preview, undo, verification
-// and outcome documents, which nothing writes yet, are withheld, since
-// their masking cannot be known until something does.
+// and result rows) through redact.Text, except that a result cell in a
+// secret-named column is masked whole (maskResultRows). The preview,
+// undo, verification and outcome documents, which nothing writes yet,
+// are withheld, since their masking cannot be known until something
+// does.
 func maskActionText(a *actions.Action) {
 	a.Statements = mapStrings(a.Statements, metrics.RedactStatementText)
 	if a.Rationale != nil {
@@ -558,18 +560,41 @@ func maskActionText(a *actions.Action) {
 			res := a.Results[i]
 			res.Statement = metrics.RedactStatementText(res.Statement)
 			res.Error = redact.Text(res.Error)
-			if res.Rows != nil {
-				rows := make([][]string, len(res.Rows))
-				for j, row := range res.Rows {
-					rows[j] = mapStrings(row, redact.Text)
-				}
-				res.Rows = rows
-			}
+			res.Rows = maskResultRows(res.Columns, res.Rows)
 			results[i] = res
 		}
 		a.Results = results
 	}
 	a.Preview, a.Undo, a.Verification, a.Outcome = nil, nil, nil, nil
+}
+
+// maskResultRows returns a masked copy of a run's result rows, or nil
+// for nil rows. A cell in a column whose name marks a secret, by the
+// rule metrics.IsSecretColumnName applies to metric columns, becomes
+// redact.RedactedValue whatever it holds, since a bare value carries no
+// keyword for redact.Text to find; every other cell goes through
+// redact.Text.
+func maskResultRows(columns []string, rows [][]string) [][]string {
+	if rows == nil {
+		return nil
+	}
+	secret := make([]bool, len(columns))
+	for i, c := range columns {
+		secret[i] = metrics.IsSecretColumnName(c)
+	}
+	masked := make([][]string, len(rows))
+	for j, row := range rows {
+		out := make([]string, len(row))
+		for k, cell := range row {
+			if k < len(secret) && secret[k] {
+				out[k] = redact.RedactedValue
+			} else {
+				out[k] = redact.Text(cell)
+			}
+		}
+		masked[j] = out
+	}
+	return masked
 }
 
 // mapStrings returns a new slice holding f of each element of in, or nil

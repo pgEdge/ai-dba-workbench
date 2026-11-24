@@ -240,16 +240,16 @@ func TestExecuteCapturesTagsAndRows(t *testing.T) {
 }
 
 // TestExecuteOnce proves an action runs only once, and that the claim is
-// detached from the caller's context: a request cancelled as it reaches
-// Start still claims and runs the action, rather than failing the claim
-// part way through.
+// detached from the caller's context: a request whose context is done
+// as it reaches Start still claims and runs the action, rather than
+// failing the claim part way through.
 func TestExecuteOnce(t *testing.T) {
 	t.Parallel()
 	f := newExecFixture(t, "_x_once", time.Second, time.Minute, 100)
 	id := f.propose(t, "SELECT 1")
-	cancelled, cancel := context.WithCancel(context.Background())
+	doneCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := f.exec.Start(cancelled, id); err != nil {
+	if err := f.exec.Start(doneCtx, id); err != nil {
 		t.Fatalf("first start: %v", err)
 	}
 	if err := f.exec.Start(context.Background(), id); !errors.Is(err, ErrAlreadyStarted) {

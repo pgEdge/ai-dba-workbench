@@ -143,7 +143,8 @@ project adheres to
 - Include active alerts on offline servers in the alert count on the
   estate dashboard's cluster cards, and count a server whose collected
   data is stale as a warning rather than online on the cluster cards,
-  the server status chart and in the AI overview. (#835)
+  the server status chart, the status panel and in the AI overview.
+  (#835)
 
 ### Security
 

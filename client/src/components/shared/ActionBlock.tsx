@@ -13,6 +13,7 @@
  */
 
 import type React from 'react';
+import type { Dispatch } from 'react';
 import { useContext, useState } from 'react';
 import Box from '@mui/material/Box';
 import AuthContext from '../../contexts/AuthContext';
@@ -63,7 +64,7 @@ interface ActionOverrideDialogProps {
     open: boolean;
     current: Action;
     serverName: string;
-    setOpen: (open: boolean) => void;
+    setOpen: Dispatch<boolean>;
     execute: UseActionResult['execute'];
 }
 
@@ -95,7 +96,7 @@ interface ActionDetailsProps {
     fromSql: boolean;
     serverName?: string;
     overrideOpen: boolean;
-    setOverrideOpen: (open: boolean) => void;
+    setOverrideOpen: Dispatch<boolean>;
     execute: UseActionResult['execute'];
     cancel: UseActionResult['cancel'];
     onDismiss?: () => void;

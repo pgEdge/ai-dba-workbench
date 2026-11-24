@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/smtpauth"
 )
 
 // smtpBehaviour configures fakeSMTPServer.
@@ -49,6 +50,9 @@ type fakeSMTPServer struct {
 	ln       net.Listener
 	b        smtpBehaviour
 	accepted atomic.Int32
+	// auths counts AUTH commands, so a test can show credentials were
+	// never sent.
+	auths    atomic.Int32
 	mu       sync.Mutex
 	messages []string
 }
@@ -134,6 +138,7 @@ func (s *fakeSMTPServer) serve(c net.Conn) {
 			r = bufio.NewReader(c)
 			upgraded = true
 		case "AUTH":
+			s.auths.Add(1)
 			if !failed(verb) {
 				reply("235 accepted")
 			}
@@ -191,19 +196,46 @@ func testServerTLS(t *testing.T) (*tls.Config, *x509.CertPool) {
 	return &tls.Config{Certificates: ts.TLS.Certificates, MinVersion: tls.VersionTLS12}, pool
 }
 
+// nonLoopbackPeer is the remote address the SMTP tests' connections
+// report by default, a documentation address (RFC 5737). The fake
+// server listens on loopback, and smtpauth.PlainAuth sends credentials
+// without TLS to a loopback address, so without it a refused or
+// succeeding PLAIN could not show whether the session was upgraded.
+const nonLoopbackPeer = "192.0.2.25"
+
+// peerAddrConn is a connection that reports remote as its peer.
+type peerAddrConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (c *peerAddrConn) RemoteAddr() net.Addr { return c.remote }
+
 // smtpTestNotifier returns an email notifier that sends to server,
 // whatever port the channel names, through the relaxed delivery policy
 // (the server is on loopback) and a resolver mapping example.com to it.
+// Its connections report nonLoopbackPeer as their remote address.
 func smtpTestNotifier(server *fakeSMTPServer, pool *x509.CertPool) *emailNotifier {
-	guarded := deliveryDialer(deliveryPolicy(true),
-		fakeResolver(map[string][]string{"example.com": {"127.0.0.1"}}))
+	return smtpTestNotifierVia(server, pool,
+		map[string][]string{"example.com": {"127.0.0.1"}}, nonLoopbackPeer)
+}
+
+// smtpTestNotifierVia is smtpTestNotifier with the resolver's names
+// and the reported peer chosen by the caller; an empty peer leaves the
+// connection's real, loopback, remote address.
+func smtpTestNotifierVia(server *fakeSMTPServer, pool *x509.CertPool, names map[string][]string, peer string) *emailNotifier {
+	guarded := deliveryDialer(deliveryPolicy(true), fakeResolver(names))
 	port := strconv.Itoa(server.port())
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, _, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, err
 		}
-		return guarded(ctx, network, net.JoinHostPort(host, port))
+		conn, err := guarded(ctx, network, net.JoinHostPort(host, port))
+		if err != nil || peer == "" {
+			return conn, err
+		}
+		return &peerAddrConn{Conn: conn, remote: &net.TCPAddr{IP: net.ParseIP(peer), Port: server.port()}}, nil
 	}
 	n, ok := newEmailNotifierWithDialer("secret", &mockTemplateRenderer{}, dial).(*emailNotifier)
 	if !ok {
@@ -285,8 +317,8 @@ func TestEmailNotifier_SMTPFailures(t *testing.T) {
 		{"greeting", smtpBehaviour{greeting: "554 go away"}, 587, false, "failed to create SMTP client"},
 		{"hello", smtpBehaviour{fail: map[string]string{"EHLO": "500 no", "HELO": "500 no"}}, 587, false, "SMTP HELLO failed"},
 		{"starttls", smtpBehaviour{startTLS: serverTLS, fail: map[string]string{"STARTTLS": "454 no"}}, 587, false, "STARTTLS failed"},
-		// Without TLS, net/smtp refuses PLAIN to a host other than
-		// localhost before the server is asked.
+		// Without TLS, PLAIN is refused before the server is asked,
+		// because the address connected to is not loopback.
 		{"authentication in the clear", smtpBehaviour{}, 587, true, "SMTP authentication failed"},
 		{"mail from", smtpBehaviour{fail: map[string]string{"MAIL": "550 no"}}, 587, false, "SMTP MAIL FROM failed"},
 		{"rcpt to", smtpBehaviour{fail: map[string]string{"RCPT": "550 no"}}, 587, false, "SMTP RCPT TO failed"},
@@ -300,6 +332,60 @@ func TestEmailNotifier_SMTPFailures(t *testing.T) {
 			err := n.Send(context.Background(), smtpTestChannel(tt.port, true, tt.withAuth), createTestPayload())
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Send() = %v, want an error containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestEmailNotifier_PlaintextAuthByConnectedAddress checks that without
+// TLS the credentials are sent only when the address connected to is
+// loopback, whatever the host name (issue #843). A host named localhost
+// whose connection lands elsewhere, as it would with a changed
+// /etc/hosts or a DNS answer for the name, is refused before AUTH is
+// sent; net/smtp's own PlainAuth would have sent the credentials there
+// in the clear. A genuinely loopback connection is allowed, whatever
+// the name.
+func TestEmailNotifier_PlaintextAuthByConnectedAddress(t *testing.T) {
+	_, pool := testServerTLS(t)
+	tests := []struct {
+		name     string
+		host     string
+		peer     string
+		port     int
+		useTLS   bool
+		wantSent bool
+	}{
+		{"localhost connected elsewhere, TLS off", "localhost", nonLoopbackPeer, 25, false, false},
+		{"localhost connected elsewhere, STARTTLS not offered", "localhost", nonLoopbackPeer, 587, true, false},
+		{"127.0.0.1 connected elsewhere", "127.0.0.1", nonLoopbackPeer, 25, false, false},
+		{"localhost connected to loopback", "localhost", "", 25, false, true},
+		{"other name connected to loopback", "example.com", "", 587, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := newFakeSMTPServer(t, smtpBehaviour{})
+			n := smtpTestNotifierVia(server, pool, map[string][]string{
+				"localhost": {"127.0.0.1"}, "example.com": {"127.0.0.1"},
+			}, tt.peer)
+			ch := smtpTestChannel(tt.port, tt.useTLS, true)
+			ch.SMTPHost = strPtr(tt.host)
+			err := n.Send(context.Background(), ch, createTestPayload())
+			if tt.wantSent {
+				if err != nil {
+					t.Fatalf("Send() = %v", err)
+				}
+				if server.auths.Load() != 1 || server.messageCount() != 1 {
+					t.Errorf("server saw %d AUTH and %d message(s), want 1 and 1",
+						server.auths.Load(), server.messageCount())
+				}
+				return
+			}
+			if !errors.Is(err, smtpauth.ErrUnencryptedConnection) {
+				t.Fatalf("Send() = %v, want %v", err, smtpauth.ErrUnencryptedConnection)
+			}
+			if server.auths.Load() != 0 || server.messageCount() != 0 {
+				t.Errorf("server saw %d AUTH and %d message(s), want none",
+					server.auths.Load(), server.messageCount())
 			}
 		})
 	}

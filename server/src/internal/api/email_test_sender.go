@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
+	"github.com/pgedge/ai-workbench/pkg/smtpauth"
 )
 
 // sanitizeSMTPHeader removes CR/LF characters from an SMTP header or
@@ -67,10 +68,16 @@ func (s *notificationTestSender) sendTestEmail(ctx context.Context, e testEmail)
 	// needs to split the address again.
 	addr := net.JoinHostPort(smtpHost, strconv.Itoa(e.Port))
 
-	// Setup authentication if credentials provided
-	var auth smtp.Auth
+	// Set up authentication if credentials are provided. As in the
+	// alerter, the PLAIN auth is built on the connection the dialer
+	// returns, because whether the credentials may go without TLS
+	// depends on the address actually connected to, not on the host
+	// name (issue #843).
+	var newAuth smtpAuthFunc
 	if e.Username != "" && e.Password != "" {
-		auth = smtp.PlainAuth("", e.Username, e.Password, smtpHost)
+		newAuth = func(conn net.Conn) smtp.Auth {
+			return smtpauth.PlainAuth("", e.Username, e.Password, smtpHost, conn)
+		}
 	}
 
 	// Build From header with optional display name
@@ -86,9 +93,9 @@ func (s *notificationTestSender) sendTestEmail(ctx context.Context, e testEmail)
 	// every other combination upgrades with STARTTLS when the server
 	// advertises it, whether or not TLS is turned on.
 	if e.Port == 465 && e.UseTLS {
-		return s.sendWithImplicitTLS(ctx, addr, auth, fromAddress, toAddresses, msg, smtpHost)
+		return s.sendWithImplicitTLS(ctx, addr, newAuth, fromAddress, toAddresses, msg, smtpHost)
 	}
-	return s.sendWithSTARTTLS(ctx, addr, auth, fromAddress, toAddresses, msg, smtpHost)
+	return s.sendWithSTARTTLS(ctx, addr, newAuth, fromAddress, toAddresses, msg, smtpHost)
 }
 
 // dialSMTP connects to addr through the guarded dialer and ties the
@@ -112,6 +119,22 @@ func (s *notificationTestSender) dialSMTP(ctx context.Context, addr string) (net
 		_ = conn.Close() //nolint:errcheck // unblocks a stalled read or write
 	})
 	return conn, func() { stop() }, nil
+}
+
+// smtpAuthFunc builds the SMTP authentication for a connection the
+// test sender has opened; a nil smtpAuthFunc means no authentication.
+type smtpAuthFunc func(conn net.Conn) smtp.Auth
+
+// smtpAuthenticate runs SMTP authentication on client when newAuth is
+// set, building the auth on conn, the connection the sender opened.
+func smtpAuthenticate(client *smtp.Client, newAuth smtpAuthFunc, conn net.Conn) error {
+	if newAuth == nil {
+		return nil
+	}
+	if err := client.Auth(newAuth(conn)); err != nil {
+		return fmt.Errorf("SMTP authentication failed: %w", err)
+	}
+	return nil
 }
 
 // buildTestEmailMessage constructs the MIME headers and HTML body for the
@@ -140,7 +163,7 @@ func buildTestEmailMessage(fromHeader string, toAddresses []string) []byte {
 func (s *notificationTestSender) sendWithImplicitTLS(
 	ctx context.Context,
 	addr string,
-	auth smtp.Auth,
+	newAuth smtpAuthFunc,
 	from string,
 	to []string,
 	msg []byte,
@@ -170,10 +193,8 @@ func (s *notificationTestSender) sendWithImplicitTLS(
 	}
 	defer client.Close()
 
-	if auth != nil {
-		if err := client.Auth(auth); err != nil {
-			return fmt.Errorf("SMTP authentication failed: %w", err)
-		}
+	if err := smtpAuthenticate(client, newAuth, rawConn); err != nil {
+		return err
 	}
 
 	return sendViaSMTPClient(client, from, to, msg)
@@ -184,7 +205,7 @@ func (s *notificationTestSender) sendWithImplicitTLS(
 func (s *notificationTestSender) sendWithSTARTTLS(
 	ctx context.Context,
 	addr string,
-	auth smtp.Auth,
+	newAuth smtpAuthFunc,
 	from string,
 	to []string,
 	msg []byte,
@@ -219,10 +240,11 @@ func (s *notificationTestSender) sendWithSTARTTLS(
 		}
 	}
 
-	if auth != nil {
-		if err := client.Auth(auth); err != nil {
-			return fmt.Errorf("SMTP authentication failed: %w", err)
-		}
+	// Without STARTTLS the session is still plaintext, and
+	// smtpauth.PlainAuth refuses to send the credentials unless conn is
+	// to a loopback address.
+	if err := smtpAuthenticate(client, newAuth, conn); err != nil {
+		return err
 	}
 
 	return sendViaSMTPClient(client, from, to, msg)

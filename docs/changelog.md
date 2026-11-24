@@ -79,6 +79,14 @@ project adheres to
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
 
+### Security
+
+- Check the supplied password against the stored hash on a failed
+  login for a disabled account, including one locked out after too
+  many failed attempts, rather than returning before any comparison;
+  this removes the large timing difference that showed the account
+  existed but was disabled. (#851)
+
 ## [2.0.0-beta1] - 2026-11-12
 
 !!! warning "Breaking changes"

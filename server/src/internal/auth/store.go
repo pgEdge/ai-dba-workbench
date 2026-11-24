@@ -105,6 +105,13 @@ func dummyHashAtCost(cost int) ([]byte, error) {
 	return hash, nil
 }
 
+// compareHashAndPassword is the bcrypt comparison AuthenticateUser
+// makes on every path that reaches the user lookup. It is a variable
+// only so that tests can confirm each failure path pays for exactly one
+// comparison, which is what keeps their response times alike; nothing
+// outside tests replaces it.
+var compareHashAndPassword = bcrypt.CompareHashAndPassword
+
 // testBcryptCost, when non-zero, is the bcrypt cost NewAuthStore gives
 // each new store in place of DefaultBcryptCost. It exists only so that
 // this package's TestMain can lower the cost for the whole test binary
@@ -1413,7 +1420,7 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 		// at production cost unless a test lowered it; s.mu is held by
 		// AuthenticateUser.
 		//nolint:errcheck // Result is intentionally ignored
-		bcrypt.CompareHashAndPassword(s.timingDummyHash(), []byte(password))
+		compareHashAndPassword(s.timingDummyHash(), []byte(password))
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 	if err != nil {
@@ -1437,7 +1444,7 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 			log.Printf("[AUTH] Authentication failed for user %s: identity is managed by %s", username, user.AuthSource)
 		}
 		//nolint:errcheck // Result is intentionally ignored
-		bcrypt.CompareHashAndPassword(s.timingDummyHash(), []byte(password))
+		compareHashAndPassword(s.timingDummyHash(), []byte(password))
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 
@@ -1445,11 +1452,17 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 		// Log the actual reason for audit purposes, but return generic error
 		// to prevent user enumeration attacks
 		log.Printf("[AUTH] Authentication failed for user %s: account is disabled", username)
+		// Compare against the user's own hash and ignore the result, so
+		// that a disabled account, including one locked out after too
+		// many failed attempts, costs the same comparison as a wrong
+		// password and cannot be told apart from it by timing.
+		//nolint:errcheck // Result is intentionally ignored
+		compareHashAndPassword([]byte(user.PasswordHash), []byte(password))
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 
 	// Verify password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+	if err := compareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		// Increment failed attempts (non-critical, best effort)
 		user.FailedAttempts++
 		//nolint:errcheck // Best effort update, authentication already failed

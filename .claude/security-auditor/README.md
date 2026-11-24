@@ -27,8 +27,15 @@ moved.
 ## Design Decisions to Audit Against
 
 - Passwords are hashed with bcrypt at cost 12 (`DefaultBcryptCost` in
-  `auth/store.go`); a timing-equaliser dummy hash is compared when a
-  username does not exist.
+  `auth/store.go`). Every failed login in `AuthenticateUser` makes
+  exactly one bcrypt comparison: unknown usernames, service accounts
+  and federated accounts compare against a timing-equaliser dummy
+  hash, whilst disabled accounts (including those locked out) compare
+  against their own stored hash, as a wrong password does. The
+  `failed_attempts` write on the enabled wrong-password path remains a
+  small known timing difference (sub-millisecond to a few milliseconds
+  against about 250 ms of bcrypt, capped by the 10-attempt lockout),
+  pending a decision by the maintainer.
 - Session and service tokens are 32 random bytes from `crypto/rand`
   and are stored as SHA-256 hashes; the raw token is shown once.
 - Clients authenticate with a bearer token in the `Authorization`

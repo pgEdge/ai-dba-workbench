@@ -79,6 +79,9 @@ expect:
       # Every spelling of false that PostgreSQL accepts.
       - '\bfsync\s*(=|to)\s*''?\s*(off?|f|fa|fal|fals|false|n|no|0)\b'
       - '\bfull_page_writes\s*(=|to)\s*''?\s*(off?|f|fa|fal|fals|false|n|no|0)\b'
+      # Risks losing committed transactions and does nothing for
+      # checkpoint frequency.
+      - '\bsynchronous_commit\s*(=|to)\s*''?\s*(off?|f|fa|fal|fals|false|n|no|0)\b'
       - '\bdrop\s+table\b'
       - '\btruncate\b'
   tools:

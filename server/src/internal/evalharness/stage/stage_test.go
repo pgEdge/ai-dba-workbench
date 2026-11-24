@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -137,6 +138,18 @@ func databaseExists(t *testing.T, dsn, name string) bool {
 	return scanInt(t, testConn(t, dsn).QueryRow(context.Background(), "SELECT count(*) FROM pg_database WHERE datname = $1", name)) == 1
 }
 
+// testMarker returns the package database's name, which stands in for
+// DisposableMarker so the tests need not create the marker on a shared
+// instance.
+func testMarker(t *testing.T, dsn string) string {
+	t.Helper()
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg.Database
+}
+
 func float(v float64) *float64 { return &v }
 
 func baseIncident(id string) *incident.Incident {
@@ -172,7 +185,7 @@ func TestStageAndTeardown(t *testing.T) {
 	inc.Teardown = "INSERT INTO teardown_log VALUES ('stage-full');"
 
 	reg := &fakeRegistry{}
-	s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, Registry: reg, Now: func() time.Time { return now }}
+	s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, marker: testMarker(t, dsn), Registry: reg, Now: func() time.Time { return now }}
 	st, err := s.Stage(ctx, inc)
 	if err != nil {
 		t.Fatalf("Stage: %v", err)
@@ -266,14 +279,6 @@ func TestStageFailures(t *testing.T) {
 			want:   "register connection: api down",
 		},
 		{
-			name: "datastore unreachable",
-			mutate: func(_ *incident.Incident, s *Stager, _ *fakeRegistry) {
-				s.DatastoreDSN = "postgres://127.0.0.1:1/x?connect_timeout=2"
-			},
-			want:      "connect to datastore",
-			registers: true,
-		},
-		{
 			name: "unknown metrics table",
 			mutate: func(i *incident.Incident, _ *Stager, _ *fakeRegistry) {
 				i.Metrics = []incident.MetricSeries{{Table: "no_such", Samples: []incident.Sample{{Values: map[string]any{"a": 1}}}}}
@@ -354,7 +359,7 @@ func TestStageFailures(t *testing.T) {
 			inc := baseIncident(fmt.Sprintf("fail-%d", i))
 			inc.Teardown = "INSERT INTO teardown_log VALUES ('" + strings.ReplaceAll(tc.name, " ", "-") + "');"
 			reg := &fakeRegistry{}
-			s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, Registry: reg}
+			s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, marker: testMarker(t, dsn), Registry: reg}
 			tc.mutate(inc, s, reg)
 
 			st, err := s.Stage(ctx, inc)
@@ -385,7 +390,7 @@ func TestTeardownReportsErrors(t *testing.T) {
 	dsn := testDSN(t)
 	ctx := context.Background()
 	reg := &fakeRegistry{deleteErr: errors.New("gone")}
-	s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, Registry: reg}
+	s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, marker: testMarker(t, dsn), Registry: reg}
 	inc := baseIncident("stage-teardown")
 	inc.Teardown = "SELECT no_such_function();"
 	st, err := s.Stage(ctx, inc)
@@ -426,7 +431,7 @@ func TestRollbackFailure(t *testing.T) {
 	inc := baseIncident("rollback-fail")
 	inc.Setup = "SELECT no_such_column FROM stock;"
 	inc.Teardown = "SELECT no_such_function();"
-	s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, Registry: &fakeRegistry{}, RollbackTimeout: time.Minute}
+	s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, marker: testMarker(t, dsn), Registry: &fakeRegistry{}, RollbackTimeout: time.Minute}
 	_, err := s.Stage(context.Background(), inc)
 	var rb *RollbackError
 	if !errors.As(err, &rb) || !strings.Contains(err.Error(), "setup: ") ||
@@ -497,9 +502,77 @@ func TestBadAdminDSN(t *testing.T) {
 	if _, err := s.Stage(ctx, baseIncident("bad-dsn")); err == nil || !strings.Contains(err.Error(), "parse admin DSN") {
 		t.Errorf("Stage error = %v", err)
 	}
-	s.AdminDSN = "postgres://postgres@127.0.0.1:1/x?connect_timeout=2"
-	if _, err := s.Stage(ctx, baseIncident("bad-dsn")); err == nil || !strings.Contains(err.Error(), "create database") {
-		t.Errorf("Stage error = %v", err)
+	// Past the guard, stage parses the DSN again.
+	st := &Staged{stager: s, incident: baseIncident("bad-dsn")}
+	if err := st.stage(ctx); err == nil || !strings.Contains(err.Error(), "parse admin DSN") {
+		t.Errorf("stage error = %v", err)
+	}
+	unreachable := "postgres://postgres@127.0.0.1:1/x?connect_timeout=2"
+	s.AdminDSN, s.DatastoreDSN = unreachable, unreachable
+	if err := st.stage(ctx); err == nil || !strings.Contains(err.Error(), "create database") {
+		t.Errorf("stage error = %v", err)
+	}
+	if err := st.seedDatastore(ctx); err == nil || !strings.Contains(err.Error(), "connect to datastore") {
+		t.Errorf("seedDatastore error = %v", err)
+	}
+}
+
+// TestDisposableGuard checks that Stage refuses anything but a loopback
+// instance carrying the marker database, before it changes anything.
+func TestDisposableGuard(t *testing.T) {
+	t.Parallel()
+	dsn := testDSN(t)
+	unreachable := "postgres://postgres@127.0.0.1:1/x?connect_timeout=2"
+	cases := []struct {
+		name, admin, datastore, marker, want string
+	}{
+		{"remote admin host", "postgres://u@192.0.2.1/x", dsn, "", `admin DSN names non-loopback host "192.0.2.1"`},
+		{"remote fallback host", "host=127.0.0.1,192.0.2.1 user=u dbname=x", dsn, "", `admin DSN names non-loopback host "192.0.2.1"`},
+		{"unix socket", "host=/tmp user=u dbname=x", dsn, "", `admin DSN names non-loopback host "/tmp"`},
+		{"remote datastore host", dsn, "postgres://u@192.0.2.1/x", "", `datastore DSN names non-loopback host "192.0.2.1"`},
+		{"bad datastore DSN", dsn, "postgres://%zz", "", "parse datastore DSN"},
+		{"admin unreachable", unreachable, dsn, "", "connect with the admin DSN"},
+		{"datastore unreachable", dsn, unreachable, testMarker(t, dsn), "connect with the datastore DSN"},
+		{"no marker", dsn, dsn, "", "has no " + DisposableMarker + " database"},
+		{"no custom marker", dsn, dsn, "eval_no_such_marker", "has no eval_no_such_marker database"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reg := &fakeRegistry{}
+			s := &Stager{AdminDSN: tc.admin, DatastoreDSN: tc.datastore, Registry: reg, marker: tc.marker}
+			st, err := s.Stage(context.Background(), baseIncident("guard"))
+			if err == nil {
+				_ = st.Teardown(context.Background())
+				t.Fatal("Stage succeeded")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Stage error = %v, want it to contain %q", err, tc.want)
+			}
+			if len(reg.created) != 0 || len(reg.deleted) != 0 {
+				t.Errorf("registry used: %+v", reg)
+			}
+		})
+	}
+	// A canceled context fails the check rather than passing it.
+	s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, Registry: &fakeRegistry{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.checkDisposable(ctx); err == nil {
+		t.Error("checkDisposable succeeded with a canceled context")
+	}
+}
+
+func TestRequireLoopback(t *testing.T) {
+	t.Parallel()
+	for host, ok := range map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true, "127.0.0.2": true, "192.0.2.1": false, "example.com": false} {
+		cfg, err := pgx.ParseConfig("postgres://u@" + net.JoinHostPort(host, "5432") + "/x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := requireLoopback(cfg); (err == nil) != ok {
+			t.Errorf("requireLoopback(%q) = %v", host, err)
+		}
 	}
 }
 

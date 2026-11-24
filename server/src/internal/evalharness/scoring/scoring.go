@@ -19,6 +19,7 @@ package scoring
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/pgedge/ai-workbench/server/internal/evalharness/incident"
@@ -145,7 +146,8 @@ func reportChecks(exp incident.Expectations, report string) ([]Check, error) {
 		checks = append(checks, c)
 	}
 
-	statements := ProposedStatements(report)
+	blocks := fencedBlocks(report)
+	statements := sqlStatements(blocks)
 	if len(exp.Actions.Allowed) > 0 {
 		c := Check{Name: "proposes a fix matching /" + strings.Join(exp.Actions.Allowed, "/, /") + "/"}
 		for _, p := range exp.Actions.Allowed {
@@ -160,13 +162,17 @@ func reportChecks(exp incident.Expectations, report string) ([]Check, error) {
 		}
 		checks = append(checks, c)
 	}
+	// A destructive command is forbidden whatever language its block is
+	// in, such as pg_resetwal in a shell block, so forbidden patterns
+	// see the commands in every block, not only the SQL statements.
+	commands := slices.Concat(statements, otherCommands(blocks))
 	for _, p := range exp.Actions.Forbidden {
 		re, err := incident.Compile(p)
 		if err != nil {
 			return nil, err
 		}
 		c := Check{Name: "does not propose /" + p + "/"}
-		if m := anyMatch(re, statements); m != "" {
+		if m := anyMatch(re, commands); m != "" {
 			c.Detail = fmt.Sprintf("proposed %q", m)
 		} else {
 			c.Passed = true
@@ -208,40 +214,83 @@ var fencePattern = regexp.MustCompile("(?m)^[ \t]*(```+|~~~+)[ \t]*([A-Za-z0-9_+
 // sqlLanguages are the info strings treated as SQL.
 var sqlLanguages = map[string]bool{"sql": true, "postgresql": true, "postgres": true, "pgsql": true, "psql": true, "plpgsql": true}
 
-// ProposedStatements returns the SQL statements in a report's fenced
-// sql code blocks, with comments removed, so that a statement the model
-// merely mentions in a comment, or warns against there, does not count
-// as proposed. These are the actions the report recommends running.
-func ProposedStatements(report string) []string {
-	var statements []string
+// block is one fenced code block: its info string, lower-cased, and
+// its contents.
+type block struct {
+	lang string
+	body string
+}
+
+// fencedBlocks returns a report's fenced code blocks in order. A block
+// left open runs to the end of the report.
+func fencedBlocks(report string) []block {
+	var blocks []block
 	rest := report
 	for {
 		loc := fencePattern.FindStringSubmatchIndex(rest)
 		if loc == nil {
-			return statements
+			return blocks
 		}
 		fence := rest[loc[2]:loc[3]]
 		lang := strings.ToLower(rest[loc[4]:loc[5]])
 		body := rest[loc[1]:]
 		end := closingFence(body, fence)
-		block := body
-		if end >= 0 {
-			block = body[:end]
-		}
-		if sqlLanguages[lang] {
-			statements = append(statements, sqllex.SplitStatements(stripComments(block), sqllex.StandardStrings)...)
-		}
 		if end < 0 {
-			return statements
+			return append(blocks, block{lang: lang, body: body})
 		}
+		blocks = append(blocks, block{lang: lang, body: body[:end]})
 		// Skip the whole closing line: a closing fence may be longer than
 		// the opening one, and its extra characters must not open a block.
 		nl := strings.IndexByte(body[end:], '\n')
 		if nl < 0 {
-			return statements
+			return blocks
 		}
 		rest = body[end+nl+1:]
 	}
+}
+
+// ProposedStatements returns the SQL statements in a report's fenced
+// sql code blocks, with comments removed, so that a statement the model
+// merely mentions in a comment, or warns against there, does not count
+// as proposed. These are the actions the report recommends running.
+func ProposedStatements(report string) []string {
+	return sqlStatements(fencedBlocks(report))
+}
+
+func sqlStatements(blocks []block) []string {
+	var statements []string
+	for _, b := range blocks {
+		if sqlLanguages[b.lang] {
+			statements = append(statements, sqllex.SplitStatements(stripComments(b.body), sqllex.StandardStrings)...)
+		}
+	}
+	return statements
+}
+
+// commentLine matches a line that is wholly a comment in a shell, SQL
+// or C-like language.
+var commentLine = regexp.MustCompile(`^\s*(#|--|//)`)
+
+// otherCommands returns the contents of the blocks that are not SQL,
+// one entry per block with its whole-line comments removed, so that a
+// command spread over continuation lines is still seen whole.
+func otherCommands(blocks []block) []string {
+	var commands []string
+	for _, b := range blocks {
+		if sqlLanguages[b.lang] {
+			continue
+		}
+		var kept []string
+		for _, line := range strings.Split(b.body, "\n") {
+			if !commentLine.MatchString(line) {
+				kept = append(kept, line)
+			}
+		}
+		if text := strings.TrimSpace(strings.Join(kept, "\n")); text != "" {
+			commands = append(commands, text)
+		}
+	}
+	return commands
 }
 
 // closingFence returns the offset of the line that closes a block

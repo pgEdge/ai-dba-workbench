@@ -23,7 +23,8 @@ project adheres to
   with deterministic checks and writes a Markdown report of pass rates
   and their variance across runs and models; run it on demand with
   `make evaluate`, or from the weekly and manually triggered Ellie
-  evaluation workflow. It is not part of `make test-all`.
+  evaluation workflow. It is not part of `make test-all`, and it
+  stages incidents only on a loopback instance marked as disposable.
   (#772)
 
 ### Changed

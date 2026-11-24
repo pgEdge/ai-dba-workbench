@@ -66,8 +66,11 @@ mkdir -p "${RUN_DIR}/logs" "${RUN_DIR}/data" "${OUT_DIR}"
 chmod 700 "${RUN_DIR}"
 
 cleanup() {
+    # The server read the API key files when it started, so they can go
+    # whether or not the stack is kept.
+    rm -rf "${RUN_DIR}/keys"
     if [ "${EVALUATE_KEEP_STACK:-0}" = "1" ]; then
-        echo "EVALUATE_KEEP_STACK=1; leaving the stack running."
+        echo "EVALUATE_KEEP_STACK=1; leaving the stack running (its API key files are removed)."
         echo "  Server log: ${RUN_DIR}/logs/server.log"
         echo "  Tear down with: E2E_RUN_DIR=${RUN_DIR} ${E2E_SCRIPTS}/stop-stack.sh && docker rm -f ${PG_CONTAINER}"
         return
@@ -75,8 +78,8 @@ cleanup() {
     echo "==> Tearing down"
     "${E2E_SCRIPTS}/stop-stack.sh" >/dev/null || true
     docker rm -f "${PG_CONTAINER}" >/dev/null 2>&1 || true
-    # The runtime directory holds the API key files; keep only the logs.
-    rm -rf "${RUN_DIR}/keys" "${RUN_DIR}/data" "${RUN_DIR}/ai-dba-server.secret"
+    # Keep only the logs.
+    rm -rf "${RUN_DIR}/data" "${RUN_DIR}/ai-dba-server.secret"
     echo "  Server log: ${RUN_DIR}/logs/server.log"
 }
 trap cleanup EXIT
@@ -138,6 +141,10 @@ echo "==> Building the server, collector and harness"
 (cd "${REPO_ROOT}/collector/src" && go build -o "${E2E_COLLECTOR_BIN}" .)
 
 "${E2E_SCRIPTS}/wait-for-postgres.sh" "${E2E_DB_HOST}" "${E2E_DB_PORT}" "${E2E_DB_USER}"
+
+# ai-dba-evaluate stages incidents only on an instance that holds this
+# database, so it cannot be pointed at one that matters by mistake.
+docker exec "${PG_CONTAINER}" psql -q -U postgres -c 'CREATE DATABASE ai_dba_evaluate_disposable'
 
 echo "==> Rendering the server configuration"
 (umask 077; openssl rand -hex 32 > "${RUN_DIR}/ai-dba-server.secret")

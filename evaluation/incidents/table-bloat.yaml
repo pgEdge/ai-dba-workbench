@@ -51,11 +51,16 @@ expect:
       - 'order_events'
       - 'dead\s+(tuple|row)s?'
       - 'autovacuum'
+    # The report must say autovacuum is off for this table, not merely
+    # use the word "disabled", which "autovacuum is not disabled" also
+    # contains.
     any_of:
-      - 'disabled'
-      - 'autovacuum_enabled\s*=\s*(false|off)'
-      - 'turned\s+off'
-      - 'switched\s+off'
+      - 'autovacuum_enabled\s*=\s*''?\s*(false|off|f|no|n|0)\b'
+      - '(disabled|turned\s+off|switched\s+off)\s+(for|on)\s+(the\s+|this\s+)?(table|order_events|public\.order_events)'
+      - '\b(table|order_events)\b[^.\n]*\b(disabled|turned\s+off|switched\s+off)'
+    none_of:
+      - '\bnot\s+(been\s+)?(disabled|turned\s+off|switched\s+off)\s+(for|on)\s+(the\s+|this\s+)?(table|order_events|public\.order_events)'
+      - '\b(table|order_events)\b[^.\n]*\bnot\s+(been\s+)?(disabled|turned\s+off|switched\s+off)'
   actions:
     allowed:
       # Each remedy must target order_events.

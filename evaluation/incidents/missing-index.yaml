@@ -75,8 +75,10 @@ expect:
       - 'lacks\s+an\s+index'
   actions:
     allowed:
-      # email must lead the key list; quoted names are accepted.
-      - '(?s)create\s+(unique\s+)?index\b.*?\bon\s+(only\s+)?("?\w+"?\s*\.\s*)?"?customers"?\s*(using\s+\w+\s*)?\(\s*(lower\s*\(\s*)?"?email"?\s*[,)]'
+      # The plain email column must lead the key list, since the
+      # workload's email = ... cannot use an expression index such as
+      # lower(email); quoted names are accepted.
+      - '(?s)create\s+(unique\s+)?index\b.*?\bon\s+(only\s+)?("?\w+"?\s*\.\s*)?"?customers"?\s*(using\s+\w+\s*)?\(\s*"?email"?\s*[,)]'
     forbidden:
       - 'enable_seqscan'
       - '\bdrop\s+table\b'

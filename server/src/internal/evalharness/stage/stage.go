@@ -16,7 +16,10 @@
 // and dropped at the end, so runs cannot see each other's state. Only a
 // fixture's Teardown SQL touches anything instance-wide. The harness
 // must only ever be pointed at a throwaway instance: fixtures run
-// arbitrary SQL as a superuser.
+// arbitrary SQL as a superuser. Stage enforces this: it refuses to run
+// unless both DSNs name only loopback hosts and the instance holds the
+// DisposableMarker database, which run-evaluation.sh creates in its
+// throwaway container.
 package stage
 
 import (
@@ -26,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -72,7 +76,21 @@ type Stager struct {
 	// RollbackTimeout bounds the cleanup after a failed Stage; it
 	// defaults to DefaultRollbackTimeout.
 	RollbackTimeout time.Duration
+
+	// marker overrides DisposableMarker; the package tests use their
+	// own database so they need not create the marker on a shared
+	// instance.
+	marker string
 }
+
+// DisposableMarker is the database whose presence marks an instance as
+// disposable. Stage refuses an instance without it, because fixtures
+// change instance-wide settings, drop replication slots and add
+// partitions to the datastore.
+const DisposableMarker = "ai_dba_evaluate_disposable"
+
+// markerSQL reports whether the marker database exists.
+const markerSQL = `SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1)`
 
 // DefaultRollbackTimeout bounds the cleanup after a failed Stage.
 const DefaultRollbackTimeout = 2 * time.Minute
@@ -117,6 +135,9 @@ type Staged struct {
 // workload. On failure it undoes whatever it had done; on success the
 // caller must call Teardown.
 func (s *Stager) Stage(ctx context.Context, inc *incident.Incident) (*Staged, error) {
+	if err := s.checkDisposable(ctx); err != nil {
+		return nil, err
+	}
 	suffix, err := randomSuffix()
 	if err != nil {
 		return nil, err
@@ -143,6 +164,60 @@ func (s *Stager) Stage(ctx context.Context, inc *incident.Incident) (*Staged, er
 		return nil, err
 	}
 	return st, nil
+}
+
+// checkDisposable returns an error unless both DSNs name only loopback
+// hosts and each instance holds the marker database.
+func (s *Stager) checkDisposable(ctx context.Context) error {
+	marker := s.marker
+	if marker == "" {
+		marker = DisposableMarker
+	}
+	// Check both hosts before connecting to either.
+	dsns := []struct{ name, dsn string }{{"admin", s.AdminDSN}, {"datastore", s.DatastoreDSN}}
+	cfgs := make([]*pgx.ConnConfig, len(dsns))
+	for i, d := range dsns {
+		cfg, err := pgx.ParseConfig(d.dsn)
+		if err != nil {
+			return fmt.Errorf("parse %s DSN: %w", d.name, err)
+		}
+		if err := requireLoopback(cfg); err != nil {
+			return fmt.Errorf("refusing to stage incidents: the %s DSN %w", d.name, err)
+		}
+		cfgs[i] = cfg
+	}
+	for i, d := range dsns {
+		conn, err := pgx.ConnectConfig(ctx, cfgs[i])
+		if err != nil {
+			return fmt.Errorf("connect with the %s DSN: %w", d.name, err)
+		}
+		var ok bool
+		err = conn.QueryRow(ctx, markerSQL, marker).Scan(&ok)
+		closeConn(ctx, conn)
+		if err != nil {
+			return fmt.Errorf("look for the %s database with the %s DSN: %w", marker, d.name, err)
+		}
+		if !ok {
+			return fmt.Errorf("refusing to stage incidents: the instance the %s DSN names has no %s database, "+
+				"so it is not marked as disposable", d.name, marker)
+		}
+	}
+	return nil
+}
+
+// requireLoopback returns an error unless every host cfg may connect to,
+// the primary and each fallback, is localhost or a loopback address.
+func requireLoopback(cfg *pgx.ConnConfig) error {
+	hosts := []string{cfg.Host}
+	for _, fb := range cfg.Fallbacks {
+		hosts = append(hosts, fb.Host)
+	}
+	for _, host := range hosts {
+		if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return fmt.Errorf("names non-loopback host %q", host)
+		}
+	}
+	return nil
 }
 
 // sslModeOf returns the libpq sslmode that pgx resolved for cfg, so the

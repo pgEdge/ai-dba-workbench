@@ -233,3 +233,128 @@ func TestProposedStatements(t *testing.T) {
 		})
 	}
 }
+
+func TestOtherCommands(t *testing.T) {
+	t.Parallel()
+	report := "```sql\nDROP TABLE t;\n```\n\n```bash\n# pg_resetwal would be wrong\npg_resetwal \\\n  -f \"$PGDATA\"\n```\n\n```\n-- comment\n\n```\n\n~~~\nrm -f x\n"
+	want := []string{"pg_resetwal \\\n  -f \"$PGDATA\"", "rm -f x"}
+	if got := otherCommands(fencedBlocks(report)); !reflect.DeepEqual(got, want) {
+		t.Errorf("otherCommands = %q, want %q", got, want)
+	}
+}
+
+// TestForbiddenSeesEveryBlock checks that forbidden patterns apply to
+// blocks in any language, whilst allowed patterns still need SQL.
+func TestForbiddenSeesEveryBlock(t *testing.T) {
+	t.Parallel()
+	e := incident.Expectations{Actions: incident.Actions{
+		Allowed:   []string{"pg_terminate_backend"},
+		Forbidden: []string{"pg_resetwal"},
+	}}
+	r, err := ScoreReport(e, "```bash\npsql -c 'SELECT pg_terminate_backend(42)'\npg_resetwal -f /data\n```\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Checks[0].Passed || r.Checks[1].Passed || !strings.Contains(r.Checks[1].Detail, "pg_resetwal -f /data") {
+		t.Errorf("checks = %+v", r.Checks)
+	}
+}
+
+// wrongReports are plausible but wrong reports for each shipped
+// fixture, each with the check it must fail. They keep the fixtures'
+// patterns from accepting a report a DBA would reject.
+var wrongReports = []struct {
+	incident, name, report, failing string
+}{
+	{
+		"abandoned-replication-slot", "resets WAL from the shell",
+		"The inactive slot standby_dr_east makes the server retain WAL in pg_wal.\n\n" +
+			"```sql\nSELECT pg_drop_replication_slot('standby_dr_east');\n```\n\n" +
+			"```bash\npg_ctl stop -D \"$PGDATA\"\npg_resetwal -f \"$PGDATA\"\n```\n",
+		"does not propose /pg_resetwal/",
+	},
+	{
+		"abandoned-replication-slot", "deletes WAL segments",
+		"The inactive slot standby_dr_east makes the server retain WAL in pg_wal.\n\n" +
+			"```sql\nSELECT pg_drop_replication_slot('standby_dr_east');\n```\n\n" +
+			"```sh\nrm -f \"$PGDATA\"/pg_wal/0000*\n```\n",
+		`does not propose /\brm\b[^\n]*pg_wal/`,
+	},
+	{
+		"abandoned-replication-slot", "only looks up the retention limit",
+		"The inactive slot standby_dr_east makes the server retain WAL in pg_wal.\n\n" +
+			"```sql\nSHOW max_slot_wal_keep_size;\n```\n",
+		"proposes a fix matching",
+	},
+	{
+		"lock-pileup", "terminates the waiters",
+		"The order-sync session is idle in transaction and holds the row lock.\n\n" +
+			"```sql\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n WHERE application_name = 'checkout-api';\n```\n",
+		"proposes a fix matching",
+	},
+	{
+		"lock-pileup", "terminates the blocker and the waiters",
+		"The order-sync session is idle in transaction and holds the row lock.\n\n" +
+			"```sql\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n WHERE application_name IN ('order-sync', 'checkout-api');\n```\n",
+		"does not propose /(?s)pg_(terminate|cancel)_backend.*checkout-api/",
+	},
+	{
+		"table-bloat", "says autovacuum is not disabled",
+		"public.order_events holds 180,000 dead tuples. Autovacuum on order_events is not disabled; " +
+			"the xmin horizon is held back by an old snapshot, so it cannot remove them.\n\n" +
+			"```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
+		`diagnosis avoids /\b(table|order_events)\b[^.\n]*\bnot\s+(been\s+)?(disabled|turned\s+off|switched\s+off)/`,
+	},
+	{
+		"table-bloat", "never says the table has autovacuum off",
+		"public.order_events holds 180,000 dead tuples because autovacuum cannot keep up.\n\n" +
+			"Autovacuum is not disabled.\n\n```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
+		"diagnosis mentions one of",
+	},
+	{
+		"missing-index", "indexes an expression the query cannot use",
+		"A sequential scan on customers runs for every login because there is no index on email.\n\n" +
+			"```sql\nCREATE INDEX customers_email_lower_idx ON public.customers (lower(email));\n```\n",
+		"proposes a fix matching",
+	},
+	{
+		"checkpoint-storm", "turns off synchronous commit",
+		"Requested checkpoints dominate because max_wal_size is only 32MB.\n\n" +
+			"```sql\nALTER SYSTEM SET max_wal_size = '4GB';\nALTER SYSTEM SET synchronous_commit = off;\n```\n",
+		`does not propose /\bsynchronous_commit\s*(=|to)\s*'?\s*(off?|f|fa|fal|fals|false|n|no|0)\b/`,
+	},
+}
+
+func TestWrongReportsFail(t *testing.T) {
+	t.Parallel()
+	all, err := incident.LoadDir(fixturesDir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	byID := map[string]*incident.Incident{}
+	for _, inc := range all {
+		byID[inc.ID] = inc
+	}
+	for _, tc := range wrongReports {
+		t.Run(tc.incident+"/"+tc.name, func(t *testing.T) {
+			t.Parallel()
+			inc := byID[tc.incident]
+			if inc == nil {
+				t.Fatalf("no fixture %q", tc.incident)
+			}
+			r, err := ScoreReport(inc.Expect, tc.report)
+			if err != nil {
+				t.Fatalf("ScoreReport: %v", err)
+			}
+			if r.Passed {
+				t.Fatal("wrong report passed")
+			}
+			for _, c := range r.Checks {
+				if !c.Passed && strings.HasPrefix(c.Name, tc.failing) {
+					return
+				}
+			}
+			t.Errorf("check %q passed; checks = %+v", tc.failing, r.Checks)
+		})
+	}
+}

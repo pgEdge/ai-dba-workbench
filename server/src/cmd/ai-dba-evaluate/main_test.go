@@ -74,7 +74,7 @@ func TestRunCommand(t *testing.T) {
 		t.Errorf("stdout:\n%s", stdout.String())
 	}
 	md, err := os.ReadFile(filepath.Join(out, "report.md"))
-	if err != nil || !strings.Contains(string(md), "staging: create database") {
+	if err != nil || !strings.Contains(string(md), "staging: connect with the admin DSN") {
 		t.Errorf("report.md (%v):\n%s", err, md)
 	}
 

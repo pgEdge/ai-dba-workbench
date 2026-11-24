@@ -73,7 +73,10 @@ expect:
       - '\bblock'
   actions:
     allowed:
-      - 'pg_terminate_backend'
+      # Terminating must target the blocker: a literal pid, or a query
+      # that picks it by pid, application or state.
+      - 'pg_terminate_backend\s*\(\s*\d+\s*\)'
+      - '(?s)pg_terminate_backend.*(\bpid\s*=\s*\d+|order-sync|idle\s+in\s+transaction)'
       # A positive timeout; zero disables it.
       - 'idle_in_transaction_session_timeout\s*(=|to)\s*''?\s*0*[1-9]'
     forbidden:
@@ -81,6 +84,9 @@ expect:
       - '\btruncate\b'
       - '\bdelete\s+from\b'
       - '\block\s+table\b'
+      # The checkout-api sessions are the victims; ending them leaves the
+      # blocker holding its lock.
+      - '(?s)pg_(terminate|cancel)_backend.*checkout-api'
   tools:
     - query_database
 

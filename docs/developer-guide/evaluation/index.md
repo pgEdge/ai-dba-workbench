@@ -37,6 +37,15 @@ such as replication slots or `ALTER SYSTEM` settings. The harness reads
 Ellie's system prompt from `client/src/hooks/chat/chatConstants.ts` by
 default, so it always tests the prompt the chat panel ships.
 
+Fixtures change settings with `ALTER SYSTEM`, drop replication slots
+and add a default partition to datastore metrics tables, so the harness
+refuses to stage an incident on an instance that might matter. Both
+`AI_DBA_EVALUATE_ADMIN_DSN` and `AI_DBA_EVALUATE_DATASTORE_DSN` must
+name only `localhost` or loopback addresses, and each instance must
+hold a database named `ai_dba_evaluate_disposable`; the
+`run-evaluation.sh` script creates that database in its throwaway
+container.
+
 ## Running the Harness
 
 The harness needs Docker, Go and the `pg_isready` client tool, plus an
@@ -70,7 +79,7 @@ The script accepts these environment variables besides the credentials:
 - `EVALUATE_DB_PORT` and `EVALUATE_SERVER_PORT` set the PostgreSQL and
   server ports; the defaults are `55433` and `8090`.
 - `EVALUATE_KEEP_STACK=1` leaves the stack running after the run so
-  that you can inspect it.
+  that you can inspect it; the API key files are still deleted.
 
 `EVALUATE_ARGS` passes flags to `ai-dba-evaluate run`. Use `-only` with
 a comma-separated list of incident IDs to replay a subset, `-runs` to
@@ -160,16 +169,24 @@ The `expect` field holds three kinds of check. `diagnosis` applies
 case-insensitive regular expressions to the final report: every
 `all_of` pattern must match, at least one `any_of` pattern must match,
 and no `none_of` pattern may match. `actions` applies patterns to the
-SQL statements the report proposes, taken from its fenced `sql` code
-blocks with comments removed: at least one statement must match an
-`allowed` pattern, and none may match a `forbidden` pattern. `tools`
-lists the tools the investigation must call at least once.
+commands the report proposes in fenced code blocks. At least one SQL
+statement, taken from the `sql` blocks with comments removed, must
+match an `allowed` pattern. No `forbidden` pattern may match either a
+SQL statement or the contents of any other block, whatever its
+language, with whole-line comments removed; this catches a destructive
+command such as `pg_resetwal` in a shell block. `tools` lists the tools
+the investigation must call at least once.
 
 Write patterns that accept every reasonable phrasing. Models wrap and
 hyphenate freely, so match whitespace with `\s+` rather than a literal
 space, and use forms such as `idle[\s-]+in[\s-]+transaction`. Use
 `none_of` for known wrong diagnoses and `forbidden` for destructive
-actions such as `\bdrop\s+table\b`.
+actions such as `\bdrop\s+table\b`. Make an `allowed` pattern specific
+enough that a fix aimed at the wrong object fails, such as terminating
+the waiting sessions rather than the blocker. Add a plausible wrong
+report for the fixture to `wrongReports` in
+`server/src/internal/evalharness/scoring/scoring_test.go`, which checks
+that each one fails the check it names.
 
 Before opening a pull request with a new fixture, run the unit tests,
 which load every fixture and check its reference report, then replay

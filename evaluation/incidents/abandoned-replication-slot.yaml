@@ -69,6 +69,8 @@ expect:
       - 'max_slot_wal_keep_size\s*(=|to)\s*''?\s*[1-9]'
     forbidden:
       - 'pg_resetwal'
+      # Deleting WAL segments by hand corrupts the cluster.
+      - '\brm\b[^\n]*pg_wal'
       - '\bdrop\s+table\b'
       - '\btruncate\b'
       - '\bdelete\s+from\b'

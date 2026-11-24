@@ -34,6 +34,10 @@ type freezingProxy struct {
 	frozen atomic.Bool
 	mu     sync.Mutex
 	conns  []net.Conn
+	// closed is set by close under mu, so that a connection accepted
+	// while the proxy is closing is closed rather than registered after
+	// the walk over conns and leaked.
+	closed bool
 }
 
 func newFreezingProxy(t *testing.T, target string) *freezingProxy {
@@ -60,6 +64,12 @@ func (p *freezingProxy) serve() {
 			continue
 		}
 		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			_ = client.Close()
+			_ = server.Close()
+			return
+		}
 		p.conns = append(p.conns, client, server)
 		p.mu.Unlock()
 		go p.pipe(server, client)
@@ -88,6 +98,7 @@ func (p *freezingProxy) close() {
 	_ = p.ln.Close()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.closed = true
 	for _, c := range p.conns {
 		_ = c.Close()
 	}
@@ -95,9 +106,16 @@ func (p *freezingProxy) close() {
 
 // proxiedRunner returns a stmtRunner whose connection to the fixture's
 // target passes through a freezing proxy, with a short response deadline.
+// The proxy forwards bytes, so a TLS session is negotiated through it as
+// it would be directly; each fallback (the non-TLS attempt of sslmode
+// prefer, say) is pointed at the proxy too. A target reached over a Unix
+// socket cannot be proxied over TCP, so the test is skipped for one.
 func (f *execFixture) proxiedRunner(t *testing.T) (*stmtRunner, *freezingProxy) {
 	t.Helper()
 	cfg := f.target.Config().ConnConfig.Config.Copy()
+	if isUnixSocket(cfg.Host) {
+		t.Skipf("the test target %q is a Unix socket; the freezing proxy needs a TCP target", cfg.Host)
+	}
 	p := newFreezingProxy(t, net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port))))
 	host, port, err := net.SplitHostPort(p.ln.Addr().String())
 	if err != nil {
@@ -107,8 +125,17 @@ func (f *execFixture) proxiedRunner(t *testing.T) (*stmtRunner, *freezingProxy) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Host, cfg.Port, cfg.Fallbacks = host, uint16(portNum), nil
-	cfg.TLSConfig = nil
+	cfg.Host, cfg.Port = host, uint16(portNum)
+	fallbacks := cfg.Fallbacks[:0]
+	for _, fb := range cfg.Fallbacks {
+		// Only fallbacks to the same server differ in transport alone;
+		// another host would bypass the proxy.
+		if fb.Host == f.target.Config().ConnConfig.Host && fb.Port == f.target.Config().ConnConfig.Port {
+			fb.Host, fb.Port = host, uint16(portNum)
+			fallbacks = append(fallbacks, fb)
+		}
+	}
+	cfg.Fallbacks = fallbacks
 	pgConn, err := pgconn.ConnectConfig(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +146,12 @@ func (f *execFixture) proxiedRunner(t *testing.T) (*stmtRunner, *freezingProxy) 
 		rowLimit: 10, settings: "SET lock_timeout = 1000", timeout: 300 * time.Millisecond,
 		exec: func(c context.Context, sql string) error { return pgConn.Exec(c, sql).Close() },
 	}, p
+}
+
+// isUnixSocket reports whether a pgconn host names a Unix socket
+// directory, as pgconn reads it.
+func isUnixSocket(host string) bool {
+	return strings.HasPrefix(host, "/")
 }
 
 // TestRunnerDeadlineWhenTargetStopsResponding covers a target that keeps

@@ -95,7 +95,7 @@ func requiresNoTransactionAs(stmt string, reading StringReading) bool {
 	case "DROP":
 		return dropRequiresNoTransaction(words)
 	case "REINDEX":
-		return reindexRequiresNoTransaction(strings.ToUpper(maskKeepingValues(stmt, reading)))
+		return reindexRequiresNoTransaction(strings.ToUpper(maskKeepingValues(stmt, reading, false)))
 	case "DISCARD":
 		return words.at(1) == "ALL"
 	case "CLUSTER":
@@ -188,9 +188,12 @@ func (w stmtWords) follows(first, second string) bool {
 // CONCURRENTLY 'off', still reads as an option with a value. The word
 // is 1 when the quoted text is TRUE or ON in any case, which PostgreSQL
 // accepts as a boolean option value however it is quoted ('on', E'on',
-// "ON", $$true$$), and X otherwise. A comment is masked to spaces, as it
-// is whitespace to PostgreSQL. The result has the same length as s.
-func maskKeepingValues(s string, reading StringReading) string {
+// "ON", $$true$$), and X when it is anything else. A value spelled with
+// an escape, which is not decoded, may still be on, and reads as on
+// when undecidedOn is set and as off when not: see quotedValue. A
+// comment is masked to spaces, as it is whitespace to PostgreSQL. The
+// result has the same length as s.
+func maskKeepingValues(s string, reading StringReading, undecidedOn bool) string {
 	masked := []byte(MaskNonCode(s, reading))
 	for i := 0; i < len(s); {
 		j := SkipNonCode(s, i, reading)
@@ -200,7 +203,7 @@ func maskKeepingValues(s string, reading StringReading) string {
 		}
 		if !isCommentStart(s, i) && j-i >= 2 {
 			masked[i+1] = 'X'
-			if quotedTurnsOn(s[i:j]) {
+			if v := quotedValue(s[i:j]); v == valueOn || (v == valueUndecided && undecidedOn) {
 				masked[i+1] = '1'
 			}
 		}
@@ -209,14 +212,40 @@ func maskKeepingValues(s string, reading StringReading) string {
 	return string(masked)
 }
 
-// quotedTurnsOn reports whether the quoted literal or identifier q reads
-// as TRUE or ON. It strips the E and U& prefixes, the quotes, and a
-// dollar quote's tags, and does not decode escapes: a value spelled with
-// one reads as off, so the statement runs in a transaction block, where
-// PostgreSQL refuses a concurrent rebuild and nothing is applied.
-func quotedTurnsOn(q string) bool {
-	body, ok := quotedBody(stripStringPrefix(q))
-	return ok && (strings.EqualFold(body, "on") || strings.EqualFold(body, "true"))
+// optionValue is how a quoted boolean option value reads.
+type optionValue int
+
+const (
+	valueOff optionValue = iota
+	valueOn
+	// valueUndecided is a value that may decode to on through an escape
+	// that is not decoded here.
+	valueUndecided
+)
+
+// quotedValue reads the quoted literal or identifier q as a boolean
+// option value: on when its text is TRUE or ON in any case. It strips
+// the E and U& prefixes, the quotes, and a dollar quote's tags, but does
+// not decode escapes, so any other text holding a backslash (E'\157n'
+// is 'on', as is a plain literal read with backslash escapes), and any
+// other U& text (whose UESCAPE clause may name any escape character),
+// is undecided rather than off. Deciding where a statement runs reads
+// an undecided value as off, so it runs in a transaction block, where
+// PostgreSQL refuses a concurrent rebuild and nothing is applied;
+// deciding whether a failure may have left an invalid index reads it
+// as on, so the warning is not lost.
+func quotedValue(q string) optionValue {
+	stripped := stripStringPrefix(q)
+	body, ok := quotedBody(stripped)
+	switch {
+	case !ok:
+		return valueOff
+	case strings.EqualFold(body, "on") || strings.EqualFold(body, "true"):
+		return valueOn
+	case strings.ContainsRune(body, '\\') || len(q)-len(stripped) == 2:
+		return valueUndecided
+	}
+	return valueOff
 }
 
 // stripStringPrefix removes a leading U& or E string prefix from q.
@@ -314,7 +343,7 @@ func BuildsIndexConcurrently(stmt string) bool {
 				return true
 			}
 		case "REINDEX":
-			if _, concurrent := parseReindex(strings.ToUpper(maskKeepingValues(stmt, reading))); concurrent {
+			if _, concurrent := parseReindex(strings.ToUpper(maskKeepingValues(stmt, reading, true))); concurrent {
 				return true
 			}
 		}

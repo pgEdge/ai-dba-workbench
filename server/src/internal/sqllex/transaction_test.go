@@ -221,6 +221,10 @@ func TestBuildsIndexConcurrently(t *testing.T) {
 		{"reindex option one", "REINDEX (CONCURRENTLY 1) TABLE t", true},
 		{"reindex last option on wins", "REINDEX (CONCURRENTLY OFF, CONCURRENTLY ON) TABLE t", true},
 		{"reindex quoted option on", "REINDEX (CONCURRENTLY 'on') TABLE t", true},
+		// An escaped value may be on, so a failure keeps its warning,
+		// even for a kind that runs outside a transaction anyway.
+		{"reindex escaped option", `REINDEX (CONCURRENTLY E'\157n') SCHEMA public`, true},
+		{"reindex unicode-escaped option", `REINDEX (CONCURRENTLY U&'o\006E') TABLE t`, true},
 
 		{"create index", "CREATE INDEX i ON t (a)", false},
 		{"create unique index", "CREATE UNIQUE INDEX i ON t (a)", false},
@@ -228,6 +232,7 @@ func TestBuildsIndexConcurrently(t *testing.T) {
 		{"reindex", "REINDEX TABLE t", false},
 		{"reindex database", "REINDEX DATABASE d", false},
 		{"reindex option off", "REINDEX (CONCURRENTLY OFF) TABLE t", false},
+		{"reindex quoted option off", "REINDEX (CONCURRENTLY 'off') TABLE t", false},
 		{"reindex last option off wins", "REINDEX (CONCURRENTLY ON, CONCURRENTLY OFF) TABLE t", false},
 		{"reindex unbalanced", "REINDEX (CONCURRENTLY TABLE t", false},
 		{"bare reindex", "REINDEX", false},
@@ -284,28 +289,32 @@ func TestChangesSequence(t *testing.T) {
 
 // TestQuotedTurnsOn covers quoted forms the statement tests cannot
 // reach, since the lexer never hands maskKeepingValues them whole.
-func TestQuotedTurnsOn(t *testing.T) {
+func TestQuotedValue(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		q    string
-		want bool
+		want optionValue
 	}{
-		{"'on'", true},
-		{"", false},
-		{`u&"True"`, true},
-		{"e'on'", true},
-		{"$x$on$x$", true},
-		{"$$on", false},     // unterminated dollar quote
-		{"$on", false},      // no closing tag delimiter
-		{"$x$", false},      // shorter than its two tags
-		{"$x$on$y$", false}, // closing tag differs
-		{"B'1'", false},     // a bit string is not a boolean
-		{"'on", false},      // unterminated literal
-		{"'on\"", false},    // mismatched quotes
+		{"'on'", valueOn},
+		{"", valueOff},
+		{`u&"True"`, valueOn},
+		{"e'on'", valueOn},
+		{"$x$on$x$", valueOn},
+		{"'off'", valueOff},
+		{`E'\157n'`, valueUndecided},   // an escape may spell on
+		{`'\157n'`, valueUndecided},    // so may a plain literal read with escapes
+		{`U&'o!006E'`, valueUndecided}, // UESCAPE may name any character
+		{"$$on", valueOff},             // unterminated dollar quote
+		{"$on", valueOff},              // no closing tag delimiter
+		{"$x$", valueOff},              // shorter than its two tags
+		{"$x$on$y$", valueOff},         // closing tag differs
+		{"B'1'", valueOff},             // a bit string is not a boolean
+		{"'on", valueOff},              // unterminated literal
+		{"'on\"", valueOff},            // mismatched quotes
 	}
 	for _, tt := range tests {
-		if got := quotedTurnsOn(tt.q); got != tt.want {
-			t.Errorf("quotedTurnsOn(%q) = %v, want %v", tt.q, got, tt.want)
+		if got := quotedValue(tt.q); got != tt.want {
+			t.Errorf("quotedValue(%q) = %v, want %v", tt.q, got, tt.want)
 		}
 	}
 }

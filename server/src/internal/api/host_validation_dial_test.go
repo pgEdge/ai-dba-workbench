@@ -86,31 +86,23 @@ func TestHostValidator_ValidateHostAllowListedResolution(t *testing.T) {
 
 // TestOpenQueryPool_DialGuard checks that openQueryPool applies the
 // guard it is given, and the always-blocked floor when given none.
+// openQueryPool connects before it returns, so the refusal is its own
+// error.
 func TestOpenQueryPool_DialGuard(t *testing.T) {
 	ctx := context.Background()
 
-	pool, err := openQueryPool(ctx,
+	_, err := openQueryPool(ctx,
 		"postgres://u@169.254.169.254:5432/x?sslmode=disable&connect_timeout=1", "test", nil)
-	if err != nil {
-		t.Fatalf("openQueryPool: %v", err)
-	}
-	err = pool.Ping(ctx)
-	pool.Close()
 	if !errors.Is(err, hostvalidation.ErrNoPermittedAddress) {
-		t.Errorf("nil guard: ping err = %v, want ErrNoPermittedAddress", err)
+		t.Errorf("nil guard: err = %v, want ErrNoPermittedAddress", err)
 	}
 
 	strict := NewHostValidator(false, nil, nil)
 	guard := func(cfg *pgconn.Config) { database.GuardConnConfig(cfg, strict.CheckDialAddr) }
-	pool, err = openQueryPool(ctx,
+	_, err = openQueryPool(ctx,
 		"postgres://u@127.0.0.1:1/x?sslmode=disable&connect_timeout=1", "test", guard)
-	if err != nil {
-		t.Fatalf("openQueryPool: %v", err)
-	}
-	err = pool.Ping(ctx)
-	pool.Close()
 	if !errors.Is(err, hostvalidation.ErrNoPermittedAddress) {
-		t.Errorf("strict guard: ping err = %v, want ErrNoPermittedAddress", err)
+		t.Errorf("strict guard: err = %v, want ErrNoPermittedAddress", err)
 	}
 
 	_, err = openQueryPool(ctx, "postgres://u:s3cret@h:notaport/x", "test", guard)

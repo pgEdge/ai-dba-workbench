@@ -930,6 +930,12 @@ func (d *Datastore) ListDatabases(ctx context.Context, connectionID int) ([]Data
 	}
 	defer tempPool.Close()
 
+	// Connect under ConnectMonitored, so that a failed connect takes the
+	// same time to report whatever its cause (issue #850).
+	if err := ConnectMonitored(ctx, tempPool.Ping); err != nil {
+		return nil, fmt.Errorf("failed to connect to server: %w", err)
+	}
+
 	return queryDatabases(ctx, tempPool)
 }
 

@@ -93,6 +93,17 @@ metadata addresses, and allows loopback and private addresses. See
 [Connection Address Checks](../configuration/collector/configuration_file.md#checking-addresses-at-connect-time)
 for the collector's list.
 
+When a request makes the server connect to a monitored server whilst
+the caller waits, as the query, query validation and database list
+endpoints and the MCP tools do, the server allows the connect 10
+seconds and reports a failed connect only once those 10 seconds have
+passed. A refused port therefore takes as long to report as a filtered
+port or a silent host, so the time taken to reply does not reveal
+which ports are open on a host that `connection_security` permits. For
+the same reason, the reply gives the same message for every failed
+connect, and the cause appears only in the server log. A connection
+with a wrong host or port takes 10 seconds to fail.
+
 The server and the collector read the files that the `ssl_cert_path`,
 `ssl_key_path` and `ssl_root_cert_path` fields name themselves, so each
 component only accepts paths inside the directory that its own

@@ -11,7 +11,9 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -216,7 +218,7 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 				Contents: []mcp.ContentItem{
 					{
 						Type: "text",
-						Text: fmt.Sprintf("Error: %v", err),
+						Text: clientErrorText(err),
 					},
 				},
 			}, nil)
@@ -269,7 +271,7 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 			Contents: []mcp.ContentItem{
 				{
 					Type: "text",
-					Text: fmt.Sprintf("Error: %v", err),
+					Text: clientErrorText(err),
 				},
 			},
 		}, nil)
@@ -344,6 +346,20 @@ func (r *ContextAwareRegistry) readConnectionInfo(ctx context.Context) (mcp.Reso
 	)
 
 	return BuildConnectionInfoResponse(info)
+}
+
+// clientErrorText is the reply to a resource read whose database client
+// could not be resolved. A failed connect to the selected server gets
+// fixed text, since the cause's text tells a refused port from a
+// filtered one (issue #850), and its cause goes to the log only; any
+// other failure, such as no connection being selected, does not depend
+// on the target and is shown as it is.
+func clientErrorText(err error) string {
+	if errors.Is(err, database.ErrConnectFailed) {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to get database client for resource: %v\n", err)
+		return database.FailedConnectText
+	}
+	return fmt.Sprintf("Error: %v", err)
 }
 
 // getClient returns the appropriate database client based on authentication state

@@ -335,10 +335,11 @@ func TestListDatabases(t *testing.T) {
 	})
 
 	for _, tc := range []struct {
-		name    string
-		port    int
-		sslMode string
-		wantErr string
+		name     string
+		port     int
+		sslMode  string
+		wantErr  string
+		wantHold bool
 	}{
 		{
 			name:    "invalid sslmode fails to build the pool",
@@ -347,13 +348,16 @@ func TestListDatabases(t *testing.T) {
 		},
 		{
 			// Port 1 is tcpmux, which nothing on a test host listens on,
-			// so the connection is refused at the first query.
-			name:    "unreachable server fails the query",
-			port:    1,
-			wantErr: "failed to query databases",
+			// so the connection is refused at once, and the failure is
+			// held to the floor (issue #850).
+			name:     "unreachable server fails the connect",
+			port:     1,
+			wantErr:  "failed to connect to server",
+			wantHold: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			clock := installFakeConnectClock(t)
 			id := insertListDatabasesTestConnection(t, ds, pool, tc.name, tc.port, tc.sslMode)
 			databases, err := ds.ListDatabases(ctx, id)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
@@ -362,8 +366,28 @@ func TestListDatabases(t *testing.T) {
 			if databases != nil {
 				t.Fatalf("ListDatabases returned %+v alongside an error", databases)
 			}
+			if held := len(clock.sleeps()) > 0; held != tc.wantHold {
+				t.Errorf("held = %v (%v), want %v", held, clock.sleeps(), tc.wantHold)
+			}
 		})
 	}
+
+	t.Run("unsafe stored host is refused before connecting", func(t *testing.T) {
+		clock := installFakeConnectClock(t)
+		id := insertListDatabasesTestConnection(t, ds, pool, "unsafe host", 0, "")
+		// Write the host directly, as a route that skipped validation
+		// would, so that BuildConnectionString is what refuses it.
+		if _, err := pool.Exec(ctx,
+			`UPDATE connections SET host = 'db.example.com,169.254.169.254' WHERE id = $1`, id); err != nil {
+			t.Fatalf("set unsafe host: %v", err)
+		}
+		if _, err := ds.ListDatabases(ctx, id); !errors.Is(err, ErrUnsafeConnectionTarget) {
+			t.Fatalf("ListDatabases error = %v, want ErrUnsafeConnectionTarget", err)
+		}
+		if s := clock.sleeps(); len(s) != 0 {
+			t.Errorf("a refused target was held: %v", s)
+		}
+	})
 
 	t.Run("missing connection", func(t *testing.T) {
 		if _, err := ds.ListDatabases(ctx, 999999); err == nil ||

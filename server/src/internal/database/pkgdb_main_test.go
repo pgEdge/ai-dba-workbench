@@ -21,5 +21,10 @@ import (
 // after the configured test database plus "_pkg_database", so that they can
 // run alongside other packages' tests; see pkgdb.
 func TestMain(m *testing.M) {
+	// Production holds a failed connect to a monitored server for the
+	// full connect timeout (issue #850); the tests here that fail a
+	// connect on purpose skip the hold, and those that check it install
+	// a fake clock.
+	SetConnectTiming(ConnectTiming{})
 	os.Exit(pkgdb.Run(m, "database"))
 }

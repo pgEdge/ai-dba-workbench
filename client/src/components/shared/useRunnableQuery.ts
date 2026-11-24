@@ -10,8 +10,9 @@
  *-------------------------------------------------------------------------
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { apiFetch } from '../../utils/apiClient';
+import { hasText } from '../../utils/textHelpers';
 
 export interface StatementResult {
     columns?: string[];
@@ -31,6 +32,21 @@ export interface QueryResponse {
     error?: string;
 }
 
+/** The connection, and optionally the database, a query runs against. */
+export interface QueryTarget {
+    connectionId: number;
+    databaseName?: string;
+}
+
+function sameTarget(
+    a: QueryTarget | undefined,
+    b: QueryTarget,
+): a is QueryTarget {
+    return a !== undefined
+        && a.connectionId === b.connectionId
+        && a.databaseName === b.databaseName;
+}
+
 export interface QueryState {
     loading: boolean;
     response: QueryResponse | null;
@@ -43,6 +59,8 @@ export interface QueryState {
      * content has changed since.
      */
     confirmSQL?: string;
+    /** The target the server refused `confirmSQL` on. */
+    confirmTarget?: QueryTarget;
 }
 
 export const IDLE_QUERY_STATE: QueryState = {
@@ -58,38 +76,48 @@ const errorState = (error: string): QueryState => ({
     error,
 });
 
-/** Read the error message from a failed query response. */
-async function readErrorMessage(response: Response): Promise<string> {
-    let errorMessage = `Query failed with status ${response.status}`;
-    try {
-        const errorData = await response.json();
-        if (errorData.error) {
-            errorMessage = errorData.error;
-        }
-    } catch {
-        // If JSON parsing fails, try plain text
-        const errorText = await response.text();
-        if (errorText) {
-            errorMessage = errorText;
-        }
+/** The `error` field of a JSON error body, or null when it has none. */
+function jsonErrorOf(body: unknown): string | null {
+    if (typeof body !== 'object' || body === null) {
+        return null;
     }
-    return errorMessage;
+    const { error } = body as { error?: unknown };
+    return typeof error === 'string' && hasText(error) ? error : null;
+}
+
+/**
+ * Read the error message from a failed query response. The body can be
+ * read only once, so it is read as text and then parsed as JSON: a JSON
+ * body gives its `error` field, and any other body is the message itself.
+ */
+async function readErrorMessage(response: Response): Promise<string> {
+    const fallback = `Query failed with status ${response.status}`;
+    const text = await response.text().catch(() => '');
+    try {
+        return jsonErrorOf(JSON.parse(text)) ?? fallback;
+    } catch {
+        return hasText(text) ? text : fallback;
+    }
 }
 
 /** Turn a 409 into a write confirmation, or an error if it is not one. */
 async function refusalState(
     response: Response,
     sql: string,
+    target: QueryTarget,
 ): Promise<QueryState> {
     const refusal: QueryResponse = await response.json().catch(() => ({}));
     if (!refusal.requires_action) {
-        return errorState(refusal.error || 'Query failed with status 409');
+        return errorState(
+            jsonErrorOf(refusal) ?? 'Query failed with status 409',
+        );
     }
     return {
         ...IDLE_QUERY_STATE,
         pendingConfirmation: true,
-        writeStatements: refusal.write_statements || [],
+        writeStatements: refusal.write_statements ?? [],
         confirmSQL: sql,
+        confirmTarget: target,
     };
 }
 
@@ -113,7 +141,11 @@ export async function executeQuery(
             },
         );
         if (response.status === 409) {
-            return await refusalState(response, sql);
+            return await refusalState(
+                response,
+                sql,
+                { connectionId, databaseName },
+            );
         }
         if (!response.ok) {
             return errorState(await readErrorMessage(response));
@@ -125,10 +157,16 @@ export async function executeQuery(
     }
 }
 
+/** A confirmed write, with the target it was refused on. */
+export interface ConfirmedWrite {
+    sql: string;
+    target: QueryTarget;
+}
+
 export interface UseRunnableQueryResult {
     queryState: QueryState;
-    /** The SQL handed to an ActionBlock, or null when there is none. */
-    actionSQL: string | null;
+    /** The write handed to an ActionBlock, or null when there is none. */
+    confirmedWrite: ConfirmedWrite | null;
     run: () => Promise<void>;
     confirm: () => void;
     dismiss: () => void;
@@ -136,9 +174,12 @@ export interface UseRunnableQueryResult {
 
 /**
  * Run a code block's SQL. A write the server refuses waits for
- * confirmation; confirming hands the SQL captured at Run time to an
- * ActionBlock, which proposes and runs it. While that action is showing,
- * Run does nothing: only dismissing the action clears it.
+ * confirmation; confirming hands the SQL and target captured at Run time
+ * to an ActionBlock, which proposes and runs it. A refusal belongs to the
+ * connection and database it was refused on, so changing either before
+ * confirming discards it and the write needs a fresh Run. While the
+ * action is showing, Run does nothing: only dismissing the action clears
+ * it, and the action keeps the target it was confirmed on.
  */
 export function useRunnableQuery(
     executableSQL: string,
@@ -146,10 +187,24 @@ export function useRunnableQuery(
     databaseName?: string,
 ): UseRunnableQueryResult {
     const [queryState, setQueryState] = useState<QueryState>(IDLE_QUERY_STATE);
-    const [actionSQL, setActionSQL] = useState<string | null>(null);
+    const [confirmedWrite, setConfirmedWrite] =
+        useState<ConfirmedWrite | null>(null);
+    const target = useMemo<QueryTarget>(
+        () => ({ connectionId, databaseName }),
+        [connectionId, databaseName],
+    );
+
+    // Discard a refusal once the target moves on, including one whose
+    // run finished after the move.
+    const staleRefusal = confirmedWrite === null
+        && queryState.pendingConfirmation
+        && !sameTarget(queryState.confirmTarget, target);
+    if (staleRefusal) {
+        setQueryState(IDLE_QUERY_STATE);
+    }
 
     const run = useCallback(async () => {
-        if (actionSQL !== null) {
+        if (confirmedWrite !== null) {
             return;
         }
         const sql = executableSQL;
@@ -160,17 +215,29 @@ export function useRunnableQuery(
             return;
         }
         setQueryState({ ...IDLE_QUERY_STATE, loading: true });
-        setQueryState(await executeQuery(sql, connectionId, databaseName));
-    }, [actionSQL, executableSQL, connectionId, databaseName]);
+        setQueryState(
+            await executeQuery(sql, target.connectionId, target.databaseName),
+        );
+    }, [confirmedWrite, executableSQL, target]);
 
     const confirm = useCallback(() => {
-        setActionSQL(queryState.confirmSQL ?? null);
-    }, [queryState.confirmSQL]);
+        const { confirmSQL, confirmTarget } = queryState;
+        if (confirmSQL === undefined || !sameTarget(confirmTarget, target)) {
+            return;
+        }
+        setConfirmedWrite({ sql: confirmSQL, target: confirmTarget });
+    }, [queryState, target]);
 
     const dismiss = useCallback(() => {
-        setActionSQL(null);
+        setConfirmedWrite(null);
         setQueryState(IDLE_QUERY_STATE);
     }, []);
 
-    return { queryState, actionSQL, run, confirm, dismiss };
+    return {
+        queryState: staleRefusal ? IDLE_QUERY_STATE : queryState,
+        confirmedWrite,
+        run,
+        confirm,
+        dismiss,
+    };
 }

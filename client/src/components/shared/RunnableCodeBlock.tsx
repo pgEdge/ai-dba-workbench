@@ -193,15 +193,15 @@ const QueryOutput: React.FC<QueryOutputProps> = ({
     targetName,
 }) => {
     const { theme } = blockProps;
-    const { queryState, actionSQL, confirm, dismiss } = query;
+    const { queryState, confirmedWrite, confirm, dismiss } = query;
     return (
         <>
             {/* A confirmed write is proposed, reviewed and run as an action */}
-            {queryState.pendingConfirmation && actionSQL !== null && (
+            {queryState.pendingConfirmation && confirmedWrite !== null && (
                 <ActionBlock
-                    sql={actionSQL}
-                    connectionId={blockProps.connectionId}
-                    databaseName={blockProps.databaseName}
+                    sql={confirmedWrite.sql}
+                    connectionId={confirmedWrite.target.connectionId}
+                    databaseName={confirmedWrite.target.databaseName}
                     serverName={blockProps.serverName}
                     source={blockProps.actionSource ?? 'chat_block'}
                     context={blockProps.actionContext}
@@ -210,7 +210,7 @@ const QueryOutput: React.FC<QueryOutputProps> = ({
                     onDismiss={dismiss}
                 />
             )}
-            {queryState.pendingConfirmation && actionSQL === null && (
+            {queryState.pendingConfirmation && confirmedWrite === null && (
                 <WriteConfirmation
                     theme={theme}
                     targetName={targetName}
@@ -275,7 +275,7 @@ const BlockRunControl: React.FC<BlockRunControlProps> = ({
                 query.queryState.loading
                 || validating
                 || blockedByValidation
-                || query.actionSQL !== null
+                || query.confirmedWrite !== null
             }
             loading={query.queryState.loading}
             validating={validating}

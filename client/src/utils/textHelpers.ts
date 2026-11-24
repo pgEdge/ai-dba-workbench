@@ -9,6 +9,14 @@
  */
 
 /**
+ * Whether `text` holds any characters. Callers use it where an empty
+ * string must take a fallback, which `??` alone would keep.
+ */
+export function hasText(text: string | null | undefined): text is string {
+    return text !== undefined && text !== null && text !== '';
+}
+
+/**
  * Strip any conversational preamble before the first markdown heading.
  * LLMs sometimes add introductory text despite instructions not to.
  */

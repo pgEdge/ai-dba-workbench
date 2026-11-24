@@ -28,6 +28,7 @@ import type {
 } from '../../types/llm';
 import { parseProposeActionResult } from '../../types/actions';
 import { LLM_CHAT_PATH, buildChatRequestInit } from '../../utils/llmChat';
+import { hasText } from '../../utils/textHelpers';
 import type { APIMessage, ToolDefinition } from './chatTypes';
 
 /**
@@ -217,11 +218,6 @@ function buildToolActivity(
 interface ToolOutcome {
     text: string;
     isError: boolean;
-}
-
-/** Whether a tool returned any text, so an empty result takes the fallback. */
-function hasText(text: string | undefined): text is string {
-    return text !== undefined && text !== '';
 }
 
 /** Turn a tool call's HTTP response into its outcome. */

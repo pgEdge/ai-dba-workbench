@@ -119,6 +119,10 @@ const makeRefusal = (writeStatements: string[]) => makeErrorResponse({
     },
 });
 
+/*
+ * Like a real Response, the body can be read only once: a second read
+ * rejects, so a reader that tries JSON and then text sees the failure.
+ */
 const makeErrorResponse = ({
     status = 500,
     json,
@@ -127,16 +131,23 @@ const makeErrorResponse = ({
     status?: number;
     json?: unknown;
     text?: string;
-} = {}) => ({
-    ok: false,
-    status,
-    json: vi.fn(
-        json === undefined
-            ? () => Promise.reject(new Error('not-json'))
-            : () => Promise.resolve(json),
-    ),
-    text: vi.fn().mockResolvedValue(text ?? ''),
-});
+} = {}) => {
+    const body = json === undefined ? (text ?? '') : JSON.stringify(json);
+    let used = false;
+    const read = () => {
+        if (used) {
+            return Promise.reject(new TypeError('Body has already been consumed'));
+        }
+        used = true;
+        return Promise.resolve(body);
+    };
+    return {
+        ok: false,
+        status,
+        json: vi.fn(() => read().then(t => JSON.parse(t) as unknown)),
+        text: vi.fn(read),
+    };
+};
 
 beforeEach(() => {
     mockApiFetch.mockReset();

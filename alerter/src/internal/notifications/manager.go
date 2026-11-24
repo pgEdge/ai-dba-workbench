@@ -224,10 +224,16 @@ func (m *Manager) ProcessPendingNotifications(ctx context.Context) error {
 }
 
 // retryNotification sends a pending notification that the retry worker
-// has claimed. A row it cannot send, because its channel or alert is
-// missing, keeps its claim and is tried again once the claim runs out.
+// has claimed. A row whose channel or alert has been deleted, which
+// sets its channel_id or alert_id to NULL, can never be sent, so it is
+// marked failed rather than claimed again for ever; a row whose lookup
+// fails keeps its claim and is tried again once the claim runs out.
 func (m *Manager) retryNotification(ctx context.Context, history *database.NotificationHistory) {
 	if history.ChannelID == nil || history.AlertID == nil {
+		history.Status = database.NotificationStatusFailed
+		errMsg := "notification channel or alert no longer exists"
+		history.ErrorMessage = &errMsg
+		m.recordOutcome(ctx, history, history.NextRetryAt)
 		return
 	}
 	channel, err := m.datastore.GetNotificationChannel(ctx, *history.ChannelID)

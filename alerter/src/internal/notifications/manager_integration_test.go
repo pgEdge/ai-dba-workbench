@@ -195,6 +195,12 @@ const managerOrphanHistorySQL = `
 INSERT INTO notification_history (alert_id, channel_id, notification_type, status)
 VALUES ($1, NULL, 'alert_fire', 'pending'), (NULL, $2, 'alert_fire', 'pending')`
 
+const managerFailedOrphansSQL = `
+SELECT count(*) FROM notification_history
+WHERE status = 'failed' AND next_retry_at IS NOT NULL AND (
+    (alert_id = $1 AND channel_id IS NULL) OR
+    (alert_id IS NULL AND channel_id = $2))`
+
 const managerMissingTargetsSQL = `
 INSERT INTO notification_history (alert_id, channel_id, notification_type, status)
 VALUES (888888, $1, 'alert_fire', 'pending'), ($2, 888888, 'alert_fire', 'pending')`
@@ -358,7 +364,8 @@ func TestManager_SystemAlertNotificationLifecycle(t *testing.T) {
 		t.Fatalf("history after failed send = %s, connection %v", status, connID)
 	}
 
-	// Rows with no channel or no alert are passed over.
+	// Rows with no channel or no alert are marked failed, so that they
+	// are not claimed again.
 	if _, err := pool.Exec(ctx, managerOrphanHistorySQL, alertID, channelID); err != nil {
 		t.Fatal(err)
 	}
@@ -371,6 +378,10 @@ func TestManager_SystemAlertNotificationLifecycle(t *testing.T) {
 	}
 	if status, _, attempts := historyRow(t, pool, alertID); status != string(database.NotificationStatusSent) || attempts != 2 {
 		t.Errorf("history after retry = %s after %d attempts", status, attempts)
+	}
+	var failed int
+	if err := pool.QueryRow(ctx, managerFailedOrphansSQL, alertID, channelID).Scan(&failed); err != nil || failed != 2 {
+		t.Errorf("failed orphan rows = %d, %v; want 2", failed, err)
 	}
 
 	if err := m.ProcessReminders(ctx); err != nil {

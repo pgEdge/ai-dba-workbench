@@ -92,8 +92,12 @@ project adheres to
   claiming it first, so it could send a reminder that the reminder
   worker was still sending, or a new alert whose first attempt had not
   yet recorded its outcome. Each delivery attempt now claims its
-  notification before sending it, so only one attempt can send a
-  notification at a time. (#866)
+  notification for 40 seconds before sending it, and no other attempt
+  can claim it whilst that claim lasts; a send that is still running
+  when its claim expires can still be repeated by a retry, but its
+  late outcome no longer overwrites the retry's. A notification whose
+  alert or channel has been deleted is now marked failed rather than
+  retried indefinitely. (#866)
 - Show the number of client connections across the estate in the
   estate dashboard's Total Connections tile, which showed the number
   of servers. (#833)

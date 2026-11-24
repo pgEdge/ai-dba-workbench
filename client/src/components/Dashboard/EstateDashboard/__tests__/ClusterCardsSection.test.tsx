@@ -133,11 +133,33 @@ describe('ClusterCardsSection', () => {
             .toHaveAccessibleDescription('1 active alert');
     });
 
-    it('gives a card without alerts no description', () => {
-        renderSection(makeSelection([singleCluster]));
+    it('gives a card without alerts no description and no badge', () => {
+        const quietCluster: ClusterEntry = {
+            id: 'cluster-7',
+            name: 'Quiet',
+            servers: [
+                { id: 71, name: 'zero', status: 'online', active_alert_count: 0 },
+                { id: 72, name: 'negative', status: 'online', active_alert_count: -1 },
+            ],
+        };
 
-        const card = screen.getByRole('button', { name: 'Select cluster Single' });
+        renderSection(makeSelection([quietCluster]));
+
+        const card = screen.getByRole('button', { name: 'Select cluster Quiet' });
         expect(card).not.toHaveAttribute('aria-describedby');
+        // A negative count is ignored, so both servers are online and
+        // the card shows no badge, not even a zero.
+        expect(screen.getByText('2 online')).toBeInTheDocument();
+        expect(screen.queryByText('0')).not.toBeInTheDocument();
+        expect(screen.queryByText('-1')).not.toBeInTheDocument();
+        expect(screen.queryByText(/active alert/)).not.toBeInTheDocument();
+    });
+
+    it('hides the bare badge number from assistive technology', () => {
+        renderSection(makeSelection([autoCluster]));
+
+        const badge = screen.getByText('3').closest('.MuiChip-root');
+        expect(badge).toHaveAttribute('aria-hidden', 'true');
     });
 
     it('selects the topology entry itself on click, keeping db_cluster_id', () => {

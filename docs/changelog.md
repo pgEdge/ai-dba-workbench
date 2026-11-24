@@ -142,7 +142,8 @@ project adheres to
   percentage is weighted by each server's commit rate. (#837)
 - Include active alerts on offline servers in the alert count on the
   estate dashboard's cluster cards, and count a server whose collected
-  data is stale as a warning rather than online. (#835)
+  data is stale as a warning rather than online on the cluster cards,
+  the server status chart and in the AI overview. (#835)
 
 ### Security
 

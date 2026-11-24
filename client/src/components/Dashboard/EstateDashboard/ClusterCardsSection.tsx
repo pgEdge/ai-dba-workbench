@@ -17,7 +17,13 @@ import Chip from '@mui/material/Chip';
 import { alpha, useTheme, type Theme } from '@mui/material/styles';
 import { useClusterSelection } from '../../../contexts/useClusterSelection';
 import type { ClusterEntry } from '../../../contexts/ClusterDataContext';
-import { collectServers, type ServerLike } from '../../../utils/clusterHelpers';
+import {
+    classifyServer,
+    collectServers,
+    getActiveAlertCount,
+    type ServerCounts,
+    type ServerLike,
+} from '../../../utils/clusterHelpers';
 import type { EstateSelection } from '../../../types/selection';
 
 interface ClusterCardsSectionProps {
@@ -146,31 +152,16 @@ const extractClusterCards = (selection: EstateSelection): ClusterCardData[] => {
             const rawServers = (clusterObj.servers || []) as ServerLike[];
             const allServers = collectServers(rawServers);
 
-            let online = 0;
-            let warning = 0;
-            let offline = 0;
+            const counts: ServerCounts = { online: 0, warning: 0, offline: 0 };
             let alertCount = 0;
             const roles: Record<string, number> = {};
 
             allServers.forEach(s => {
-                const status = s.status;
-                const rawAlerts = s.active_alert_count;
-                const alerts = typeof rawAlerts === 'number' && rawAlerts > 0
-                    ? rawAlerts
-                    : 0;
-
                 // Every server's alerts count towards the badge, offline
-                // ones included, and a 'warning' status (role data 6 to
-                // 12 minutes old) marks a stale server (issue #835).
-                alertCount += alerts;
-
-                if (status === 'offline') {
-                    offline += 1;
-                } else if (status === 'warning' || alerts > 0) {
-                    warning += 1;
-                } else {
-                    online += 1;
-                }
+                // ones included, and a stale server counts as a warning
+                // (issue #835).
+                alertCount += getActiveAlertCount(s);
+                counts[classifyServer(s)] += 1;
 
                 const role = (s.role || s.primary_role || 'unknown') as string;
                 roles[role] = (roles[role] || 0) + 1;
@@ -185,9 +176,7 @@ const extractClusterCards = (selection: EstateSelection): ClusterCardData[] => {
                 cluster,
                 name: clusterObj.name,
                 serverCount: allServers.length,
-                online,
-                warning,
-                offline,
+                ...counts,
                 roles,
                 alertCount,
             });
@@ -235,109 +224,109 @@ const ClusterCardsSection: React.FC<ClusterCardsSectionProps> = ({ selection }) 
                 // description to keep the count audible.
                 const alertsId = `${idPrefix}-alerts-${index}`;
                 return (
-                <Paper
-                    key={card.cluster.id}
-                    elevation={0}
-                    sx={cardSx}
-                    onClick={handleClusterClick(card.cluster)}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Select cluster ${card.name}`}
-                    aria-describedby={card.alertCount > 0 ? alertsId : undefined}
-                    onKeyDown={(e: React.KeyboardEvent) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            selectCluster(card.cluster);
-                        }
-                    }}
-                >
-                    <Box sx={CARD_HEADER_SX}>
-                        <Box>
-                            <Typography sx={CARD_NAME_SX}>
-                                {card.name}
-                            </Typography>
-                            <Typography sx={SERVER_COUNT_SX}>
-                                {card.serverCount} server{card.serverCount !== 1 ? 's' : ''}
-                            </Typography>
+                    <Paper
+                        key={card.cluster.id}
+                        elevation={0}
+                        sx={cardSx}
+                        onClick={handleClusterClick(card.cluster)}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Select cluster ${card.name}`}
+                        aria-describedby={card.alertCount > 0 ? alertsId : undefined}
+                        onKeyDown={(e: React.KeyboardEvent) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                selectCluster(card.cluster);
+                            }
+                        }}
+                    >
+                        <Box sx={CARD_HEADER_SX}>
+                            <Box>
+                                <Typography sx={CARD_NAME_SX}>
+                                    {card.name}
+                                </Typography>
+                                <Typography sx={SERVER_COUNT_SX}>
+                                    {card.serverCount} server{card.serverCount !== 1 ? 's' : ''}
+                                </Typography>
+                            </Box>
+                            {card.alertCount > 0 && (
+                                <>
+                                    <Chip
+                                        label={card.alertCount}
+                                        aria-hidden="true"
+                                        size="small"
+                                        color="warning"
+                                        sx={{
+                                            height: 22,
+                                            fontSize: '0.75rem',
+                                            fontWeight: 700,
+                                        }}
+                                    />
+                                    <Box component="span" id={alertsId} sx={VISUALLY_HIDDEN_SX}>
+                                        {card.alertCount} active alert{card.alertCount !== 1 ? 's' : ''}
+                                    </Box>
+                                </>
+                            )}
                         </Box>
-                        {card.alertCount > 0 && (
-                            <>
-                                <Chip
-                                    label={card.alertCount}
-                                    aria-hidden="true"
-                                    size="small"
-                                    color="warning"
+
+                        <Box sx={STATUS_ROW_SX}>
+                            <Box sx={STATUS_ITEM_SX}>
+                                <Box
                                     sx={{
-                                        height: 22,
-                                        fontSize: '0.75rem',
-                                        fontWeight: 700,
+                                        ...STATUS_DOT_SX,
+                                        bgcolor: theme.palette.success.main,
                                     }}
                                 />
-                                <Box component="span" id={alertsId} sx={VISUALLY_HIDDEN_SX}>
-                                    {card.alertCount} active alert{card.alertCount !== 1 ? 's' : ''}
+                                <Typography sx={STATUS_LABEL_SX}>
+                                    {card.online} online
+                                </Typography>
+                            </Box>
+                            {card.warning > 0 && (
+                                <Box sx={STATUS_ITEM_SX}>
+                                    <Box
+                                        sx={{
+                                            ...STATUS_DOT_SX,
+                                            bgcolor: theme.palette.warning.main,
+                                        }}
+                                    />
+                                    <Typography sx={STATUS_LABEL_SX}>
+                                        {card.warning} warning
+                                    </Typography>
                                 </Box>
-                            </>
-                        )}
-                    </Box>
-
-                    <Box sx={STATUS_ROW_SX}>
-                        <Box sx={STATUS_ITEM_SX}>
-                            <Box
-                                sx={{
-                                    ...STATUS_DOT_SX,
-                                    bgcolor: theme.palette.success.main,
-                                }}
-                            />
-                            <Typography sx={STATUS_LABEL_SX}>
-                                {card.online} online
-                            </Typography>
+                            )}
+                            {card.offline > 0 && (
+                                <Box sx={STATUS_ITEM_SX}>
+                                    <Box
+                                        sx={{
+                                            ...STATUS_DOT_SX,
+                                            bgcolor: theme.palette.error.main,
+                                        }}
+                                    />
+                                    <Typography sx={STATUS_LABEL_SX}>
+                                        {card.offline} offline
+                                    </Typography>
+                                </Box>
+                            )}
                         </Box>
-                        {card.warning > 0 && (
-                            <Box sx={STATUS_ITEM_SX}>
-                                <Box
-                                    sx={{
-                                        ...STATUS_DOT_SX,
-                                        bgcolor: theme.palette.warning.main,
-                                    }}
-                                />
-                                <Typography sx={STATUS_LABEL_SX}>
-                                    {card.warning} warning
-                                </Typography>
+
+                        {Object.keys(card.roles).length > 0 && (
+                            <Box sx={ROLES_ROW_SX}>
+                                {Object.entries(card.roles).map(([role, count]) => (
+                                    <Chip
+                                        key={role}
+                                        label={`${role}: ${count}`}
+                                        size="small"
+                                        variant="outlined"
+                                        sx={{
+                                            height: 20,
+                                            fontSize: '0.7rem',
+                                            fontWeight: 500,
+                                        }}
+                                    />
+                                ))}
                             </Box>
                         )}
-                        {card.offline > 0 && (
-                            <Box sx={STATUS_ITEM_SX}>
-                                <Box
-                                    sx={{
-                                        ...STATUS_DOT_SX,
-                                        bgcolor: theme.palette.error.main,
-                                    }}
-                                />
-                                <Typography sx={STATUS_LABEL_SX}>
-                                    {card.offline} offline
-                                </Typography>
-                            </Box>
-                        )}
-                    </Box>
-
-                    {Object.keys(card.roles).length > 0 && (
-                        <Box sx={ROLES_ROW_SX}>
-                            {Object.entries(card.roles).map(([role, count]) => (
-                                <Chip
-                                    key={role}
-                                    label={`${role}: ${count}`}
-                                    size="small"
-                                    variant="outlined"
-                                    sx={{
-                                        height: 20,
-                                        fontSize: '0.7rem',
-                                        fontWeight: 500,
-                                    }}
-                                />
-                            ))}
-                        </Box>
-                    )}
-                </Paper>
+                    </Paper>
                 );
             })}
         </Box>

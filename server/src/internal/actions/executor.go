@@ -692,43 +692,60 @@ func (r *stmtRunner) runIndividually(st *runState) {
 	results := st.results
 	for i := range results {
 		ran, err := r.step(results, i)
-		var pgErr *pgconn.PgError
-		isPgErr := errors.As(err, &pgErr)
-		if ran && err != nil {
-			// A statement the server did not answer, or stopped part way
-			// through, has an unknown outcome rather than a rolled-back one.
-			stopped := isPgErr && pgErr.Code == "57014" && r.ctx.Err() != nil
-			noteFailure(&results[i], !isPgErr || stopped)
-		}
-		if err != nil && !isPgErr {
-			results[i].Error = "outcome unknown: " + lostDuring(err, "the statement")
-			st.unknown = true
-			return
-		}
-		// A statement stopped by a cancel request may have left partial
-		// work (an invalid index, say), so its outcome is unknown.
-		if pgErr != nil && pgErr.Code == "57014" && r.ctx.Err() != nil {
-			results[i].Applied = false
-			results[i].Error = "outcome unknown: the statement was stopped part way through"
-			st.unknown = true
+		if r.outcomeUnknown(st, i, ran, err) {
 			return
 		}
 		// A statement that ran without a server error took effect, even
 		// if a check on its side effects then stops the batch.
 		results[i].Applied = ran && err == nil
-		if results[i].Error != "" {
-			return
-		}
-		// Defensive: a statement cannot normally open a transaction,
-		// because transaction control is refused before anything runs.
-		if msg := openTransactionMessage(r.pgConn); msg != "" {
-			rollbackQuietly(r.execCtx, r.exec)
-			clearApplied(results[i : i+1])
-			noteSequencesKept(results[i:i+1], false)
-			results[i].Error = msg
+		if results[i].Error != "" || r.leftTransactionOpen(results[i:i+1]) {
 			return
 		}
 	}
+}
+
+// outcomeUnknown notes the effects a failed statement may have left and
+// reports whether its outcome is unknown, marking st so when it is: the
+// server did not answer, or a cancel request stopped the statement part
+// way through, which may leave partial work (an invalid index, say).
+func (r *stmtRunner) outcomeUnknown(st *runState, i int, ran bool, err error) bool {
+	if err == nil {
+		return false
+	}
+	res := &st.results[i]
+	var pgErr *pgconn.PgError
+	isPgErr := errors.As(err, &pgErr)
+	stopped := isPgErr && pgErr.Code == "57014" && r.ctx.Err() != nil
+	if ran {
+		noteFailure(res, !isPgErr || stopped)
+	}
+	switch {
+	case !isPgErr:
+		res.Error = "outcome unknown: " + lostDuring(err, "the statement")
+	case stopped:
+		res.Applied = false
+		res.Error = "outcome unknown: the statement was stopped part way through"
+	default:
+		return false
+	}
+	st.unknown = true
+	return true
+}
+
+// leftTransactionOpen rolls back, and reports as failed, the one
+// statement in res if it left a transaction open. It is defensive: a statement cannot
+// normally open one, because transaction control is refused before
+// anything runs.
+func (r *stmtRunner) leftTransactionOpen(res []StatementResult) bool {
+	msg := openTransactionMessage(r.pgConn)
+	if msg == "" {
+		return false
+	}
+	rollbackQuietly(r.execCtx, r.exec)
+	clearApplied(res)
+	noteSequencesKept(res, false)
+	res[0].Error = msg
+	return true
 }
 
 // sequenceNote warns that a statement undone by a rollback may still

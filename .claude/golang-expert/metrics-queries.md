@@ -2423,6 +2423,16 @@ CTE, and served by `idx_pg_stat_statements_identity_time`), and the rate
 partition omits `database_name` so a series survives a change of probing
 database. `TestMetricsQuery_StatementDatabaseAcrossProbingDatabases`
 pins both. The derived ratio path still reads the table directly.
+For pg_stat_statements, `metricQueryClauses` puts only
+`statementDatabasePrefilter` (the dbid half) in `filterClauses` and keeps
+the full statement-database clause in `parts.statementFilter`: the raw
+path applies it to the kept copy (`sampleSource`'s `after`), and the rate
+path applies it after the `LAG`, carrying `MAX(database_name)` up, so an
+unresolved dbid's database_name fallback never picks a discarded copy or
+drops a predecessor read through another database
+(`TestStatementDatabaseFallbackAfterCopies_Integration`). Every query
+built from those parts must apply `statementFilter`, since it binds the
+last filter value.
 
 Whether the `(connection_id, database_name, queryid, collected_at)`
 object index actually serves a queryid lookup depends on the predicate

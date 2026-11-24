@@ -2756,15 +2756,12 @@ func TestMetricQueryParts(t *testing.T) {
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	t.Run("where matches metricQueryBase", func(t *testing.T) {
+	t.Run("leading args", func(t *testing.T) {
 		filters := MetricFilters{SchemaName: "public", TableName: "orders"}
 		parts := metricQueryClauses("pg_stat_all_tables", 7, start, end, time.Minute, filters)
-		whereSQL, args := metricQueryBase("pg_stat_all_tables", 7, start, end, time.Minute, filters)
-		if parts.where() != whereSQL {
-			t.Errorf("where() = %q, metricQueryBase = %q", parts.where(), whereSQL)
-		}
-		if len(parts.args) != len(args) {
-			t.Fatalf("arg count mismatch: %d vs %d", len(parts.args), len(args))
+		args := parts.args
+		if len(args) != 6 {
+			t.Fatalf("expected 6 args, got %d: %v", len(args), args)
 		}
 		if args[0] != "60 seconds" || args[1] != 7 {
 			t.Errorf("unexpected leading args: %v", args[:2])

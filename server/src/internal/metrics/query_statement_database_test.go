@@ -95,6 +95,14 @@ func TestBuildMetricsQueryStatementDatabase(t *testing.T) {
 	if len(args) != 9 || args[8] != "alpha" {
 		t.Fatalf("args = %#v", args)
 	}
+	// Only the dbid part runs before the copies are reduced; the
+	// database_name fallback runs on the copy kept.
+	if want := statementDatabasePrefilter(7) + "\n"; !strings.Contains(query, want) {
+		t.Errorf("query should prefilter by dbid, got:\n%s", query)
+	}
+	if want := "statement_copies\n                WHERE " + statementDatabaseClauseAt("7", "8", "9"); !strings.Contains(query, want) {
+		t.Errorf("query should apply the statement database to the kept copy, got:\n%s", query)
+	}
 	// The filters run inside the source that keeps one copy of each
 	// reading, so the copies a probing database adds are dropped after
 	// them; the result must still be a shape ColdFront can run.
@@ -144,6 +152,13 @@ func TestBuildDerivedMetricsQueryStatementDatabase(t *testing.T) {
 	if !strings.Contains(query, statementDatabaseClauseAt("6", "7", "8")) {
 		t.Errorf("query should filter by statement database, got:\n%s", query)
 	}
+	// The full clause filters each interval after the LAG, on its ending
+	// reading, so an unresolved statement keeps its predecessor.
+	if want := "WHERE collected_at >= $3 AND " + statementDatabaseClauseAt("6", "7", "8"); !strings.Contains(query, want) ||
+		!strings.Contains(query, "MAX(database_name) AS database_name") ||
+		!strings.Contains(query, statementDatabasePrefilter(6)) {
+		t.Errorf("query should filter by statement database after the LAG, got:\n%s", query)
+	}
 	if !strings.Contains(query, "$9::float8") {
 		t.Errorf("the gap bound should follow the filter as $9, got:\n%s", query)
 	}
@@ -168,7 +183,7 @@ const statementReadingsSource = "SELECT DISTINCT ON (queryid, userid, dbid, topl
 // TestSampleSourceOtherProbes proves every other probe reads its table
 // directly and keeps all of its entity-key columns.
 func TestSampleSourceOtherProbes(t *testing.T) {
-	if got := sampleSource("pg_stat_database", "x = 1"); strings.Contains(got, "DISTINCT") ||
+	if got := sampleSource("pg_stat_database", "x = 1", ""); strings.Contains(got, "DISTINCT") ||
 		!strings.HasPrefix(got, `metrics."pg_stat_database"`) || !strings.HasSuffix(got, "WHERE x = 1") {
 		t.Errorf("sampleSource = %q", got)
 	}

@@ -2057,7 +2057,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Properties: map[string]*OpenAPISchema{
 				"decision": {Type: "string", Description: "The reviewer's decision"},
 				"danger":   {Type: "string", Description: "The reviewer's danger rating"},
-				"reasons":  {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Reasons given for the decision"},
+				"reasons":  {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Reasons given for the decision; masked for anyone but the proposer or the approver"},
 				"reviewer": {Type: "string", Description: "Which reviewer produced the verdict"},
 			},
 		},
@@ -2082,7 +2082,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"id":               {Type: "integer", Format: "int64", Description: "Action ID"},
 				"connection_id":    {Type: "integer", Description: "Connection the action targets"},
 				"database_name":    {Type: "string", Nullable: true, Description: "Database the action runs in"},
-				"statements":       {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "The statements, split by the server"},
+				"statements":       {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "The statements, split by the server; masked for anyone but the proposer or the approver"},
 				"source":           {Type: "string", Enum: []string{"chat_tool", "chat_block", "alert_analysis", "query_analysis", "server_analysis", "chart_analysis"}, Description: "Where the proposal came from"},
 				"proposed_by":      {Type: "string", Description: "Proposer's username"},
 				"proposed_via":     {Type: "string", Description: "Channel the proposal arrived on"},
@@ -2090,7 +2090,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"alert_id":         {Type: "integer", Format: "int64", Nullable: true, Description: "Linked alert"},
 				"parent_action_id": {Type: "integer", Format: "int64", Nullable: true, Description: "Previous attempt in the review chain"},
 				"attempt":          {Type: "integer", Description: "Position in the review chain"},
-				"rationale":        {Type: "string", Nullable: true, Description: "Why the change is proposed"},
+				"rationale":        {Type: "string", Nullable: true, Description: "Why the change is proposed; masked for anyone but the proposer or the approver"},
 				"evidence":         {Type: "object", Nullable: true, Description: "Stored context snapshot; null for anyone but the proposer or a superuser"},
 				"review_status":    {Type: "string", Enum: []string{"pending", "passed", "vetoed"}, Description: "Review state"},
 				"review":           {Ref: "#/components/schemas/ActionReview"},
@@ -2100,11 +2100,11 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"approved_at":      {Type: "string", Format: "date-time", Nullable: true, Description: "When it was approved"},
 				"exec_status":      {Type: "string", Enum: []string{"not_started", "executing", "succeeded", "failed", "cancelled", "unknown"}, Description: "Execution state"}, //nolint:misspell // value fixed by the table CHECK
 				"transactional":    {Type: "boolean", Nullable: true, Description: "Whether the statements ran in one transaction"},
-				"results":          {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/ActionStatementResult"}, Description: "Per-statement results"},
-				"preview":          {Type: "object", Nullable: true, Description: "Preview of the change"},
-				"undo":             {Type: "object", Nullable: true, Description: "Undo information"},
-				"verification":     {Type: "object", Nullable: true, Description: "Verification result"},
-				"outcome":          {Type: "object", Nullable: true, Description: "Recorded outcome"},
+				"results":          {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/ActionStatementResult"}, Description: "Per-statement results; statement text, errors and rows are masked for anyone but the proposer or the approver"},
+				"preview":          {Type: "object", Nullable: true, Description: "Preview of the change; null for anyone but the proposer or the approver"},
+				"undo":             {Type: "object", Nullable: true, Description: "Undo information; null for anyone but the proposer or the approver"},
+				"verification":     {Type: "object", Nullable: true, Description: "Verification result; null for anyone but the proposer or the approver"},
+				"outcome":          {Type: "object", Nullable: true, Description: "Recorded outcome; null for anyone but the proposer or the approver"},
 				"created_at":       {Type: "string", Format: "date-time", Description: "Creation time"},
 				"updated_at":       {Type: "string", Format: "date-time", Description: "Last update time"},
 				"executed_at":      {Type: "string", Format: "date-time", Nullable: true, Description: "When execution started"},
@@ -2471,7 +2471,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/actions/{id}": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get an action",
-				Description: "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser.",
+				Description: "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser. For anyone but the proposer or the approver, a superuser included, the statements, rationale, review reasons and results are masked as other statement text is, and the preview, undo, verification and outcome documents are null.",
 				OperationID: "getAction",
 				Tags:        []string{"Actions"},
 				Security:    bearerAuth,
@@ -2488,7 +2488,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/actions/{id}/execute": {
 			Post: &OpenAPIOperation{
 				Summary:     "Approve and execute an action",
-				Description: "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens. An action approved or overridden earlier that has not started may be executed again, without a second approval, by whoever approved or overrode it or by a superuser; an overridden action is retried with override and the confirm text again, under the same rules. Anyone else gets 409.",
+				Description: "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens. An action approved or overridden earlier that has not started may be executed again, without a second approval, by whoever approved or overrode it or by a superuser, whose retry is then recorded as the approval; an overridden action is retried with override and the confirm text again, under the same rules. Anyone else gets 409.",
 				OperationID: "executeAction",
 				Tags:        []string{"Actions"},
 				Security:    bearerAuth,

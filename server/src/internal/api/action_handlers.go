@@ -24,10 +24,12 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/redact"
 	"github.com/pgedge/ai-workbench/server/internal/actions"
 	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // Limits on the fields of a proposal, matching those the propose_action
@@ -74,6 +76,7 @@ const (
 type actionStore interface {
 	Get(ctx context.Context, id int64) (*actions.Action, error)
 	Approve(ctx context.Context, id int64, approval, by, via string) error
+	Reapprove(ctx context.Context, id int64, approval, previousBy, by, via string) error
 	LinkConversation(ctx context.Context, ids []int64, conversationID, username string) error
 }
 
@@ -99,6 +102,9 @@ type actionConnections interface {
 type actionAccess interface {
 	CanAccessConnection(ctx context.Context, connectionID int) (bool, string)
 	HasWriteAccess(ctx context.Context, connectionID int) bool
+	// IsSuperuser is the scope-aware superuser check: a token narrowed
+	// to particular connections or tools does not carry it.
+	IsSuperuser(ctx context.Context) bool
 }
 
 // ConversationOwnership reports whether the named user owns the
@@ -501,18 +507,82 @@ func (h *ActionHandler) approveAndStart(ctx context.Context, a *actions.Action) 
 	return a, failure
 }
 
-// redactFor returns the action as the caller may see it. The evidence
-// holds the context the proposer supplied, and the conversation id links
-// to their private chat, so only the proposer and a superuser get them.
-func redactFor(ctx context.Context, a *actions.Action) *actions.Action {
+// viewFor returns the action as the caller may see it, never changing a.
+// The evidence holds the context the proposer supplied, and the
+// conversation id links to their private chat, so only the proposer and
+// a superuser (scope-aware, so not through a narrowed token) get them.
+//
+// The statement text, and what the run reported, may hold a password
+// (ALTER ROLE ... PASSWORD, say), and anyone with read access to the
+// connection can read the action, so only the proposer and the approver,
+// who decided to run that text, see it as stored. Everyone else, a
+// superuser included, gets it masked as the other routes that return
+// statement text mask it (GitHub issues #670 and #724); see
+// maskActionText.
+func (h *ActionHandler) viewFor(ctx context.Context, a *actions.Action) *actions.Action {
 	username := auth.GetUsernameFromContext(ctx)
-	if auth.IsSuperuserFromContext(ctx) || (username != "" && username == a.ProposedBy) {
-		return a
-	}
+	proposer := username != "" && username == a.ProposedBy
+	approver := username != "" && a.ApprovedBy != nil && *a.ApprovedBy == username
 	c := *a
-	c.Evidence = nil
-	c.ConversationID = nil
+	if !proposer && !h.access.IsSuperuser(ctx) {
+		c.Evidence = nil
+		c.ConversationID = nil
+	}
+	if !proposer && !approver {
+		maskActionText(&c)
+	}
 	return &c
+}
+
+// maskActionText replaces every text field of a that may hold a secret
+// with a masked copy, leaving the slices a shared with the stored action
+// untouched. Statement text goes through metrics.RedactStatementText,
+// and free text (the rationale, the review's reasons, the run's errors
+// and result rows) through redact.Text. The preview, undo, verification
+// and outcome documents, which nothing writes yet, are withheld, since
+// their masking cannot be known until something does.
+func maskActionText(a *actions.Action) {
+	a.Statements = mapStrings(a.Statements, metrics.RedactStatementText)
+	if a.Rationale != nil {
+		r := redact.Text(*a.Rationale)
+		a.Rationale = &r
+	}
+	if a.Review != nil {
+		v := *a.Review
+		v.Reasons = mapStrings(v.Reasons, redact.Text)
+		a.Review = &v
+	}
+	if a.Results != nil {
+		results := make([]actions.StatementResult, len(a.Results))
+		for i := range a.Results {
+			res := a.Results[i]
+			res.Statement = metrics.RedactStatementText(res.Statement)
+			res.Error = redact.Text(res.Error)
+			if res.Rows != nil {
+				rows := make([][]string, len(res.Rows))
+				for j, row := range res.Rows {
+					rows[j] = mapStrings(row, redact.Text)
+				}
+				res.Rows = rows
+			}
+			results[i] = res
+		}
+		a.Results = results
+	}
+	a.Preview, a.Undo, a.Verification, a.Outcome = nil, nil, nil, nil
+}
+
+// mapStrings returns a new slice holding f of each element of in, or nil
+// for a nil in.
+func mapStrings(in []string, f func(string) string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = f(s)
+	}
+	return out
 }
 
 // loadVisibleAction reads the action named in the path. It answers 404,
@@ -547,7 +617,7 @@ func (h *ActionHandler) handleGet(w http.ResponseWriter, r *http.Request) {
 	if a == nil {
 		return
 	}
-	RespondJSON(w, http.StatusOK, redactFor(r.Context(), a))
+	RespondJSON(w, http.StatusOK, h.viewFor(r.Context(), a))
 }
 
 // decodeOptionalBody decodes a JSON body into dest, accepting an empty
@@ -596,7 +666,7 @@ func (h *ActionHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fresh = a
 	}
-	RespondJSON(w, http.StatusAccepted, redactFor(ctx, fresh))
+	RespondJSON(w, http.StatusAccepted, h.viewFor(ctx, fresh))
 }
 
 // executeApproval decides the kind of approval an execute request
@@ -622,31 +692,37 @@ func (h *ActionHandler) executeApproval(w http.ResponseWriter, r *http.Request,
 // isExecuteRetry reports whether an execute request retries an earlier
 // decision rather than making a new one. An action approved or
 // overridden earlier whose start failed or never happened is retried
-// without deciding again, but only by whoever decided it or a superuser,
-// and only through the same kind of request: an overridden action is
-// retried as an override, so the override rules have been applied
-// again. Anyone else falls through to Approve, which refuses it.
-// ClaimForExecution in Start stays the atomic gate either way.
-func isExecuteRetry(ctx context.Context, a *actions.Action, approval, by string) bool {
+// without deciding again, but only by whoever decided it or a superuser
+// (scope-aware, so not through a narrowed token), and only through the
+// same kind of request: an overridden action is retried as an override,
+// so the override rules have been applied again. Anyone else falls
+// through to Approve, which refuses it. ClaimForExecution in Start stays
+// the atomic gate either way.
+func (h *ActionHandler) isExecuteRetry(ctx context.Context, a *actions.Action, approval, by string) bool {
 	if a.Approval != approval || a.ExecStatus != "not_started" {
 		return false
 	}
-	if auth.IsSuperuserFromContext(ctx) {
+	if by != "" && a.ApprovedBy != nil && *a.ApprovedBy == by {
 		return true
 	}
-	return by != "" && a.ApprovedBy != nil && *a.ApprovedBy == by
+	return h.access.IsSuperuser(ctx)
 }
 
-// approveForExecute records the approval unless the request is a retry,
-// answering the refusal itself.
+// approveForExecute records the approval, answering the refusal itself.
+// A retry by whoever decided records nothing new; a superuser's retry of
+// someone else's decision records the superuser as the approver, since
+// the run is then theirs.
 func (h *ActionHandler) approveForExecute(ctx context.Context, w http.ResponseWriter,
 	a *actions.Action, approval string) bool {
 
 	by := auth.GetUsernameFromContext(ctx)
-	if isExecuteRetry(ctx, a, approval, by) {
-		return true
+	var err error
+	switch {
+	case !h.isExecuteRetry(ctx, a, approval, by):
+		err = h.store.Approve(ctx, a.ID, approval, by, actorVia(ctx))
+	case a.ApprovedBy != nil && *a.ApprovedBy != by:
+		err = h.store.Reapprove(ctx, a.ID, approval, *a.ApprovedBy, by, actorVia(ctx))
 	}
-	err := h.store.Approve(ctx, a.ID, approval, by, actorVia(ctx))
 	if err == nil {
 		return true
 	}

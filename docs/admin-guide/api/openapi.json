@@ -15,7 +15,7 @@
     "/actions/{id}": {
       "get": {
         "summary": "Get an action",
-        "description": "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser.",
+        "description": "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser. For anyone but the proposer or the approver, a superuser included, the statements, rationale, review reasons and results are masked as other statement text is, and the preview, undo, verification and outcome documents are null.",
         "operationId": "getAction",
         "tags": [
           "Actions"
@@ -154,7 +154,7 @@
     "/actions/{id}/execute": {
       "post": {
         "summary": "Approve and execute an action",
-        "description": "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens. An action approved or overridden earlier that has not started may be executed again, without a second approval, by whoever approved or overrode it or by a superuser; an overridden action is retried with override and the confirm text again, under the same rules. Anyone else gets 409.",
+        "description": "Records approval once and starts execution in the background, answering 202; poll GET /actions/{id} for the outcome. Requires write access to the connection. Running an action whose review did not pass needs override and the matching confirm text, and is refused for API tokens. An action approved or overridden earlier that has not started may be executed again, without a second approval, by whoever approved or overrode it or by a superuser, whose retry is then recorded as the approval; an overridden action is retried with override and the confirm text again, under the same rules. Anyone else gets 409.",
         "operationId": "executeAction",
         "tags": [
           "Actions"
@@ -11766,7 +11766,7 @@
           },
           "outcome": {
             "type": "object",
-            "description": "Recorded outcome",
+            "description": "Recorded outcome; null for anyone but the proposer or the approver",
             "nullable": true
           },
           "parent_action_id": {
@@ -11777,7 +11777,7 @@
           },
           "preview": {
             "type": "object",
-            "description": "Preview of the change",
+            "description": "Preview of the change; null for anyone but the proposer or the approver",
             "nullable": true
           },
           "proposed_by": {
@@ -11790,12 +11790,12 @@
           },
           "rationale": {
             "type": "string",
-            "description": "Why the change is proposed",
+            "description": "Why the change is proposed; masked for anyone but the proposer or the approver",
             "nullable": true
           },
           "results": {
             "type": "array",
-            "description": "Per-statement results",
+            "description": "Per-statement results; statement text, errors and rows are masked for anyone but the proposer or the approver",
             "items": {
               "$ref": "#/components/schemas/ActionStatementResult"
             }
@@ -11826,7 +11826,7 @@
           },
           "statements": {
             "type": "array",
-            "description": "The statements, split by the server",
+            "description": "The statements, split by the server; masked for anyone but the proposer or the approver",
             "items": {
               "type": "string"
             }
@@ -11838,7 +11838,7 @@
           },
           "undo": {
             "type": "object",
-            "description": "Undo information",
+            "description": "Undo information; null for anyone but the proposer or the approver",
             "nullable": true
           },
           "updated_at": {
@@ -11848,7 +11848,7 @@
           },
           "verification": {
             "type": "object",
-            "description": "Verification result",
+            "description": "Verification result; null for anyone but the proposer or the approver",
             "nullable": true
           }
         }
@@ -11976,7 +11976,7 @@
           },
           "reasons": {
             "type": "array",
-            "description": "Reasons given for the decision",
+            "description": "Reasons given for the decision; masked for anyone but the proposer or the approver",
             "items": {
               "type": "string"
             }

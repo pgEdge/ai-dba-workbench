@@ -243,6 +243,36 @@ func (s *Store) Approve(ctx context.Context, id int64, approval, by, via string)
 	return ErrInvalidState
 }
 
+// Reapprove records by as the approver of an action whose earlier
+// approval or override (of the same kind, by previousBy) was never
+// started, for a superuser who retries someone else's decision: the run
+// is then on record as theirs. It is a compare-and-swap on the approver,
+// so of several concurrent retries exactly one is recorded, and it
+// returns ErrInvalidState when the action has started, or its decision
+// or approver has changed, since it was read.
+func (s *Store) Reapprove(ctx context.Context, id int64, approval, previousBy, by, via string) error {
+	if approval != "approved" && approval != "overridden" {
+		return fmt.Errorf("invalid approval %q", approval)
+	}
+	if via != "session" && via != "token" {
+		return fmt.Errorf("invalid approval channel %q", via)
+	}
+	tag, err := s.pool.Exec(ctx, `
+        UPDATE proposed_actions
+           SET approved_by = $4, approved_via = $5,
+               approved_at = now(), updated_at = now()
+         WHERE id = $1 AND exec_status = 'not_started' AND approval = $2
+           AND approved_by = $3`,
+		id, approval, previousBy, by, via)
+	if err != nil {
+		return fmt.Errorf("reapprove action: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInvalidState
+	}
+	return nil
+}
+
 // ClaimForExecution atomically moves a not-started action that has
 // a recorded decision to executing: it passed review and was approved,
 // or was vetoed and then overridden. A passed but unapproved action is

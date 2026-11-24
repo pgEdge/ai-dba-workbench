@@ -61,6 +61,13 @@ type fakeActionBackend struct {
 	approveErr error
 	approvals  []string
 
+	reapproveErr error
+	reapprovals  []string // the user each Reapprove recorded
+
+	// narrowed makes IsSuperuser deny a superuser, as for a token
+	// narrowed to particular connections.
+	narrowed bool
+
 	startErr error
 	started  []int64
 
@@ -102,7 +109,7 @@ func (f *fakeActionBackend) Get(_ context.Context, id int64) (*actions.Action, e
 	return &c, nil
 }
 
-func (f *fakeActionBackend) Approve(_ context.Context, id int64, approval, _, _ string) error {
+func (f *fakeActionBackend) Approve(_ context.Context, id int64, approval, by, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.approveErr != nil {
@@ -116,8 +123,29 @@ func (f *fakeActionBackend) Approve(_ context.Context, id int64, approval, _, _ 
 		return actions.ErrInvalidState
 	}
 	a.Approval = approval
+	a.ApprovedBy = &by
 	f.approvals = append(f.approvals, approval)
 	return nil
+}
+
+func (f *fakeActionBackend) Reapprove(_ context.Context, id int64, approval, previousBy, by, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.reapproveErr != nil {
+		return f.reapproveErr
+	}
+	a, ok := f.actions[id]
+	if !ok || a.ExecStatus != "not_started" || a.Approval != approval ||
+		a.ApprovedBy == nil || *a.ApprovedBy != previousBy {
+		return actions.ErrInvalidState
+	}
+	a.ApprovedBy = &by
+	f.reapprovals = append(f.reapprovals, by)
+	return nil
+}
+
+func (f *fakeActionBackend) IsSuperuser(ctx context.Context) bool {
+	return auth.IsSuperuserFromContext(ctx) && !f.narrowed
 }
 
 func (f *fakeActionBackend) LinkConversation(_ context.Context, ids []int64, conv, _ string) error {
@@ -457,12 +485,14 @@ func TestActionRedaction(t *testing.T) {
 		name      string
 		user      string
 		superuser bool
+		narrowed  bool
 		visible   bool
 	}{
-		{"proposer", "alice", false, true},
-		{"superuser", "root", true, true},
-		{"other user", "bob", false, false},
-		{"no username", "", false, false},
+		{"proposer", "alice", false, false, true},
+		{"superuser", "root", true, false, true},
+		{"superuser through a narrowed token", "root", true, true, false},
+		{"other user", "bob", false, false, false},
+		{"no username", "", false, false, false},
 	}
 	for _, tt := range tests {
 		for _, call := range []struct{ method, path string }{
@@ -471,6 +501,7 @@ func TestActionRedaction(t *testing.T) {
 		} {
 			t.Run(tt.name+" "+call.method, func(t *testing.T) {
 				e := newActionTestEnv(t)
+				e.b.narrowed = tt.narrowed
 				a := notStarted(1, "passed")
 				a.ProposedBy = "alice"
 				a.ConversationID = &conv
@@ -504,6 +535,81 @@ func TestActionRedaction(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestActionStatementMasking proves the statement text, and what the
+// run reported, are returned as stored only to the proposer and the
+// approver. Everyone else who can read the action, a superuser
+// included, gets them masked, and the stored action is left as it was.
+func TestActionStatementMasking(t *testing.T) {
+	const secret = "example-secret"
+	stmt := "ALTER ROLE app PASSWORD '" + secret + "'"
+	tests := []struct {
+		name      string
+		user      string
+		superuser bool
+		shown     bool
+	}{
+		{"proposer", "alice", false, true},
+		{"approver", "carol", false, true},
+		{"superuser", "root", true, false},
+		{"other user", "bob", false, false},
+		{"no username", "", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newActionTestEnv(t)
+			rationale := "rotate the password to '" + secret + "'"
+			approver := "carol"
+			a := &actions.Action{
+				ID: 1, ConnectionID: 7, ProposedBy: "alice", ReviewStatus: "passed",
+				Approval: "approved", ApprovedBy: &approver, ExecStatus: "failed",
+				Statements: []string{stmt},
+				Rationale:  &rationale,
+				Review:     &actions.Verdict{Decision: "pass", Reasons: []string{"sets PASSWORD '" + secret + "'"}},
+				Results: []actions.StatementResult{{
+					Statement: stmt, Error: "near PASSWORD '" + secret + "'",
+					Columns: []string{"c"}, Rows: [][]string{{"PASSWORD '" + secret + "'"}},
+				}},
+				Preview: json.RawMessage(`{"text":"` + secret + `"}`),
+			}
+			e.b.actions[1] = a
+
+			rec := e.doAs("GET", "/api/v1/actions/1", "", false, tt.user, tt.superuser)
+			if rec.Code != 200 {
+				t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+			}
+			body := rec.Body.String()
+			if got := strings.Count(body, secret); tt.shown && got != 7 {
+				t.Errorf("the secret appears %d times, want 7: %s", got, body)
+			} else if !tt.shown && got != 0 {
+				t.Errorf("the secret leaked: %s", body)
+			}
+			var got actions.Action
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Statements) != 1 || len(got.Results) != 1 || len(got.Results[0].Rows) != 1 ||
+				got.Review == nil || len(got.Review.Reasons) != 1 || got.Rationale == nil {
+				t.Errorf("a masked field was dropped: %s", body)
+			}
+			if a.Statements[0] != stmt || a.Results[0].Statement != stmt ||
+				!strings.Contains(a.Results[0].Rows[0][0], secret) ||
+				!strings.Contains(a.Review.Reasons[0], secret) || !strings.Contains(*a.Rationale, secret) {
+				t.Error("masking altered the stored action")
+			}
+		})
+	}
+}
+
+// TestMaskActionTextEmpty proves an action with nothing to mask stays
+// empty, rather than gaining empty slices.
+func TestMaskActionTextEmpty(t *testing.T) {
+	var a actions.Action
+	maskActionText(&a)
+	if a.Statements != nil || a.Results != nil || a.Rationale != nil || a.Review != nil {
+		t.Errorf("masked = %+v", a)
 	}
 }
 
@@ -770,18 +876,27 @@ func TestExecuteActionStatuses(t *testing.T) {
 // approval, anyone else gets 409.
 func TestExecuteRetryOfApprovedAction(t *testing.T) {
 	tests := []struct {
-		name      string
-		user      string
-		superuser bool
-		status    int
+		name         string
+		user         string
+		superuser    bool
+		narrowed     bool
+		reapproveErr error
+		status       int
+		approvedBy   string
 	}{
-		{"approver", "alice", false, 202},
-		{"superuser", "root", true, 202},
-		{"other user", "bob", false, 409},
+		{"approver", "alice", false, false, nil, 202, "alice"},
+		{"superuser", "root", true, false, nil, 202, "root"},
+		{"superuser who approved", "alice", true, false, nil, 202, "alice"},
+		{"superuser through a narrowed token", "root", true, true, nil, 409, "alice"},
+		{"superuser losing a race", "root", true, false, actions.ErrInvalidState, 409, "alice"},
+		{"superuser, store failure", "root", true, false, errors.New("boom"), 500, "alice"},
+		{"other user", "bob", false, false, nil, 409, "alice"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newActionTestEnv(t)
+			e.b.narrowed = tt.narrowed
+			e.b.reapproveErr = tt.reapproveErr
 			a := notStarted(1, "passed")
 			a.Approval = "approved"
 			approver := "alice"
@@ -797,6 +912,9 @@ func TestExecuteRetryOfApprovedAction(t *testing.T) {
 			}
 			if started := len(e.b.started) == 1; started != (tt.status == 202) {
 				t.Errorf("started = %v for status %d", e.b.started, tt.status)
+			}
+			if got := e.b.actions[1].ApprovedBy; got == nil || *got != tt.approvedBy {
+				t.Errorf("approved_by = %v, want %q", got, tt.approvedBy)
 			}
 		})
 	}
@@ -818,6 +936,7 @@ func TestExecuteRetryOfOverriddenAction(t *testing.T) {
 	}{
 		{"overrider", override, "alice", false, false, 202},
 		{"superuser", override, "root", false, true, 202},
+		{"superuser through a narrowed token", override, "root", true, true, 403},
 		{"other user", override, "bob", false, false, 409},
 		{"token", override, "alice", true, false, 403},
 		{"no override flag", "", "alice", false, false, 409},

@@ -424,6 +424,9 @@ func TestStoreErrorsOnClosedPool(t *testing.T) {
 	if err := s.Approve(ctx, a.ID, "approved", "b", "session"); err == nil {
 		t.Error("approve")
 	}
+	if err := s.Reapprove(ctx, a.ID, "approved", "b", "c", "session"); err == nil || errors.Is(err, ErrInvalidState) {
+		t.Error("reapprove")
+	}
 	if _, err := s.ClaimForExecution(ctx, a.ID); err == nil {
 		t.Error("claim")
 	}
@@ -431,3 +434,64 @@ func TestStoreErrorsOnClosedPool(t *testing.T) {
 		t.Error("finish")
 	}
 }
+
+// TestReapprove proves a retry by another user is recorded as theirs
+// only while the decision it retries still stands unstarted, and as a
+// compare-and-swap on the approver.
+func TestReapprove(t *testing.T) {
+	s, _, connID := newTestStore(t, "_act_reap")
+	ctx := context.Background()
+	a, err := s.Create(ctx, sampleAction(connID, "alice"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetReview(ctx, a.ID, "passed", Verdict{Decision: "pass", Danger: "low"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reapprove(ctx, a.ID, "approved", "bob", "root", "session"); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("reapprove before any approval = %v, want ErrInvalidState", err)
+	}
+	if err := s.Approve(ctx, a.ID, "approved", "bob", "session"); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name                        string
+		approval, previous, by, via string
+		wantErr                     error // nil for success; errAny for any non-state error
+	}{
+		{"bad approval", "none", "bob", "root", "session", errAny},
+		{"bad channel", "approved", "bob", "root", "cookie", errAny},
+		{"other kind", "overridden", "bob", "root", "session", ErrInvalidState},
+		{"stale approver", "approved", "carol", "root", "session", ErrInvalidState},
+		{"retry", "approved", "bob", "root", "token", nil},
+		{"lost race", "approved", "bob", "dave", "session", ErrInvalidState},
+	}
+	for _, tc := range tests {
+		err := s.Reapprove(ctx, a.ID, tc.approval, tc.previous, tc.by, tc.via)
+		switch {
+		case tc.wantErr == errAny:
+			if err == nil || errors.Is(err, ErrInvalidState) {
+				t.Errorf("%s: err = %v", tc.name, err)
+			}
+		case !errors.Is(err, tc.wantErr):
+			t.Errorf("%s: err = %v, want %v", tc.name, err, tc.wantErr)
+		}
+	}
+	got, err := s.Get(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ApprovedBy == nil || *got.ApprovedBy != "root" || got.ApprovedVia == nil || *got.ApprovedVia != "token" {
+		t.Errorf("approved_by = %v via %v, want root via token", got.ApprovedBy, got.ApprovedVia)
+	}
+	if ok, err := s.ClaimForExecution(ctx, a.ID); err != nil || !ok {
+		t.Fatalf("claim = %v, %v", ok, err)
+	}
+	if err := s.Reapprove(ctx, a.ID, "approved", "root", "bob", "session"); !errors.Is(err, ErrInvalidState) {
+		t.Errorf("reapprove after the start = %v, want ErrInvalidState", err)
+	}
+}
+
+// errAny marks a table case that expects an error other than a state
+// error.
+var errAny = errors.New("any error")

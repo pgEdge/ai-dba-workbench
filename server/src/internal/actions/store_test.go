@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -495,3 +496,32 @@ func TestReapprove(t *testing.T) {
 // errAny marks a table case that expects an error other than a state
 // error.
 var errAny = errors.New("any error")
+
+// TestGetRejectsUndecodableColumns proves a stored document that does not
+// decode into its field is reported as an error naming the column,
+// rather than returned half-filled.
+func TestGetRejectsUndecodableColumns(t *testing.T) {
+	s, pool, connID := newTestStore(t, "_act_dec")
+	ctx := context.Background()
+	tests := []struct {
+		column, update, want string
+	}{
+		{"statements", `UPDATE proposed_actions SET statements = '{"not": "a list"}' WHERE id = $1`, "decode statements"},
+		{"review", `UPDATE proposed_actions SET review = '"not a verdict"' WHERE id = $1`, "decode review"},
+		{"results", `UPDATE proposed_actions SET results = '{"not": "a list"}' WHERE id = $1`, "decode results"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.column, func(t *testing.T) {
+			a, err := s.Create(ctx, sampleAction(connID, "alice"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, tt.update, a.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Get(ctx, a.ID); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}

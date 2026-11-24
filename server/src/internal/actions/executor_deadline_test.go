@@ -270,3 +270,15 @@ func TestExecuteAcquireDeadline(t *testing.T) {
 		t.Fatalf("action = %s %+v", a.ExecStatus, a.Results)
 	}
 }
+
+// TestRunnerCancelInFlightFails proves a cancel request that cannot
+// reach the server is logged and returns, rather than blocking or
+// panicking: once the proxy has gone, the cancel connection is refused.
+func TestRunnerCancelInFlightFails(t *testing.T) {
+	t.Parallel()
+	f := newExecFixture(t, "_x_dlc", time.Second, time.Minute, 10)
+	r, p := f.proxiedRunner(t)
+	p.close()
+	r.inFlight = true
+	r.cancelInFlight()
+}

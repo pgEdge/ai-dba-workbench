@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -559,23 +560,39 @@ func TestConnect_ClampsMaxConns(t *testing.T) {
 	defer ds.Close()
 }
 
+// loopbackHostAddr returns the IP address to use as hostaddr for a test
+// server reached at host, and false when host is not a loopback host:
+// the address itself for a loopback IP, and 127.0.0.1 for localhost.
+func loopbackHostAddr(host string) (string, bool) {
+	if strings.EqualFold(host, "localhost") {
+		return "127.0.0.1", true
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return ip.String(), true
+	}
+	return "", false
+}
+
 // TestConnect_HostAddr connects with the hostaddr set to the local test
 // server and the host set to a name. With localhost, which resolves, the
 // connection fails with FATAL if hostaddr reaches the server as a startup
 // parameter (issue #841); with a name that cannot resolve (RFC 2606
 // reserves .invalid), it succeeds only if the datastore dials hostaddr.
+// Connecting is the whole check: a server in a port-mapped container
+// sees its own address, not the loopback one, as inet_server_addr().
 func TestConnect_HostAddr(t *testing.T) {
 	requireSchema(t)
 
 	for _, host := range []string{"localhost", "datastore.invalid"} {
 		t.Run(host, func(t *testing.T) {
 			cfg := parseTestServerURL(t)
-			if cfg.host != "127.0.0.1" {
-				t.Skipf("test server host %q is not 127.0.0.1", cfg.host)
+			hostAddr, ok := loopbackHostAddr(cfg.host)
+			if !ok {
+				t.Skipf("test server host %q is not a loopback host", cfg.host)
 			}
 			cfg.database = testDBName
 			cfg.host = host
-			cfg.hostAddr = "127.0.0.1"
+			cfg.hostAddr = hostAddr
 
 			ds := &Datastore{config: cfg}
 			if err := ds.connect(); err != nil {
@@ -583,15 +600,34 @@ func TestConnect_HostAddr(t *testing.T) {
 			}
 			defer ds.Close()
 
-			var addr string
-			if err := ds.pool.QueryRow(context.Background(),
-				"SELECT host(inet_server_addr())").Scan(&addr); err != nil {
-				t.Fatalf("query server address: %v", err)
-			}
-			if addr != "127.0.0.1" {
-				t.Errorf("connected to %q, want 127.0.0.1", addr)
+			if err := ds.pool.Ping(context.Background()); err != nil {
+				t.Fatalf("ping with hostaddr: %v", err)
 			}
 		})
+	}
+}
+
+// TestLoopbackHostAddr checks which test server hosts the hostaddr
+// tests run against.
+func TestLoopbackHostAddr(t *testing.T) {
+	cases := []struct {
+		host, want string
+		ok         bool
+	}{
+		{"localhost", "127.0.0.1", true},
+		{"LOCALHOST", "127.0.0.1", true},
+		{"127.0.0.1", "127.0.0.1", true},
+		{"127.0.0.2", "127.0.0.2", true},
+		{"::1", "::1", true},
+		{"db.example.com", "", false},
+		{"192.0.2.1", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := loopbackHostAddr(tc.host)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("loopbackHostAddr(%q) = %q, %v; want %q, %v",
+				tc.host, got, ok, tc.want, tc.ok)
+		}
 	}
 }
 

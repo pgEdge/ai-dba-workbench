@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"errors"
+	"net"
 	"strconv"
 	"strings"
 	"testing"
@@ -244,20 +245,24 @@ func TestNewDatastoreSuccess(t *testing.T) {
 // resolves, the connection fails with FATAL if hostaddr reaches the
 // server as a startup parameter (issue #841); with a name that cannot
 // resolve (RFC 2606 reserves .invalid), it succeeds only if the alerter
-// dials hostaddr.
+// dials hostaddr. Connecting is the whole check: a server in a
+// port-mapped container sees its own address, not the loopback one, as
+// inet_server_addr().
 func TestNewDatastoreHostAddr(t *testing.T) {
+	// requireLocalTestDSN has checked that the host is a loopback one.
 	connStr := requireLocalTestDSN(t, "the NewDatastore hostaddr test")
 
 	testHost, port, db, user, pw := parseTestConnString(connStr)
-	if testHost != "127.0.0.1" {
-		t.Skipf("test server host %q is not 127.0.0.1", testHost)
+	hostAddr := "127.0.0.1"
+	if ip := net.ParseIP(testHost); ip != nil {
+		hostAddr = ip.String()
 	}
 	for _, host := range []string{"localhost", "datastore.invalid"} {
 		t.Run(host, func(t *testing.T) {
 			cfg := &config.Config{
 				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     host,
-					HostAddr: "127.0.0.1",
+					HostAddr: hostAddr,
 					Port:     port,
 					Database: db,
 					Username: user,
@@ -275,13 +280,8 @@ func TestNewDatastoreHostAddr(t *testing.T) {
 			}
 			defer ds.Close()
 
-			var addr string
-			if err := ds.pool.QueryRow(context.Background(),
-				"SELECT host(inet_server_addr())").Scan(&addr); err != nil {
-				t.Fatalf("query server address: %v", err)
-			}
-			if addr != "127.0.0.1" {
-				t.Errorf("connected to %q, want 127.0.0.1", addr)
+			if err := ds.pool.Ping(context.Background()); err != nil {
+				t.Fatalf("ping with hostaddr: %v", err)
 			}
 		})
 	}

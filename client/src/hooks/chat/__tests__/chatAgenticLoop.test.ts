@@ -669,6 +669,49 @@ describe('chatAgenticLoop', () => {
                 expect(result.finalMessage.content).toBe('Done');
             });
 
+            it.each([
+                ['an HTTP error body', { ok: false, status: 500, text: 'boom' },
+                    'Tool execution error: boom', true],
+                ['an empty HTTP error body', { ok: false, status: 502, text: '' },
+                    'Tool execution error: Tool call failed with status 502', true],
+                ['an empty text result', { ok: true, json: { content: [{ text: '' }] } },
+                    'No data returned', false],
+                ['an empty error result', { ok: true, json: { content: [], isError: true } },
+                    'Tool execution failed', true],
+            ] as const)('feeds the model %s', async (_name, reply, want, isError) => {
+                let llmCalls = 0;
+                const mockFetch = vi.fn<FetchFunction>().mockImplementation(async (url: string) => {
+                    if (url === '/api/v1/llm/chat') {
+                        llmCalls++;
+                        const response = llmCalls === 1
+                            ? createToolUseResponse([
+                                { id: 'tool-1', name: 'list_connections', input: {} },
+                            ])
+                            : createTextResponse('Done');
+                        return stubResponse({
+                            ok: true,
+                            json: () => Promise.resolve(response),
+                            text: () => Promise.resolve(''),
+                        });
+                    }
+                    return {
+                        ok: reply.ok,
+                        status: 'status' in reply ? reply.status : 200,
+                        json: () => Promise.resolve('json' in reply ? reply.json : {}),
+                        text: () => Promise.resolve('text' in reply ? reply.text : ''),
+                    } as unknown as Response;
+                });
+
+                const result = await runAgenticLoop(createLoopParams({ fetchFn: mockFetch }));
+
+                const blocks = result.updatedApiMessages.flatMap(
+                    m => (Array.isArray(m.content) ? m.content : []),
+                ) as unknown as { type: string; text?: string; is_error?: boolean }[];
+                const toolResult = blocks.find(b => b.type === 'tool_result');
+                expect(toolResult?.text).toBe(want);
+                expect(Boolean(toolResult?.is_error)).toBe(isError);
+            });
+
             it('handles tool response isError with no content text', async () => {
                 const mockFetch = createMockFetch(
                     [

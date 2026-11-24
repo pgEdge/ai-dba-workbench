@@ -16,6 +16,7 @@
  * response is produced or the iteration limit is reached.
  */
 
+import type { Dispatch } from 'react';
 import type { ChatMessageData } from '../../components/ChatPanel/ChatMessage';
 import type { ToolActivity } from '../../components/ChatPanel/ToolStatus';
 import { extractToolTarget } from '../../components/ChatPanel/chatSqlTarget';
@@ -66,7 +67,7 @@ export interface AgenticLoopParams {
      * as soon as its result arrives, so the caller can link it to a
      * conversation later even if this turn then fails or is aborted.
      */
-    onActionProposed?: (actionId: number) => void;
+    onActionProposed?: Dispatch<number>;
 }
 
 /**
@@ -218,9 +219,36 @@ interface ToolOutcome {
     isError: boolean;
 }
 
+/** Whether a tool returned any text, so an empty result takes the fallback. */
+function hasText(text: string | undefined): text is string {
+    return text !== undefined && text !== '';
+}
+
+/** Turn a tool call's HTTP response into its outcome. */
+async function toolOutcomeOf(toolResponse: Response): Promise<ToolOutcome> {
+    if (!toolResponse.ok) {
+        const errorText = await toolResponse.text();
+        const message = hasText(errorText)
+            ? errorText
+            : `Tool call failed with status ${toolResponse.status}`;
+        return { text: `Tool execution error: ${message}`, isError: true };
+    }
+
+    const toolData: ToolCallResponse = await toolResponse.json();
+    const text = toolData.content?.[0]?.text;
+    const fallback = toolData.isError
+        ? 'Tool execution failed'
+        : 'No data returned';
+    return {
+        text: hasText(text) ? text : fallback,
+        isError: Boolean(toolData.isError),
+    };
+}
+
 /**
  * Call one tool on the server. Transport and HTTP failures become error
- * outcomes; an abort is rethrown so the loop stops.
+ * outcomes; an abort is rethrown on purpose, for `runAgenticLoop` to
+ * propagate and the chat hook to catch, so the turn stops.
  */
 async function callTool(
     toolUse: LLMContentBlock,
@@ -240,23 +268,7 @@ async function callTool(
             body: JSON.stringify(body),
             signal: params.abortSignal,
         });
-
-        if (!toolResponse.ok) {
-            const errorText = await toolResponse.text();
-            throw new Error(
-                errorText
-                    || `Tool call failed with status ${toolResponse.status}`,
-            );
-        }
-
-        const toolData: ToolCallResponse = await toolResponse.json();
-        const fallback = toolData.isError
-            ? 'Tool execution failed'
-            : 'No data returned';
-        return {
-            text: toolData.content?.[0]?.text || fallback,
-            isError: Boolean(toolData.isError),
-        };
+        return await toolOutcomeOf(toolResponse);
     } catch (toolErr) {
         if ((toolErr as Error).name === 'AbortError') {
             throw toolErr;

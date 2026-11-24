@@ -973,7 +973,9 @@ only that entity's share.
 The entity keys come from `GetProbeEntityKeyColumns`: the columns of the
 probe table's primary key other than `connection_id` and `collected_at`,
 in key order (`interface_name`; `database_name` for `pg_stat_database`;
-`database_name, queryid, userid, dbid, toplevel`; nothing for a
+`database_name, queryid, userid, dbid, toplevel` for pg_stat_statements,
+less `database_name`, which `sampleEntityColumns` drops (see below);
+nothing for a
 single-row probe such as `pg_stat_wal`, which then reduces to the
 unpartitioned form). On plain PostgreSQL the keyed probes declare such a
 key (`primaryKeyEntityColumns` reads it and also reports whether any key
@@ -2388,14 +2390,20 @@ string, because JavaScript cannot represent it exactly.
 `/metrics/query` also takes `statement_database_name` (PR #825, the
 follow-up to #802), so the query detail charts count only the statement's
 runs in the row's own database, as the summary tiles do. `database_name`
-cannot do this on pg_stat_statements, since every probing database carries
-every database's counters. `applyStatementDatabaseFilter` in
+cannot do this on pg_stat_statements, since its value is only the probing
+database: every probing database carried every database's counters before
+#762, and since #762 the one probing database can change between
+collections, so the charts send `statement_database_name` alone, never
+`database_name`. `applyStatementDatabaseFilter` in
 `metrics_statement_database.go` validates the name with
 `database.ValidateDatabaseName`, refuses any other probe and more than one
 connection with `400`, and resolves the name through
-`statementDatabaseLookupSQL` (the Top Queries lookup) into
+`metrics.LookupStatementDatabases` (the Top Queries lookup,
+`internal/metrics/statement_database.go`) and
+`metrics.NewStatementDatabaseFilter` into
 `MetricFilters.StatementDatabase`: the dbids with that name, plus every
-resolved dbid. `statementDatabaseClause` then matches
+resolved dbid. The `query_metrics` MCP tool applies its `database_name`
+argument the same way for pg_stat_statements. `statementDatabaseClause` then matches
 `dbid::bigint = ANY(<named>) OR (NOT dbid::bigint = ANY(<resolved>) AND
 database_name = $n)`, which is the Top Queries row key
 `COALESCE(db_names.datname, database_name)` without a join. The lists are
@@ -2406,13 +2414,25 @@ unknown name still matches rows collected through a database of that
 name. The handler test seeds a probe_configs row because the time-series
 path resolves the probe interval, and drops the table it created.
 
+Every pg_stat_statements read in `BuildMetricsQuery` and the rate path of
+`BuildDerivedMetricsQuery` goes through `sampleSource`, which wraps the
+filtered rows in `SELECT DISTINCT ON (queryid, userid, dbid, toplevel,
+collected_at) * ... ORDER BY ..., database_name`, keeping one copy of
+each reading (lowest probing name wins, as in the Top Queries `readings`
+CTE, and served by `idx_pg_stat_statements_identity_time`), and the rate
+partition omits `database_name` so a series survives a change of probing
+database. `TestMetricsQuery_StatementDatabaseAcrossProbingDatabases`
+pins both. The derived ratio path still reads the table directly.
+
 Whether the `(connection_id, database_name, queryid, collected_at)`
 object index actually serves a queryid lookup depends on the predicate
 also naming `database_name`, the index's second column. Before
 PostgreSQL 18, which added B-tree skip scans, a predicate on
 `connection_id` and `queryid` alone falls back to a bitmap scan of
 `idx_pg_stat_statements_conn_time` over every row of the connection in
-the window. `/metrics/query` always carries the database name;
+the window. The query detail charts send `statement_database_name`
+instead of `database_name` (#762), so like `/metrics/query-stats` their
+scan binds `connection_id` and `queryid` and reads the identity index;
 `/metrics/query-stats` takes an optional `database_name`
 parameter, which the drill-down always sends, and `buildQueryStatsSQL`
 applies it to the statement's resolved database (see below), so the

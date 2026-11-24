@@ -22,6 +22,11 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
+// statementsProbe is the probe whose database_name filter query_metrics
+// applies to the statement's own database rather than to the database
+// the rows were collected through.
+const statementsProbe = "pg_stat_statements"
+
 // QueryMetricsTool creates the query_metrics tool for querying collected metrics.
 // The rbacChecker is consulted before any datastore read so that callers cannot
 // query metrics for connections they are not permitted to see. A nil checker
@@ -71,7 +76,9 @@ Use this tool to:
 - time_end: End of time range (ISO 8601 or "now", default: now)
 - buckets: Number of time buckets for aggregation (default: 150)
 - metrics: Comma-separated list of metric columns (default: all numeric columns)
-- database_name: Filter by database name (for database-scoped probes)
+- database_name: Filter by database name (for database-scoped probes). For
+  pg_stat_statements it keeps the statements that ran in that database;
+  without it the figures cover every database on the server.
 - schema_name: Filter by schema name (for table/index probes)
 - table_name: Filter by table name (for table/index probes)
 - aggregation: "avg", "sum", "min", "max", "last" (default: "avg")
@@ -130,7 +137,7 @@ To manage response sizes:
 					},
 					"database_name": map[string]any{
 						"type":        "string",
-						"description": "Filter by database name (for database-scoped probes)",
+						"description": "Filter by database name (for database-scoped probes). For pg_stat_statements, the database the statements ran in.",
 					},
 					"schema_name": map[string]any{
 						"type":        "string",
@@ -270,7 +277,18 @@ To manage response sizes:
 
 			// Build the aggregated query using shared package
 			filters := metrics.MetricFilters{}
-			if dbName, fok := args["database_name"].(string); fok && dbName != "" {
+			if dbName, fok := args["database_name"].(string); fok && dbName != "" && probeName == statementsProbe {
+				// pg_stat_statements is server-wide and its database_name
+				// is the database the collector read it through, which can
+				// change between collections (GitHub issue #762), so the
+				// name selects the statements that ran in that database,
+				// resolved from dbid as the Top Queries list resolves it.
+				names, err := metrics.LookupStatementDatabases(ctx, pool, connectionID)
+				if err != nil {
+					return mcp.NewToolError(fmt.Sprintf("Failed to resolve database_name: %v", err))
+				}
+				filters.StatementDatabase = metrics.NewStatementDatabaseFilter(dbName, names)
+			} else if fok && dbName != "" {
 				filters.DatabaseName = dbName
 				// Resolve which column name this probe uses for database filtering
 				dbCol, err := metrics.ResolveDatabaseColumn(ctx, pool, probeName)

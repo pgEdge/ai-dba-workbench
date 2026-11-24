@@ -371,7 +371,7 @@ func TestBuildMetricsQuery(t *testing.T) {
 			t.Errorf("nil QueryID changed SQL:\n%s\n---\n%s",
 				withoutField, withEmptyField)
 		}
-		if strings.Contains(withEmptyField, "queryid") {
+		if strings.Contains(withEmptyField, "queryid = $") {
 			t.Error("nil QueryID must not add a queryid clause")
 		}
 		if len(argsA) != len(argsB) {
@@ -2880,13 +2880,13 @@ func TestBuildDerivedMetricsQueryEntityPartition(t *testing.T) {
 
 	t.Run("several entity keys are quoted and listed in order", func(t *testing.T) {
 		query, _, err := BuildDerivedMetricsQuery(
-			"pg_stat_statements", derived[:1],
-			[]string{"database_name", "queryid", "userid", "dbid", "toplevel"}, nil,
+			"pg_stat_user_indexes", derived[:1],
+			[]string{"database_name", "schemaname", "relname", "indexrelname"}, nil,
 			1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		want := `PARTITION BY "database_name", "queryid", "userid", "dbid", "toplevel" ORDER BY collected_at`
+		want := `PARTITION BY "database_name", "schemaname", "relname", "indexrelname" ORDER BY collected_at`
 		if !strings.Contains(query, want) {
 			t.Errorf("query missing %q\n---\n%s", want, query)
 		}

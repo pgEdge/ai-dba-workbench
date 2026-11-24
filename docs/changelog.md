@@ -223,7 +223,10 @@ project adheres to
   the extension installed and stored each statement once for each such
   database, which multiplied the probe's write volume and datastore
   size by the number of those databases; it now reads the view in the
-  first database that has the extension. (#762)
+  first database that has the extension. The query detail charts and
+  the `query_metrics` tool count each reading once, so they keep their
+  history when that database changes and no longer multiply the
+  figures stored by earlier releases. (#762)
 
 ### Security
 

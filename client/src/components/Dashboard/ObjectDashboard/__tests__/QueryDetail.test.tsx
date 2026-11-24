@@ -516,7 +516,7 @@ describe('QueryDetail', () => {
 
             const execParams = paramsFor(EXEC_KEY);
             expect(execParams?.probeName).toBe('pg_stat_statements');
-            expect(execParams?.databaseName).toBe('testdb');
+            expect(execParams?.statementDatabaseName).toBe('testdb');
             expect(execParams?.timeRange).toBe('1h');
             expect(execParams?.metrics).toEqual([
                 'mean_exec_time', 'min_exec_time', 'max_exec_time',
@@ -528,18 +528,19 @@ describe('QueryDetail', () => {
             expect(callsParams?.timeRange).toBe('1h');
         });
 
-        it('scopes both charts to the database the statistics were '
-            + 'collected through', async () => {
+        it('never filters the charts on the database the statistics '
+            + 'were collected through', async () => {
             mockApiFetch.mockResolvedValue(okResponse([
                 makeQueryRow({ sample_database_name: 'alpha' }),
             ]));
             renderDetail();
 
             await waitFor(() => {
-                expect(paramsFor(EXEC_KEY)?.databaseName).toBe('alpha');
+                expect(paramsFor(EXEC_KEY)).toBeDefined();
             });
+            expect(paramsFor(EXEC_KEY)?.databaseName).toBeUndefined();
             expect(paramsFor('calls_per_sec')?.databaseName)
-                .toBe('alpha');
+                .toBeUndefined();
         });
 
         it('limits both charts to the statement\'s own database, as the '

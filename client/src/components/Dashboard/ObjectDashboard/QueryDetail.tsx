@@ -344,16 +344,12 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     }, [user, fetchQueryData, refreshTrigger]);
 
     // The charts read the statement's pg_stat_statements metric rows,
-    // which are keyed by the database the statistics were collected
-    // through rather than by the statement's own database, so they
-    // filter on the former whenever the server reports it.
-    // Every probing database carries every database's counters for the
-    // statement, so the charts also name the statement's own database,
-    // the one the summary above them is scoped to; without it they would
-    // add up the statement's runs in every database.
-    const chartDatabaseName =
-        queryData?.sample_database_name || databaseName;
-
+    // whose database_name is the database the statistics were collected
+    // through. That database can change between collections (GitHub
+    // issue #762), so the charts never filter on it: they name the
+    // statement's own database, the one the summary above them is
+    // scoped to, and the server counts each reading once whichever
+    // database it was collected through.
     // Chart query - execution time over time
     const execTimeChartParams = useMemo(
         (): MetricQueryParams | null => {
@@ -361,7 +357,6 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             return {
                 probeName: 'pg_stat_statements',
                 connectionId,
-                databaseName: chartDatabaseName,
                 statementDatabaseName: databaseName,
                 queryId: queryData.queryid,
                 timeRange: timeRange.range,
@@ -375,8 +370,8 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             };
         },
         [
-            connectionId, chartDatabaseName, databaseName,
-            timeRange.range, queryData?.queryid,
+            connectionId, databaseName, timeRange.range,
+            queryData?.queryid,
         ]
     );
 
@@ -387,7 +382,6 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             return {
                 probeName: 'pg_stat_statements',
                 connectionId,
-                databaseName: chartDatabaseName,
                 statementDatabaseName: databaseName,
                 queryId: queryData.queryid,
                 timeRange: timeRange.range,
@@ -397,8 +391,8 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             };
         },
         [
-            connectionId, chartDatabaseName, databaseName,
-            timeRange.range, queryData?.queryid,
+            connectionId, databaseName, timeRange.range,
+            queryData?.queryid,
         ]
     );
 

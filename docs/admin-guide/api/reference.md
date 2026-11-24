@@ -479,9 +479,12 @@ sample. The behaviour that follows from that is:
   `span must not exceed 30 days`, as described under
   Metric Time Windows below.
 - The collector reads `pg_stat_statements` in one
-  database per collection, the first that has the
-  extension installed; collectors from earlier releases
-  stored each counter once per such database. The
+  database per collection: it tries the connection's
+  own database first and then the other databases in
+  name order, and a database without the extension, or
+  where the read fails, moves it on to the next.
+  Collectors from earlier releases stored each counter
+  once per such database. The
   endpoint counts each counter once, and a
   `database_name` filter sums only the counters of the
   statements that ran in that database.

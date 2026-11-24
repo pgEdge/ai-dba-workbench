@@ -182,6 +182,56 @@ func statementDatabaseClause(f *StatementDatabaseFilter, argNum int) (string, []
 	return clause, []any{Int64ListArg(f.DBIDs), Int64ListArg(f.ResolvedDBIDs), f.Name}
 }
 
+// statementCopiesProbe is the probe whose rows can hold several copies
+// of one reading. pg_stat_statements is server-wide, and collectors
+// before GitHub issue #762 read it in every database that has the
+// extension, storing each counter once per such database at the same
+// collected_at, differing only in the probing database_name. A current
+// collector reads it in one database per collection, but which one can
+// change between collections (a database dropped, the extension removed,
+// a connection refused), so neither the old rows nor the new ones may be
+// filtered or partitioned on database_name to obtain one series.
+const statementCopiesProbe = "pg_stat_statements"
+
+// sampleSource returns the FROM item, with its WHERE clause, that the
+// time-series builders read probeName's samples from. For every probe but
+// statementCopiesProbe it is the probe's table filtered by where. For
+// that probe it keeps one copy per statement identity (queryid, userid,
+// dbid, toplevel) and collected_at, choosing the lowest database_name so
+// the choice is stable, exactly as the Top Queries readings CTE does;
+// idx_pg_stat_statements_identity_time serves that order. where is
+// applied before the copies are reduced, so its filters, which never test
+// the probing database_name unless the caller asked for it, see every
+// copy. The SELECT * is narrowed to the columns the caller's outer query
+// reads, none of which is the statement text.
+func sampleSource(probeName, where string) string {
+	table := "metrics." + QuoteIdentifier(probeName)
+	if probeName != statementCopiesProbe {
+		return table + "\n            WHERE " + where
+	}
+	return fmt.Sprintf(`(
+                SELECT DISTINCT ON (queryid, userid, dbid, toplevel, collected_at) *
+                FROM %s
+                WHERE %s
+                ORDER BY queryid, userid, dbid, toplevel, collected_at, database_name
+            ) statement_readings`, table, where)
+}
+
+// sampleEntityColumns returns the entity-key columns a derived query
+// partitions probeName's counters by. For statementCopiesProbe it drops
+// database_name, which names the database the reading was taken through
+// rather than a counter of its own (see sampleSource): partitioning on it
+// would difference the readings taken through each database separately
+// and lose the interval wherever the probing database changed.
+func sampleEntityColumns(probeName string, entityCols []string) []string {
+	if probeName != statementCopiesProbe {
+		return entityCols
+	}
+	return slices.DeleteFunc(slices.Clone(entityCols), func(c string) bool {
+		return c == "database_name"
+	})
+}
+
 // maxLatestRowLimit bounds the number of rows a latest-row query may
 // return, mirroring the bound-checking style applied to bucket counts.
 const maxLatestRowLimit = 100
@@ -843,7 +893,9 @@ func GetQualifiedSelectCols(metricCols []string, tableAlias string) []string {
 // the given probe, columns, connection, time range, and filters. The
 // colTypes map provides each column's PostgreSQL data type so that the
 // aggregation default can match (e.g. interval vs numeric). NULL values
-// from LEFT JOIN gaps are preserved so the caller can apply LOCF.
+// from LEFT JOIN gaps are preserved so the caller can apply LOCF. The
+// samples are read through sampleSource, which keeps one copy of each
+// pg_stat_statements reading.
 func BuildMetricsQuery(
 	probeName string,
 	metricCols []string,
@@ -868,8 +920,7 @@ func BuildMetricsQuery(
             SELECT
                 date_bin($1::interval, collected_at, $3) AS bucket_time,
                 %s
-            FROM metrics.%s
-            WHERE %s
+            FROM %s
             GROUP BY date_bin($1::interval, collected_at, $3)
         ),
         all_buckets AS (
@@ -884,8 +935,7 @@ func BuildMetricsQuery(
         ORDER BY all_buckets.bucket_time
     `,
 		strings.Join(GetAggSelectCols(metricCols, aggregation, colTypes), ", "),
-		QuoteIdentifier(probeName),
-		whereSQL,
+		sampleSource(probeName, whereSQL),
 		strings.Join(GetQualifiedSelectCols(metricCols, "data_buckets"), ", "),
 	)
 
@@ -1210,7 +1260,10 @@ func ratioTupleExpr(aggregation, column string) string {
 // lifetime total into a single interval. With the partition a vanished
 // entity simply stops contributing and a new one contributes nothing until
 // its second sample. A single-row probe has no entity columns and reduces
-// to the unpartitioned form.
+// to the unpartitioned form. pg_stat_statements is read through
+// sampleSource and partitioned without database_name
+// (sampleEntityColumns), so a statement's counter is one series however
+// many databases its readings were taken through.
 //
 // The sample query feeding that LAG reaches one sample back beyond the
 // window start (see metricQueryParts.lookbackWhere), so the counter
@@ -1315,7 +1368,7 @@ func BuildDerivedMetricsQuery(
 		// by GetProbeEntityKeyColumns and quoted here; nothing caller
 		// supplied reaches this list.
 		var entityKeys []string
-		for _, col := range entityCols {
+		for _, col := range sampleEntityColumns(probeName, entityCols) {
 			entityKeys = append(entityKeys, QuoteIdentifier(col))
 		}
 		// With entity keys the LAG runs per entity and the inner GROUP BY
@@ -1442,8 +1495,7 @@ func BuildDerivedMetricsQuery(
                         EXTRACT(EPOCH FROM collected_at
                             - LAG(collected_at) OVER (%sORDER BY collected_at)
                         )::float8 AS elapsed_sec
-                    FROM metrics.%s
-                    WHERE %s
+                    FROM %s
                     GROUP BY %s
                 ) samples
                 WHERE collected_at >= $3
@@ -1455,8 +1507,7 @@ func BuildDerivedMetricsQuery(
 			groupBy,
 			strings.Join(innerCols, ",\n                        "),
 			partition,
-			QuoteIdentifier(probeName),
-			parts.lookbackWhere(probeName, lookbackArg),
+			sampleSource(probeName, parts.lookbackWhere(probeName, lookbackArg)),
 			groupBy,
 		))
 

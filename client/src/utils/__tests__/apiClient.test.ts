@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import {
     apiGet,
     apiPost,
@@ -19,6 +19,8 @@ import {
     ApiError,
     onDisconnect,
     resetConnectionHealth,
+    OUTAGE_PROBE_URL,
+    OUTAGE_PROBE_TIMEOUT_MS,
 } from '../apiClient';
 
 // ---------------------------------------------------------------------------
@@ -373,7 +375,11 @@ describe('apiClient', () => {
                 await expect(apiGet('/api/v1/alerts')).rejects.toThrow();
             }
 
-            expect(listener).toHaveBeenCalledWith('network');
+            // The threshold now triggers an outage probe first, and
+            // the disconnect follows once that probe fails too.
+            await vi.waitFor(() => {
+                expect(listener).toHaveBeenCalledWith('network');
+            });
             unsubscribe();
             resetConnectionHealth();
         });
@@ -396,7 +402,9 @@ describe('apiClient', () => {
             fetchSpy.mockRejectedValueOnce(new TypeError('Failed to fetch'));
             await expect(apiGet('/api/v1/alerts')).rejects.toThrow();
 
-            expect(listener).toHaveBeenCalledTimes(1);
+            await vi.waitFor(() => {
+                expect(listener).toHaveBeenCalledTimes(1);
+            });
             unsubscribe();
             resetConnectionHealth();
         });
@@ -506,7 +514,11 @@ describe('apiClient', () => {
                 await apiFetch('/api/v1/llm/chat');
             }
 
-            expect(listener).toHaveBeenCalledWith('server');
+            // The threshold now triggers an outage probe first, and
+            // the disconnect follows once that probe fails too.
+            await vi.waitFor(() => {
+                expect(listener).toHaveBeenCalledWith('server');
+            });
             unsubscribe();
             resetConnectionHealth();
         });
@@ -522,9 +534,308 @@ describe('apiClient', () => {
                 );
             }
 
-            expect(listener).toHaveBeenCalledWith('network');
+            // The threshold now triggers an outage probe first, and
+            // the disconnect follows once that probe fails too.
+            await vi.waitFor(() => {
+                expect(listener).toHaveBeenCalledWith('network');
+            });
             unsubscribe();
             resetConnectionHealth();
+        });
+    });
+    // ----- Outage confirmation (#872) ----------------------------------------
+
+    describe('outage confirmation probe', () => {
+        const FAILING_URL = '/api/v1/timeline/events';
+
+        /*
+         * Route the fetch mock by URL: the probe gets `probe`, the
+         * failing endpoint gets a 500, and anything else succeeds.
+         */
+        function routeFetch(
+            probe: () => Promise<Response>,
+        ): void {
+            fetchSpy.mockImplementation((input) => {
+                const url = String(input);
+                if (url === OUTAGE_PROBE_URL) {
+                    return probe();
+                }
+                if (url === FAILING_URL) {
+                    return Promise.resolve(
+                        mockResponse('boom', { status: 500, ok: false }),
+                    );
+                }
+                return Promise.resolve(mockResponse({ ok: true }));
+            });
+        }
+
+        function probeCalls(): number {
+            return fetchSpy.mock.calls.filter(
+                ([input]) => String(input) === OUTAGE_PROBE_URL,
+            ).length;
+        }
+
+        /** Let pending probe promises settle. */
+        async function settle(): Promise<void> {
+            for (let i = 0; i < 10; i += 1) {
+                await Promise.resolve();
+            }
+        }
+
+        let listener: Mock;
+        let unsubscribe: () => void;
+
+        beforeEach(() => {
+            resetConnectionHealth();
+            listener = vi.fn();
+            unsubscribe = onDisconnect(listener);
+        });
+
+        afterEach(() => {
+            unsubscribe();
+            resetConnectionHealth();
+            vi.useRealTimers();
+        });
+
+        it('does not disconnect when one endpoint fails and others succeed', async () => {
+            routeFetch(() => Promise.resolve(mockResponse({ ok: true })));
+
+            for (let i = 0; i < 9; i += 1) {
+                await expect(apiGet(FAILING_URL)).rejects.toThrow();
+                await apiGet('/api/v1/alerts');
+            }
+            await settle();
+
+            expect(listener).not.toHaveBeenCalled();
+        });
+
+        it('does not disconnect when one endpoint fails with no other traffic but the server answers the probe', async () => {
+            routeFetch(() => Promise.resolve(mockResponse({ ok: true })));
+
+            // Nine consecutive failures of the same endpoint, which is
+            // what the timeline's retries produced in the report.
+            for (let i = 0; i < 9; i += 1) {
+                await expect(apiGet(FAILING_URL)).rejects.toThrow();
+                await settle();
+            }
+
+            expect(listener).not.toHaveBeenCalled();
+            // One probe per run of three consecutive failures.
+            expect(probeCalls()).toBe(3);
+        });
+
+        it('sends the probe with credentials and outside health tracking', async () => {
+            routeFetch(() => Promise.resolve(mockResponse({ ok: true })));
+
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch(FAILING_URL);
+            }
+            await settle();
+
+            const probe = fetchSpy.mock.calls.find(
+                ([input]) => String(input) === OUTAGE_PROBE_URL,
+            );
+            expect(probe?.[1]?.credentials).toBe('include');
+            expect(probe?.[1]?.signal).toBeInstanceOf(AbortSignal);
+            expect(listener).not.toHaveBeenCalled();
+        });
+
+        it('treats a 4xx probe answer as the server being reachable', async () => {
+            routeFetch(() =>
+                Promise.resolve(mockResponse('nope', { status: 404, ok: false })),
+            );
+
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch(FAILING_URL);
+            }
+            await settle();
+
+            expect(listener).not.toHaveBeenCalled();
+        });
+
+        it('disconnects when the server cannot be reached at all', async () => {
+            fetchSpy.mockRejectedValue(new TypeError('Failed to fetch'));
+
+            for (let i = 0; i < 3; i += 1) {
+                await expect(apiGet('/api/v1/alerts')).rejects.toThrow();
+            }
+
+            await vi.waitFor(() => {
+                expect(listener).toHaveBeenCalledWith('network');
+            });
+            expect(listener).toHaveBeenCalledTimes(1);
+            expect(probeCalls()).toBe(1);
+        });
+
+        it('disconnects when every request, the probe included, answers 5xx', async () => {
+            fetchSpy.mockResolvedValue(
+                mockResponse('bad gateway', { status: 502, ok: false }),
+            );
+
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch('/api/v1/alerts');
+            }
+
+            await vi.waitFor(() => {
+                expect(listener).toHaveBeenCalledWith('server');
+            });
+        });
+
+        it('disconnects when the probe does not answer in time', async () => {
+            vi.useFakeTimers();
+            routeFetch(
+                () =>
+                    new Promise<Response>((_resolve, reject) => {
+                        const signal = fetchSpy.mock.calls.at(-1)?.[1]?.signal;
+                        signal?.addEventListener('abort', () => {
+                            reject(new DOMException('aborted', 'AbortError'));
+                        });
+                    }),
+            );
+
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch(FAILING_URL);
+            }
+            await settle();
+            expect(listener).not.toHaveBeenCalled();
+
+            await vi.advanceTimersByTimeAsync(OUTAGE_PROBE_TIMEOUT_MS);
+
+            expect(listener).toHaveBeenCalledWith('server');
+        });
+
+        it('runs only one probe at a time', async () => {
+            let answerProbe: (r: Response) => void = () => {};
+            routeFetch(
+                () =>
+                    new Promise<Response>((resolve) => {
+                        answerProbe = resolve;
+                    }),
+            );
+
+            for (let i = 0; i < 8; i += 1) {
+                await apiFetch(FAILING_URL);
+            }
+            expect(probeCalls()).toBe(1);
+
+            answerProbe(mockResponse({ ok: true }));
+            await settle();
+            expect(listener).not.toHaveBeenCalled();
+        });
+
+        it('does not disconnect when a request succeeds while the probe is pending', async () => {
+            let failProbe: (e: Error) => void = () => {};
+            routeFetch(
+                () =>
+                    new Promise<Response>((_resolve, reject) => {
+                        failProbe = reject;
+                    }),
+            );
+
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch(FAILING_URL);
+            }
+            await apiGet('/api/v1/alerts');
+
+            failProbe(new TypeError('Failed to fetch'));
+            await settle();
+
+            expect(listener).not.toHaveBeenCalled();
+        });
+
+        it('ignores a probe superseded by a success and a new run of failures', async () => {
+            const probes: Array<{
+                resolve: (r: Response) => void;
+                reject: (e: Error) => void;
+            }> = [];
+            routeFetch(
+                () =>
+                    new Promise<Response>((resolve, reject) => {
+                        probes.push({ resolve, reject });
+                    }),
+            );
+
+            // Run 1 starts probe P1; a success interrupts the run.
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch(FAILING_URL);
+            }
+            await apiGet('/api/v1/alerts');
+
+            // Run 2 reaches the threshold again before P1 settles, and
+            // must start a fresh probe rather than reuse P1's answer.
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch(FAILING_URL);
+            }
+            expect(probeCalls()).toBe(2);
+
+            probes[0].reject(new TypeError('Failed to fetch'));
+            await settle();
+            expect(listener).not.toHaveBeenCalled();
+
+            probes[1].resolve(mockResponse({ ok: true }));
+            await settle();
+            expect(listener).not.toHaveBeenCalled();
+        });
+
+        it('ignores a probe that resolves after the health state was reset', async () => {
+            let failProbe: (e: Error) => void = () => {};
+            routeFetch(
+                () =>
+                    new Promise<Response>((_resolve, reject) => {
+                        failProbe = reject;
+                    }),
+            );
+
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch(FAILING_URL);
+            }
+            resetConnectionHealth();
+
+            failProbe(new TypeError('Failed to fetch'));
+            await settle();
+
+            expect(listener).not.toHaveBeenCalled();
+        });
+
+        it('still reports a 401 immediately, without a probe', async () => {
+            fetchSpy.mockResolvedValueOnce(
+                mockResponse('unauthorised', { status: 401, ok: false }),
+            );
+
+            await expect(apiGet('/api/v1/alerts')).rejects.toThrow();
+
+            expect(listener).toHaveBeenCalledWith('auth');
+            expect(probeCalls()).toBe(0);
+        });
+
+        it('reports a 401 that arrives while a probe is pending', async () => {
+            let answerProbe: (r: Response) => void = () => {};
+            fetchSpy.mockImplementation((input) => {
+                if (String(input) === OUTAGE_PROBE_URL) {
+                    return new Promise<Response>((resolve) => {
+                        answerProbe = resolve;
+                    });
+                }
+                return Promise.resolve(
+                    mockResponse('boom', { status: 500, ok: false }),
+                );
+            });
+
+            for (let i = 0; i < 3; i += 1) {
+                await apiFetch(FAILING_URL);
+            }
+            fetchSpy.mockImplementationOnce(() =>
+                Promise.resolve(
+                    mockResponse('unauthorised', { status: 401, ok: false }),
+                ),
+            );
+            await apiFetch('/api/v1/alerts');
+            expect(listener).toHaveBeenCalledWith('auth');
+
+            // The late probe answer must not fire a second disconnect.
+            answerProbe(mockResponse('down', { status: 503, ok: false }));
+            await settle();
+            expect(listener).toHaveBeenCalledTimes(1);
         });
     });
 });

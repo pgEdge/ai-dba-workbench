@@ -108,25 +108,9 @@ func scanAction(row pgx.Row) (*Action, error) {
 // fails to store its verdict, because the row is gone, so a verdict can
 // never land on statements it did not review.
 func (s *Store) Create(ctx context.Context, n NewAction) (*Action, error) {
-	stmts := n.Statements
-	if stmts == nil {
-		stmts = []string{}
-	}
-	statementsJSON, err := json.Marshal(stmts)
+	args, err := insertArgs(n)
 	if err != nil {
-		return nil, fmt.Errorf("encode statements: %w", err)
-	}
-	attempt := n.Attempt
-	if attempt < 1 {
-		attempt = 1
-	}
-	var rationale *string
-	if n.Rationale != "" {
-		rationale = &n.Rationale
-	}
-	var evidence []byte
-	if len(n.Evidence) > 0 {
-		evidence = n.Evidence
+		return nil, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -149,22 +133,53 @@ func (s *Store) Create(ctx context.Context, n NewAction) (*Action, error) {
              proposed_via, conversation_id, alert_id, parent_action_id,
              attempt, rationale, evidence, review_status)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending')
-        RETURNING `+selectColumns,
-		n.ConnectionID, n.DatabaseName, statementsJSON, n.Source,
-		n.ProposedBy, n.ProposedVia, n.ConversationID, n.AlertID,
-		n.ParentActionID, attempt, rationale, evidence))
+        RETURNING `+selectColumns, args...))
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" &&
-			pgErr.ConstraintName == "idx_proposed_actions_parent" {
-			return nil, ErrAlreadyRevised
-		}
-		return nil, fmt.Errorf("create proposed action: %w", err)
+		return nil, createError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("create proposed action: %w", err)
 	}
 	return a, nil
+}
+
+// insertArgs returns the twelve parameters of Create's INSERT for n: the
+// statements encoded as JSON (an empty list for none), the attempt
+// raised to at least 1, and an empty rationale or evidence as NULL.
+func insertArgs(n NewAction) ([]any, error) {
+	stmts := n.Statements
+	if stmts == nil {
+		stmts = []string{}
+	}
+	statementsJSON, err := json.Marshal(stmts)
+	if err != nil {
+		return nil, fmt.Errorf("encode statements: %w", err)
+	}
+	attempt := max(n.Attempt, 1)
+	var rationale *string
+	if n.Rationale != "" {
+		rationale = &n.Rationale
+	}
+	var evidence []byte
+	if len(n.Evidence) > 0 {
+		evidence = n.Evidence
+	}
+	return []any{
+		n.ConnectionID, n.DatabaseName, statementsJSON, n.Source,
+		n.ProposedBy, n.ProposedVia, n.ConversationID, n.AlertID,
+		n.ParentActionID, attempt, rationale, evidence,
+	}, nil
+}
+
+// createError maps a failed INSERT to ErrAlreadyRevised when the parent
+// already has a revision, and wraps any other error.
+func createError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "idx_proposed_actions_parent" {
+		return ErrAlreadyRevised
+	}
+	return fmt.Errorf("create proposed action: %w", err)
 }
 
 // Get returns the action with the given id, or ErrNotFound.

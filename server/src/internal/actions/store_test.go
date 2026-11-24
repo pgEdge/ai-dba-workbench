@@ -525,3 +525,61 @@ func TestGetRejectsUndecodableColumns(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateFailsMidTransaction proves Create reports a failure of the
+// revision replacement and of the commit, and leaves no row behind.
+// Triggers in the test's own scratch database make each step fail.
+func TestCreateFailsMidTransaction(t *testing.T) {
+	s, pool, connID := newTestStore(t, "_act_ctx")
+	ctx := context.Background()
+	parent, err := s.Create(ctx, sampleAction(connID, "alice"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec := func(sql string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustExec(`CREATE FUNCTION test_refuse() RETURNS trigger LANGUAGE plpgsql
+        AS $$ BEGIN RAISE EXCEPTION 'refused by test'; END $$`)
+	tests := []struct {
+		name, trigger, drop, want string
+	}{
+		{
+			"replacement fails",
+			`CREATE TRIGGER test_refuse_delete BEFORE DELETE ON proposed_actions
+                FOR EACH STATEMENT EXECUTE FUNCTION test_refuse()`,
+			`DROP TRIGGER test_refuse_delete ON proposed_actions`,
+			"replace unreviewed revision",
+		},
+		{
+			"commit fails",
+			`CREATE CONSTRAINT TRIGGER test_refuse_commit AFTER INSERT ON proposed_actions
+                DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION test_refuse()`,
+			`DROP TRIGGER test_refuse_commit ON proposed_actions`,
+			"create proposed action",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mustExec(tt.trigger)
+			defer mustExec(tt.drop)
+			n := sampleAction(connID, "alice")
+			n.ParentActionID = &parent.ID
+			if _, err := s.Create(ctx, n); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want %q", err, tt.want)
+			}
+			var rows int
+			if err := pool.QueryRow(ctx,
+				`SELECT count(*) FROM proposed_actions WHERE parent_action_id = $1`,
+				parent.ID).Scan(&rows); err != nil {
+				t.Fatal(err)
+			}
+			if rows != 0 {
+				t.Errorf("revisions = %d, want 0", rows)
+			}
+		})
+	}
+}

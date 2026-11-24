@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { ThemeProvider } from '@mui/material/styles';
-import type { PaletteMode } from '@mui/material/styles';
+import type { PaletteMode } from '@mui/material';
 import userEvent from '@testing-library/user-event';
 import ActionBlock from '../ActionBlock';
 import AuthContext from '../../../contexts/AuthContext';
@@ -587,6 +587,19 @@ describe('ActionBlock', () => {
         );
         await user.click(screen.getByRole('button', { name: 'Dismiss' }));
         expect(onDismiss).toHaveBeenCalledTimes(1);
+    });
+
+    it('withholds Dismiss while an overridden action runs', () => {
+        hook.action = makeAction({
+            review_status: 'vetoed',
+            approval: 'overridden',
+            exec_status: 'executing',
+        });
+        renderBlock({ action: makeAction(), onDismiss: vi.fn() });
+        expect(screen.getByText("Vetoed by Ellie's supervisor")).toBeDefined();
+        expect(
+            screen.queryByRole('button', { name: 'Dismiss' }),
+        ).not.toBeInTheDocument();
     });
 
     it('keeps Dismiss off a request error while the action is showing', () => {

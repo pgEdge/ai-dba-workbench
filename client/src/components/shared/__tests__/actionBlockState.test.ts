@@ -148,6 +148,24 @@ describe('deriveActionFlags', () => {
             undefined,
         )).toMatchObject({ reviewing: true, finished: true });
     });
+
+    it.each([
+        ['an action awaiting approval', {}, false],
+        ['a finished run', { exec_status: 'succeeded' }, true],
+        ['an unstarted veto', { review_status: 'vetoed' }, true],
+        ['a running override', {
+            review_status: 'vetoed', approval: 'overridden',
+            exec_status: 'executing',
+        }, false],
+        ['a finished override', {
+            review_status: 'vetoed', approval: 'overridden',
+            exec_status: 'failed',
+        }, true],
+    ] as const)('lets %s be dismissed: %s', (_name, over, want) => {
+        expect(deriveActionFlags(
+            makeAction(over as Partial<Action>), null, 'srv',
+        ).dismissible).toBe(want);
+    });
 });
 
 describe('labels', () => {

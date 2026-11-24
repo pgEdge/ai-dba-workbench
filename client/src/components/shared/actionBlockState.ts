@@ -91,6 +91,12 @@ export interface ActionFlags {
     reviewing: boolean;
     vetoed: boolean;
     finished: boolean;
+    /**
+     * Whether the block may be closed: once the run has finished, or
+     * while a vetoed action has not started. An override that is running
+     * keeps the block, so its progress and Cancel stay in view.
+     */
+    dismissible: boolean;
     /** Whether a reviewed action awaiting approval may be run. */
     canExecute: boolean;
     canOverride: boolean;
@@ -133,10 +139,14 @@ export const deriveActionFlags = (
     const canRetryOverride =
         current.approval === 'overridden' && mayRetry && hasServer;
 
+    const finished = isTerminalExecStatus(current.exec_status);
+
     return {
         reviewing: current.review_status === 'pending',
         vetoed,
-        finished: isTerminalExecStatus(current.exec_status),
+        finished,
+        dismissible: finished
+            || (vetoed && notStarted),
         canExecute: current.review_status === 'passed'
             && current.approval === 'none',
         canOverride,

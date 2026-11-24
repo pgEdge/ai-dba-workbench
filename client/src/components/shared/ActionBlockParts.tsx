@@ -47,8 +47,15 @@ type StatusTone = 'success' | 'error' | 'warning';
  * 3.76:1), so status text takes the per-mode `chipText` shade instead;
  * see `.claude/react-expert/color-contrast-guidelines.md`.
  */
-const statusTextColour = (tone: StatusTone) =>
-    (theme: Theme): string => theme.palette.custom.chipText[tone];
+function statusTextColour(tone: StatusTone): (theme: Theme) => string {
+    return function textShade(theme: Theme): string {
+        return theme.palette.custom.chipText[tone];
+    };
+}
+
+function darkestGrey(theme: Theme): string {
+    return theme.palette.grey[900];
+}
 
 /**
  * Execute sits on the warning fill, which white text cannot read on
@@ -57,8 +64,8 @@ const statusTextColour = (tone: StatusTone) =>
  */
 const executeButtonSx = {
     textTransform: 'none',
-    color: (theme: Theme) => theme.palette.grey[900],
-    '&:hover': { color: (theme: Theme) => theme.palette.grey[900] },
+    color: darkestGrey,
+    '&:hover': { color: darkestGrey },
 } as const;
 
 /** The outlined error button, with its label and edge in the text shade. */
@@ -68,7 +75,11 @@ const overrideButtonSx = {
     borderColor: statusTextColour('error'),
 } as const;
 
-export const ActionFrame: React.FC<{ children: React.ReactNode }> = ({
+interface ActionFrameProps {
+    children: React.ReactNode;
+}
+
+export const ActionFrame: React.FC<ActionFrameProps> = ({
     children,
 }) => {
     const theme = useTheme();
@@ -79,11 +90,13 @@ export const ActionFrame: React.FC<{ children: React.ReactNode }> = ({
     );
 };
 
-export const ActionErrorRow: React.FC<{
+interface ActionErrorRowProps {
     children: React.ReactNode;
     /** When given, a Dismiss control closes the block. */
     onDismiss?: () => void;
-}> = ({ children, onDismiss }) => {
+}
+
+export const ActionErrorRow: React.FC<ActionErrorRowProps> = ({ children, onDismiss }) => {
     const theme = useTheme();
     return (
         <Box sx={getQueryErrorSx(theme)} role="alert">
@@ -100,9 +113,13 @@ export const ActionErrorRow: React.FC<{
     );
 };
 
-export const ActionLoading: React.FC<{ label: string }> = ({ label }) => (
+interface ActionLoadingProps {
+    label: string;
+}
+
+export const ActionLoading: React.FC<ActionLoadingProps> = ({ label }) => (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1.5 }}>
-        <CircularProgress size={14} aria-label="Loading action" />
+        <CircularProgress aria-label="Loading action" size={14} />
         <Typography variant="body2">{label}</Typography>
     </Box>
 );
@@ -113,45 +130,59 @@ interface ActionHeaderProps {
     onDismiss?: () => void;
 }
 
+interface DangerChipProps {
+    danger?: string;
+}
+
+const DangerChip: React.FC<DangerChipProps> = ({ danger }) =>
+    danger ? (
+        <Chip
+            size="small"
+            label={dangerLabelOf(danger)}
+            color={dangerColour(danger)}
+        />
+    ) : null;
+
+interface DismissButtonProps {
+    onDismiss?: () => void;
+}
+
+const DismissButton: React.FC<DismissButtonProps> = ({ onDismiss }) =>
+    onDismiss ? (
+        <IconButton size="small" aria-label="Dismiss" onClick={onDismiss}>
+            <CloseIcon sx={{ fontSize: 14 }} />
+        </IconButton>
+    ) : null;
+
 export const ActionHeader: React.FC<ActionHeaderProps> = ({
     current,
     flags,
     onDismiss,
 }) => {
-    const { reviewing, vetoed, finished } = flags;
-    const danger = current.review?.danger;
+    const headingSx = {
+        color: flags.vetoed ? statusTextColour('error') : 'text.primary',
+        flex: 1,
+    };
     return (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            {reviewing && (
-                <CircularProgress size={14} aria-label="Supervisor reviewing" />
+            {flags.reviewing && (
+                <CircularProgress aria-label="Supervisor reviewing" size={14} />
             )}
-            <Typography
-                variant="subtitle2"
-                sx={{
-                    color: vetoed ? statusTextColour('error') : 'text.primary',
-                    flex: 1,
-                }}
-            >
+            <Typography variant="subtitle2" sx={headingSx}>
                 {reviewLabelOf(current)}
             </Typography>
-            {!reviewing && danger && (
-                <Chip
-                    size="small"
-                    label={dangerLabelOf(danger)}
-                    color={dangerColour(danger)}
-                />
-            )}
-            {onDismiss && (finished || vetoed) && (
-                <IconButton size="small" aria-label="Dismiss" onClick={onDismiss}>
-                    <CloseIcon sx={{ fontSize: 14 }} />
-                </IconButton>
-            )}
+            {!flags.reviewing && <DangerChip danger={current.review?.danger} />}
+            {flags.dismissible && <DismissButton onDismiss={onDismiss} />}
         </Box>
     );
 };
 
 /** The supervisor's reasons for a veto; nothing when it gave none. */
-export const VetoReasons: React.FC<{ reasons?: string[] }> = ({ reasons }) => {
+interface VetoReasonsProps {
+    reasons?: string[];
+}
+
+export const VetoReasons: React.FC<VetoReasonsProps> = ({ reasons }) => {
     if (!reasons || reasons.length === 0) {
         return null;
     }
@@ -166,7 +197,11 @@ export const VetoReasons: React.FC<{ reasons?: string[] }> = ({ reasons }) => {
     );
 };
 
-export const StatementList: React.FC<{ statements: string[] }> = ({
+interface StatementListProps {
+    statements: string[];
+}
+
+export const StatementList: React.FC<StatementListProps> = ({
     statements,
 }) => (
     <Box sx={{ m: 0 }}>
@@ -182,11 +217,13 @@ export const StatementList: React.FC<{ statements: string[] }> = ({
     </Box>
 );
 
-const OutcomeHeading: React.FC<{
+interface OutcomeHeadingProps {
     tone: StatusTone;
     label: string;
     children?: React.ReactNode;
-}> = ({ tone, label, children }) => (
+}
+
+const OutcomeHeading: React.FC<OutcomeHeadingProps> = ({ tone, label, children }) => (
     <Box>
         <Typography variant="subtitle2" sx={{ color: statusTextColour(tone) }}>
             {label}
@@ -206,7 +243,7 @@ export const ExecStatus: React.FC<ExecStatusProps> = ({ current, onCancel }) => 
         case 'executing':
             return (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <CircularProgress size={14} aria-label="Running" />
+                    <CircularProgress aria-label="Running" size={14} />
                     <Typography variant="body2" sx={{ flex: 1 }}>
                         Running…
                     </Typography>
@@ -245,7 +282,11 @@ export const ExecStatus: React.FC<ExecStatusProps> = ({ current, onCancel }) => 
     }
 };
 
-const FailedOutcome: React.FC<{ current: Action }> = ({ current }) => {
+interface FailedOutcomeProps {
+    current: Action;
+}
+
+const FailedOutcome: React.FC<FailedOutcomeProps> = ({ current }) => {
     const firstError = (current.results ?? []).find((r) => r.error)?.error;
     return (
         <OutcomeHeading tone="error" label="Failed">
@@ -258,7 +299,12 @@ const FailedOutcome: React.FC<{ current: Action }> = ({ current }) => {
     );
 };
 
-const ResultTable: React.FC<{ columns: string[]; rows: string[][] }> = ({
+interface ResultTableProps {
+    columns: string[];
+    rows: string[][];
+}
+
+const ResultTable: React.FC<ResultTableProps> = ({
     columns,
     rows,
 }) => {
@@ -294,7 +340,11 @@ const ResultTable: React.FC<{ columns: string[]; rows: string[][] }> = ({
 };
 
 /** A server caveat about one statement, shown as a warning line. */
-const StatementNote: React.FC<{ note: string }> = ({ note }) => (
+interface StatementNoteProps {
+    note: string;
+}
+
+const StatementNote: React.FC<StatementNoteProps> = ({ note }) => (
     <Typography
         variant="body2"
         role="note"
@@ -304,7 +354,11 @@ const StatementNote: React.FC<{ note: string }> = ({ note }) => (
     </Typography>
 );
 
-const StatementRows: React.FC<{ result: ActionStatementResult }> = ({
+interface StatementRowsProps {
+    result: ActionStatementResult;
+}
+
+const StatementRows: React.FC<StatementRowsProps> = ({
     result,
 }) =>
     result.columns && result.rows ? (
@@ -319,9 +373,11 @@ const StatementRows: React.FC<{ result: ActionStatementResult }> = ({
     ) : null;
 
 /** The rows and notes any statement returned, in statement order. */
-export const ActionResults: React.FC<{
+interface ActionResultsProps {
     results?: ActionStatementResult[] | null;
-}> = ({ results }) => (
+}
+
+export const ActionResults: React.FC<ActionResultsProps> = ({ results }) => (
     <>
         {(results ?? []).map((result, idx) => (
             <Box key={idx}>

@@ -32,13 +32,26 @@ const SendTimeout = 30 * time.Second
 // send that used up its caller's deadline is still recorded.
 const recordTimeout = 10 * time.Second
 
-// DeliveryTimeout is how long SendAlertNotification owns the
-// notification_history rows it creates: it sends to every channel at
-// once, each send within SendTimeout, and then records each outcome
-// within recordTimeout. Until then the rows' next_retry_at keeps the
-// pending-retry worker off them; a row whose outcome was never recorded
-// (the alerter stopped, say) is retried once it passes.
+// DeliveryTimeout is how long an attempt owns the notification_history
+// rows it sends: the rows SendAlertNotification and ProcessReminders
+// create, and each row the pending-retry worker claims. An attempt
+// sends within SendTimeout and then records its outcome within
+// recordTimeout. Ownership is held by the row's next_retry_at, set by
+// the database's clock, which also decides when a row is due, so the
+// alerter's clock cannot shorten it; a row whose outcome was never
+// recorded (the alerter stopped, say) is retried once it passes.
 const DeliveryTimeout = SendTimeout + recordTimeout
+
+// attemptContext returns the context for an attempt on rows claimed for
+// DeliveryTimeout no earlier than claimedAt: it ends recordTimeout
+// before the claim can, so that the attempt's outcome is written while
+// the attempt still owns its rows. claimedAt is read from the
+// alerter's clock before the database sets the lease from its own, so
+// the deadline comes before the lease runs out, in elapsed time,
+// however far apart the two clocks are.
+func attemptContext(ctx context.Context, claimedAt time.Time) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(ctx, claimedAt.Add(DeliveryTimeout-recordTimeout))
+}
 
 // Manager implements NotificationManager
 type Manager struct {
@@ -132,11 +145,11 @@ func (m *Manager) SendAlertNotification(ctx context.Context, alert *database.Ale
 
 	// Create every channel's history row before sending to any of
 	// them, so that a slow channel cannot use up ctx before a later
-	// channel has a row (issue #836). Each row is owned by this call
-	// until ownedUntil: its next_retry_at keeps the pending-retry
-	// worker, which runs on its own schedule, from sending it a second
-	// time while the send below is under way.
-	ownedUntil := time.Now().Add(DeliveryTimeout)
+	// channel has a row (issue #836). Each row is created owned by this
+	// call for DeliveryTimeout, which keeps the pending-retry worker,
+	// which runs on its own schedule, from claiming and sending it a
+	// second time while the send below is under way.
+	claimedAt := time.Now()
 	type delivery struct {
 		history *database.NotificationHistory
 		channel *database.NotificationChannel
@@ -151,11 +164,10 @@ func (m *Manager) SendAlertNotification(ctx context.Context, alert *database.Ale
 			Status:           database.NotificationStatusPending,
 			AttemptCount:     0,
 			MaxAttempts:      m.config.MaxRetryAttempts,
-			NextRetryAt:      &ownedUntil,
 			CreatedAt:        time.Now(),
 		}
 
-		if err := m.datastore.CreateNotificationHistory(ctx, history); err != nil {
+		if err := m.datastore.CreateNotificationHistory(ctx, history, DeliveryTimeout); err != nil {
 			m.log("ERROR: Failed to create notification history: %v", err)
 			continue
 		}
@@ -164,10 +176,10 @@ func (m *Manager) SendAlertNotification(ctx context.Context, alert *database.Ale
 
 	// Send to every channel at once, so that no channel waits on
 	// another. The sends end in time for their outcomes to be recorded
-	// before ownedUntil; processNotification records each with a
-	// context of its own, so a send that ran out of time becomes a
-	// failed attempt for the retry worker like any other.
-	sendCtx, cancel := context.WithDeadline(ctx, ownedUntil.Add(-recordTimeout))
+	// while this call owns the rows; processNotification records each
+	// with a context of its own, so a send that ran out of time becomes
+	// a failed attempt for the retry worker like any other.
+	sendCtx, cancel := attemptContext(ctx, claimedAt)
 	defer cancel()
 	var wg sync.WaitGroup
 	for _, d := range deliveries {
@@ -180,56 +192,62 @@ func (m *Manager) SendAlertNotification(ctx context.Context, alert *database.Ale
 	return nil
 }
 
-// ProcessPendingNotifications implements NotificationManager.ProcessPendingNotifications
+// ProcessPendingNotifications implements
+// NotificationManager.ProcessPendingNotifications. It claims due rows
+// one at a time, each just before it is sent, so that every row's
+// claim covers its own attempt however long the earlier ones took, and
+// so that a row another attempt owns (an immediate send under way,
+// say) is never sent (issue #866).
 func (m *Manager) ProcessPendingNotifications(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
 
-	pending, err := m.datastore.GetPendingNotifications(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get pending notifications: %w", err)
-	}
-
-	for _, history := range pending {
+	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		// Get channel
-		if history.ChannelID == nil {
-			continue
-		}
-		channel, err := m.datastore.GetNotificationChannel(ctx, *history.ChannelID)
+		claimedAt := time.Now()
+		history, err := m.datastore.ClaimPendingNotification(ctx, DeliveryTimeout)
 		if err != nil {
-			m.log("ERROR: Failed to get channel %d: %v", *history.ChannelID, err)
-			continue
+			return fmt.Errorf("failed to claim a pending notification: %w", err)
+		}
+		if history == nil {
+			return nil
 		}
 
-		// Get alert for payload
-		if history.AlertID == nil {
-			continue
-		}
-		alert, err := m.datastore.GetAlert(ctx, *history.AlertID)
-		if err != nil {
-			m.log("ERROR: Failed to get alert %d: %v", *history.AlertID, err)
-			continue
-		}
+		attemptCtx, cancel := attemptContext(ctx, claimedAt)
+		m.retryNotification(attemptCtx, history)
+		cancel()
+	}
+}
 
-		// Get connection info
-		serverName, serverHost, serverPort, err := m.connectionInfo(ctx, alert)
-		if err != nil {
-			m.debugLog("Failed to get connection info for %d: %v", alert.ConnectionID, err)
-		}
-
-		// Build payload
-		payload := m.buildPayload(alert, history.NotificationType, serverName, serverHost, serverPort)
-
-		// Process
-		m.processNotification(ctx, history, channel, payload)
+// retryNotification sends a pending notification that the retry worker
+// has claimed. A row it cannot send, because its channel or alert is
+// missing, keeps its claim and is tried again once the claim runs out.
+func (m *Manager) retryNotification(ctx context.Context, history *database.NotificationHistory) {
+	if history.ChannelID == nil || history.AlertID == nil {
+		return
+	}
+	channel, err := m.datastore.GetNotificationChannel(ctx, *history.ChannelID)
+	if err != nil {
+		m.log("ERROR: Failed to get channel %d: %v", *history.ChannelID, err)
+		return
+	}
+	alert, err := m.datastore.GetAlert(ctx, *history.AlertID)
+	if err != nil {
+		m.log("ERROR: Failed to get alert %d: %v", *history.AlertID, err)
+		return
 	}
 
-	return nil
+	serverName, serverHost, serverPort, err := m.connectionInfo(ctx, alert)
+	if err != nil {
+		m.debugLog("Failed to get connection info for %d: %v", alert.ConnectionID, err)
+	}
+
+	payload := m.buildPayload(alert, history.NotificationType, serverName, serverHost, serverPort)
+	m.processNotification(ctx, history, channel, payload)
 }
 
 // ProcessReminders implements NotificationManager.ProcessReminders
@@ -268,7 +286,9 @@ func (m *Manager) ProcessReminders(ctx context.Context) error {
 
 		payload.ReminderCount = reminder.State.ReminderCount + 1
 
-		// Create history record
+		// Create the history record, owned by this attempt so that the
+		// pending-retry worker does not send it as well.
+		claimedAt := time.Now()
 		history := &database.NotificationHistory{
 			AlertID:          &reminder.Alert.ID,
 			ChannelID:        &reminder.Channel.ID,
@@ -280,13 +300,15 @@ func (m *Manager) ProcessReminders(ctx context.Context) error {
 			CreatedAt:        time.Now(),
 		}
 
-		if err := m.datastore.CreateNotificationHistory(ctx, history); err != nil {
+		if err := m.datastore.CreateNotificationHistory(ctx, history, DeliveryTimeout); err != nil {
 			m.log("ERROR: Failed to create reminder history: %v", err)
 			continue
 		}
 
-		// Process notification
-		if m.processNotification(ctx, history, reminder.Channel, payload) {
+		attemptCtx, cancel := attemptContext(ctx, claimedAt)
+		sent := m.processNotification(attemptCtx, history, reminder.Channel, payload)
+		cancel()
+		if sent {
 			// Update reminder state
 			reminder.State.LastReminderAt = time.Now()
 			reminder.State.ReminderCount++
@@ -331,9 +353,12 @@ func historyConnectionID(alert *database.Alert) *int {
 	return &id
 }
 
-// processNotification sends a notification and updates history
+// processNotification sends a notification and updates history, whose
+// row the caller owns: history.NextRetryAt on entry is the attempt's
+// lease, which recording the outcome checks.
 // Returns true if successful
 func (m *Manager) processNotification(ctx context.Context, history *database.NotificationHistory, channel *database.NotificationChannel, payload *database.NotificationPayload) bool {
+	lease := history.NextRetryAt
 	history.AttemptCount++
 
 	// Get notifier for channel type
@@ -342,7 +367,7 @@ func (m *Manager) processNotification(ctx context.Context, history *database.Not
 		history.Status = database.NotificationStatusFailed
 		errMsg := fmt.Sprintf("unknown channel type: %s", channel.ChannelType)
 		history.ErrorMessage = &errMsg
-		m.recordOutcome(ctx, history)
+		m.recordOutcome(ctx, history, lease)
 		return false
 	}
 
@@ -390,20 +415,28 @@ func (m *Manager) processNotification(ctx context.Context, history *database.Not
 		}
 	}
 
-	m.recordOutcome(ctx, history)
+	m.recordOutcome(ctx, history, lease)
 	return err == nil
 }
 
-// recordOutcome writes history's outcome to its row. The write runs on
-// a context that ctx's cancellation and deadline do not reach, bounded
-// by recordTimeout instead, so a send that used up ctx is still
-// recorded rather than left for the retry worker to send again as if
-// it had never been attempted.
-func (m *Manager) recordOutcome(ctx context.Context, history *database.NotificationHistory) {
+// recordOutcome writes history's outcome to its row, if the attempt's
+// lease still holds it. The write runs on a context that ctx's
+// cancellation and deadline do not reach, bounded by recordTimeout
+// instead, so a send that used up ctx is still recorded rather than
+// left for the retry worker to send again as if it had never been
+// attempted. An attempt that outran its lease, so that another attempt
+// has claimed the row since, leaves the row to that attempt.
+func (m *Manager) recordOutcome(ctx context.Context, history *database.NotificationHistory, lease *time.Time) {
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
 	defer cancel()
-	if err := m.datastore.UpdateNotificationHistory(recordCtx, history); err != nil {
+	owned, err := m.datastore.UpdateNotificationHistory(recordCtx, history, lease)
+	if err != nil {
 		m.log("ERROR: Failed to update notification history: %v", err)
+		return
+	}
+	if !owned {
+		m.log("WARNING: Notification %d was claimed by another attempt before this attempt's outcome (%s) was recorded; the row keeps the other attempt's outcome",
+			history.ID, history.Status)
 	}
 }
 

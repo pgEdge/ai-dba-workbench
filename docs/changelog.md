@@ -87,6 +87,13 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+- Stop the alerter from sending the same notification twice. The
+  retry worker sent every pending notification that was due without
+  claiming it first, so it could send a reminder that the reminder
+  worker was still sending, or a new alert whose first attempt had not
+  yet recorded its outcome. Each delivery attempt now claims its
+  notification before sending it, so only one attempt can send a
+  notification at a time. (#866)
 - Show the number of client connections across the estate in the
   estate dashboard's Total Connections tile, which showed the number
   of servers. (#833)

@@ -253,10 +253,13 @@ func TestEmailRecipients(t *testing.T) {
 }
 
 // TestNotificationHistoryLifecycle covers CreateNotificationHistory,
-// UpdateNotificationHistory and GetPendingNotifications, all of which
-// survive this change. The original also asserted through
-// GetNotificationHistoryForAlert, removed here as unreachable, so that
-// leg is checked with SQL instead.
+// UpdateNotificationHistory and ClaimPendingNotification: a row is
+// owned by whoever created or last claimed it until its lease, set by
+// the database's clock, runs out; only one attempt can claim a due row;
+// and only the attempt holding the current lease can record an outcome
+// (issue #866). The original also asserted through
+// GetNotificationHistoryForAlert, removed as unreachable, so that leg
+// is checked with SQL instead.
 func TestNotificationHistoryLifecycle(t *testing.T) {
 	ds, pool, cleanup := newFullTestDatastore(t)
 	defer cleanup()
@@ -272,33 +275,88 @@ func TestNotificationHistoryLifecycle(t *testing.T) {
 	`, connID).Scan(&alertID); err != nil {
 		t.Fatalf("seeding alert: %v", err)
 	}
-
-	hist := &NotificationHistory{
-		AlertID:          &alertID,
-		ChannelID:        &channelID,
-		ConnectionID:     &connID,
-		NotificationType: NotificationTypeAlertFire,
-		Status:           NotificationStatusPending,
-		PayloadJSON:      map[string]any{"a": 1},
-		AttemptCount:     0,
-		MaxAttempts:      3,
-		CreatedAt:        time.Now(),
+	newHistory := func(typ NotificationType) *NotificationHistory {
+		return &NotificationHistory{
+			AlertID:          &alertID,
+			ChannelID:        &channelID,
+			ConnectionID:     &connID,
+			NotificationType: typ,
+			Status:           NotificationStatusPending,
+			PayloadJSON:      map[string]any{"a": 1},
+			MaxAttempts:      3,
+			CreatedAt:        time.Now(),
+		}
 	}
-	if err := ds.CreateNotificationHistory(ctx, hist); err != nil {
+	// leaseLeft is how long the row's lease has to run by the
+	// database's clock.
+	leaseLeft := func(id int64) time.Duration {
+		t.Helper()
+		var secs float64
+		if err := pool.QueryRow(ctx,
+			"SELECT EXTRACT(EPOCH FROM next_retry_at - NOW())::float8 FROM notification_history WHERE id = $1",
+			id).Scan(&secs); err != nil {
+			t.Fatalf("reading lease: %v", err)
+		}
+		return time.Duration(secs * float64(time.Second))
+	}
+	expire := func(id int64) {
+		t.Helper()
+		if _, err := pool.Exec(ctx,
+			"UPDATE notification_history SET next_retry_at = NOW() - INTERVAL '1 minute' WHERE id = $1",
+			id); err != nil {
+			t.Fatalf("expiring lease: %v", err)
+		}
+	}
+	claim := func() *NotificationHistory {
+		t.Helper()
+		got, err := ds.ClaimPendingNotification(ctx, time.Minute)
+		if err != nil {
+			t.Fatalf("ClaimPendingNotification: %v", err)
+		}
+		return got
+	}
+
+	// A new row is owned by its creator for the lease, by the
+	// database's clock, whatever NextRetryAt the caller set.
+	hist := newHistory(NotificationTypeAlertFire)
+	past := time.Now().Add(-time.Hour)
+	hist.NextRetryAt = &past
+	if err := ds.CreateNotificationHistory(ctx, hist, time.Minute); err != nil {
 		t.Fatalf("CreateNotificationHistory: %v", err)
 	}
-	if hist.ID == 0 {
-		t.Fatal("expected an ID to be assigned")
+	if hist.ID == 0 || hist.NextRetryAt == nil {
+		t.Fatalf("created row has ID %d, lease %v", hist.ID, hist.NextRetryAt)
+	}
+	if left := leaseLeft(hist.ID); left <= 50*time.Second || left > time.Minute {
+		t.Errorf("new row's lease has %v left, want about a minute", left)
+	}
+	if got := claim(); got != nil {
+		t.Errorf("claimed row %d while its creator owned it", got.ID)
 	}
 
+	// The creator records its outcome with the lease it was given; an
+	// attempt holding any other lease cannot.
+	created := *hist.NextRetryAt
 	hist.Status = NotificationStatusSent
 	now := time.Now()
 	hist.SentAt = &now
-	if err := ds.UpdateNotificationHistory(ctx, hist); err != nil {
-		t.Fatalf("UpdateNotificationHistory: %v", err)
+	hist.AttemptCount = 1
+	stale := created.Add(-time.Second)
+	if owned, err := ds.UpdateNotificationHistory(ctx, hist, &stale); err != nil || owned {
+		t.Errorf("UpdateNotificationHistory with a stale lease = %v, %v; want false", owned, err)
 	}
-
 	var status string
+	if err := pool.QueryRow(ctx,
+		"SELECT status FROM notification_history WHERE id = $1",
+		hist.ID).Scan(&status); err != nil {
+		t.Fatalf("reading back status: %v", err)
+	}
+	if status != string(NotificationStatusPending) {
+		t.Errorf("status after a stale update = %q, want %q", status, NotificationStatusPending)
+	}
+	if owned, err := ds.UpdateNotificationHistory(ctx, hist, &created); err != nil || !owned {
+		t.Fatalf("UpdateNotificationHistory with the row's lease = %v, %v; want true", owned, err)
+	}
 	if err := pool.QueryRow(ctx,
 		"SELECT status FROM notification_history WHERE id = $1",
 		hist.ID).Scan(&status); err != nil {
@@ -308,35 +366,86 @@ func TestNotificationHistoryLifecycle(t *testing.T) {
 		t.Errorf("status = %q, want %q", status, NotificationStatusSent)
 	}
 
-	pending := &NotificationHistory{
-		AlertID:          &alertID,
-		ChannelID:        &channelID,
-		ConnectionID:     &connID,
-		NotificationType: NotificationTypeReminder,
-		Status:           NotificationStatusPending,
-		AttemptCount:     0,
-		MaxAttempts:      3,
-		CreatedAt:        time.Now(),
-	}
-	if err := ds.CreateNotificationHistory(ctx, pending); err != nil {
-		t.Fatalf("CreateNotificationHistory (pending): %v", err)
+	// A sent row is never claimed, even once it is past due.
+	expire(hist.ID)
+	if got := claim(); got != nil {
+		t.Errorf("claimed sent row %d", got.ID)
 	}
 
-	pendList, err := ds.GetPendingNotifications(ctx)
-	if err != nil {
-		t.Fatalf("GetPendingNotifications: %v", err)
+	// Once its creator's lease runs out, a pending row is claimed by
+	// exactly one attempt, which takes a new lease, and then cannot be
+	// claimed again until that lease runs out too.
+	older := newHistory(NotificationTypeReminder)
+	if err := ds.CreateNotificationHistory(ctx, older, time.Minute); err != nil {
+		t.Fatalf("CreateNotificationHistory (older): %v", err)
 	}
-	if len(pendList) != 1 {
-		t.Errorf("expected 1 pending notification, got %d", len(pendList))
+	newer := newHistory(NotificationTypeReminder)
+	newer.CreatedAt = older.CreatedAt.Add(time.Second)
+	if err := ds.CreateNotificationHistory(ctx, newer, time.Minute); err != nil {
+		t.Fatalf("CreateNotificationHistory (newer): %v", err)
+	}
+	creatorLease := *newer.NextRetryAt
+	expire(newer.ID)
+	expire(older.ID)
+	first := claim()
+	if first == nil || first.ID != older.ID {
+		t.Fatalf("first claim = %+v, want the older row %d", first, older.ID)
+	}
+	if first.NextRetryAt == nil || first.Status != NotificationStatusPending {
+		t.Errorf("claimed row = %+v, want pending with a lease", first)
+	}
+	if left := leaseLeft(first.ID); left <= 50*time.Second || left > time.Minute {
+		t.Errorf("claimed row's lease has %v left, want about a minute", left)
+	}
+	second := claim()
+	if second == nil || second.ID != newer.ID {
+		t.Fatalf("second claim = %+v, want the newer row %d", second, newer.ID)
+	}
+	if got := claim(); got != nil {
+		t.Errorf("claimed row %d a second time while its lease held", got.ID)
+	}
+
+	// The row's creator, which outran its lease, can no longer record
+	// an outcome; the attempt that claimed it can.
+	newer.Status = NotificationStatusSent
+	if owned, err := ds.UpdateNotificationHistory(ctx, newer, &creatorLease); err != nil || owned {
+		t.Errorf("update by the outrun creator = %v, %v; want false", owned, err)
+	}
+	second.Status = NotificationStatusRetrying
+	second.AttemptCount = 1
+	if owned, err := ds.UpdateNotificationHistory(ctx, second, second.NextRetryAt); err != nil || !owned {
+		t.Errorf("update by the claiming attempt = %v, %v; want true", owned, err)
+	}
+
+	// A due row whose outcome another session is writing at that
+	// moment, so that the row is locked, is passed over rather than
+	// waited for, and is claimable once the lock is released.
+	expire(older.ID)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		"SELECT 1 FROM notification_history WHERE id = $1 FOR UPDATE", older.ID); err != nil {
+		t.Fatalf("locking row: %v", err)
+	}
+	if got := claim(); got != nil {
+		t.Errorf("claimed row %d while another session held its lock", got.ID)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if got := claim(); got == nil || got.ID != older.ID {
+		t.Errorf("claim after the lock was released = %+v, want row %d", got, older.ID)
 	}
 
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := ds.UpdateNotificationHistory(canceled, hist); err == nil {
+	if _, err := ds.UpdateNotificationHistory(canceled, hist, hist.NextRetryAt); err == nil {
 		t.Error("expected a cancel error from UpdateNotificationHistory")
 	}
-	if _, err := ds.GetPendingNotifications(canceled); err == nil {
-		t.Error("expected a cancel error from GetPendingNotifications")
+	if _, err := ds.ClaimPendingNotification(canceled, time.Minute); err == nil {
+		t.Error("expected a cancel error from ClaimPendingNotification")
 	}
 }
 

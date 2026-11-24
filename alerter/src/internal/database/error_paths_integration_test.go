@@ -217,14 +217,14 @@ func TestNotificationQueriesReturnErrorOnClosedPool(t *testing.T) {
 	if _, err := ds.GetEmailRecipients(ctx, 1); err == nil {
 		t.Errorf("GetEmailRecipients should error on closed pool")
 	}
-	if err := ds.CreateNotificationHistory(ctx, &NotificationHistory{}); err == nil {
+	if err := ds.CreateNotificationHistory(ctx, &NotificationHistory{}, time.Minute); err == nil {
 		t.Errorf("CreateNotificationHistory should error on closed pool")
 	}
-	if err := ds.UpdateNotificationHistory(ctx, &NotificationHistory{}); err == nil {
+	if _, err := ds.UpdateNotificationHistory(ctx, &NotificationHistory{}, nil); err == nil {
 		t.Errorf("UpdateNotificationHistory should error on closed pool")
 	}
-	if _, err := ds.GetPendingNotifications(ctx); err == nil {
-		t.Errorf("GetPendingNotifications should error on closed pool")
+	if _, err := ds.ClaimPendingNotification(ctx, time.Minute); err == nil {
+		t.Errorf("ClaimPendingNotification should error on closed pool")
 	}
 	if err := ds.UpsertReminderState(ctx, &NotificationReminderState{}); err == nil {
 		t.Errorf("UpsertReminderState should error on closed pool")

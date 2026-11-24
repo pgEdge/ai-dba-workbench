@@ -187,6 +187,11 @@ failed attempt and retries the delivery on the `retry_backoff_minutes`
 schedule. The alerter marks the notification `failed` once the
 `max_retry_attempts` attempts run out.
 
+Each delivery attempt claims its notification for 40 seconds, the 30-second
+attempt limit plus up to 10 seconds to record the outcome, so that no other
+attempt sends the same notification in that time. If the alerter stops during
+an attempt, the notification is retried once the claim expires.
+
 ### Delivery Address Checks
 
 The alerter checks the address of every notification delivery when the

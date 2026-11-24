@@ -213,11 +213,15 @@ DROP FUNCTION IF EXISTS issue530_probe_write();
 DROP TABLE IF EXISTS issue530_probe;
 `
 
-// TestIssue530_SimpleProtocolRunsInsideReadOnlyTransaction is the
-// backstop that holds when classification does not: a statement that classification calls read-only but
-// that actually writes must be refused by PostgreSQL, because the
-// simple-protocol branch now runs inside a read-only transaction.
-func TestIssue530_SimpleProtocolRunsInsideReadOnlyTransaction(t *testing.T) {
+// TestIssue530_QueriesRunInsideReadOnlyTransaction is the backstop that
+// holds when classification does not: a statement that classification
+// calls read-only but that actually writes must be refused by
+// PostgreSQL, on both the extended-protocol branch and the
+// simple-protocol branch, because each runs inside a read-only
+// transaction. With every write now routed through proposed actions
+// (issue #774), this transaction is all that stands between /query and
+// a write classification misses.
+func TestIssue530_QueriesRunInsideReadOnlyTransaction(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()
 
@@ -230,40 +234,51 @@ func TestIssue530_SimpleProtocolRunsInsideReadOnlyTransaction(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), issue530ProbeTeardown)
 	}()
 
-	// The write comes first so that it runs before the EXPLAIN, which
-	// PostgreSQL rejects for its unbound placeholder; the EXPLAIN is
-	// only there to route the request onto the simple-protocol branch.
-	rec := postQuery(t, h, connID,
-		`{"query":"SELECT issue530_probe_write(); EXPLAIN SELECT 1 WHERE 1 = $1;"}`)
+	tests := []struct {
+		name string
+		body string
+	}{
+		// The extended protocol, the path every ordinary query takes.
+		{"extended protocol", `{"query":"SELECT issue530_probe_write();"}`},
+		// The write comes first so that it runs before the EXPLAIN,
+		// which PostgreSQL rejects for its unbound placeholder; the
+		// EXPLAIN is only there to route the request onto the
+		// simple-protocol branch.
+		{"simple protocol", `{"query":"SELECT issue530_probe_write(); EXPLAIN SELECT 1 WHERE 1 = $1;"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := postQuery(t, h, connID, tt.body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %q)",
+					rec.Code, http.StatusOK, rec.Body.String())
+			}
+			resp := decodeMultiQuery(t, rec)
+			if len(resp.Results) != 1 {
+				t.Fatalf("results = %d, want 1 (execution stops at the refusal)",
+					len(resp.Results))
+			}
+			if !strings.Contains(strings.ToLower(resp.Results[0].Error), "read-only transaction") {
+				t.Errorf("error = %q, want a read-only transaction refusal",
+					resp.Results[0].Error)
+			}
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d (body %q)",
-			rec.Code, http.StatusOK, rec.Body.String())
-	}
-	resp := decodeMultiQuery(t, rec)
-	if len(resp.Results) != 1 {
-		t.Fatalf("results = %d, want 1 (execution stops at the refusal)",
-			len(resp.Results))
-	}
-	if !strings.Contains(strings.ToLower(resp.Results[0].Error), "read-only transaction") {
-		t.Errorf("error = %q, want a read-only transaction refusal",
-			resp.Results[0].Error)
-	}
+			var rows int
+			if err := pool.QueryRow(context.Background(),
+				"SELECT count(*) FROM issue530_probe").Scan(&rows); err != nil {
+				t.Fatalf("failed to count the probe rows: %v", err)
+			}
+			if rows != 0 {
+				t.Errorf("probe rows = %d, want 0: the write was not refused", rows)
+			}
 
-	var rows int
-	if err := pool.QueryRow(context.Background(),
-		"SELECT count(*) FROM issue530_probe").Scan(&rows); err != nil {
-		t.Fatalf("failed to count the probe rows: %v", err)
-	}
-	if rows != 0 {
-		t.Errorf("probe rows = %d, want 0: the write was not refused", rows)
-	}
-
-	// The rollback must leave the pooled connection usable.
-	rec = postQuery(t, h, connID, `{"query":"SELECT 1"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("follow-up status = %d, want %d (body %q)",
-			rec.Code, http.StatusOK, rec.Body.String())
+			// The rollback must leave the pooled connection usable.
+			rec = postQuery(t, h, connID, `{"query":"SELECT 1"}`)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("follow-up status = %d, want %d (body %q)",
+					rec.Code, http.StatusOK, rec.Body.String())
+			}
+		})
 	}
 }
 

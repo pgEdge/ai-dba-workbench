@@ -224,6 +224,26 @@ describe('ActionBlock', () => {
             expect(screen.getByRole('alert')).toHaveTextContent('Permission denied');
         });
 
+        it('offers Dismiss once write access is refused for an idle action', async () => {
+            const user = userEvent.setup();
+            const onDismiss = vi.fn();
+            hook.writeDenied = true;
+            renderBlock({ action: makeAction(), onDismiss });
+
+            await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+            expect(onDismiss).toHaveBeenCalled();
+        });
+
+        it('withholds Dismiss from a running action even after a refusal', () => {
+            hook.writeDenied = true;
+            hook.action = makeAction({ approval: 'approved', exec_status: 'executing' });
+            renderBlock({ action: makeAction(), onDismiss: vi.fn() });
+
+            expect(
+                screen.queryByRole('button', { name: 'Dismiss' }),
+            ).not.toBeInTheDocument();
+        });
+
         it('shows Running with a Cancel button that cancels', async () => {
             const user = userEvent.setup();
             hook.action = makeAction({

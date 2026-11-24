@@ -156,6 +156,19 @@ const ActionDetails: React.FC<ActionDetailsProps> = ({
     );
 };
 
+/**
+ * A refused write leaves an idle action with no controls, so let the user
+ * dismiss it, and get the code block's Run back, instead.
+ */
+function withDeniedDismiss(
+    flags: ActionFlags,
+    current: Action,
+    writeDenied: boolean,
+): ActionFlags {
+    const deniedIdle = writeDenied && current.exec_status === 'not_started';
+    return { ...flags, dismissible: flags.dismissible || deniedIdle };
+}
+
 const ActionBlock: React.FC<ActionBlockProps> = (props) => {
     const { action: initialAction, actionId, sql, serverName, source } = props;
     const {
@@ -199,7 +212,11 @@ const ActionBlock: React.FC<ActionBlockProps> = (props) => {
         <ActionFrame>
             <ActionDetails
                 current={current}
-                flags={deriveActionFlags(current, user, serverName)}
+                flags={withDeniedDismiss(
+                    deriveActionFlags(current, user, serverName),
+                    current,
+                    writeDenied,
+                )}
                 busy={busy}
                 writeDenied={writeDenied}
                 errorRow={errorRow}

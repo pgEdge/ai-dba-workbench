@@ -215,30 +215,50 @@ func maskKeepingValues(s string, reading StringReading) string {
 // one reads as off, so the statement runs in a transaction block, where
 // PostgreSQL refuses a concurrent rebuild and nothing is applied.
 func quotedTurnsOn(q string) bool {
+	body, ok := quotedBody(stripStringPrefix(q))
+	return ok && (strings.EqualFold(body, "on") || strings.EqualFold(body, "true"))
+}
+
+// stripStringPrefix removes a leading U& or E string prefix from q.
+func stripStringPrefix(q string) string {
 	switch {
 	case len(q) > 2 && (q[0] == 'U' || q[0] == 'u') && q[1] == '&':
-		q = q[2:]
+		return q[2:]
 	case len(q) > 1 && (q[0] == 'E' || q[0] == 'e'):
-		q = q[1:]
+		return q[1:]
 	}
-	var body string
-	switch {
-	case q[0] == '$':
-		end := strings.IndexByte(q[1:], '$')
-		if end < 0 {
-			return false
-		}
-		tag := q[:end+2]
-		if len(q) < 2*len(tag) || !strings.HasSuffix(q, tag) {
-			return false
-		}
-		body = q[len(tag) : len(q)-len(tag)]
-	case len(q) >= 2 && (q[0] == '\'' || q[0] == '"') && q[len(q)-1] == q[0]:
-		body = q[1 : len(q)-1]
-	default:
-		return false
+	return q
+}
+
+// quotedBody returns the text between the quotes of q, a single-quoted,
+// double-quoted or dollar-quoted string with no prefix; ok is false when
+// q is not one, or its closing quote does not match its opening one.
+func quotedBody(q string) (body string, ok bool) {
+	if q == "" {
+		return "", false
 	}
-	return strings.EqualFold(body, "on") || strings.EqualFold(body, "true")
+	if q[0] == '$' {
+		return dollarQuotedBody(q)
+	}
+	if len(q) >= 2 && (q[0] == '\'' || q[0] == '"') && q[len(q)-1] == q[0] {
+		return q[1 : len(q)-1], true
+	}
+	return "", false
+}
+
+// dollarQuotedBody returns the text between the tags of the
+// dollar-quoted string q; ok is false when the closing tag is missing or
+// differs from the opening one.
+func dollarQuotedBody(q string) (body string, ok bool) {
+	end := strings.IndexByte(q[1:], '$')
+	if end < 0 {
+		return "", false
+	}
+	tag := q[:end+2]
+	if len(q) < 2*len(tag) || !strings.HasSuffix(q, tag) {
+		return "", false
+	}
+	return q[len(tag) : len(q)-len(tag)], true
 }
 
 // reindexRequiresNoTransaction reads a masked, upper-cased REINDEX

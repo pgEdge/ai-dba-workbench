@@ -291,6 +291,7 @@ func TestQuotedTurnsOn(t *testing.T) {
 		want bool
 	}{
 		{"'on'", true},
+		{"", false},
 		{`u&"True"`, true},
 		{"e'on'", true},
 		{"$x$on$x$", true},

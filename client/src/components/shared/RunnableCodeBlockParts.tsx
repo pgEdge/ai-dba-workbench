@@ -89,11 +89,11 @@ export const RunButton: React.FC<RunButtonProps> = ({
             >
                 {(loading || validating) ? (
                     <CircularProgress
-                        size={14}
-                        sx={{ color: alpha(theme.palette.secondary.main, 0.7) }}
                         aria-label={
                             validating ? 'Validating query' : 'Running query'
                         }
+                        size={14}
+                        sx={{ color: alpha(theme.palette.secondary.main, 0.7) }}
                     />
                 ) : (
                     <PlayArrowIcon sx={{ fontSize: 18 }} />
@@ -119,13 +119,12 @@ export const InfoNotice: React.FC<InfoNoticeProps> = ({
     testId,
     children,
 }) => (
-    <Box sx={getQueryResultWrapperSx(theme)}>
+    <Box data-testid={testId} sx={getQueryResultWrapperSx(theme)}>
         <Box sx={getQueryErrorSx(theme)}>
             <InfoOutlinedIcon
                 sx={{ ...noticeIconSx, color: theme.palette.info.main }}
             />
             <Typography
-                data-testid={testId}
                 sx={{ fontSize: '0.875rem', color: 'text.secondary', flex: 1 }}
             >
                 {children}
@@ -149,14 +148,16 @@ export const ValidationFailedNotice: React.FC<ValidationFailedNoticeProps> = ({
     runAnyway,
     onRunAnyway,
 }) => (
-    <Box sx={getQueryResultWrapperSx(theme)}>
+    <Box
+        data-testid="sql-validation-error"
+        sx={getQueryResultWrapperSx(theme)}
+    >
         <Box sx={getQueryErrorSx(theme)}>
             <WarningIcon
                 sx={{ ...noticeIconSx, color: theme.palette.warning.main }}
             />
             <Box sx={{ flex: 1 }}>
                 <Typography
-                    data-testid="sql-validation-error"
                     sx={{
                         fontSize: '0.875rem',
                         color: errorTextColour(theme),

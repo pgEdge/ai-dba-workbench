@@ -26,8 +26,31 @@ row.
   action that has not started is retried without `Approve`, only by
   the recorded `approved_by` or a superuser, and only through the same
   kind of request (an overridden one needs `override` and `confirm`
-  again). `ClaimForExecution` is the atomic gate and sets
-  `executed_at` (the start time).
+  again). A superuser's retry of someone else's approval goes through
+  `Store.Reapprove`, which rewrites `approved_by`/`approved_via`/
+  `approved_at` only if the row still holds the approval it read, so
+  the record names who actually started the run. `ClaimForExecution`
+  is the atomic gate and sets `executed_at` (the start time).
+- Every superuser decision in the handler (evidence redaction, retry)
+  uses the scope-aware `actionAccess.IsSuperuser`
+  (`auth.RBACChecker.IsSuperuser`), never the raw context flag, so a
+  token narrowed to some connections does not act as a superuser.
+- `GET` and `execute` return `ActionHandler.viewFor`: evidence and
+  `conversation_id` only to the proposer or a superuser; statements,
+  rationale, review reasons and results as stored only to the proposer
+  or the approver. Everyone else, superusers included, gets
+  `maskActionText`: statements through `metrics.RedactStatementText`,
+  free text and result cells through `redact.Text`, and the
+  preview/undo/verification/outcome documents nil. Mask a copy; never
+  the slices shared with the stored action. Any new route returning an
+  `actions.Action` must go through `viewFor`, and
+  `tools/datastore_masking_routes_test.go` checks the GET route.
+- A revision (`ParentActionID` set) whose review failed is left
+  `pending`; `Store.Create` deletes such an untouched child of the same
+  proposer (pending, unapproved, not started) in the same transaction
+  before inserting, so a retry is not refused by
+  `idx_proposed_actions_parent`. `review()` maps a lost `SetReview`
+  (`ErrNotFound`) on a revision to `ErrBadRevision`.
 - Override of a veto: signed-in session only
   (`!auth.IsAPITokenFromContext`), `HasWriteAccess`, and `confirm` must
   equal the connection name exactly.
@@ -39,10 +62,26 @@ row.
   turns a sub-millisecond value into 0, which disables it).
 - `sqllex` decides whether a REINDEX must run outside a transaction
   from the target kind word (DATABASE, SCHEMA, SYSTEM) and
-  CONCURRENTLY, as a keyword or an option not set false/off/0; never
-  from a name, which may be any of those words.
+  CONCURRENTLY, as a keyword or an option; never from a name, which
+  may be any of those words. In an option list the last CONCURRENTLY
+  wins, as in PostgreSQL. A quoted TRUE or ON ('on', E'on', "ON",
+  $$true$$) turns it on, as PostgreSQL accepts those; any other value,
+  or a quoted one spelled with escapes, reads as off, which is safe
+  because PostgreSQL then refuses the statement inside the transaction.
+  `maskKeepingValues` keeps each quoted value as a word (1 or X).
 - `Store.MarkInterruptedUnknown` runs once at startup and marks every
   `executing` row `unknown`. This assumes one server per datastore;
   keep the assumption documented in the user and configuration docs.
+  `FinishExecution` accepts `executing`, or an `unknown` row with no
+  `results` (the sweep's mark), so a run that is still going when the
+  sweep runs still records its outcome; a second finish is
+  `ErrInvalidState`.
+- `Executor.Start` claims on `context.WithoutCancel(ctx)` bounded by
+  `claimTimeout`, so a client disconnect cannot strand the claim.
+  Outcome writes retry until `Shutdown`'s context ends
+  (`shutdownDone`), not merely until `stopping` closes.
+- A statement that calls `nextval`/`setval` (matched as a call by
+  `sqllex.ChangesSequence`) gets `sequenceNote` when rolled back, or
+  `sequenceUnknownNote` when the outcome is unknown.
 - Collector schema 33 adds the table; `MinCollectorSchemaVersion` in
   `server/src/internal/database/health.go` must stay in step.

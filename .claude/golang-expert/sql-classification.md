@@ -57,6 +57,11 @@ do not copy either into another package.
   `pg_proc`, skipping names in `coreFunctionMinVersion` that are newer
   than the server under test; add an entry there for any core name
   added after PostgreSQL 14.
+- `transaction.go`: `ChangesSequence`, which picks the sequence note
+  for a proposed action, matches `nextval`/`setval` only as a call
+  (name token then `(`, outside `namesThatAreNotCalls`), unlike the
+  write check above, so a column `t.nextval` gets no note; a statement
+  that fails to tokenise counts as changing a sequence.
 
 ## Prefixing EXPLAIN
 

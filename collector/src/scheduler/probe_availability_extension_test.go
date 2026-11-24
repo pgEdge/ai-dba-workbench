@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/collector/src/probes"
@@ -513,14 +514,16 @@ func createDatabases(t *testing.T, f *integrationFixture, names ...string) {
 	// Registered first, so it runs after the drops below.
 	t.Cleanup(adminPool.Close)
 	for _, name := range names {
-		if _, err := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", name)); err != nil {
+		quoted := pgx.Identifier{name}.Sanitize()
+		//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL, which cannot bind a name; test-generated name sanitized by pgx.Identifier
+		if _, err := adminPool.Exec(ctx, "CREATE DATABASE "+quoted); err != nil {
 			t.Skipf("create database %s: %v", name, err)
 		}
 		t.Cleanup(func() {
 			dropCtx, dropCancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer dropCancel()
-			if _, err := adminPool.Exec(dropCtx, fmt.Sprintf(
-				"DROP DATABASE IF EXISTS %s WITH (FORCE)", name)); err != nil {
+			//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; same sanitized identifier as the CREATE above
+			if _, err := adminPool.Exec(dropCtx, "DROP DATABASE IF EXISTS "+quoted+" WITH (FORCE)"); err != nil {
 				t.Logf("drop database %s: %v", name, err)
 			}
 		})

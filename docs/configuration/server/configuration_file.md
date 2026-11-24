@@ -290,9 +290,11 @@ the server connects only to the permitted addresses. The save-time check also
 refuses the always-refused addresses first, whether a `host` or `hostaddr` that
 the request supplies is such an address or a supplied `host` name resolves to
 one; a name is refused when any of its addresses is always refused, even if the
-server could connect to another of them. An update that supplies neither value
-is not checked, so a stored connection that names such an address can still be
-edited, and the connect-time checks decide whether it connects. A host name
+server could connect to another of them. An update checks a `host` or
+`hostaddr` only when it differs from the stored value, so a stored connection
+that names such an address can still be edited, including from the server
+dialog, which sends the host back on every save, and the connect-time checks
+decide whether it connects. A host name
 that `allowed_hosts` lists is not resolved at save time and meets this check
 only when the server connects. When no resolved address is permitted, the
 connection attempt fails with an error that says the host resolves only to

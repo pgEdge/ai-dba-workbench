@@ -78,7 +78,11 @@ moved.
   still accepted without a lookup. Notification channel create and
   update apply only that floor (`CheckAlwaysBlockedHost`, via
   `refuseAlwaysBlockedTargets`) to supplied `smtp_host`, `webhook_url`
-  and `endpoint_url` hosts. The server URL prefers `hostaddr` over
+  and `endpoint_url` hosts. An update checks only a `host` or
+  `hostaddr` that differs from the stored value (`changedValue`), since
+  the server dialog resends the host on every save; the stored target
+  meets the connect-time checks instead. The server URL prefers
+  `hostaddr` over
   `host`, so skipping either check lets an allowed name front an
   internal address. At connect time `hostvalidation.CheckStoredTarget`
   (in `pkg/`) refuses a stored host carrying `, [ ] / ? @ # %` or

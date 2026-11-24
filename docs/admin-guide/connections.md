@@ -86,9 +86,12 @@ allow-listed address permits only that address. Before applying those
 rules, the server refuses unspecified, link-local and cloud metadata
 addresses, whatever `allowed_hosts` or `allow_internal_networks` say,
 both at connect time and when a connection is saved. A request to create
-or update a connection whose supplied `host` or `hostaddr` is such an
-address, or whose supplied `host` is a name that resolves to one, fails
-with a 400 response stating that these addresses are always blocked. A
+a connection, or to update one with a `host` or `hostaddr` that differs
+from the stored value, fails with a 400 response stating that these
+addresses are always blocked when that `host` or `hostaddr` is such an
+address, or that `host` is a name that resolves to one. An update that
+repeats the stored values, as the server dialog does, is not checked
+again, so an existing connection can still be edited. A
 host name that `allowed_hosts` lists is not resolved when the connection
 is saved, so the server applies the check to that name's addresses only
 at connect time. The collector has none of the `connection_security`

@@ -153,7 +153,9 @@ project adheres to
   `allowed_hosts` say, and covers host names that resolve to such
   addresses, except a connection host name that `allowed_hosts` lists
   by name, which is not resolved when saved and is refused only when
-  the server connects. (#842)
+  the server connects. An update checks a connection's host and
+  hostaddr only when they change, so an existing connection can still
+  be edited. (#842)
 
 ### Security
 

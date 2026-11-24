@@ -211,8 +211,9 @@ const alwaysBlockedLookupTimeout = 5 * time.Second
 // CheckAlwaysBlockedHost returns an error wrapping ErrAlwaysBlockedHost
 // when host is an IP literal (optionally bracketed, optionally with an
 // IPv6 zone) that hostvalidation.IsAlwaysBlockedIP reports, or a host
-// name any of whose addresses it reports. A nil lookup is the system
-// resolver. A failed lookup refuses nothing: the check rejects a target
+// name any of whose addresses lookup reports, so lookup must not be nil
+// (NewNotificationChannelHandlerWithSecurity passes the system
+// resolver). A failed lookup refuses nothing: the check rejects a target
 // that can never be reached, and does not require a name to resolve
 // from this host.
 func CheckAlwaysBlockedHost(ctx context.Context, host string, lookup hostvalidation.LookupFunc) error {
@@ -225,9 +226,6 @@ func CheckAlwaysBlockedHost(ctx context.Context, host string, lookup hostvalidat
 			return ErrAlwaysBlockedHost
 		}
 		return nil
-	}
-	if lookup == nil {
-		lookup = net.DefaultResolver.LookupHost
 	}
 	ctx, cancel := context.WithTimeout(ctx, alwaysBlockedLookupTimeout)
 	defer cancel()

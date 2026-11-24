@@ -15,6 +15,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -38,8 +39,9 @@ type NotificationChannelHandler struct {
 	// in for DNS.
 	testSender *notificationTestSender
 	// lookupHost resolves a host name for the always-blocked check a
-	// create or update makes (refuseAlwaysBlockedTargets); nil is the
-	// system resolver, and tests set it to stand in for DNS.
+	// create or update makes (refuseAlwaysBlockedTargets). The
+	// constructor sets the system resolver; tests replace it to stand
+	// in for DNS.
 	lookupHost      hostvalidation.LookupFunc
 	checkPermission func(http.ResponseWriter, *http.Request) bool
 	// allConnectionIDs lists every connection, whose alerts a channel
@@ -61,6 +63,7 @@ func NewNotificationChannelHandlerWithSecurity(datastore *database.Datastore, au
 		rbacChecker:   rbacChecker,
 		hostValidator: validator,
 		testSender:    newNotificationTestSender(testSendPolicy(validator), nil),
+		lookupHost:    net.DefaultResolver.LookupHost,
 	}
 	h.allConnectionIDs = datastore.GetAllConnectionIDs
 	h.checkPermission = requireAdminPermission(rbacChecker, &h.denialAuditor, auth.PermManageNotificationChannels)

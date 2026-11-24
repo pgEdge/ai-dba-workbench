@@ -340,7 +340,9 @@ deliveries follow the alerter's settings, not the server's
 `refuseAlwaysBlockedTargets` and `CheckAlwaysBlockedHost`
 (`api/host_validation.go`), to the `smtp_host`, `webhook_url` and
 `endpoint_url` the request supplies; an unresolvable name or an
-unparseable URL is left alone. Tests stub DNS with `h.lookupHost`.
+unparseable URL is left alone. The constructor sets `h.lookupHost` to
+`net.DefaultResolver.LookupHost` (`CheckAlwaysBlockedHost` needs a
+non-nil lookup), and tests replace it to stub DNS.
 
 The policy is `testSendPolicy(h.hostValidator)`: the always-blocked
 floor first, then `HostValidator.CheckDialAddr`, so the server's own

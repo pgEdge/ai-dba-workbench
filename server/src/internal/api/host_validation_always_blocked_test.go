@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -165,9 +166,22 @@ func TestCheckAlwaysBlockedHost(t *testing.T) {
 		})
 	}
 
-	// A nil lookup is the system resolver; localhost is loopback.
-	if err := CheckAlwaysBlockedHost(context.Background(), "localhost", nil); err != nil {
+	// Through the system resolver, localhost is loopback.
+	if err := CheckAlwaysBlockedHost(context.Background(), "localhost",
+		net.DefaultResolver.LookupHost); err != nil {
 		t.Errorf("CheckAlwaysBlockedHost(localhost) = %v, want nil", err)
+	}
+}
+
+// TestNewNotificationChannelHandler_SystemResolver checks that the
+// constructor gives the always-blocked check the system resolver, since
+// the handler tests all replace it.
+func TestNewNotificationChannelHandler_SystemResolver(t *testing.T) {
+	h := NewNotificationChannelHandlerWithSecurity(nil, nil, nil, false, nil, nil)
+	got := reflect.ValueOf(h.lookupHost).Pointer()
+	want := reflect.ValueOf(net.DefaultResolver.LookupHost).Pointer()
+	if got != want {
+		t.Errorf("lookupHost is not net.DefaultResolver.LookupHost")
 	}
 }
 

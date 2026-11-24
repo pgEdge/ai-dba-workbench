@@ -322,7 +322,11 @@ const ResultTable: React.FC<ResultTableProps> = ({ theme, columns, rows }) => (
 );
 
 /** The row-count footnote beneath a statement's results. */
-const RowCount: React.FC<{ result: StatementResult }> = ({ result }) => {
+interface RowCountProps {
+    result: StatementResult;
+}
+
+const RowCount: React.FC<RowCountProps> = ({ result }) => {
     if (result.truncated) {
         return (
             <Typography sx={footnoteSx}>

@@ -278,6 +278,13 @@ func TestIssue530_QueriesRunInsideReadOnlyTransaction(t *testing.T) {
 				t.Fatalf("follow-up status = %d, want %d (body %q)",
 					rec.Code, http.StatusOK, rec.Body.String())
 			}
+			// A statement error also comes back as 200, so read the result.
+			follow := decodeMultiQuery(t, rec).Results
+			if len(follow) != 1 || follow[0].Error != "" ||
+				len(follow[0].Rows) != 1 || len(follow[0].Rows[0]) != 1 ||
+				follow[0].Rows[0][0] != "1" {
+				t.Errorf("follow-up results = %+v, want one row holding 1", follow)
+			}
 		})
 	}
 }

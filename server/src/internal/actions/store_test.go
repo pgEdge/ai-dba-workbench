@@ -333,6 +333,22 @@ func TestMarkInterruptedUnknown(t *testing.T) {
 		t.Errorf("second mark: n=%d err=%v", n, err)
 	}
 
+	// The run that was still going records its real outcome over the
+	// sweep's guess, once; a recorded outcome is never replaced.
+	results := []StatementResult{{Statement: "SELECT 1", Applied: true}}
+	if err := s.FinishExecution(ctx, running.ID, "succeeded", true, results); err != nil {
+		t.Fatalf("finish after the sweep: %v", err)
+	}
+	if got, err = s.Get(ctx, running.ID); err != nil || got.ExecStatus != "succeeded" || len(got.Results) != 1 {
+		t.Errorf("after finish = %+v, %v", got, err)
+	}
+	if err := s.FinishExecution(ctx, running.ID, "failed", true, nil); !errors.Is(err, ErrInvalidState) {
+		t.Errorf("second finish = %v, want ErrInvalidState", err)
+	}
+	if err := s.FinishExecution(ctx, idle.ID, "succeeded", true, nil); !errors.Is(err, ErrInvalidState) {
+		t.Errorf("finish of an unclaimed action = %v, want ErrInvalidState", err)
+	}
+
 	pool.Close()
 	if _, err := s.MarkInterruptedUnknown(ctx); err == nil {
 		t.Error("expected an error on a closed pool")

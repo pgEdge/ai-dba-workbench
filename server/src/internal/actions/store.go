@@ -235,8 +235,13 @@ func (s *Store) ClaimForExecution(ctx context.Context, id int64) (bool, error) {
 }
 
 // FinishExecution records the outcome of an executing action; status is
-// one of the exec_status end states. It returns ErrInvalidState when
-// the action is not executing.
+// one of the exec_status end states. It also accepts an action that
+// MarkInterruptedUnknown marked unknown whilst the run was still going
+// (another server instance starting up, say), which it tells from a
+// finished one by its results: the sweep leaves them NULL, whilst this
+// method always writes them, so the run's real outcome replaces the
+// guess but can never overwrite another recorded outcome. It returns
+// ErrInvalidState when the action is in any other state.
 func (s *Store) FinishExecution(ctx context.Context, id int64, status string, transactional bool, results []StatementResult) error {
 	switch status {
 	case "succeeded", "failed", "cancelled", "unknown": //nolint:misspell // value fixed by the table CHECK
@@ -254,7 +259,9 @@ func (s *Store) FinishExecution(ctx context.Context, id int64, status string, tr
         UPDATE proposed_actions
            SET exec_status = $2, transactional = $3, results = $4,
                updated_at = now()
-         WHERE id = $1 AND exec_status = 'executing'`,
+         WHERE id = $1
+           AND (exec_status = 'executing'
+                OR (exec_status = 'unknown' AND results IS NULL))`,
 		id, status, transactional, encoded)
 	if err != nil {
 		return fmt.Errorf("finish execution: %w", err)

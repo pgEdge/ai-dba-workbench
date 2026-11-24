@@ -15,7 +15,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -292,22 +294,51 @@ func (s *Store) Reapprove(ctx context.Context, id int64, approval, previousBy, b
 // a recorded decision to executing: it passed review and was approved,
 // or was vetoed and then overridden. A passed but unapproved action is
 // never claimable, so the database is the final gate whatever the
-// callers do. The claim records the start time in executed_at. It returns true for exactly one caller
-// however many race for the same action; every other caller, and any
-// action not eligible, gets false.
+// callers do. The claim records the start time in executed_at. It
+// returns true for exactly one caller however many race for the same
+// action; every other caller, and any action not eligible, gets false.
+//
+// The claim may commit even when its reply is lost, so each claim
+// writes a fresh random claim_token, and on an error the row is read
+// back: a claim that holds this call's token took effect and returns
+// true, so the caller runs the action rather than leaving it executing
+// with no run behind it (see claim).
 func (s *Store) ClaimForExecution(ctx context.Context, id int64) (bool, error) {
+	return s.claim(ctx, id, uuid.NewString())
+}
+
+// claimReconcileTimeout bounds the read that settles a claim whose
+// reply was lost. It runs on a context detached from the claim's, whose
+// deadline may be what ended the claim.
+const claimReconcileTimeout = 10 * time.Second
+
+// claim is ClaimForExecution with the claim's token given. When the
+// UPDATE fails it returns true only if the row is executing under
+// token, which no other claim can have written; otherwise it returns
+// the UPDATE's error, and never touches a claim it does not hold. A
+// read that fails too leaves the action as it was, for the startup
+// sweep (MarkInterruptedUnknown) to settle if the claim did commit.
+func (s *Store) claim(ctx context.Context, id int64, token string) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
         UPDATE proposed_actions
            SET exec_status = 'executing', executed_at = now(),
-               updated_at = now()
+               updated_at = now(), claim_token = $2
          WHERE id = $1
            AND exec_status = 'not_started'
            AND ((review_status = 'passed' AND approval = 'approved')
-                OR (review_status = 'vetoed' AND approval = 'overridden'))`, id)
-	if err != nil {
-		return false, fmt.Errorf("claim action: %w", err)
+                OR (review_status = 'vetoed' AND approval = 'overridden'))`, id, token)
+	if err == nil {
+		return tag.RowsAffected() == 1, nil
 	}
-	return tag.RowsAffected() == 1, nil
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimReconcileTimeout)
+	defer cancel()
+	var held bool
+	if rerr := s.pool.QueryRow(rctx, `
+        SELECT exec_status = 'executing' AND claim_token = $2
+          FROM proposed_actions WHERE id = $1`, id, token).Scan(&held); rerr == nil && held {
+		return true, nil
+	}
+	return false, fmt.Errorf("claim action: %w", err)
 }
 
 // FinishExecution records the outcome of an executing action; status is

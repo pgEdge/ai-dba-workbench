@@ -4354,7 +4354,8 @@ func (sm *SchemaManager) registerMigrations() {
 					outcome JSONB,
 					created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 					updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-					executed_at TIMESTAMPTZ
+					executed_at TIMESTAMPTZ,
+					claim_token UUID
 				);
 
 				CREATE INDEX IF NOT EXISTS idx_proposed_actions_connection_created
@@ -4433,6 +4434,8 @@ func (sm *SchemaManager) registerMigrations() {
 					'When the action row was last changed';
 				COMMENT ON COLUMN proposed_actions.executed_at IS
 					'When execution started';
+				COMMENT ON COLUMN proposed_actions.claim_token IS
+					'Random token written by the claim for execution, so that a server whose claim reply was lost can tell its own claim from another';
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create proposed_actions: %w", err)

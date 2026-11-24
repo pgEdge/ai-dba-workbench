@@ -78,6 +78,11 @@ row.
   `ErrInvalidState`.
 - `Executor.Start` claims on `context.WithoutCancel(ctx)` bounded by
   `claimTimeout`, so a client disconnect cannot strand the claim.
+  Each claim writes a fresh `claim_token` (UUID); when the UPDATE
+  errors, `Store.claim` reads the row back on a detached context and
+  counts the claim only if it is `executing` under that token, so a
+  commit whose reply was lost still gets a run and another server's
+  claim is never taken over. Test it through `claim` with a fixed token.
   Outcome writes retry until `Shutdown`'s context ends
   (`shutdownDone`), not merely until `stopping` closes.
 - A statement that calls `nextval`/`setval` (matched as a call by

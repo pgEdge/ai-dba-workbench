@@ -49,7 +49,9 @@ const finishTimeout = 30 * time.Second
 
 // claimTimeout bounds the claim Start makes. The claim runs on a context
 // detached from the request, so a client that disconnects mid-claim
-// cannot leave the row claimed with no run behind it.
+// cannot leave the row claimed with no run behind it; a claim that
+// commits but loses its reply is told apart by its token
+// (ClaimForExecution), so it gets a run too.
 const claimTimeout = 30 * time.Second
 
 // cancelRequestTimeout bounds the cancel request sent to the server.

@@ -583,3 +583,73 @@ func TestCreateFailsMidTransaction(t *testing.T) {
 		})
 	}
 }
+
+// TestClaimReconcilesFailedClaim proves a claim that reports an error
+// still counts when the row holds its token, as when the claim commits
+// but its reply is lost, and fails when the row is unclaimed or holds
+// another claim's token. A statement trigger in the test's own scratch
+// database makes every UPDATE of the table fail.
+func TestClaimReconcilesFailedClaim(t *testing.T) {
+	s, pool, connID := newTestStore(t, "_act_claim")
+	ctx := context.Background()
+	newApproved := func() int64 {
+		t.Helper()
+		a, err := s.Create(ctx, sampleAction(connID, "alice"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetReview(ctx, a.ID, "passed", Verdict{Decision: "pass"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Approve(ctx, a.ID, "approved", "bob", "session"); err != nil {
+			t.Fatal(err)
+		}
+		return a.ID
+	}
+	mine := "6f1c2a52-6a9a-4c39-9a53-7d0f2d1f0a01"
+	theirs := "6f1c2a52-6a9a-4c39-9a53-7d0f2d1f0a02"
+
+	held := newApproved()
+	if ok, err := s.claim(ctx, held, mine); err != nil || !ok {
+		t.Fatalf("claim: ok=%v err=%v", ok, err)
+	}
+	var token string
+	if err := pool.QueryRow(ctx, `SELECT claim_token::text FROM proposed_actions WHERE id = $1`,
+		held).Scan(&token); err != nil || token != mine {
+		t.Fatalf("claim_token = %q (%v), want %q", token, err, mine)
+	}
+	unclaimed := newApproved()
+
+	for _, sql := range []string{
+		`CREATE FUNCTION test_refuse_claim() RETURNS trigger LANGUAGE plpgsql
+            AS $$ BEGIN RAISE EXCEPTION 'refused by test'; END $$`,
+		`CREATE TRIGGER test_refuse_claim BEFORE UPDATE ON proposed_actions
+            FOR EACH STATEMENT EXECUTE FUNCTION test_refuse_claim()`,
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name   string
+		id     int64
+		token  string
+		wantOK bool
+	}{
+		{"own claim took effect", held, mine, true},
+		{"another claim holds it", held, theirs, false},
+		{"claim did not take effect", unclaimed, mine, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, err := s.claim(ctx, tt.id, tt.token)
+			if ok != tt.wantOK || (err == nil) != tt.wantOK {
+				t.Errorf("claim = %v, %v; want ok=%v and an error only when not ok", ok, err, tt.wantOK)
+			}
+		})
+	}
+	got, err := s.Get(ctx, unclaimed)
+	if err != nil || got.ExecStatus != "not_started" {
+		t.Errorf("unclaimed action = %+v (%v), want not_started", got, err)
+	}
+}

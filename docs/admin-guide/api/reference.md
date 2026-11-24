@@ -282,8 +282,9 @@ describes the limits.
 The `/api/v1/actions/{id}` endpoint returns an action to any caller who can
 see its connection, but returns the `statements` and `results` unmasked only
 to the user who proposed the action and the user who approved it. For any
-other caller, the statement text and results are masked in the same way as
-query text, as described under [Masked Credentials](#masked-credentials).
+other caller, a superuser included, the statement text, results, rationale
+and review reasons are masked in the same way as query text, as described
+under [Masked Credentials](#masked-credentials).
 The `evidence` and `conversation_id` fields are returned only to the user who
 proposed the action and to a superuser.
 

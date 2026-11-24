@@ -326,7 +326,9 @@ unapproved.
 The Workbench assumes that one server instance uses a given datastore. When
 the server starts, it marks every action still running as Outcome unknown.
 Running two servers against one datastore can therefore mislabel an action
-that the other server is still running.
+that the other server is still running. The action shows Outcome unknown
+until that server records the real outcome and results, and stays Outcome
+unknown if that server stops first.
 
 ### SQL Extraction
 

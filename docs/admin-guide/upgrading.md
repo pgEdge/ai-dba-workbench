@@ -62,8 +62,10 @@ Run only one server against a given datastore. When the server starts, it
 marks every action still recorded as running in the datastore as Outcome
 unknown, whichever server started the action. A second server started
 against the same datastore therefore marks the actions that the first server
-is still running, and those actions can then lose their recorded results.
-During an upgrade, stop the old server before you start the new one.
+is still running. Such an action shows Outcome unknown until the first server
+records the real outcome and results; if the first server stops before it
+records them, the action stays Outcome unknown. During an upgrade, stop the
+old server before you start the new one.
 
 ## Checking a Configuration by Hand
 

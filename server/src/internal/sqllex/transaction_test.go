@@ -281,3 +281,30 @@ func TestChangesSequence(t *testing.T) {
 		})
 	}
 }
+
+// TestQuotedTurnsOn covers quoted forms the statement tests cannot
+// reach, since the lexer never hands maskKeepingValues them whole.
+func TestQuotedTurnsOn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		q    string
+		want bool
+	}{
+		{"'on'", true},
+		{`u&"True"`, true},
+		{"e'on'", true},
+		{"$x$on$x$", true},
+		{"$$on", false},     // unterminated dollar quote
+		{"$on", false},      // no closing tag delimiter
+		{"$x$", false},      // shorter than its two tags
+		{"$x$on$y$", false}, // closing tag differs
+		{"B'1'", false},     // a bit string is not a boolean
+		{"'on", false},      // unterminated literal
+		{"'on\"", false},    // mismatched quotes
+	}
+	for _, tt := range tests {
+		if got := quotedTurnsOn(tt.q); got != tt.want {
+			t.Errorf("quotedTurnsOn(%q) = %v, want %v", tt.q, got, tt.want)
+		}
+	}
+}

@@ -50,6 +50,18 @@ export interface UseActionResult {
 const messageOf = (err: unknown): string =>
     err instanceof Error ? err.message : 'Request failed';
 
+const hasStatus = (err: unknown, ...codes: number[]): boolean =>
+    err instanceof ApiError && codes.includes(err.statusCode);
+
+/** The action is gone or off limits: there is nothing left to follow. */
+const isGone = (err: unknown): boolean => hasStatus(err, 403, 404);
+
+/**
+ * An execute refusal meaning the action is not in the state the UI
+ * showed, so it should be fetched again.
+ */
+const isStaleRefusal = (err: unknown): boolean => hasStatus(err, 409, 503);
+
 /**
  * Drives one proposed action: creating it, executing and cancelling it,
  * and polling `GET /api/v1/actions/{id}` with an exponential back-off
@@ -103,11 +115,7 @@ export const useAction = (): UseActionResult => {
                 if (!mountedRef.current || gen !== pollGenRef.current) {
                     return false;
                 }
-                // The action is gone or off limits: nothing to follow.
-                if (
-                    err instanceof ApiError
-                    && (err.statusCode === 403 || err.statusCode === 404)
-                ) {
+                if (isGone(err)) {
                     setError(messageOf(err));
                     return false;
                 }
@@ -227,17 +235,12 @@ export const useAction = (): UseActionResult => {
         } catch (err) {
             if (mountedRef.current) {
                 setError(messageOf(err));
-                if (err instanceof ApiError && err.statusCode === 403) {
+                if (hasStatus(err, 403)) {
                     setWriteDenied(true);
                 }
             }
-            // A refusal means the action is not in the state the UI
-            // showed, so fetch it again rather than keep a stale button.
-            if (
-                err instanceof ApiError
-                && (err.statusCode === 409 || err.statusCode === 503)
-                && mountedRef.current
-            ) {
+            // Fetch a stale action again rather than keep a stale button.
+            if (isStaleRefusal(err) && mountedRef.current) {
                 await load(id, true);
             }
             return false;

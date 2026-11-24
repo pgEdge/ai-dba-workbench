@@ -126,6 +126,13 @@ export async function fetchConversation(
 }
 
 /**
+ * The most action IDs one link request may name. This MUST match
+ * `actionMaxLinkIDs` in `server/src/internal/api/action_handlers.go`,
+ * which answers a longer list with a 400.
+ */
+export const MAX_ACTION_IDS_PER_LINK = 100;
+
+/**
  * Link the actions proposed during a conversation's first turn to it.
  * Those tool calls ran before the conversation had been saved, so they
  * carried no conversation ID.

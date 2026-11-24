@@ -53,6 +53,7 @@ vi.mock('../chatConversation', () => ({
     linkConversationActions: (...args: unknown[]) =>
         mockLinkConversationActions(...args),
     fetchConversation: (...args: unknown[]) => mockFetchConversation(...args),
+    MAX_ACTION_IDS_PER_LINK: 100,
 }));
 
 vi.mock('../../../utils/apiClient', () => ({
@@ -101,6 +102,16 @@ Object.defineProperty(globalThis, 'localStorage', {
 describe('useChat', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        // clearAllMocks keeps queued *Once implementations, so one a test
+        // left unused would leak into the next; reset the mocks that queue
+        // them, whose defaults are set again below.
+        [
+            mockRunAgenticLoop,
+            mockCreateConversation,
+            mockUpdateConversation,
+            mockLinkConversationActions,
+            mockFetchConversation,
+        ].forEach(mock => mock.mockReset());
         localStorageMock.clear();
 
         // Default mock implementations
@@ -327,6 +338,7 @@ describe('useChat', () => {
             interface LoopParams {
                 conversationId?: string | null;
                 onActionProposed?: (actionId: number) => void;
+                onToolActivity?: (tools: unknown[]) => void;
             }
 
             /**
@@ -514,6 +526,162 @@ describe('useChat', () => {
                     expect.any(Function),
                 );
                 expect(mockLinkConversationActions).not.toHaveBeenCalled();
+            });
+
+            it('saves the final reply even while a tool update is pending', async () => {
+                mockRunAgenticLoop.mockImplementationOnce(
+                    async (params: LoopParams) => {
+                        params.onToolActivity?.([{ name: 'query_database' }]);
+                        return {
+                            finalMessage: {
+                                role: 'assistant',
+                                content: 'Final reply',
+                                timestamp: new Date().toISOString(),
+                            },
+                            updatedApiMessages: [],
+                        };
+                    },
+                );
+                const { result } = renderHook(() => useChat());
+
+                await send(result, 'Do it');
+
+                const saved = mockCreateConversation.mock.calls[0][0] as {
+                    content: string;
+                }[];
+                expect(saved.map(m => m.content)).toEqual(['Do it', 'Final reply']);
+            });
+
+            it('links more than 100 actions in batches, keeping a failed batch', async () => {
+                const ids = Array.from({ length: 150 }, (_, i) => i + 1);
+                mockLinkConversationActions
+                    .mockResolvedValueOnce(false)
+                    .mockResolvedValue(true);
+                nextTurn(ids);
+                nextTurn([]);
+                const { result } = renderHook(() => useChat());
+
+                await send(result, 'First');
+                expect(mockLinkConversationActions.mock.calls.map(c => c[1]))
+                    .toEqual([ids.slice(0, 100), ids.slice(100)]);
+
+                await send(result, 'Second');
+                expect(mockLinkConversationActions).toHaveBeenLastCalledWith(
+                    'new-conv-123',
+                    ids.slice(0, 100),
+                    expect.anything(),
+                );
+                expect(mockLinkConversationActions).toHaveBeenCalledTimes(3);
+            });
+
+            it('links nothing when the conversation update fails', async () => {
+                mockLinkConversationActions
+                    .mockResolvedValueOnce(false)
+                    .mockResolvedValue(true);
+                mockUpdateConversation
+                    .mockResolvedValueOnce(false)
+                    .mockResolvedValue(true);
+                nextTurn([52]);
+                nextTurn([]);
+                nextTurn([]);
+                const { result } = renderHook(() => useChat());
+
+                await send(result, 'First');
+                await send(result, 'Second');
+                expect(mockLinkConversationActions).toHaveBeenCalledTimes(1);
+
+                await send(result, 'Third');
+                expect(mockLinkConversationActions).toHaveBeenCalledTimes(2);
+                expect(mockLinkConversationActions).toHaveBeenLastCalledWith(
+                    'new-conv-123',
+                    [52],
+                    expect.anything(),
+                );
+            });
+
+            it('keeps a first save that ends after a new chat out of it', async () => {
+                let finishCreate: (id: string) => void = () => undefined;
+                mockCreateConversation.mockImplementationOnce(
+                    () => new Promise(resolve => { finishCreate = resolve; }),
+                );
+                nextTurn([63]);
+                const { result } = renderHook(() => useChat());
+
+                let first: Promise<void> = Promise.resolve();
+                await act(async () => {
+                    first = result.current.sendMessage('First');
+                    await Promise.resolve();
+                });
+                await waitFor(() =>
+                    expect(mockCreateConversation).toHaveBeenCalled(),
+                );
+                act(() => {
+                    result.current.newChat();
+                });
+                await act(async () => {
+                    finishCreate('conv-old');
+                    await first;
+                });
+
+                expect(result.current.currentConversationId).toBeNull();
+                expect(mockLinkConversationActions).not.toHaveBeenCalled();
+            });
+
+            it('keeps an update that ends after a new chat from linking its actions', async () => {
+                let finishUpdate: (ok: boolean) => void = () => undefined;
+                nextTurn([]);
+                mockUpdateConversation.mockImplementationOnce(
+                    () => new Promise(resolve => { finishUpdate = resolve; }),
+                );
+                nextTurn([]);
+                mockCreateConversation
+                    .mockResolvedValueOnce('conv-a')
+                    .mockResolvedValueOnce(null);
+                nextTurn([92]);
+                const { result } = renderHook(() => useChat());
+
+                await send(result, 'In A');
+                let second: Promise<void> = Promise.resolve();
+                await act(async () => {
+                    second = result.current.sendMessage('Again in A');
+                    await Promise.resolve();
+                });
+                await waitFor(() =>
+                    expect(mockUpdateConversation).toHaveBeenCalled(),
+                );
+                act(() => {
+                    result.current.newChat();
+                });
+                await send(result, 'In B');
+                await act(async () => {
+                    finishUpdate(true);
+                    await second;
+                });
+
+                expect(mockLinkConversationActions).not.toHaveBeenCalled();
+            });
+
+            it('keeps pending actions when another conversation fails to load', async () => {
+                const consoleSpy = vi
+                    .spyOn(console, 'error')
+                    .mockImplementation(() => {});
+                nextTurn([64], abortError());
+                nextTurn([]);
+                mockFetchConversation.mockRejectedValueOnce(new Error('404'));
+                const { result } = renderHook(() => useChat());
+
+                await send(result, 'First');
+                await act(async () => {
+                    await result.current.loadConversation('missing');
+                });
+                await send(result, 'Again');
+
+                expect(mockLinkConversationActions).toHaveBeenCalledWith(
+                    'new-conv-123',
+                    [64],
+                    expect.anything(),
+                );
+                consoleSpy.mockRestore();
             });
 
             it('ignores actions reported by a turn from an earlier chat', async () => {

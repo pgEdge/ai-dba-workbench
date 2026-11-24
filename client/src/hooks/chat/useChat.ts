@@ -30,6 +30,7 @@ import {
     updateConversation,
     fetchConversation,
     linkConversationActions,
+    MAX_ACTION_IDS_PER_LINK,
 } from './chatConversation';
 import {
     NO_MCP_PRIVILEGES_MESSAGE,
@@ -102,8 +103,9 @@ export function useChat(): UseChatReturn {
     const apiMessagesRef = useRef<APIMessage[]>([]);
     const conversationIdRef = useRef<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
-    // Ref to track visible messages within the sendMessage closure
-    // without depending on the `messages` state value.
+    // The visible messages, kept ahead of React state: every write sets
+    // the ref and the state together, so a save can send what was just
+    // appended without waiting for the state update to render.
     const visibleMessagesRef = useRef<ChatMessageData[]>([]);
     // Ref mirroring the latest `availableTools` value. Reading the
     // tool list through a ref inside sendMessage eliminates the
@@ -124,11 +126,6 @@ export function useChat(): UseChatReturn {
     // Bumped whenever the chat is replaced, so a turn still running in
     // the old chat cannot add its actions to the new one.
     const chatGenerationRef = useRef(0);
-
-    // Keep the visible messages ref in sync with React state.
-    useEffect(() => {
-        visibleMessagesRef.current = messages;
-    }, [messages]);
 
     // Keep the tools ref in sync with React state so async closures
     // (sendMessage in particular) always read the latest list.
@@ -196,17 +193,21 @@ export function useChat(): UseChatReturn {
     // Send message (agentic loop orchestrator)
     // ---------------------------------------------------------------
 
-    /** Append a message to the visible conversation. */
-    const appendVisible = useCallback((message: ChatMessageData): void => {
-        // Functional update, so a reply appended before an earlier update
-        // has committed (for example with synchronous test mocks) is not
-        // lost; the ref lets async closures read the result straight away.
-        setMessages(prev => {
-            const updated = [...prev, message];
+    /**
+     * Append a message to the visible conversation and return the
+     * conversation including it. The result is built from the ref rather
+     * than in a state updater, which React may defer until it renders,
+     * so a save straight afterwards can send it.
+     */
+    const appendVisible = useCallback(
+        (message: ChatMessageData): ChatMessageData[] => {
+            const updated = [...visibleMessagesRef.current, message];
             visibleMessagesRef.current = updated;
+            setMessages(updated);
             return updated;
-        });
-    }, []);
+        },
+        [],
+    );
 
     /** Record input in history (most recent first, deduped). */
     const recordInput = useCallback((text: string): void => {
@@ -221,55 +222,76 @@ export function useChat(): UseChatReturn {
     }, []);
 
     /**
-     * Link the actions proposed before this chat had a saved
-     * conversation to `conversationId`. They stay pending if the link
-     * fails, so the next save tries again; the server only links actions
+     * Link `ids`, the actions proposed before this chat had a saved
+     * conversation, to `conversationId`, in batches the server accepts.
+     * A batch leaves the pending set only once it has linked and the chat
+     * that started the save is still showing; a failed batch stays
+     * pending for the next save to retry. The server only links actions
      * that have no conversation yet, so sending one twice is harmless.
      */
     const linkPendingActions = useCallback(
-        async (conversationId: string): Promise<void> => {
-            const ids = [...pendingActionIdsRef.current];
-            if (ids.length === 0) {
-                return;
-            }
-            const generation = chatGenerationRef.current;
-            const linked = await linkConversationActions(
-                conversationId,
-                ids,
-                apiFetch,
-            );
-            if (linked && chatGenerationRef.current === generation) {
-                ids.forEach(id => pendingActionIdsRef.current.delete(id));
+        async (
+            conversationId: string,
+            ids: number[],
+            generation: number,
+        ): Promise<void> => {
+            for (let i = 0; i < ids.length; i += MAX_ACTION_IDS_PER_LINK) {
+                const batch = ids.slice(i, i + MAX_ACTION_IDS_PER_LINK);
+                const linked = await linkConversationActions(
+                    conversationId,
+                    batch,
+                    apiFetch,
+                );
+                if (chatGenerationRef.current !== generation) {
+                    return;
+                }
+                if (linked) {
+                    batch.forEach(id => pendingActionIdsRef.current.delete(id));
+                }
             }
         },
         [],
     );
 
-    /** Save the visible conversation, creating it on the first turn. */
-    const persistConversation = useCallback(async (): Promise<void> => {
-        try {
-            let id = conversationIdRef.current;
-            if (id) {
-                await updateConversation(
-                    id,
-                    visibleMessagesRef.current,
-                    apiFetch,
-                );
-            } else {
-                id = await createConversation(
-                    visibleMessagesRef.current,
-                    apiFetch,
-                );
-                if (!id) {
-                    return;
+    /**
+     * Save `snapshot`, the visible conversation, creating it on the first
+     * turn, then link the actions still pending. The save is bound to the
+     * chat that started it: if another chat has replaced it by the time
+     * the server answers, neither its conversation ID nor a link reaches
+     * the new chat. A failed save links nothing, so the actions stay
+     * pending and are linked with the next save that carries their cards.
+     */
+    const persistConversation = useCallback(
+        async (snapshot: ChatMessageData[]): Promise<void> => {
+            const generation = chatGenerationRef.current;
+            const ids = [...pendingActionIdsRef.current];
+            const stillCurrent = (): boolean =>
+                chatGenerationRef.current === generation;
+            try {
+                let id = conversationIdRef.current;
+                if (id) {
+                    const saved = await updateConversation(
+                        id,
+                        snapshot,
+                        apiFetch,
+                    );
+                    if (!saved || !stillCurrent()) {
+                        return;
+                    }
+                } else {
+                    id = await createConversation(snapshot, apiFetch);
+                    if (!id || !stillCurrent()) {
+                        return;
+                    }
+                    syncConversationId(id);
                 }
-                syncConversationId(id);
+                await linkPendingActions(id, ids, generation);
+            } catch {
+                // Non-fatal: the user can still continue chatting
             }
-            await linkPendingActions(id);
-        } catch {
-            // Non-fatal: the user can still continue chatting
-        }
-    }, [syncConversationId, linkPendingActions]);
+        },
+        [syncConversationId, linkPendingActions],
+    );
 
     /** Compact the API history if it has grown too large. */
     const compactHistory = useCallback(async (): Promise<void> => {
@@ -416,8 +438,7 @@ export function useChat(): UseChatReturn {
                     });
 
                 apiMessagesRef.current = updatedApiMessages;
-                appendVisible(finalMessage);
-                await persistConversation();
+                await persistConversation(appendVisible(finalMessage));
                 await compactHistory();
             } catch (err) {
                 if ((err as Error).name === 'AbortError') {
@@ -497,11 +518,13 @@ export function useChat(): UseChatReturn {
             setIsLoading(true);
             setError(null);
             setActiveTools([]);
-            resetPendingActions();
 
             try {
                 const data = await fetchConversation(id, apiFetch);
 
+                // Only a successful load replaces the chat; a failed one
+                // leaves it showing, with its unlinked actions intact.
+                resetPendingActions();
                 setMessages(data.messages || []);
                 visibleMessagesRef.current = data.messages || [];
                 setConversationTitle(data.title || 'Conversation');

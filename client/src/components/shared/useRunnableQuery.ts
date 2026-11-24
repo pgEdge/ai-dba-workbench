@@ -86,18 +86,24 @@ function jsonErrorOf(body: unknown): string | null {
 }
 
 /**
- * Read the error message from a failed query response. The body can be
- * read only once, so it is read as text and then parsed as JSON: a JSON
- * body gives its `error` field, and any other body is the message itself.
+ * The error message in a failed query response body: a JSON body gives
+ * its `error` field, and any other body is the message itself.
  */
-async function readErrorMessage(response: Response): Promise<string> {
-    const fallback = `Query failed with status ${response.status}`;
-    const text = await response.text().catch(() => '');
+function errorMessageOf(text: string, fallback: string): string {
     try {
         return jsonErrorOf(JSON.parse(text)) ?? fallback;
     } catch {
         return hasText(text) ? text : fallback;
     }
+}
+
+/**
+ * Read the error message from a failed query response. The body can be
+ * read only once, so it is read as text and parsed afterwards.
+ */
+async function readErrorMessage(response: Response): Promise<string> {
+    const text = await response.text().catch(() => '');
+    return errorMessageOf(text, `Query failed with status ${response.status}`);
 }
 
 /** Turn a 409 into a write confirmation, or an error if it is not one. */

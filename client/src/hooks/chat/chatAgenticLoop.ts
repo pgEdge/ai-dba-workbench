@@ -265,12 +265,12 @@ async function callTool(
             signal: params.abortSignal,
         });
         return await toolOutcomeOf(toolResponse);
-    } catch (toolErr) {
-        if ((toolErr as Error).name === 'AbortError') {
-            throw toolErr;
+    } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+            throw err;
         }
         return {
-            text: `Tool execution error: ${(toolErr as Error).message}`,
+            text: `Tool execution error: ${(err as Error).message}`,
             isError: true,
         };
     }

@@ -339,6 +339,34 @@ describe('usePerformanceSummary connection_ids batching', () => {
         expect(result.current.data?.aggregate).toBeUndefined();
     });
 
+    it('sends every batch the same explicit window so buckets line up', async () => {
+        mockApiFetch.mockImplementation((url: string) =>
+            Promise.resolve(okResponse(bodyFor(url))),
+        );
+        const now = Date.parse('2026-05-01T12:34:56.789Z');
+        const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now);
+
+        const selection = bigCluster(150);
+        const { result } = renderHook(() => usePerformanceSummary(selection));
+
+        await waitFor(() => {
+            expect(result.current.data).not.toBeNull();
+        });
+        nowSpy.mockRestore();
+
+        const params = mockApiFetch.mock.calls.map(
+            call => new URLSearchParams((call[0] as string).split('?')[1]),
+        );
+        expect(params).toHaveLength(2);
+        params.forEach(p => {
+            expect(p.get('time_range')).toBe('custom');
+            // Whole seconds, ending a minute behind the client's clock,
+            // spanning exactly 24 hours.
+            expect(p.get('time_end')).toBe('2026-05-01T12:33:56Z');
+            expect(p.get('time_start')).toBe('2026-04-30T12:33:56Z');
+        });
+    });
+
     it('surfaces a failing batch as an error and keeps no partial data', async () => {
         mockApiFetch.mockImplementation((url: string) =>
             requestedIds(url)[0] === 101

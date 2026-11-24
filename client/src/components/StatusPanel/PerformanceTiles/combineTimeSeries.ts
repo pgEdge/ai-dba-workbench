@@ -28,7 +28,9 @@ const roundToTenth = (value: number): number => Math.round(value * 10) / 10;
  * so that equal times written differently still match), and `combine`
  * turns each group into the bucket's values. The result is sorted by
  * time. A bucket missing from some servers is combined from the
- * servers that have it.
+ * servers that have it, so a summed series dips for any bucket in which
+ * a server has no samples; with buckets 24 minutes wide and probes every
+ * five or ten minutes, that takes an outage longer than a bucket.
  */
 export function combineTimeSeries<T extends { time: string }>(
     seriesList: ReadonlyArray<ReadonlyArray<T> | null | undefined>,
@@ -61,10 +63,16 @@ export function combineTimeSeries<T extends { time: string }>(
 /**
  * Combines one bucket's transaction samples across servers: commits
  * per second are summed, and the rollback percentage is averaged with
- * each server's commit rate as its weight, which is how the server
- * computes the estate-wide `aggregate.rollback_percent`. When no server
- * committed anything in the bucket the weights are all zero, so the
- * plain mean is used instead.
+ * each server's commit rate as its weight. That is the weighting the
+ * server uses for the estate-wide `aggregate.rollback_percent`, although
+ * the server applies it to the latest bucket only and returns 0 where
+ * nothing committed. Here, when no server committed anything in the
+ * bucket the weights are all zero, so the plain mean is used instead.
+ *
+ * Weighting by commit rate means a server that rolls back most of a
+ * small number of transactions barely moves the estate figure: one
+ * server at 100 commits/sec and 0% with another at 1 commit/sec and 99%
+ * gives about 1%, and a server with no commits weighs nothing.
  */
 export function combineTransactionPoints(
     points: TransactionTimeSeries[],

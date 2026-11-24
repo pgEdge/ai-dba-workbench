@@ -75,7 +75,9 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
     }, []);
 
     const analysisContext: ChartAnalysisContext | undefined = hasData ? {
-        metricDescription: 'Checkpoint write time and sync time',
+        metricDescription: connections.length > 1
+            ? 'Checkpoint write time and sync time, summed across servers'
+            : 'Checkpoint write time and sync time',
         connectionId: connections[0]?.connection_id,
         connectionName: connections[0]?.connection_name,
     } : undefined;

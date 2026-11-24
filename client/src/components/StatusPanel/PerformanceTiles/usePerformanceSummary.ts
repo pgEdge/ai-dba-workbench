@@ -47,6 +47,40 @@ const mergeSummaries = async (
     };
 };
 
+/**
+ * Margin by which a shared window ends before the client's clock, in
+ * milliseconds. See sharedWindowQuery.
+ */
+const SHARED_WINDOW_END_MARGIN_MS = 60_000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Build the query string for an explicit 24-hour window that every
+ * batch of one fetch shares.
+ *
+ * The server buckets each response with date_bin, using the window's
+ * start as the origin and a width derived from the window's length. With
+ * time_range=24h each batched request resolves the window against its
+ * own clock, so the batches' bucket times differ by the milliseconds
+ * between the requests and the tiles cannot line up one server's buckets
+ * with another's. Sending the same time_start and time_end to every
+ * batch gives them all the same origin and width.
+ *
+ * The bounds are whole seconds, and the end sits a minute behind the
+ * client's clock: the server clamps an end in its own future to its own
+ * now, which would shorten each batch's window by a different amount and
+ * could change the bucket width, so the margin absorbs a client clock up
+ * to a minute ahead of the server's.
+ */
+const sharedWindowQuery = (nowMs: number): string => {
+    const endMs = Math.floor((nowMs - SHARED_WINDOW_END_MARGIN_MS) / 1000) * 1000;
+    const startMs = endMs - DAY_MS;
+    const iso = (ms: number): string => new Date(ms).toISOString().replace('.000Z', 'Z');
+    return `time_range=custom&time_start=${encodeURIComponent(iso(startMs))}`
+        + `&time_end=${encodeURIComponent(iso(endMs))}`;
+};
+
 interface UsePerformanceSummaryReturn {
     data: PerformanceSummaryData | null;
     loading: boolean;
@@ -87,7 +121,8 @@ export const usePerformanceSummary = (
      * be made. A cluster or estate can hold more servers than one
      * request may name, so its ID list is batched to the server's cap
      * and the responses merged; a list within the cap still yields the
-     * single URL it always did.
+     * single URL it always did. Batches carry one explicit window
+     * between them (sharedWindowQuery) so that their buckets line up.
      */
     const buildUrls = useCallback((): string[] | null => {
         if (!selection) {return null;}
@@ -95,8 +130,13 @@ export const usePerformanceSummary = (
         const base = '/api/v1/metrics/performance-summary';
         const batchUrls = (ids: number[]): string[] | null => {
             if (!ids.length) {return null;}
-            return chunkConnectionIds(ids).map(
-                batch => `${base}?connection_ids=${batch.join(',')}&time_range=24h`,
+            const batches = chunkConnectionIds(ids);
+            if (batches.length === 1) {
+                return [`${base}?connection_ids=${batches[0].join(',')}&time_range=24h`];
+            }
+            const window = sharedWindowQuery(Date.now());
+            return batches.map(
+                batch => `${base}?connection_ids=${batch.join(',')}&${window}`,
             );
         };
 

@@ -130,7 +130,9 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
     }, []);
 
     const analysisContext: ChartAnalysisContext | undefined = hasData ? {
-        metricDescription: 'Transaction commit rate and rollback percentage',
+        metricDescription: connections.length > 1
+            ? 'Transaction commit rate summed across servers, and rollback percentage weighted by each server\'s commit rate'
+            : 'Transaction commit rate and rollback percentage',
         connectionId: connections[0]?.connection_id,
         connectionName: connections[0]?.connection_name,
     } : undefined;

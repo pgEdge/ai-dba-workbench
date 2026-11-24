@@ -78,6 +78,7 @@ project adheres to
   time, each attempt with its own 30-second limit, and records an
   attempt that runs out of time as a failed attempt for the retry
   worker. (#836)
+
 ### Security
 
 - Bound the connect to a monitored server at 10 seconds on the query,

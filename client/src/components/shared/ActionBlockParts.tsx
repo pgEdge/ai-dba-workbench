@@ -47,7 +47,7 @@ type StatusTone = 'success' | 'error' | 'warning';
  * 3.76:1), so status text takes the per-mode `chipText` shade instead;
  * see `.claude/react-expert/color-contrast-guidelines.md`.
  */
-function statusTextColour(tone: StatusTone): (theme: Theme) => string {
+function statusTextColour(tone: StatusTone) {
     return function textShade(theme: Theme): string {
         return theme.palette.custom.chipText[tone];
     };

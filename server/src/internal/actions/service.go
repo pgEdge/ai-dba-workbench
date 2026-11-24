@@ -39,7 +39,9 @@ var (
 	ErrTimeoutOverride = errors.New("proposal must not change lock_timeout or statement_timeout or reset session settings")
 
 	// ErrBadRevision is returned when the revised action is not a vetoed
-	// action on the same connection from the same proposer.
+	// action on the same connection from the same proposer, when it has
+	// already been revised, or when a concurrent revision replaced this
+	// one before its review was stored.
 	ErrBadRevision = errors.New("action cannot be revised")
 
 	// ErrChainExhausted is returned when a proposal would exceed the
@@ -134,7 +136,8 @@ func classify(sql string) ([]string, error) {
 
 // Propose classifies the SQL, stores it as a new attempt, has it reviewed
 // and records the verdict. A reviewer error leaves the action pending and
-// is returned, so nothing unreviewed can run.
+// is returned, so nothing unreviewed can run; a later revision of the
+// same parent replaces it (see Store.Create), so the chain can go on.
 func (s *Service) Propose(ctx context.Context, req ProposeRequest) (*ProposeResult, error) {
 	statements, err := classify(req.SQL)
 	if err != nil {
@@ -232,6 +235,11 @@ func (s *Service) review(ctx context.Context, created *Action) (string, error) {
 		return "", fmt.Errorf("review action %d: unknown decision %q", created.ID, verdict.Decision)
 	}
 	if err := s.store.SetReview(ctx, created.ID, status, verdict); err != nil {
+		if errors.Is(err, ErrNotFound) && created.ParentActionID != nil {
+			// A concurrent revision of the same parent replaced this
+			// one whilst it was being reviewed.
+			return "", ErrBadRevision
+		}
 		return "", err
 	}
 	created.ReviewStatus = status

@@ -19,6 +19,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
 var (
@@ -94,6 +96,17 @@ func scanAction(row pgx.Row) (*Action, error) {
 
 // Create inserts a new action with review pending, no approval and
 // execution not started, and returns it.
+//
+// A revision replaces an earlier revision of the same parent by the same
+// proposer that is still waiting for its review, with nothing approved
+// or run: that is a proposal whose review failed (the reviewer errored,
+// or the verdict could not be stored), and leaving it would block every
+// later revision of the parent on idx_proposed_actions_parent. Such a
+// row can never have been run, nor revised itself, since only a vetoed
+// action can be. A revision that already has a verdict still returns
+// ErrAlreadyRevised. A review still in flight for the replaced row then
+// fails to store its verdict, because the row is gone, so a verdict can
+// never land on statements it did not review.
 func (s *Store) Create(ctx context.Context, n NewAction) (*Action, error) {
 	stmts := n.Statements
 	if stmts == nil {
@@ -115,7 +128,22 @@ func (s *Store) Create(ctx context.Context, n NewAction) (*Action, error) {
 	if len(n.Evidence) > 0 {
 		evidence = n.Evidence
 	}
-	a, err := scanAction(s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create proposed action: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+	if n.ParentActionID != nil {
+		if _, err := tx.Exec(ctx, `
+            DELETE FROM proposed_actions
+             WHERE parent_action_id = $1 AND proposed_by = $2
+               AND review_status = 'pending' AND approval = 'none'
+               AND exec_status = 'not_started'`,
+			*n.ParentActionID, n.ProposedBy); err != nil {
+			return nil, fmt.Errorf("replace unreviewed revision: %w", err)
+		}
+	}
+	a, err := scanAction(tx.QueryRow(ctx, `
         INSERT INTO proposed_actions
             (connection_id, database_name, statements, source, proposed_by,
              proposed_via, conversation_id, alert_id, parent_action_id,
@@ -131,6 +159,9 @@ func (s *Store) Create(ctx context.Context, n NewAction) (*Action, error) {
 			pgErr.ConstraintName == "idx_proposed_actions_parent" {
 			return nil, ErrAlreadyRevised
 		}
+		return nil, fmt.Errorf("create proposed action: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("create proposed action: %w", err)
 	}
 	return a, nil

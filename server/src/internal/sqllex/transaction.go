@@ -95,7 +95,7 @@ func requiresNoTransactionAs(stmt string, reading StringReading) bool {
 	case "DROP":
 		return dropRequiresNoTransaction(words)
 	case "REINDEX":
-		return reindexRequiresNoTransaction(strings.ToUpper(MaskNonCode(stmt, reading)))
+		return reindexRequiresNoTransaction(strings.ToUpper(maskKeepingValues(stmt, reading)))
 	case "DISCARD":
 		return words.at(1) == "ALL"
 	case "CLUSTER":
@@ -182,6 +182,28 @@ func (w stmtWords) follows(first, second string) bool {
 	return false
 }
 
+// maskKeepingValues masks s as MaskNonCode does, except that a quoted
+// literal or identifier leaves the word X in its place rather than only
+// spaces, so that an option given a quoted value, such as
+// CONCURRENTLY 'off', still reads as an option with a value. A comment
+// is masked to spaces, as it is whitespace to PostgreSQL. The result has
+// the same length as s.
+func maskKeepingValues(s string, reading StringReading) string {
+	masked := []byte(MaskNonCode(s, reading))
+	for i := 0; i < len(s); {
+		j := SkipNonCode(s, i, reading)
+		if j == i {
+			i++
+			continue
+		}
+		if !isCommentStart(s, i) && j-i >= 2 {
+			masked[i+1] = 'X'
+		}
+		i = j
+	}
+	return string(masked)
+}
+
 // reindexRequiresNoTransaction reads a masked, upper-cased REINDEX
 // statement and reports whether PostgreSQL refuses it in a transaction
 // block: the kind is DATABASE, SCHEMA or SYSTEM, or the rebuild is
@@ -235,7 +257,7 @@ func BuildsIndexConcurrently(stmt string) bool {
 				return true
 			}
 		case "REINDEX":
-			if _, concurrent := parseReindex(masked); concurrent {
+			if _, concurrent := parseReindex(strings.ToUpper(maskKeepingValues(stmt, reading))); concurrent {
 				return true
 			}
 		}
@@ -263,22 +285,29 @@ func ChangesSequence(stmt string) bool {
 // CONCURRENTLY on. Each comma-separated option is a name and an
 // optional value; the tablespace name in TABLESPACE name is a value,
 // not an option, so a tablespace called concurrently does not count.
+// PostgreSQL applies the options in order, so the last CONCURRENTLY
+// decides. It takes no value or TRUE, ON or 1 to turn it on and FALSE,
+// OFF or 0 to turn it off, and refuses any other value. Any other
+// value, including a quoted one (which maskKeepingValues leaves as X),
+// reads as off, so the statement runs in a transaction block, where
+// PostgreSQL refuses a concurrent rebuild and nothing in the batch is
+// applied.
 func reindexOptionsConcurrent(options string) bool {
+	concurrent := false
 	for _, opt := range strings.Split(options, ",") {
 		words := sqlWords(opt)
 		if len(words) == 0 || words[0] != "CONCURRENTLY" {
 			continue
 		}
-		if len(words) == 1 {
-			return true
-		}
-		switch words[1] {
-		case "FALSE", "OFF", "0":
-		default:
-			return true
+		concurrent = len(words) == 1
+		if len(words) == 2 {
+			switch words[1] {
+			case "TRUE", "ON", "1":
+				concurrent = true
+			}
 		}
 	}
-	return false
+	return concurrent
 }
 
 // clusterHasNoTable reports whether a CLUSTER statement names no table:

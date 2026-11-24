@@ -239,12 +239,19 @@ func TestChangesSequence(t *testing.T) {
 		{"in insert", "INSERT INTO t VALUES (nextval('s'))", true},
 		{"spaced call", "SELECT nextval ('s')", true},
 		{"either literal reading", `SELECT 'a\'' , nextval('s')`, true},
+		{"quoted lower-case name", `INSERT INTO t VALUES (pg_catalog."nextval"('s'))`, true},
+		{"schema-qualified", "SELECT pg_catalog.setval('s', 1)", true},
+		{"comment before parenthesis", "SELECT nextval /* c */ ('s')", true},
+		{"undecodable unicode identifier", `SELECT U&"\zzzz"`, true},
 
 		{"plain select", "SELECT 1", false},
 		{"in literal", "SELECT 'nextval'", false},
 		{"in comment", "SELECT 1 -- setval", false},
 		{"identifier containing it", "SELECT nextval_count FROM t", false},
 		{"quoted identifier", `SELECT "nextval" FROM t`, false},
+		{"bare column", "SELECT nextval FROM t", false},
+		{"qualified column", "UPDATE t SET a = t.setval", false},
+		{"alias with column list", "SELECT * FROM f() AS nextval(a)", false},
 		{"empty", "", false},
 	}
 	for _, tt := range tests {

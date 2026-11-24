@@ -266,16 +266,32 @@ func BuildsIndexConcurrently(stmt string) bool {
 }
 
 // ChangesSequence reports whether stmt calls nextval or setval, whose
-// effect on a sequence a rollback does not undo. It matches the
-// function names as words of code, so a column or literal that merely
-// contains the name does not count; a sequence advanced by a column
-// default is not visible in the text and is not matched. The statement
-// counts if either reading of a plain '...' literal says so.
+// effect on a sequence a rollback does not undo. It matches the names
+// as calls, a name followed by an opening parenthesis, read with the
+// same tokens as CallsSideEffectingFunction: in any case, with or
+// without a schema, quoted ("nextval", folded as a match is safe in
+// that direction) and with whitespace or comments before the
+// parenthesis. A column, literal or comment that merely holds the name
+// does not count, nor does a name the grammar never reads as a call
+// (see namesThatAreNotCalls); a sequence advanced by a column default is
+// not visible in the text and is not matched. A statement that cannot
+// be tokenised counts, since the note is the cautious answer. The
+// statement counts if either reading of a plain '...' literal says so.
 func ChangesSequence(stmt string) bool {
 	for _, reading := range StringReadings {
-		words := stmtWords(codeWords(stmt, reading))
-		if words.has("NEXTVAL") || words.has("SETVAL") {
+		tokens, ok := tokenizeForCalls(stmt, reading)
+		if !ok {
 			return true
+		}
+		notCalls := namesThatAreNotCalls(tokens)
+		for k, tok := range tokens {
+			if tok.kind != nameToken || notCalls[k] ||
+				(tok.text != "nextval" && tok.text != "setval") {
+				continue
+			}
+			if k+1 < len(tokens) && tokens[k+1].kind == openParenToken {
+				return true
+			}
 		}
 	}
 	return false

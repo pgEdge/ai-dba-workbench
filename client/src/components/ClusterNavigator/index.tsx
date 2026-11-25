@@ -32,12 +32,14 @@ import Tooltip from '@mui/material/Tooltip';
 import TextField from '@mui/material/TextField';
 import InputAdornment from '@mui/material/InputAdornment';
 import Skeleton from '@mui/material/Skeleton';
+import Button from '@mui/material/Button';
 import { alpha, useTheme } from '@mui/material/styles';
 import SearchIcon from '@mui/icons-material/Search';
 import ServerIcon from '@mui/icons-material/Storage';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import AddIcon from '@mui/icons-material/Add';
 import AutorenewIcon from '@mui/icons-material/Autorenew';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import ServerDialog from '../ServerDialog';
 import GroupDialog from '../GroupDialog';
 import ClusterConfigDialog from '../ClusterConfigDialog';
@@ -104,6 +106,9 @@ const emptyStateSx = {
 const emptyIconSx = { fontSize: 48, color: 'text.disabled', mb: 1.5 };
 const emptyTitleSx = { color: 'text.secondary', mb: 0.5 };
 const emptySubtitleSx = { color: 'text.disabled' };
+const errorIconSx = { fontSize: 48, color: 'error.main', mb: 1.5 };
+const errorSubtitleSx = { color: 'text.secondary', wordBreak: 'break-word' };
+const retryButtonSx = { mt: 1.5 };
 
 const footerCountSx = { color: 'text.disabled', fontSize: '0.875rem' };
 
@@ -462,6 +467,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         autoRefreshEnabled,
         setAutoRefreshEnabled,
         lastRefresh,
+        error: loadError,
     } = useCluster();
 
     // Handler for adding a server
@@ -984,6 +990,36 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                                 ))}
                             </Box>
                         ))}
+                    </Box>
+                ) : loadError && data.length === 0 ? (
+                    // Error state: the first load failed, so there is
+                    // nothing to show; distinguish this from a fresh
+                    // install with no servers configured
+                    <Box sx={emptyStateSx} role="alert">
+                        <ErrorOutlineIcon sx={errorIconSx} />
+                        <Typography
+                            variant="body2"
+                            sx={emptyTitleSx}
+                        >
+                            Could not load servers
+                        </Typography>
+                        <Typography
+                            variant="caption"
+                            sx={errorSubtitleSx}
+                        >
+                            {loadError}
+                        </Typography>
+                        {onRefresh && (
+                            <Button
+                                size="small"
+                                variant="outlined"
+                                startIcon={<RefreshIcon />}
+                                onClick={onRefresh}
+                                sx={retryButtonSx}
+                            >
+                                Retry
+                            </Button>
+                        )}
                     </Box>
                 ) : filteredData.length === 0 ? (
                     // Empty state

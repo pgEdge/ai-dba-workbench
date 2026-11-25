@@ -302,6 +302,98 @@ describe('ClusterDataContext', () => {
                 expect(result.current.error).toBe('boom');
             });
         });
+
+        it('keeps the error until a fetch succeeds, then clears it', async () => {
+            mockApiGet.mockReset();
+            mockApiGet.mockRejectedValue(new Error('boom'));
+
+            const { result } = renderHook(() => useClusterData(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.error).toBe('boom');
+            });
+
+            // A further failed retry leaves the error in place
+            mockApiGet.mockRejectedValueOnce(new Error('still down'));
+            await act(async () => {
+                await result.current.fetchClusterData();
+            });
+            expect(result.current.error).toBe('still down');
+
+            // A successful retry clears it and loads the data
+            mockApiGet.mockResolvedValue(defaultData);
+            await act(async () => {
+                await result.current.fetchClusterData();
+            });
+            expect(result.current.error).toBeNull();
+            expect(result.current.clusterData).toEqual(defaultData);
+        });
+
+        it('shows loading again on a retry after a failed first load', async () => {
+            mockApiGet.mockReset();
+            mockApiGet.mockRejectedValue(new Error('boom'));
+
+            const { result } = renderHook(() => useClusterData(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.error).toBe('boom');
+            });
+            expect(result.current.loading).toBe(false);
+
+            let resolveFetch: (value: ClusterGroup[]) => void = () => {};
+            mockApiGet.mockImplementationOnce(
+                () => new Promise<ClusterGroup[]>((resolve) => {
+                    resolveFetch = resolve;
+                }),
+            );
+
+            let pending: Promise<void> = Promise.resolve();
+            act(() => {
+                pending = result.current.fetchClusterData();
+            });
+
+            // The error stays visible to consumers whilst loading
+            expect(result.current.loading).toBe(true);
+            expect(result.current.error).toBe('boom');
+
+            await act(async () => {
+                resolveFetch(defaultData);
+                await pending;
+            });
+
+            expect(result.current.loading).toBe(false);
+            expect(result.current.error).toBeNull();
+        });
+
+        it('does not show loading on a refresh after a successful load', async () => {
+            const { result } = renderHook(() => useClusterData(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.clusterData.length).toBeGreaterThan(0);
+            });
+            expect(result.current.loading).toBe(false);
+
+            let resolveFetch: (value: ClusterGroup[]) => void = () => {};
+            mockApiGet.mockImplementationOnce(
+                () => new Promise<ClusterGroup[]>((resolve) => {
+                    resolveFetch = resolve;
+                }),
+            );
+
+            let pending: Promise<void> = Promise.resolve();
+            act(() => {
+                pending = result.current.fetchClusterData();
+            });
+
+            expect(result.current.loading).toBe(false);
+
+            await act(async () => {
+                resolveFetch(defaultData);
+                await pending;
+            });
+
+            expect(result.current.loading).toBe(false);
+        });
     });
 
     describe('auto-refresh', () => {

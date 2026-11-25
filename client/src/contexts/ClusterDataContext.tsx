@@ -97,7 +97,8 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
 
     // Track data fingerprint to detect actual changes
     const dataFingerprintRef = useRef<string>('');
-    // Track if this is the initial load (to show loading state)
+    // True until the first successful fetch; while set, every fetch
+    // (including retries after a failed first load) shows the loading state
     const isInitialLoadRef = useRef<boolean>(true);
     // Stable ref for fetchClusterData to avoid resetting the interval
     const fetchRef = useRef<() => Promise<void>>(() => Promise.resolve());
@@ -105,16 +106,19 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
     /**
      * Fetch cluster hierarchy from the API.
      * Uses fingerprinting to detect actual changes and avoid unnecessary re-renders.
-     * Only shows loading state on initial load, not during auto-refresh.
+     * Shows the loading state until data has loaded successfully once,
+     * so a retry after a failed first load shows the skeleton rather than
+     * the empty state; refreshes after a successful load do not.
+     * The error is cleared only on success, so it persists across failed
+     * retries.
      */
     const fetchClusterData = useCallback(async (): Promise<void> => {
         if (!user) {return;}
 
-        // Only show loading spinner on initial load
+        // Only show the loading state until the first successful load
         if (isInitialLoadRef.current) {
             setLoading(true);
         }
-        setError(null);
 
         try {
             // First, try to get the hierarchical cluster data
@@ -144,13 +148,12 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
 
             // Always update last refresh time
             setLastRefresh(new Date());
+            setError(null);
+            isInitialLoadRef.current = false;
         } catch (err) {
             logger.error('Error fetching cluster data:', err);
             setError((err as Error).message);
         } finally {
-            if (isInitialLoadRef.current) {
-                isInitialLoadRef.current = false;
-            }
             setLoading(false);
         }
     }, [user]);
@@ -166,6 +169,7 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
             fetchClusterData();
         } else {
             setClusterData([]);
+            setError(null);
         }
     }, [user, fetchClusterData]);
 

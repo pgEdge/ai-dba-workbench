@@ -68,7 +68,11 @@ vi.mock('../../contexts/useAuth', () => ({
     useAuth: () => mockUseAuth(),
 }));
 
-// Mock the ClusterContext
+// Mock the ClusterContext. Tests may set mockClusterState.error to
+// simulate a failed fetch; beforeEach resets it to null.
+const { mockClusterState } = vi.hoisted(() => ({
+    mockClusterState: { error: null as string | null },
+}));
 vi.mock('../../contexts/useCluster', () => ({
     useCluster: () => ({
         updateGroupName: mockUpdateGroupName,
@@ -83,6 +87,7 @@ vi.mock('../../contexts/useCluster', () => ({
         autoRefreshEnabled: false,
         setAutoRefreshEnabled: vi.fn(),
         lastRefresh: null,
+        error: mockClusterState.error,
         getServer: vi.fn(),
         createServer: vi.fn(),
         updateServer: vi.fn(),
@@ -200,6 +205,7 @@ describe('ClusterNavigator', () => {
         onSelectServer = vi.fn();
         onRefresh = vi.fn();
         mockBlackouts.list = [];
+        mockClusterState.error = null;
         mockUpdateGroupName.mockReset().mockResolvedValue(undefined);
         mockUpdateGroup.mockReset().mockResolvedValue(undefined);
         mockUpdateClusterName.mockReset().mockResolvedValue(undefined);
@@ -414,6 +420,95 @@ describe('ClusterNavigator', () => {
         );
 
         expect(screen.getByText('No servers configured')).toBeInTheDocument();
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    describe('load error state (issue #890)', () => {
+        it('shows the error and retries when the first load failed', () => {
+            mockClusterState.error = 'Request failed: 503';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            const alert = screen.getByRole('alert');
+            expect(alert).toHaveTextContent('Could not load servers');
+            expect(alert).toHaveTextContent('Request failed: 503');
+            expect(
+                screen.queryByText('No servers configured'),
+            ).not.toBeInTheDocument();
+
+            fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        it('omits the Retry button when no onRefresh is given', () => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    onSelectServer={onSelectServer}
+                />
+            );
+
+            expect(screen.getByRole('alert')).toHaveTextContent('boom');
+            expect(
+                screen.queryByRole('button', { name: 'Retry' }),
+            ).not.toBeInTheDocument();
+        });
+
+        it('shows the loading skeleton rather than the error whilst loading', () => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    loading
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+            expect(
+                screen.queryByText('No servers configured'),
+            ).not.toBeInTheDocument();
+        });
+
+        it('keeps rendering the tree when a refresh fails with data present', () => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={mockClusterData}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            expect(screen.getByText('Production')).toBeInTheDocument();
+            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        });
+
+        it('still shows "No servers found" for a search with no matches', () => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={mockClusterData}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            fireEvent.change(
+                screen.getByPlaceholderText('Search servers...'),
+                { target: { value: 'nonexistent' } },
+            );
+
+            expect(screen.getByText('No servers found')).toBeInTheDocument();
+            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        });
     });
 
     it('calls onRefresh when refresh button is clicked', () => {

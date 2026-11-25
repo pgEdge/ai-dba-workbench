@@ -42,20 +42,16 @@ func (e *oidcTestEnv) loginWithRefreshToken(t *testing.T, refreshToken string,
 	return session
 }
 
-// shortLivedIDTokenLifetime is how long the ID token from
-// loginUntilExpired lasts. It has to outlast the login itself, which can
-// take a few seconds on a loaded host, and the exp claim's whole-second
-// resolution.
-const shortLivedIDTokenLifetime = 6 * time.Second
-
-// loginUntilExpired logs in with an ID token that expires shortly, and
-// returns the session cookie once that expiry has passed.
+// loginUntilExpired logs in with the provider's usual ID token, then
+// expires the session it produced, so that the next request finds it due
+// for a refresh without the test waiting out a real expiry.
 func (e *oidcTestEnv) loginUntilExpired(t *testing.T, refreshToken string) *http.Cookie {
 	t.Helper()
 
-	exp := time.Now().Add(shortLivedIDTokenLifetime).Unix()
-	session := e.loginWithRefreshToken(t, refreshToken, map[string]any{"exp": exp})
-	time.Sleep(time.Until(time.Unix(exp, 0)) + 100*time.Millisecond)
+	session := e.loginWithRefreshToken(t, refreshToken, nil)
+	if !auth.ExpireSessionForTesting(e.store, session.Value) {
+		t.Fatal("the login left no session to expire")
+	}
 	return session
 }
 

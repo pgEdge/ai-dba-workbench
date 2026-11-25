@@ -268,6 +268,28 @@ export function Chart(props: ChartProps) {
         return () => { clearInterval(id); };
     }, [liveUpdate, onDataRefresh, updateInterval, refreshData]);
 
+    /*
+     * Tooltips are appended to <body> at fixed page coordinates (#48),
+     * so scrolling the dashboard moves the chart out from under the
+     * pointer without ECharts seeing a mouseout, and the tooltip would
+     * stay on screen. Hide it on any scroll; capturing on the document
+     * catches scrolls of inner containers, which do not bubble (#882).
+     */
+    useEffect(() => {
+        const hideTooltip = () => {
+            chartRef.current?.dispatchAction({ type: 'hideTip' });
+        };
+        document.addEventListener('scroll', hideTooltip, {
+            capture: true,
+            passive: true,
+        });
+        return () => {
+            document.removeEventListener('scroll', hideTooltip, {
+                capture: true,
+            });
+        };
+    }, []);
+
     const handleChartReady = useCallback(
         (instance: EChartsType) => {
             chartRef.current = instance;

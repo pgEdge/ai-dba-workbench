@@ -13,6 +13,7 @@ import { ThemeProvider } from '@mui/material/styles';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import CssBaseline from '@mui/material/CssBaseline';
+import GlobalStyles from '@mui/material/GlobalStyles';
 import type { PaletteMode } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -40,6 +41,21 @@ import ChatFAB from './components/ChatPanel/ChatFAB';
 import { createPgedgeTheme, loginTheme } from './theme/pgedgeTheme';
 import { buildSelection } from './utils/buildSelection';
 import type { Selection } from './types/selection';
+
+/*
+ * Stops the document itself scrolling whilst the main layout is mounted.
+ * The layout root is a fixed 100vh box, but chart tooltips are appended
+ * to <body> (so they escape clipped cards, #48) and ECharts hides them
+ * with visibility rather than display, so one left past the viewport
+ * edge makes the document scrollable and scroll chaining from the
+ * dashboard then scrolls the header out of view (#882). The login and
+ * loading screens do not render this, so they keep normal scrolling.
+ */
+const mainLayoutGlobalStyles = {
+    'html, body': {
+        overflow: 'hidden',
+    },
+};
 
 // Style constants
 const styles = {
@@ -193,6 +209,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ onToggleTheme }) => {
 
     return (
         <BlackoutProvider selection={selection}>
+            <GlobalStyles styles={mainLayoutGlobalStyles} />
             <Box sx={styles.mainLayoutRoot}>
                 <Header
                     onToggleTheme={onToggleTheme}

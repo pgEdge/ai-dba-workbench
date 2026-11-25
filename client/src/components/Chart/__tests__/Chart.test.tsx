@@ -26,7 +26,7 @@ import type { ChartData } from '../types';
  * something was.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const captured = vi.hoisted(() => ({ option: null as any, events: null as any }));
+const captured = vi.hoisted(() => ({ option: null as any, events: null as any, instance: null as any }));
 
 vi.mock('echarts-for-react/esm/core', () => ({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -34,10 +34,14 @@ vi.mock('echarts-for-react/esm/core', () => ({
         captured.option = option;
         captured.events = onEvents;
         if (onChartReady) {
-            setTimeout(() => { onChartReady({
-                getDataURL: vi.fn(() => 'data:image/png;base64,test'),
-                dispose: vi.fn(),
-            }); }, 0);
+            setTimeout(() => {
+                captured.instance = {
+                    getDataURL: vi.fn(() => 'data:image/png;base64,test'),
+                    dispatchAction: vi.fn(),
+                    dispose: vi.fn(),
+                };
+                onChartReady(captured.instance);
+            }, 0);
         }
         return React.createElement('div', {
             'data-testid': 'echarts-mock',
@@ -136,6 +140,7 @@ function renderChart(props: Partial<React.ComponentProps<typeof Chart>> = {}) {
 describe('Chart component', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        captured.instance = null;
     });
 
     it('renders without crashing for type line', () => {
@@ -163,6 +168,30 @@ describe('Chart component', () => {
     it('does not render title when title prop is omitted', () => {
         renderChart();
         expect(screen.queryByText('Monthly Sales')).toBeNull();
+    });
+
+    it('hides the tooltip when any container scrolls, until unmount', async () => {
+        const { unmount } = renderChart();
+
+        await waitFor(() => {
+            expect(captured.instance).not.toBeNull();
+        });
+        const instance = captured.instance;
+
+        // An inner scroll container's scroll event does not bubble, so
+        // this only reaches the chart through the capturing listener.
+        const scroller = document.createElement('div');
+        document.body.appendChild(scroller);
+        fireEvent.scroll(scroller);
+
+        expect(instance.dispatchAction).toHaveBeenCalledWith({ type: 'hideTip' });
+
+        unmount();
+        instance.dispatchAction.mockClear();
+        fireEvent.scroll(scroller);
+        scroller.remove();
+
+        expect(instance.dispatchAction).not.toHaveBeenCalled();
     });
 
     it('renders toolbar with export button when showToolbar and enableExport are true', () => {

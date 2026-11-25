@@ -93,6 +93,12 @@ project adheres to
 - Count only active alerts on the estate's servers in the estate
   dashboard's Active Alerts tile, which stopped at 200 and included
   acknowledged alerts, system alerts and alerts on other servers. (#834)
+- Stop the web client's page scrolling behind the dashboard. A chart
+  tooltip left near the edge of the window could make the whole page
+  scrollable, so scrolling to the end of a dashboard scrolled the
+  header and cluster navigator out of view; chart tooltips now also
+  close when the dashboard scrolls rather than staying on screen at
+  their old position. (#882)
 
 ### Security
 
@@ -101,9 +107,6 @@ project adheres to
   many failed attempts, rather than returning before any comparison;
   this removes the large timing difference that showed the account
   existed but was disabled. (#851)
-
-### Security
-
 - Bound the connect to a monitored server at 10 seconds on the query,
   query validation and database list endpoints and in the MCP tools,
   and hold any failed connect until the 10 seconds have passed, so

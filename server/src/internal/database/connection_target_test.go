@@ -192,16 +192,41 @@ func TestGuardConnConfigHostAddrJudgedAsItself(t *testing.T) {
 }
 
 // TestGuardConnConfigHostAddrNilPolicy checks that a nil policy with a
-// hostaddr still applies the always-blocked floor to the address.
+// hostaddr still applies the always-blocked floor to the address, and
+// that an ordinary address reaches the nil-policy fallback and is
+// returned rather than panicking on a nil function.
 func TestGuardConnConfigHostAddrNilPolicy(t *testing.T) {
-	cfg, err := pgconn.ParseConfig(
-		"postgres://user@db.example.com:5432/mydb?sslmode=disable&hostaddr=169.254.169.254")
-	if err != nil {
-		t.Fatalf("ParseConfig failed: %v", err)
+	tests := []struct {
+		name     string
+		hostaddr string
+		wantErr  bool
+	}{
+		{name: "metadata address refused", hostaddr: "169.254.169.254", wantErr: true},
+		{name: "ordinary address permitted", hostaddr: "192.0.2.10"},
 	}
-	GuardConnConfig(cfg, nil)
-	if addrs, err := cfg.LookupFunc(context.Background(), cfg.Host); err == nil {
-		t.Errorf("lookup = %v; want the metadata address refused", addrs)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := pgconn.ParseConfig(
+				"postgres://user@db.example.com:5432/mydb?sslmode=disable&hostaddr=" + tt.hostaddr)
+			if err != nil {
+				t.Fatalf("ParseConfig failed: %v", err)
+			}
+			GuardConnConfig(cfg, nil)
+			addrs, err := cfg.LookupFunc(context.Background(), cfg.Host)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("lookup = %v; want %s refused", addrs, tt.hostaddr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("lookup failed: %v", err)
+			}
+			if len(addrs) != 1 || addrs[0] != tt.hostaddr {
+				t.Errorf("lookup = %v; want [%s]", addrs, tt.hostaddr)
+			}
+		})
 	}
 }
 

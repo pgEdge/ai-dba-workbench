@@ -14,12 +14,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // integrationConfig is a fully populated Config implementation used by the
@@ -555,6 +558,97 @@ func TestConnect_ClampsMaxConns(t *testing.T) {
 		t.Fatalf("connect with huge maxConnections: %v", err)
 	}
 	defer ds.Close()
+}
+
+// loopbackHostAddr returns the IP address to use as hostaddr for a test
+// server reached at host, and false when host is not a loopback host:
+// the address itself for a loopback IP, and 127.0.0.1 for localhost.
+func loopbackHostAddr(host string) (string, bool) {
+	if strings.EqualFold(host, "localhost") {
+		return "127.0.0.1", true
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return ip.String(), true
+	}
+	return "", false
+}
+
+// TestConnect_HostAddr connects with the hostaddr set to the local test
+// server and the host set to a name. With localhost, which resolves, the
+// connection fails with FATAL if hostaddr reaches the server as a startup
+// parameter (issue #841); with a name that cannot resolve (RFC 2606
+// reserves .invalid), it succeeds only if the datastore dials hostaddr.
+// Connecting is the whole check: a server in a port-mapped container
+// sees its own address, not the loopback one, as inet_server_addr().
+func TestConnect_HostAddr(t *testing.T) {
+	requireSchema(t)
+
+	for _, host := range []string{"localhost", "datastore.invalid"} {
+		t.Run(host, func(t *testing.T) {
+			cfg := parseTestServerURL(t)
+			hostAddr, ok := loopbackHostAddr(cfg.host)
+			if !ok {
+				t.Skipf("test server host %q is not a loopback host", cfg.host)
+			}
+			cfg.database = testDBName
+			cfg.host = host
+			cfg.hostAddr = hostAddr
+
+			ds := &Datastore{config: cfg}
+			if err := ds.connect(); err != nil {
+				t.Fatalf("connect with hostaddr: %v", err)
+			}
+			defer ds.Close()
+
+			if err := ds.pool.Ping(context.Background()); err != nil {
+				t.Fatalf("ping with hostaddr: %v", err)
+			}
+		})
+	}
+}
+
+// TestLoopbackHostAddr checks which test server hosts the hostaddr
+// tests run against.
+func TestLoopbackHostAddr(t *testing.T) {
+	cases := []struct {
+		host, want string
+		ok         bool
+	}{
+		{"localhost", "127.0.0.1", true},
+		{"LOCALHOST", "127.0.0.1", true},
+		{"127.0.0.1", "127.0.0.1", true},
+		{"127.0.0.2", "127.0.0.2", true},
+		{"::1", "::1", true},
+		{"db.example.com", "", false},
+		{"192.0.2.1", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := loopbackHostAddr(tc.host)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("loopbackHostAddr(%q) = %q, %v; want %q, %v",
+				tc.host, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+// TestConnect_HostAddrNotIP checks that a hostaddr that is not a literal
+// IP address is refused before any connection is attempted.
+func TestConnect_HostAddrNotIP(t *testing.T) {
+	cfg := &integrationConfig{
+		host:           "datastore.invalid",
+		hostAddr:       "datastore.example.com",
+		database:       "x",
+		username:       "x",
+		port:           5432,
+		sslMode:        "disable",
+		maxConnections: 1,
+		maxIdleSeconds: 1,
+	}
+	ds := &Datastore{config: cfg}
+	err := ds.connect()
+	if !errors.Is(err, hostvalidation.ErrHostAddrNotIP) {
+		t.Fatalf("connect error = %v, want ErrHostAddrNotIP", err)
+	}
 }
 
 // TestGetMonitoredConnections_AfterClose exercises the failure paths in

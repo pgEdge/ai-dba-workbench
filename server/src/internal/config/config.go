@@ -56,7 +56,7 @@ type Config struct {
 	// Custom definitions file path (for user-defined prompts and resources)
 	CustomDefinitionsPath string `yaml:"custom_definitions_path"`
 
-	// Data directory path (for conversation history, etc.)
+	// Data directory path (for the authentication database, auth.db)
 	DataDir string `yaml:"data_dir"`
 
 	// Trace file path (for MCP request/response tracing)

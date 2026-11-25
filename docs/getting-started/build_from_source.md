@@ -387,7 +387,7 @@ Update the `PATHS AND DATA DIRECTORIES` section to specify the paths to the
 # Default: /etc/pgedge/ai-dba-server.secret or ./ai-dba-server.secret
 secret_file: "/etc/pgedge/server.secret"
 
-# Data directory for conversation history and other persistent data
+# Data directory for the authentication database (auth.db)
 data_dir: "/var/lib/ai-workbench/data"
 ```
 

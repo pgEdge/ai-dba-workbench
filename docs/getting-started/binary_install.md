@@ -343,7 +343,7 @@ Then, update the data_dir property to specify the full path to the SQLite
 database created earlier:
 
 ```yaml
-# Data directory for conversation history and other persistent data
+# Data directory for the authentication database (auth.db)
 data_dir: "/var/lib/ai-workbench/data"
 ```
 

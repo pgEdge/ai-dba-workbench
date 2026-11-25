@@ -19,9 +19,9 @@ overview of the state of your cluster:
 ![Reviewing the state of your cluster](../../images/cluster_state.png)
 
 - The `OK` tile (green) shows the count of servers that conform to all
-  configured alert thresholds.
+  configured alert thresholds and have current collected data.
 - The `WARNING` tile (orange) shows the count of servers with one or more
-  active threshold violations.
+  active threshold violations, or whose collected data is stale.
 - The `OFFLINE` tile (red) shows the count of servers that the collector cannot
   reach.
 

@@ -18,10 +18,11 @@ of the state of your servers:
 
 ![Reviewing the state of your servers](../../images/estate_server_state.png)
 
-- The `OK` tile (green) shows the count of servers that are not offline and
-  have no active alerts.
+- The `OK` tile (green) shows the count of servers that are not offline,
+  have no active alerts and are not reporting stale collected data.
 - The `WARNING` tile (orange) shows the count of servers that are not offline
-  and have one or more active alerts, including threshold and anomaly alerts.
+  and have one or more active alerts, including threshold and anomaly alerts,
+  or whose collected data is stale.
 - The `OFFLINE` tile (red) shows the count of servers that monitoring reports
   as offline because the collector reported a connection error or has not
   stored recent data for the server; a stopped collector can also cause this
@@ -128,9 +129,7 @@ The pane includes the following tiles:
   its rate in the most recent interval of the selected time range, not its
   average across the range.
 - The `ACTIVE ALERTS` tile shows the number of active alerts on the estate's
-  servers, which excludes acknowledged alerts and system alerts. The tile
-  counts the alerts on offline servers, which the cluster card badges omit, so
-  the tile can exceed the sum of the badges.
+  servers, which excludes acknowledged alerts and system alerts.
 
 The `TRANSACTION RATE` and `TOTAL CONNECTIONS` tiles follow the dashboard time
 range selector. The `TOTAL SERVERS` and `ACTIVE ALERTS` tiles report the
@@ -150,13 +149,13 @@ Each cluster tile displays the following details:
   `management`, and `traffic`.
 - The server count shows the number of servers in the cluster, such as
   `1 server` or `2 servers`.
-- Colored dots indicate the server counts; an orange dot marks servers with
-  active alerts, a red dot marks offline servers, and a green dot marks the
-  remaining servers, which are not offline and have no active alerts.
+- Colored dots indicate the server counts; a red dot marks offline servers,
+  an orange dot marks servers that are not offline and have active alerts or
+  stale collected data, and a green dot marks the remaining servers.
 - Role labels show each role and its count, such as `primary: 1`,
   `binary_standby: 1`, and `spock: 1`.
-- An orange badge displays the number of active alerts on the cluster's
-  servers that are not offline. The badge omits alerts on offline servers and
-  acknowledged alerts, so a cluster without a badge may still have alerts.
+- An orange badge displays the number of active alerts on all of the
+  cluster's servers, including offline servers. The badge omits acknowledged
+  alerts, so a cluster without a badge may still have acknowledged alerts.
 
 ![Reviewing the estate's clusters](../../images/estate_clusters.png)

@@ -371,6 +371,25 @@ describe('StatusPanel wiring', () => {
         expect(screen.getByText('estate dashboard')).toBeInTheDocument();
     });
 
+    it('counts a stale server as a warning, as the estate dashboard does (issue #835)', async () => {
+        mockApiGet.mockResolvedValue({ alerts: [] });
+
+        renderPanel({
+            ...clusterSelection,
+            servers: [
+                { id: 1, name: 's1', status: 'online' },
+                { id: 2, name: 'stale', status: 'warning' },
+                { id: 3, name: 'negative', status: 'online', active_alert_count: -1 },
+            ] as never,
+            serverIds: [1, 2, 3],
+        } as Selection);
+
+        await waitFor(() => { expect(mockApiGet).toHaveBeenCalled(); });
+        expect(metricValue('OK')).toBe('OK2');
+        expect(metricValue('Warning')).toBe('Warning1');
+        expect(metricValue('Offline')).toBe('Offline0');
+    });
+
     it('formats relative times across ranges', async () => {
         mockApiGet.mockResolvedValue({
             alerts: [

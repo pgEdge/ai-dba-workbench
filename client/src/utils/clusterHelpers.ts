@@ -145,9 +145,36 @@ export interface ServerCounts {
 }
 
 /**
- * Count servers by status category across an estate selection.
- * A server is "offline" if its status is "offline", "warning"
- * if it has active alerts, and "online" otherwise.
+ * Server status category, as shown on the estate dashboard.
+ */
+export type ServerCategory = keyof ServerCounts;
+
+/**
+ * Return a server's active alert count, treating a missing,
+ * non-numeric or negative value as zero.
+ */
+export const getActiveAlertCount = (server: ServerLike): number => {
+    const alerts = server.active_alert_count;
+    return typeof alerts === 'number' && alerts > 0 ? alerts : 0;
+};
+
+/**
+ * Classify a server for the estate dashboard. A server is "offline"
+ * if its status is "offline", "warning" if its status is "warning"
+ * (its collected data is stale) or it has active alerts, and
+ * "online" otherwise. See issue #835.
+ */
+export const classifyServer = (server: ServerLike): ServerCategory => {
+    if (server.status === 'offline') {return 'offline';}
+    if (server.status === 'warning' || getActiveAlertCount(server) > 0) {
+        return 'warning';
+    }
+    return 'online';
+};
+
+/**
+ * Count servers by status category across an estate selection,
+ * classifying each with classifyServer.
  */
 export const computeEstateServerCounts = (
     selection: EstateSelection
@@ -158,17 +185,7 @@ export const computeEstateServerCounts = (
         group.clusters?.forEach(cluster => {
             if (cluster.servers) {
                 collectServers(cluster.servers as ServerLike[]).forEach(s => {
-                    const rec = s as Record<string, unknown>;
-                    const status = rec.status as string;
-                    const alertCount = rec.active_alert_count as
-                        number | undefined;
-                    if (status === 'offline') {
-                        counts.offline += 1;
-                    } else if (alertCount && alertCount > 0) {
-                        counts.warning += 1;
-                    } else {
-                        counts.online += 1;
-                    }
+                    counts[classifyServer(s)] += 1;
                 });
             }
         });

@@ -30,7 +30,7 @@ import { useAICapabilities } from '../../contexts/useAICapabilities';
 import { useClusterData } from '../../contexts/useClusterData';
 import { useDashboard } from '../../contexts/useDashboard';
 import { apiPost, apiGet, apiDelete, ApiError } from '../../utils/apiClient';
-import { collectServers } from '../../utils/clusterHelpers';
+import { classifyServer, collectServers, type ServerCounts, type ServerLike } from '../../utils/clusterHelpers';
 import { logger } from '../../utils/logger';
 import { isSystemAlertRecord } from '../../utils/systemAlerts';
 import EventTimeline from '../EventTimeline';
@@ -72,16 +72,15 @@ import {
 import type { ApiAlert, StatusPanelProps, TransformedAlert } from './types';
 
 /**
- * Read a server-like record's active alert count. The cluster server
- * records carry an index signature, so the field arrives as `unknown`
- * and has to be narrowed before it can be compared numerically.
+ * Count servers by status category with the rule the estate dashboard
+ * uses, so a stale server counts as a warning here too (issue #835).
  */
-const getActiveAlertCount = (server: unknown): number => {
-    if (typeof server === 'object' && server !== null && 'active_alert_count' in server) {
-        const count = (server as { active_alert_count: unknown }).active_alert_count;
-        return typeof count === 'number' ? count : 0;
-    }
-    return 0;
+const countServers = (servers: ServerLike[]): ServerCounts => {
+    const counts: ServerCounts = { online: 0, warning: 0, offline: 0 };
+    servers.forEach(s => {
+        counts[classifyServer(s)] += 1;
+    });
+    return counts;
 };
 
 /**
@@ -205,9 +204,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         if (!selection) {return null;}
 
         if (selection.type === 'server') {
-            const isOffline = selection.status === 'offline';
-            const hasAlerts = getActiveAlertCount(selection) > 0;
-            const effectiveStatus = isOffline ? 'offline' : (hasAlerts ? 'warning' : 'online');
+            const effectiveStatus = classifyServer({ ...selection });
 
             return {
                 status: effectiveStatus,
@@ -217,9 +214,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
         if (selection.type === 'cluster') {
             const servers = selection.servers || [];
-            const offline = servers.filter(s => s.status === 'offline').length;
-            const warning = servers.filter(s => s.status !== 'offline' && getActiveAlertCount(s) > 0).length;
-            const online = servers.filter(s => s.status !== 'offline' && !getActiveAlertCount(s)).length;
+            const { online, warning, offline } = countServers(servers);
 
             return {
                 status: offline === servers.length ? 'offline' : (warning > 0 || offline > 0 ? 'warning' : 'online'),
@@ -240,9 +235,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 });
             });
 
-            const offline = allServers.filter(s => s.status === 'offline').length;
-            const warning = allServers.filter(s => s.status !== 'offline' && getActiveAlertCount(s) > 0).length;
-            const online = allServers.filter(s => s.status !== 'offline' && !getActiveAlertCount(s)).length;
+            const { online, warning, offline } = countServers(allServers);
 
             return {
                 status: offline === allServers.length && allServers.length > 0 ? 'offline' : (warning > 0 || offline > 0 ? 'warning' : 'online'),

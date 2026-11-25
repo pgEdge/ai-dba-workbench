@@ -16,6 +16,8 @@ import {
     extractClusterServerIds,
     computeEstateServerCounts,
     countEstateServers,
+    classifyServer,
+    getActiveAlertCount,
     getDbClusterId,
     findRefreshedCluster,
 } from '../clusterHelpers';
@@ -756,6 +758,71 @@ describe('computeEstateServerCounts', () => {
         const counts = computeEstateServerCounts(selection);
         expect(counts.online).toBe(1);
         expect(counts.offline).toBe(1);
+    });
+});
+
+describe('getActiveAlertCount', () => {
+    it.each([
+        ['a positive count', 4, 4],
+        ['zero', 0, 0],
+        ['a negative count', -2, 0],
+        ['a missing count', undefined, 0],
+        ['a non-numeric count', '3', 0],
+    ])('returns the right value for %s', (_label, value, expected) => {
+        const server: ServerLike = { id: 1, name: 's', active_alert_count: value };
+        expect(getActiveAlertCount(server)).toBe(expected);
+    });
+});
+
+describe('classifyServer', () => {
+    it.each([
+        ['offline with alerts', 'offline', 2, 'offline'],
+        ['stale with no alerts', 'warning', undefined, 'warning'],
+        ['online with alerts', 'online', 1, 'warning'],
+        ['online with a negative count', 'online', -1, 'online'],
+        ['online with no alerts', 'online', 0, 'online'],
+        ['with no status', undefined, undefined, 'online'],
+    ])('classifies a server %s', (_label, status, alerts, expected) => {
+        const server: ServerLike = {
+            id: 1, name: 's', status, active_alert_count: alerts,
+        };
+        expect(classifyServer(server)).toBe(expected);
+    });
+});
+
+describe('computeEstateServerCounts with stale servers (issue #835)', () => {
+    it('counts a warning status as a warning, matching the cluster cards', () => {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
+            groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
+                clusters: [{
+                    id: 'c1',
+                    name: 'c1',
+                    description: '',
+                    status: 'online',
+                    servers: [
+                        {
+                            id: 1, name: 'alerting', status: 'online', host: '',
+                            port: 5432, database: '', active_alert_count: 1,
+                        },
+                        { id: 2, name: 'stale', status: 'warning', host: '', port: 5432, database: '' },
+                        {
+                            id: 3, name: 'down', status: 'offline', host: '',
+                            port: 5432, database: '', active_alert_count: 2,
+                        },
+                    ],
+                    serverIds: [1, 2, 3],
+                }],
+            }],
+        };
+        expect(computeEstateServerCounts(selection)).toEqual({
+            online: 0, warning: 2, offline: 1,
+        });
     });
 });
 

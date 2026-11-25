@@ -166,9 +166,8 @@ func (d *Datastore) GetEstateSnapshot(ctx context.Context) *EstateSnapshot {
 }
 
 // gatherEstateServerData populates server status counts and per-server
-// details by walking the cluster topology hierarchy. Servers are
-// classified as offline (status is offline), warning (has active alerts
-// but not offline), or online (no alerts, not offline).
+// details by walking the cluster topology hierarchy, classifying each
+// server with countServerStatus.
 func (d *Datastore) gatherEstateServerData(ctx context.Context, snapshot *EstateSnapshot) {
 	// Sync cluster_id assignments before reading topology
 	if err := d.RefreshClusterAssignments(ctx); err != nil {
@@ -192,18 +191,28 @@ func (d *Datastore) gatherEstateServerData(ctx context.Context, snapshot *Estate
 	for i := range servers {
 		servers[i].Role = d.mapPrimaryRoleToDisplayRole(servers[i].Role)
 
-		switch {
-		case servers[i].Status == "offline":
-			snapshot.ServerOffline++
-		case servers[i].ActiveAlertCount > 0:
-			snapshot.ServerWarning++
-		default:
-			snapshot.ServerOnline++
-		}
+		countServerStatus(snapshot, &servers[i])
 	}
 
 	snapshot.Servers = servers
 	snapshot.ServerTotal = len(servers)
+}
+
+// countServerStatus adds a server to the snapshot's status counts. A
+// server is offline when its status is offline, a warning when its
+// status is warning (its collected data is stale) or it has active
+// alerts, and online otherwise. The web client's classifyServer in
+// client/src/utils/clusterHelpers.ts applies the same rule, so the
+// AI overview and the estate dashboard agree (issue #835).
+func countServerStatus(snapshot *EstateSnapshot, s *EstateServerSummary) {
+	switch {
+	case s.Status == "offline":
+		snapshot.ServerOffline++
+	case s.Status == "warning" || s.ActiveAlertCount > 0:
+		snapshot.ServerWarning++
+	default:
+		snapshot.ServerOnline++
+	}
 }
 
 // flattenTopologyServers recursively extracts server summaries from the
@@ -671,14 +680,7 @@ func (d *Datastore) gatherScopedServerData(ctx context.Context, snapshot *Estate
 			allServers[i].Role = d.mapPrimaryRoleToDisplayRole(allServers[i].Role)
 			servers = append(servers, allServers[i])
 
-			switch {
-			case allServers[i].Status == "offline":
-				snapshot.ServerOffline++
-			case allServers[i].ActiveAlertCount > 0:
-				snapshot.ServerWarning++
-			default:
-				snapshot.ServerOnline++
-			}
+			countServerStatus(snapshot, &allServers[i])
 		}
 	}
 

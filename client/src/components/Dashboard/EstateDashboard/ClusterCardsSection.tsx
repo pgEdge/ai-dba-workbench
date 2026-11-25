@@ -9,7 +9,7 @@
  */
 
 import type React from 'react';
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useId } from 'react';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
@@ -17,7 +17,13 @@ import Chip from '@mui/material/Chip';
 import { alpha, useTheme, type Theme } from '@mui/material/styles';
 import { useClusterSelection } from '../../../contexts/useClusterSelection';
 import type { ClusterEntry } from '../../../contexts/ClusterDataContext';
-import { collectServers, type ServerLike } from '../../../utils/clusterHelpers';
+import {
+    classifyServer,
+    collectServers,
+    getActiveAlertCount,
+    type ServerCounts,
+    type ServerLike,
+} from '../../../utils/clusterHelpers';
 import type { EstateSelection } from '../../../types/selection';
 
 interface ClusterCardsSectionProps {
@@ -93,6 +99,22 @@ const SERVER_COUNT_SX = {
     color: 'text.secondary',
 };
 
+/**
+ * Hide text visually whilst keeping it available to assistive
+ * technology.
+ */
+const VISUALLY_HIDDEN_SX = {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    p: 0,
+    m: '-1px',
+    overflow: 'hidden',
+    clip: 'rect(0 0 0 0)',
+    whiteSpace: 'nowrap',
+    border: 0,
+};
+
 const EMPTY_SX = {
     color: 'text.secondary',
     fontSize: '0.875rem',
@@ -130,24 +152,16 @@ const extractClusterCards = (selection: EstateSelection): ClusterCardData[] => {
             const rawServers = (clusterObj.servers || []) as ServerLike[];
             const allServers = collectServers(rawServers);
 
-            let online = 0;
-            let warning = 0;
-            let offline = 0;
+            const counts: ServerCounts = { online: 0, warning: 0, offline: 0 };
             let alertCount = 0;
             const roles: Record<string, number> = {};
 
             allServers.forEach(s => {
-                const status = s.status as string;
-                const alerts = s.active_alert_count as number | undefined;
-
-                if (status === 'offline') {
-                    offline += 1;
-                } else if (alerts && alerts > 0) {
-                    warning += 1;
-                    alertCount += alerts;
-                } else {
-                    online += 1;
-                }
+                // Every server's alerts count towards the badge, offline
+                // ones included, and a stale server counts as a warning
+                // (issue #835).
+                alertCount += getActiveAlertCount(s);
+                counts[classifyServer(s)] += 1;
 
                 const role = (s.role || s.primary_role || 'unknown') as string;
                 roles[role] = (roles[role] || 0) + 1;
@@ -162,9 +176,7 @@ const extractClusterCards = (selection: EstateSelection): ClusterCardData[] => {
                 cluster,
                 name: clusterObj.name,
                 serverCount: allServers.length,
-                online,
-                warning,
-                offline,
+                ...counts,
                 roles,
                 alertCount,
             });
@@ -182,6 +194,7 @@ const extractClusterCards = (selection: EstateSelection): ClusterCardData[] => {
  */
 const ClusterCardsSection: React.FC<ClusterCardsSectionProps> = ({ selection }) => {
     const theme = useTheme();
+    const idPrefix = useId();
     const { selectCluster } = useClusterSelection();
 
     const clusterCards = useMemo(() => extractClusterCards(selection), [selection]);
@@ -205,104 +218,117 @@ const ClusterCardsSection: React.FC<ClusterCardsSectionProps> = ({ selection }) 
 
     return (
         <Box sx={CARDS_GRID_SX}>
-            {clusterCards.map(card => (
-                <Paper
-                    key={card.cluster.id}
-                    elevation={0}
-                    sx={cardSx}
-                    onClick={handleClusterClick(card.cluster)}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Select cluster ${card.name}`}
-                    onKeyDown={(e: React.KeyboardEvent) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            selectCluster(card.cluster);
-                        }
-                    }}
-                >
-                    <Box sx={CARD_HEADER_SX}>
-                        <Box>
-                            <Typography sx={CARD_NAME_SX}>
-                                {card.name}
-                            </Typography>
-                            <Typography sx={SERVER_COUNT_SX}>
-                                {card.serverCount} server{card.serverCount !== 1 ? 's' : ''}
-                            </Typography>
+            {clusterCards.map((card, index) => {
+                // The card's aria-label replaces its content as its
+                // accessible name, so link the alert badge as its
+                // description to keep the count audible.
+                const alertsId = `${idPrefix}-alerts-${index}`;
+                return (
+                    <Paper
+                        key={card.cluster.id}
+                        elevation={0}
+                        sx={cardSx}
+                        onClick={handleClusterClick(card.cluster)}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Select cluster ${card.name}`}
+                        aria-describedby={card.alertCount > 0 ? alertsId : undefined}
+                        onKeyDown={(e: React.KeyboardEvent) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                selectCluster(card.cluster);
+                            }
+                        }}
+                    >
+                        <Box sx={CARD_HEADER_SX}>
+                            <Box>
+                                <Typography sx={CARD_NAME_SX}>
+                                    {card.name}
+                                </Typography>
+                                <Typography sx={SERVER_COUNT_SX}>
+                                    {card.serverCount} server{card.serverCount !== 1 ? 's' : ''}
+                                </Typography>
+                            </Box>
+                            {card.alertCount > 0 && (
+                                <>
+                                    <Chip
+                                        label={card.alertCount}
+                                        aria-hidden="true"
+                                        size="small"
+                                        color="warning"
+                                        sx={{
+                                            height: 22,
+                                            fontSize: '0.75rem',
+                                            fontWeight: 700,
+                                        }}
+                                    />
+                                    <Box component="span" id={alertsId} sx={VISUALLY_HIDDEN_SX}>
+                                        {card.alertCount} active alert{card.alertCount !== 1 ? 's' : ''}
+                                    </Box>
+                                </>
+                            )}
                         </Box>
-                        {card.alertCount > 0 && (
-                            <Chip
-                                label={card.alertCount}
-                                size="small"
-                                color="warning"
-                                sx={{
-                                    height: 22,
-                                    fontSize: '0.75rem',
-                                    fontWeight: 700,
-                                }}
-                            />
-                        )}
-                    </Box>
 
-                    <Box sx={STATUS_ROW_SX}>
-                        <Box sx={STATUS_ITEM_SX}>
-                            <Box
-                                sx={{
-                                    ...STATUS_DOT_SX,
-                                    bgcolor: theme.palette.success.main,
-                                }}
-                            />
-                            <Typography sx={STATUS_LABEL_SX}>
-                                {card.online} online
-                            </Typography>
-                        </Box>
-                        {card.warning > 0 && (
+                        <Box sx={STATUS_ROW_SX}>
                             <Box sx={STATUS_ITEM_SX}>
                                 <Box
                                     sx={{
                                         ...STATUS_DOT_SX,
-                                        bgcolor: theme.palette.warning.main,
+                                        bgcolor: theme.palette.success.main,
                                     }}
                                 />
                                 <Typography sx={STATUS_LABEL_SX}>
-                                    {card.warning} warning
+                                    {card.online} online
                                 </Typography>
                             </Box>
-                        )}
-                        {card.offline > 0 && (
-                            <Box sx={STATUS_ITEM_SX}>
-                                <Box
-                                    sx={{
-                                        ...STATUS_DOT_SX,
-                                        bgcolor: theme.palette.error.main,
-                                    }}
-                                />
-                                <Typography sx={STATUS_LABEL_SX}>
-                                    {card.offline} offline
-                                </Typography>
-                            </Box>
-                        )}
-                    </Box>
-
-                    {Object.keys(card.roles).length > 0 && (
-                        <Box sx={ROLES_ROW_SX}>
-                            {Object.entries(card.roles).map(([role, count]) => (
-                                <Chip
-                                    key={role}
-                                    label={`${role}: ${count}`}
-                                    size="small"
-                                    variant="outlined"
-                                    sx={{
-                                        height: 20,
-                                        fontSize: '0.7rem',
-                                        fontWeight: 500,
-                                    }}
-                                />
-                            ))}
+                            {card.warning > 0 && (
+                                <Box sx={STATUS_ITEM_SX}>
+                                    <Box
+                                        sx={{
+                                            ...STATUS_DOT_SX,
+                                            bgcolor: theme.palette.warning.main,
+                                        }}
+                                    />
+                                    <Typography sx={STATUS_LABEL_SX}>
+                                        {card.warning} warning
+                                    </Typography>
+                                </Box>
+                            )}
+                            {card.offline > 0 && (
+                                <Box sx={STATUS_ITEM_SX}>
+                                    <Box
+                                        sx={{
+                                            ...STATUS_DOT_SX,
+                                            bgcolor: theme.palette.error.main,
+                                        }}
+                                    />
+                                    <Typography sx={STATUS_LABEL_SX}>
+                                        {card.offline} offline
+                                    </Typography>
+                                </Box>
+                            )}
                         </Box>
-                    )}
-                </Paper>
-            ))}
+
+                        {Object.keys(card.roles).length > 0 && (
+                            <Box sx={ROLES_ROW_SX}>
+                                {Object.entries(card.roles).map(([role, count]) => (
+                                    <Chip
+                                        key={role}
+                                        label={`${role}: ${count}`}
+                                        size="small"
+                                        variant="outlined"
+                                        sx={{
+                                            height: 20,
+                                            fontSize: '0.7rem',
+                                            fontWeight: 500,
+                                        }}
+                                    />
+                                ))}
+                            </Box>
+                        )}
+                    </Paper>
+                );
+            })}
         </Box>
     );
 };

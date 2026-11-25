@@ -97,6 +97,71 @@ describe('ClusterCardsSection', () => {
         expect(screen.getByText('unknown: 1')).toBeInTheDocument();
     });
 
+    it('counts alerts on offline servers and stale servers as warning (issue #835)', () => {
+        const mixedCluster: ClusterEntry = {
+            id: 'cluster-5',
+            name: 'Mixed',
+            servers: [
+                { id: 51, name: 'down', status: 'offline', active_alert_count: 2 },
+                { id: 52, name: 'stale', status: 'warning' },
+                { id: 53, name: 'stale-alerting', status: 'warning', active_alert_count: 1 },
+                { id: 54, name: 'healthy', status: 'online', active_alert_count: 0 },
+            ],
+        };
+
+        renderSection(makeSelection([mixedCluster]));
+
+        // Alerts on the offline server stay in the badge alongside the
+        // stale server's alert.
+        expect(screen.getByRole('button', { name: 'Select cluster Mixed' }))
+            .toHaveAccessibleDescription('3 active alerts');
+        expect(screen.getByText('1 online')).toBeInTheDocument();
+        expect(screen.getByText('2 warning')).toBeInTheDocument();
+        expect(screen.getByText('1 offline')).toBeInTheDocument();
+    });
+
+    it('labels a single alert in the singular', () => {
+        const oneAlert: ClusterEntry = {
+            id: 'cluster-6',
+            name: 'One Alert',
+            servers: [{ id: 61, name: 'down', status: 'offline', active_alert_count: 1 }],
+        };
+
+        renderSection(makeSelection([oneAlert]));
+
+        expect(screen.getByRole('button', { name: 'Select cluster One Alert' }))
+            .toHaveAccessibleDescription('1 active alert');
+    });
+
+    it('gives a card without alerts no description and no badge', () => {
+        const quietCluster: ClusterEntry = {
+            id: 'cluster-7',
+            name: 'Quiet',
+            servers: [
+                { id: 71, name: 'zero', status: 'online', active_alert_count: 0 },
+                { id: 72, name: 'negative', status: 'online', active_alert_count: -1 },
+            ],
+        };
+
+        renderSection(makeSelection([quietCluster]));
+
+        const card = screen.getByRole('button', { name: 'Select cluster Quiet' });
+        expect(card).not.toHaveAttribute('aria-describedby');
+        // A negative count is ignored, so both servers are online and
+        // the card shows no badge, not even a zero.
+        expect(screen.getByText('2 online')).toBeInTheDocument();
+        expect(screen.queryByText('0')).not.toBeInTheDocument();
+        expect(screen.queryByText('-1')).not.toBeInTheDocument();
+        expect(screen.queryByText(/active alert/)).not.toBeInTheDocument();
+    });
+
+    it('hides the bare badge number from assistive technology', () => {
+        renderSection(makeSelection([autoCluster]));
+
+        const badge = screen.getByText('3').closest('.MuiChip-root');
+        expect(badge).toHaveAttribute('aria-hidden', 'true');
+    });
+
     it('selects the topology entry itself on click, keeping db_cluster_id', () => {
         renderSection(makeSelection([autoCluster]));
 

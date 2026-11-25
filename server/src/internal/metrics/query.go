@@ -94,6 +94,61 @@ type MetricFilters struct {
 	// filters on the database the probe collected them through. A nil
 	// pointer means no filter.
 	StatementDatabase *StatementDatabaseFilter
+	// ExcludeSystemSchemas drops the rows of PostgreSQL's system schemas
+	// (see SystemSchemaPredicate), so a probe such as pg_stat_all_tables
+	// reports only the user relations pg_stat_user_tables would. It
+	// applies only to a probe with a schemaname column; QueryTimeSeries
+	// and QueryLatestRows refuse it for any other probe.
+	ExcludeSystemSchemas bool
+}
+
+// SystemSchemaPredicate is the WHERE fragment that removes PostgreSQL
+// system schemas from a probe's rows. It is the predicate PostgreSQL uses
+// to derive pg_stat_user_tables from pg_stat_all_tables (and
+// pg_stat_user_indexes from pg_stat_all_indexes): pg_catalog and
+// information_schema by name, and every TOAST schema (pg_toast and the
+// per-backend pg_toast_temp_N schemas) by prefix. It is a constant, so no
+// caller input reaches the SQL text through it, and it binds no argument.
+//
+// The TOAST prefix is matched with LIKE and an explicit escape rather
+// than a regex: on a ColdFront datastore the query runs in DuckDB, whose
+// ~ operator matches the whole string, so '^pg_toast' would let the
+// pg_toast_temp_N schemas through there. The escape keeps "_" literal,
+// so pg_temp_N schemas, which pg_stat_user_tables includes, stay in.
+const SystemSchemaPredicate = `"schemaname" NOT IN ('pg_catalog', 'information_schema') AND "schemaname" NOT LIKE 'pg!_toast%' ESCAPE '!'`
+
+// checkSystemSchemaFilter refuses ExcludeSystemSchemas on a probe without a
+// schemaname column, which the predicate could not be applied to. It does
+// nothing, and queries nothing, when the flag is unset.
+func checkSystemSchemaFilter(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	probeName string,
+	filters MetricFilters,
+) error {
+	if !filters.ExcludeSystemSchemas {
+		return nil
+	}
+	cols, _, err := GetProbeAllColumns(ctx, pool, probeName)
+	if err != nil {
+		return fmt.Errorf("failed to get probe columns: %w", err)
+	}
+	return systemSchemaFilterError(probeName, cols, filters)
+}
+
+// systemSchemaFilterError is checkSystemSchemaFilter for a caller that
+// already holds the probe's columns, so it needs no catalog round trip.
+func systemSchemaFilterError(
+	probeName string,
+	cols []string,
+	filters MetricFilters,
+) error {
+	if filters.ExcludeSystemSchemas && !slices.Contains(cols, "schemaname") {
+		return fmt.Errorf(
+			"exclude_system_schemas is not supported for probe %q: "+
+				"it has no schemaname column", probeName)
+	}
+	return nil
 }
 
 // StatementDatabaseFilter selects the pg_stat_statements rows whose own
@@ -1054,6 +1109,12 @@ func metricQueryClauses(
 		parts.args = append(parts.args, args...)
 	}
 
+	// The system-schema exclusion is likewise a constant fragment with no
+	// bound value, so it leaves the $N layout untouched as well.
+	if filters.ExcludeSystemSchemas {
+		parts.filterClauses = append(parts.filterClauses, SystemSchemaPredicate)
+	}
+
 	// The registry's exclusion is a fixed fragment with no bound value
 	// (for example interface_name NOT IN ('lo', 'lo0')), so it adds no
 	// argument and leaves the $N layout untouched.
@@ -1110,11 +1171,14 @@ func deltaAggExpr(idx int, outputName string) string {
 }
 
 // ratioTupleExpr builds the bucket-level aggregation expression for one
-// tuple-count column feeding the dead-tuple ratio. Only "last" needs
-// distinct handling, mirroring rateAggExpr: it picks the latest sample's
-// value in the bucket so the ratio reflects the most recent live/dead
-// counts. Every other aggregation collapses the bucket with SUM, matching
-// the prior behavior.
+// per-sample tuple total feeding the dead-tuple ratio. The totals come from
+// the ratio_samples CTE, which has already summed the column across every
+// relation in a sample, so each row is the whole filtered set (a database,
+// or a single table) at one collected_at. Only "last" needs distinct
+// handling, mirroring rateAggExpr: it picks the latest sample's total in the
+// bucket so the ratio reflects the most recent live/dead counts. Every other
+// aggregation collapses the bucket with SUM, which equals summing every
+// relation's row in the bucket, matching the prior behavior.
 func ratioTupleExpr(aggregation, column string) string {
 	q := QuoteIdentifier(column)
 	if aggregation == "last" {
@@ -1412,10 +1476,63 @@ func BuildDerivedMetricsQuery(
 	}
 
 	if hasRatio {
+		// The probe holds one row per relation at each collected_at, so
+		// ratio_samples first totals the live and dead tuples of every
+		// relation the filters keep at each sample; the bucket stage then
+		// works on those totals. Picking "last" straight from the
+		// per-relation rows would return one arbitrary relation's counts
+		// rather than the total (issue #869).
+		//
 		// The ratio is expressed on a 0-100 percentage scale (not a 0-1
-		// fraction) to match what the client dashboards render.
-		liveExpr := ratioTupleExpr(aggregation, "n_live_tup")
-		deadExpr := ratioTupleExpr(aggregation, "n_dead_tup")
+		// fraction) to match what the client dashboards render. A sample
+		// whose relations hold no tuples at all is a genuine 0%; a bucket
+		// with no sample has no row here and is NULL (which the gauge
+		// carry-forward in scanSeriesRows may then fill, as for any gauge).
+		liveExpr := ratioTupleExpr(aggregation, "live_tup")
+		deadExpr := ratioTupleExpr(aggregation, "dead_tup")
+
+		// With the system-schema exclusion, the predicate must not drop a
+		// sample's rows before grouping: a sample of a database that has
+		// no user relations left would otherwise vanish, and "last" would
+		// keep reporting an older sample's ratio. So the sample times come
+		// from every row the other filters keep (the database filter still
+		// scopes them), and the exclusion moves into FILTER clauses on the
+		// sums. A sample with no user relation then totals 0 live and 0
+		// dead tuples, a 0% ratio, while a bucket with no sample at all
+		// still has no row here. The predicate binds nothing, so the
+		// argument layout is the same with or without it.
+		ratioWhere := whereSQL
+		liveSum := `SUM("n_live_tup")`
+		deadSum := `SUM("n_dead_tup")`
+		if filters.ExcludeSystemSchemas {
+			unfiltered := filters
+			unfiltered.ExcludeSystemSchemas = false
+			ratioWhere = metricQueryClauses(
+				probeName, connectionID, timeStart, timeEnd, bucketWidth,
+				unfiltered).where()
+			userRows := "FILTER (WHERE " + SystemSchemaPredicate + ")"
+			liveSum = fmt.Sprintf(
+				`CASE WHEN COUNT(*) %[1]s = 0 THEN 0 ELSE SUM("n_live_tup") %[1]s END`,
+				userRows)
+			deadSum = fmt.Sprintf(
+				`CASE WHEN COUNT(*) %[1]s = 0 THEN 0 ELSE SUM("n_dead_tup") %[1]s END`,
+				userRows)
+		}
+		ctes = append(ctes, fmt.Sprintf(`
+        ratio_samples AS (
+            SELECT
+                collected_at,
+                %[3]s AS live_tup,
+                %[4]s AS dead_tup
+            FROM metrics.%[1]s
+            WHERE %[2]s
+            GROUP BY collected_at
+        )`,
+			QuoteIdentifier(probeName),
+			ratioWhere,
+			liveSum,
+			deadSum,
+		))
 		ctes = append(ctes, fmt.Sprintf(`
         ratio_buckets AS (
             SELECT
@@ -1424,14 +1541,11 @@ func BuildDerivedMetricsQuery(
                      ELSE %[2]s::float
                           / (%[1]s + %[2]s)::float * 100.0
                 END AS dead_tuple_ratio
-            FROM metrics.%[3]s
-            WHERE %[4]s
+            FROM ratio_samples
             GROUP BY date_bin($1::interval, collected_at, $3)
         )`,
 			liveExpr,
 			deadExpr,
-			QuoteIdentifier(probeName),
-			whereSQL,
 		))
 
 		joins = append(joins,
@@ -1783,6 +1897,9 @@ func QueryTimeSeries(
 	}
 	if !exists {
 		return nil, fmt.Errorf("probe %q not found", probeName)
+	}
+	if err := checkSystemSchemaFilter(ctx, pool, probeName, filters); err != nil {
+		return nil, err
 	}
 
 	// Discover metric columns
@@ -2298,6 +2415,10 @@ func buildLatestRowsQuery(
 		argNum += len(sdArgs)
 	}
 
+	if filters.ExcludeSystemSchemas {
+		whereClauses = append(whereClauses, SystemSchemaPredicate)
+	}
+
 	whereClause := strings.Join(whereClauses, " AND ")
 
 	// connection_id is always part of the entity key so that two monitored
@@ -2408,6 +2529,11 @@ func discoverLatestRowColumns(
 	allCols, colTypes, err := GetProbeAllColumns(ctx, pool, probeName)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("failed to get probe columns: %w", err)
+	}
+	// Checked against every column, before the returnable ones are picked,
+	// so the same probes accept the flag here as in QueryTimeSeries.
+	if err := systemSchemaFilterError(probeName, allCols, *filters); err != nil {
+		return nil, nil, "", err
 	}
 
 	// A column that must never be returned, such as one whose name marks

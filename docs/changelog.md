@@ -125,6 +125,16 @@ project adheres to
   said the data directory holds conversation history. The directory
   holds the authentication database (`auth.db`); the server stores
   conversations in the PostgreSQL datastore. (#876)
+- Make the Database Dashboard's `Dead Tuple Ratio` tile and sparkline
+  report the database's ratio from the live and dead tuples totalled
+  across its user tables at each sample. The tile previously read the
+  latest sample of a single, arbitrary relation, so it could show 0.0%
+  for a database with millions of dead tuples. The `dead_tuple_ratio`
+  metric of `GET /api/v1/metrics/query` now totals every relation in a
+  sample before applying `aggregation=last`, and the endpoint accepts
+  `exclude_system_schemas` to leave out `pg_catalog`,
+  `information_schema`, and `pg_toast*` relations, as
+  `GET /api/v1/metrics/latest` does. (#869)
 
 ### Security
 

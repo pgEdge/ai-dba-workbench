@@ -216,7 +216,7 @@ The API provides endpoints in the following categories.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/metrics/query` | Query metrics for preset or custom windows. |
+| GET | `/api/v1/metrics/query` | Query bucketed metrics for preset or custom windows, or the latest raw rows; `exclude_system_schemas` filters out system relations in both modes. |
 | GET | `/api/v1/metrics/baselines` | Get metric baseline values. |
 | GET | `/api/v1/metrics/anomaly-comparison` | Compare a metric with its anomaly baselines. |
 | GET | `/api/v1/metrics/anomaly-comparison/metrics` | List the metrics the anomaly comparison accepts. |
@@ -427,6 +427,28 @@ The `/api/v1/metrics/query` and
 most 100 entries in `connection_ids`, because each one adds
 a further set of queries to the request; a longer list
 returns status 400.
+
+The `/api/v1/metrics/query` endpoint accepts the optional
+`exclude_system_schemas` parameter in both its bucketed and
+latest-row modes. When the value is `true` or `1`, the
+server leaves out the rows of the `pg_catalog`,
+`information_schema` and `pg_toast*` schemas, as
+`pg_stat_user_tables` does and as the parameter of the same
+name on `/api/v1/metrics/latest` does. The parameter applies
+only to a probe with a `schemaname` column; a request that
+sets it for any other probe returns status 400. With the
+parameter set, the `dead_tuple_ratio` metric totals the live
+and dead tuples of the user relations in each sample, and a
+sample with no user relations reports 0.
+
+Within a bucket, the `dead_tuple_ratio` metric combines
+samples according to the `aggregation` parameter. The
+`last` aggregation takes the percentage of the latest
+sample's totals. The `avg`, `sum`, `min` and `max`
+aggregations add up the live and dead totals of every
+sample in the bucket and take the percentage of those
+sums; a bucket can therefore report a nonzero ratio under
+`avg` even when its latest sample reports 0.
 
 The `/api/v1/metrics/top-queries` endpoint defaults to
 `time_range=1h` when the request names no window.

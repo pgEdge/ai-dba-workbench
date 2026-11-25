@@ -183,6 +183,9 @@ func parseMetricFilters(
 		IndexName:    ParseQueryString(r, "index_name"),
 		MountPoint:   ParseQueryString(r, "mount_point"),
 		QueryID:      queryID,
+		// exclude_system_schemas drops pg_catalog, information_schema
+		// and TOAST relations, as GET /api/v1/metrics/latest does.
+		ExcludeSystemSchemas: ParseQueryBool(r, "exclude_system_schemas"),
 	}, true
 }
 

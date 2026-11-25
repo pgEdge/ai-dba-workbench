@@ -158,9 +158,12 @@ casts work, but `?`, `@>`, `jsonb_*` functions, `=`, `ORDER BY`,
 `min`/`max` on the raw column do not. The same holds for expressions:
 `jsonb_agg` and `jsonb_build_object` over a view return `json`, so
 comparing two of them (`=`, `IS DISTINCT FROM`) fails with "operator
-does not exist: json = json". Compare them as `::text`, as the
-timeline's `identMappingsDiffer` does (#886); `::jsonb` is pushed into
-DuckDB and comes back as `json` again.
+does not exist: json = json"; `::jsonb` is pushed into DuckDB and
+comes back as `json` again. Comparing `::text` works only where equal
+values always serialise identically, as the timeline's
+`identMappingsDiffer` does for text-valued mappings aggregated in
+`map_number` order (#886); it is not JSON equality in general, since
+`1` and `1.0` are equal as jsonb but differ as text.
 
 ### Writing metrics SQL that runs on ColdFront
 

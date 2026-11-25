@@ -284,9 +284,10 @@ target. The server also refuses such a target when a connection or a
 notification channel is saved; an update that changes a connection's
 host or hostaddr to such a target is refused, but an update that leaves
 them as stored is not checked, so an existing connection can still be
-edited. An existing connection whose host or hostaddr is such an
-address never connects, so change it; one whose host name also
-resolves to a permitted address connects to that address.
+edited. An existing connection whose hostaddr, or whose host when it
+has no hostaddr, is such an address never connects, so change it; one
+whose host name also resolves to a permitted address connects to that
+address.
 
 The internal ranges now include the IPv6 unspecified address `::`, the
 IPv4-compatible range `::/96`, the SIIT range `::ffff:0:0:0/96`, the NAT64

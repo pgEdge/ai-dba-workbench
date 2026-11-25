@@ -633,7 +633,16 @@ decomposed into small, separately testable helpers:
   `inserted_at`), resolves `order_by` against the discovered columns with
   `ResolveOrderByColumn`, and resolves the database filter column with
   `ResolveDatabaseColumn` when a `DatabaseName` filter is set.
-- `buildLatestRowsQuery` assembles the SQL; `scanLatestRows` reads rows
+- `buildLatestRowsQuery` assembles the SQL. For `pg_stat_statements`
+  it reads from `latestStatementSource`, which keeps each
+  `(connection_id, queryid, userid, dbid, toplevel)` identity's newest
+  reading (lowest `database_name` among its copies), and keys the
+  DISTINCT ON on that identity rather than the text columns, since
+  `database_name` is the probing database and would return a stale row
+  per database the statement was read through (#762). The
+  `database_name` filter and the statement-database clause apply to
+  the kept reading; only `statementDatabasePrefilter` runs before the
+  reduction. `scanLatestRows` reads rows
   into flat maps, normalising each value through `normalizeLatestValue`
   (RFC3339 for `time.Time`, `sanitizeFloat` dropping NaN/Inf to JSON
   null, `pgtype.Numeric`/`pgtype.Interval` collapsed to seconds/float).

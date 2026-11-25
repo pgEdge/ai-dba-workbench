@@ -88,6 +88,8 @@ var reviewedProbeTableReaders = map[string]string{
 	"internal/metrics/query.go:BuildDerivedMetricsQuery": "returns only numbers derived from numeric " +
 		"columns; entity-key columns are used to partition and group, never returned",
 	"internal/metrics/query.go:metricQueryParts.lookbackWhere": "reads only MAX(collected_at)",
+	"internal/metrics/query.go:latestStatementSource": "returns a FROM item, not a result; " +
+		"buildLatestRowsQuery selects from it only the columns MaskedProbeColumn masks, under their own names",
 	"internal/metrics/query.go:sampleSource": "returns a FROM item, not a result; BuildMetricsQuery " +
 		"aggregates only the numeric columns GetProbeMetricColumns returns (IsMetricColumn) from it, " +
 		"and BuildDerivedMetricsQuery only numeric and entity-key columns",

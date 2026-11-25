@@ -508,6 +508,12 @@ this envelope; the latest-rows mode, which a request selects
 by passing `limit` or `order_by`, is unchanged and still
 returns the matching rows.
 
+For `pg_stat_statements`, the latest-rows mode returns the
+newest reading of each statement once, whichever database the
+collector read it through. A `database_name` filter keeps a
+statement only when its newest reading was collected through
+that database, rather than returning an older reading that was.
+
 In the following example, the server answers a six-hour
 preset with a five-minute bucket width:
 

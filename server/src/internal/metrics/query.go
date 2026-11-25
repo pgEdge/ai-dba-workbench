@@ -242,6 +242,42 @@ func sampleSource(probeName, where, after string) string {
             ) statement_readings`, readings, after)
 }
 
+// statementIdentityColumns is the identity a pg_stat_statements counter
+// is cumulative within, which keys one statement's readings for the
+// copy reduction in sampleSource and latestStatementSource.
+var statementIdentityColumns = []string{"queryid", "userid", "dbid", "toplevel"}
+
+// latestStatementSource returns the FROM item buildLatestRowsQuery reads
+// statementCopiesProbe from: each statement identity's newest reading,
+// once per connection. Its probing database_name can change between
+// collections and older rows hold one copy per probing database (see
+// statementCopiesProbe), so keying the newest row on database_name, as
+// the text entity key would, returns a stale reading for every database
+// the statement was ever read through. where is applied to every row
+// before the reduction; it never tests database_name. Of the copies of
+// the newest reading the one with the lowest database_name is kept, as
+// sampleSource and the Top Queries readings CTE do, and after, when not
+// empty, is applied to that copy, so a database_name or
+// statement-database fallback filter keeps a statement only when its
+// newest reading matches rather than returning an older one that does.
+// idx_pg_stat_statements_identity_time serves the order.
+func latestStatementSource(where, after string) string {
+	identity := "connection_id, " + strings.Join(statementIdentityColumns, ", ")
+	readings := fmt.Sprintf(`(
+                SELECT DISTINCT ON (%s) *
+                FROM metrics.%s
+                WHERE %s
+                ORDER BY %s, collected_at DESC, database_name
+            )`, identity, statementCopiesProbe, where, identity)
+	if after == "" {
+		return readings + " statement_readings"
+	}
+	return fmt.Sprintf(`(
+                SELECT * FROM %s statement_copies
+                WHERE %s
+            ) statement_readings`, readings, after)
+}
+
 // sampleEntityColumns returns the entity-key columns a derived query
 // partitions probeName's counters by. For statementCopiesProbe it drops
 // database_name, which names the database the reading was taken through
@@ -2459,9 +2495,18 @@ func buildLatestRowsQuery(
 	args = append(args, IntListArg(connectionIDs))
 	argNum++
 
+	// For statementCopiesProbe, a filter on the probing database_name is
+	// applied to the reading latestStatementSource keeps, not to the rows
+	// it chooses from (see latestStatementSource).
+	var afterClauses []string
+	statementCopies := probeName == statementCopiesProbe
 	if filters.DatabaseName != "" && filters.DatabaseColumn != "" {
-		whereClauses = append(whereClauses,
-			fmt.Sprintf("%s = $%d", QuoteIdentifier(filters.DatabaseColumn), argNum))
+		clause := fmt.Sprintf("%s = $%d", QuoteIdentifier(filters.DatabaseColumn), argNum)
+		if statementCopies && filters.DatabaseColumn == "database_name" {
+			afterClauses = append(afterClauses, clause)
+		} else {
+			whereClauses = append(whereClauses, clause)
+		}
 		args = append(args, filters.DatabaseName)
 		argNum++
 	}
@@ -2498,7 +2543,12 @@ func buildLatestRowsQuery(
 
 	if filters.StatementDatabase != nil {
 		clause, sdArgs := statementDatabaseClause(filters.StatementDatabase, argNum)
-		whereClauses = append(whereClauses, clause)
+		if statementCopies {
+			whereClauses = append(whereClauses, statementDatabasePrefilter(argNum))
+			afterClauses = append(afterClauses, clause)
+		} else {
+			whereClauses = append(whereClauses, clause)
+		}
 		args = append(args, sdArgs...)
 		argNum += len(sdArgs)
 	}
@@ -2511,10 +2561,20 @@ func buildLatestRowsQuery(
 
 	// connection_id is always part of the entity key so that two monitored
 	// servers sharing a schema+table name never collapse into one DISTINCT ON
-	// group. Any text/name dimension columns the probe exposes extend the key.
+	// group. Any text/name dimension columns the probe exposes extend the key,
+	// except for statementCopiesProbe, whose rows latestStatementSource has
+	// already reduced to one per statement identity: its text columns include
+	// the probing database_name, which would keep a stale reading for every
+	// database the statement was ever read through.
 	distinctParts := []string{"connection_id"}
-	for _, col := range EntityKeyColumns(outputCols, colTypes) {
-		distinctParts = append(distinctParts, QuoteIdentifier(col))
+	source := "metrics." + QuoteIdentifier(probeName) + "\n            WHERE " + whereClause
+	if statementCopies {
+		distinctParts = append(distinctParts, statementIdentityColumns...)
+		source = latestStatementSource(whereClause, strings.Join(afterClauses, " AND "))
+	} else {
+		for _, col := range EntityKeyColumns(outputCols, colTypes) {
+			distinctParts = append(distinctParts, QuoteIdentifier(col))
+		}
 	}
 	distinctClause := strings.Join(distinctParts, ", ")
 
@@ -2528,8 +2588,7 @@ func buildLatestRowsQuery(
         SELECT %s
         FROM (
             SELECT DISTINCT ON (%s) %s, connection_id, collected_at
-            FROM metrics.%s
-            WHERE %s
+            FROM %s
             ORDER BY %s, collected_at DESC
         ) latest
         ORDER BY %s %s, collected_at DESC
@@ -2538,8 +2597,7 @@ func buildLatestRowsQuery(
 		selectClause,
 		distinctClause,
 		strings.Join(innerParts, ", "),
-		QuoteIdentifier(probeName),
-		whereClause,
+		source,
 		distinctClause,
 		QuoteIdentifier(orderCol),
 		order,

@@ -226,7 +226,9 @@ project adheres to
   first database that has the extension. The query detail charts and
   the `query_metrics` tool count each reading once, so they keep their
   history when that database changes and no longer multiply the
-  figures stored by earlier releases. (#762)
+  figures stored by earlier releases, and the latest-rows mode of
+  `/api/v1/metrics/query` returns each statement's newest reading once
+  rather than one reading per database it was read through. (#762)
 
 ### Security
 

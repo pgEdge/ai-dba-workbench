@@ -13,6 +13,7 @@ package metrics
 import (
 	"context"
 	"database/sql"
+	"maps"
 	"testing"
 	"time"
 )
@@ -105,5 +106,84 @@ func TestStatementDatabaseFallbackAfterCopies_Integration(t *testing.T) {
 		if got.Valid != tt.valid || (tt.valid && got.Float64 != 1) {
 			t.Errorf("calls per second through %s = %v, want valid %v and 1", tt.name, got, tt.valid)
 		}
+	}
+}
+
+// TestQueryLatestRowsStatementReadings_Integration checks that the
+// latest-rows mode returns each pg_stat_statements identity's newest
+// reading once, whichever database it and its predecessors were read
+// through, and that a database_name or statement-database fallback
+// filter keeps the statement only when that newest reading matches.
+func TestQueryLatestRowsStatementReadings_Integration(t *testing.T) {
+	pool, closePool := newLatestRowsTestPool(t)
+	defer closePool()
+	ctx := context.Background()
+
+	dropTable(ctx, pool, "pg_stat_statements")
+	t.Cleanup(func() { dropTable(context.Background(), pool, "pg_stat_statements") })
+
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Minute)
+	t2 := t1.Add(time.Minute)
+	// One statement, with unresolved dbid 300: two copies at t0 from an
+	// earlier collector, then one reading through gamma and one through
+	// delta. Its newest copies on connection 2 were both read at t1.
+	if _, err := pool.Exec(ctx, `
+        CREATE SCHEMA IF NOT EXISTS metrics;
+        CREATE TABLE metrics.pg_stat_statements (connection_id integer,
+            collected_at timestamptz, queryid bigint, userid bigint, dbid bigint,
+            toplevel boolean, database_name text, calls bigint)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+        INSERT INTO metrics.pg_stat_statements VALUES
+            (1, $1, 1, 10, 300, true, 'alpha', 100),
+            (1, $1, 1, 10, 300, true, 'beta', 100),
+            (1, $2, 1, 10, 300, true, 'gamma', 160),
+            (1, $3, 1, 10, 300, true, 'delta', 220),
+            (2, $2, 1, 10, 300, true, 'beta', 50),
+            (2, $2, 1, 10, 300, true, 'alpha', 50)`, t0, t1, t2); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	unresolved := func(name string) *StatementDatabaseFilter {
+		return &StatementDatabaseFilter{Name: name, DBIDs: []int64{}, ResolvedDBIDs: []int64{100}}
+	}
+	for _, tt := range []struct {
+		name    string
+		conns   []int
+		filters MetricFilters
+		want    map[string]int64 // database_name -> calls
+	}{
+		{"newest reading once", []int{1}, MetricFilters{}, map[string]int64{"delta": 220}},
+		{"each connection's newest reading, lowest copy", []int{1, 2}, MetricFilters{},
+			map[string]int64{"delta": 220, "alpha": 50}},
+		{"database_name of the newest reading", []int{1},
+			MetricFilters{DatabaseName: "delta"}, map[string]int64{"delta": 220}},
+		{"database_name of an older reading", []int{1},
+			MetricFilters{DatabaseName: "gamma"}, map[string]int64{}},
+		{"fallback to the newest reading's database", []int{1},
+			MetricFilters{StatementDatabase: unresolved("delta")}, map[string]int64{"delta": 220}},
+		{"fallback to an older reading's database", []int{1},
+			MetricFilters{StatementDatabase: unresolved("alpha")}, map[string]int64{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, err := QueryLatestRows(ctx, pool, "pg_stat_statements", tt.conns,
+				tt.filters, "", "desc", 10)
+			if err != nil {
+				t.Fatalf("QueryLatestRows: %v", err)
+			}
+			got := map[string]int64{}
+			for _, row := range rows {
+				name, _ := row["database_name"].(string)
+				if _, dup := got[name]; dup {
+					t.Errorf("database %q returned more than once: %v", name, rows)
+				}
+				got[name] = toInt64(t, row["calls"])
+			}
+			if !maps.Equal(got, tt.want) {
+				t.Errorf("rows = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

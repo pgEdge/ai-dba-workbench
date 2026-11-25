@@ -245,8 +245,8 @@ func TestHandleHTTPRequestBodyErrors(t *testing.T) {
 }
 
 // TestHandleHTTPRequestDebugAndTracing runs a successful and a failing
-// request with debug logging and tracing enabled, and checks that the
-// trace file records both. Tracing is process-wide and cannot be
+// request and a notification with debug logging and tracing enabled, and
+// checks that the trace file records all three. Tracing is process-wide and cannot be
 // turned off again, so this enables it for the rest of the package's
 // tests, which do not depend on it. The trace file is set up once in
 // TestMain, so a repeated run appends to it; only the lines this run
@@ -273,13 +273,19 @@ func TestHandleHTTPRequestDebugAndTracing(t *testing.T) {
 	if resp := postMCP(t, server, `{"jsonrpc":"2.0","id":2,"method":"no/such/method"}`); resp.Error == nil {
 		t.Error("an unknown method succeeded")
 	}
+	w := httptest.NewRecorder()
+	server.handleHTTPRequest(w, httptest.NewRequest(http.MethodPost, "/mcp/v1",
+		strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)))
+	if w.Code != http.StatusAccepted {
+		t.Errorf("notification status = %d, want 202", w.Code)
+	}
 
 	data, err := os.ReadFile(traceFile)
 	if err != nil {
 		t.Fatalf("failed to read the trace file: %v", err)
 	}
 	added := data[len(before):]
-	if got := strings.Count(string(added), "\n"); got < 4 {
+	if got := strings.Count(string(added), "\n"); got < 6 {
 		t.Errorf("this run added %d trace entries, want a request and a response for each call:\n%s", got, added)
 	}
 }

@@ -353,7 +353,7 @@ func TestParseBaselinesPage(t *testing.T) {
 		{"nil values are absent", map[string]any{"limit": nil, "offset": nil}, baselinesPage{limit: baselinesDefaultLimit}, ""},
 		{"float values", map[string]any{"limit": float64(25), "offset": float64(50)}, baselinesPage{limit: 25, offset: 50}, ""},
 		{"int values", map[string]any{"limit": 1, "offset": 0}, baselinesPage{limit: 1}, ""},
-		{"json number", map[string]any{"limit": json.Number("300")}, baselinesPage{limit: baselinesMaxLimit}, ""},
+		{"json number", map[string]any{"limit": json.Number("100")}, baselinesPage{limit: baselinesMaxLimit}, ""},
 		{"largest offset", map[string]any{"offset": float64(math.MaxInt32)}, baselinesPage{limit: baselinesDefaultLimit, offset: math.MaxInt32}, ""},
 		{"zero limit", map[string]any{"limit": float64(0)}, baselinesPage{}, limitErr},
 		{"negative limit", map[string]any{"limit": -1}, baselinesPage{}, limitErr},
@@ -410,6 +410,115 @@ func TestBaselineMetricPattern(t *testing.T) {
 	got := baselineMetricPattern(&name)
 	if got == nil || *got != `%cache\_hit%` {
 		t.Errorf("pattern = %v; want %q", got, `%cache\_hit%`)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// get_metric_baselines filter and sort tests
+// ---------------------------------------------------------------------------
+
+func TestParseBaselinesView(t *testing.T) {
+	periodErr := "Invalid 'period_type' parameter: must be one of all, hourly, daily"
+	orderErr := "Invalid 'order_by' parameter: must be one of metric, mean_desc, mean_asc, stddev_desc"
+
+	cases := []struct {
+		name       string
+		args       map[string]any
+		wantPeriod string
+		wantOrder  string
+		wantLead   string
+		wantErr    string
+	}{
+		{"defaults", map[string]any{}, "", "metric", "", ""},
+		{"empty and nil are absent", map[string]any{"period_type": "", "order_by": nil}, "", "metric", "", ""},
+		{"hourly by mean desc", map[string]any{"period_type": "hourly", "order_by": "mean_desc"}, "hourly", "mean_desc", "mb.mean DESC, ", ""},
+		{"all by mean asc", map[string]any{"period_type": "all", "order_by": "mean_asc"}, "all", "mean_asc", "mb.mean ASC, ", ""},
+		{"daily by stddev", map[string]any{"period_type": "daily", "order_by": "stddev_desc"}, "daily", "stddev_desc", "mb.stddev DESC, ", ""},
+		{"explicit metric order", map[string]any{"order_by": "metric"}, "", "metric", "", ""},
+		{"weekly is not written", map[string]any{"period_type": "weekly"}, "", "", "", periodErr},
+		{"wrong case period", map[string]any{"period_type": "Hourly"}, "", "", "", periodErr},
+		{"numeric period", map[string]any{"period_type": 1}, "", "", "", periodErr},
+		{"unknown order", map[string]any{"order_by": "mean"}, "", "", "", orderErr},
+		{"injected order", map[string]any{"order_by": "mean; DROP TABLE x"}, "", "", "", orderErr},
+		{"numeric order", map[string]any{"order_by": 2}, "", "", "", orderErr},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, errMsg := parseBaselinesView(tc.args)
+			if errMsg != tc.wantErr {
+				t.Fatalf("error = %q; want %q", errMsg, tc.wantErr)
+			}
+			if tc.wantErr != "" {
+				return
+			}
+			period := ""
+			if got.periodType != nil {
+				period = *got.periodType
+			}
+			if period != tc.wantPeriod || got.orderBy != tc.wantOrder || got.orderLead != tc.wantLead {
+				t.Errorf("view = {%q %q %q}; want {%q %q %q}", period, got.orderBy, got.orderLead,
+					tc.wantPeriod, tc.wantOrder, tc.wantLead)
+			}
+		})
+	}
+}
+
+func TestBaselinesTitle(t *testing.T) {
+	hourly := "hourly"
+	metric := "cache_hit"
+	cases := []struct {
+		name   string
+		metric *string
+		view   baselinesView
+		want   string
+	}{
+		{"defaults", nil, baselinesView{orderBy: "metric"}, "all metrics"},
+		{"metric only", &metric, baselinesView{orderBy: "metric"}, "metric: cache_hit"},
+		{"filter and order", nil, baselinesView{periodType: &hourly, orderBy: "mean_desc", orderLead: "mb.mean DESC, "},
+			"all metrics | period_type: hourly | order_by: mean_desc"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := baselinesTitle(tc.metric, tc.view); got != tc.want {
+				t.Errorf("got %q; want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBaselinesOrderAllowList(t *testing.T) {
+	if len(baselineOrderNames) != len(baselineOrderLeads) {
+		t.Fatalf("%d order names but %d fragments", len(baselineOrderNames), len(baselineOrderLeads))
+	}
+	for _, name := range baselineOrderNames {
+		if _, ok := baselineOrderLeads[name]; !ok {
+			t.Errorf("order %q has no SQL fragment", name)
+		}
+	}
+
+	tool := GetMetricBaselinesTool(nil, nil, nil, nil)
+	props := tool.Definition.InputSchema.Properties
+	for prop, want := range map[string][]string{
+		"period_type": baselinePeriodTypes,
+		"order_by":    baselineOrderNames,
+	} {
+		p, ok := props[prop].(map[string]any)
+		if !ok {
+			t.Fatalf("expected %s property in input schema", prop)
+		}
+		if got, _ := p["enum"].([]string); strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s enum = %v; want %v", prop, p["enum"], want)
+		}
+	}
+
+	example := "period_type='hourly', order_by='mean_desc', limit=5"
+	for name, text := range map[string]string{
+		"description":         tool.Definition.Description,
+		"compact description": tool.Definition.CompactDescription,
+	} {
+		if !strings.Contains(text, example) {
+			t.Errorf("%s does not give the example %q", name, example)
+		}
 	}
 }
 

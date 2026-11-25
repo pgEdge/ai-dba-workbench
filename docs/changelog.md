@@ -102,6 +102,14 @@ project adheres to
 
 ### Security
 
+- Send SMTP credentials without TLS only when the address the alerter
+  or the server's test send actually connected to is a loopback
+  address, rather than whenever the SMTP host is named `localhost`,
+  `127.0.0.1` or `::1`; a host named `localhost` that resolves
+  elsewhere no longer receives the credentials in the clear, whilst a
+  local relay reached on any loopback address still works without
+  TLS. (#843)
+
 - Check the supplied password against the stored hash on a failed
   login for a disabled account, including one locked out after too
   many failed attempts, rather than returning before any comparison;

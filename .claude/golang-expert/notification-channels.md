@@ -297,16 +297,20 @@ match the alerter's `sendEmail`: port 465 with TLS on is implicit TLS,
 and everything else upgrades with STARTTLS whenever the server
 advertises it, TLS setting or not. When STARTTLS is not advertised the
 exchange stays in plaintext: a message without credentials is sent
-unencrypted even with TLS on, whilst `smtp.PlainAuth` refuses to send
-configured credentials over the unencrypted connection unless the SMTP
-host is exactly `localhost`, `127.0.0.1` or `::1` (`isLocalhost` in
-`net/smtp/auth.go`, a plain string match on the name given to
-`smtp.NewClient`, which is the bare host). To such a host the
-credentials go in the clear; neither sender relies on or guards
-against this, and a loopback host is only reachable when the dial
-policy allows internal networks. The SMTP tests therefore use
-`example.com` resolved to the loopback fake, so a refused or succeeding
-PLAIN shows whether the session was upgraded. `sendTestEmail`
+unencrypted even with TLS on. Neither sender uses `smtp.PlainAuth`,
+whose `isLocalhost` exception sends credentials in the clear to a host
+*named* `localhost`, `127.0.0.1` or `::1` wherever that name resolves
+(issue #843). Both use `smtpauth.PlainAuth` (`pkg/smtpauth`), built
+after the dial on the dialled connection (`smtpAuthFunc`), which
+without TLS sends credentials only when that connection's remote
+address is loopback and otherwise fails with
+`smtpauth.ErrUnencryptedConnection` before AUTH; a loopback address is
+only reachable when the dial policy allows internal networks. Because
+the fakes listen on loopback, the SMTP test dialers wrap each
+connection in `peerAddrConn` reporting `nonLoopbackPeer`
+(`192.0.2.25`), so a refused or succeeding PLAIN still shows whether
+the session was upgraded; `smtpTestNotifierVia` and `smtpTestSenderVia`
+with an empty peer keep the real loopback address. `sendTestEmail`
 bounds the whole SMTP exchange with `testSendTimeout`, and `dialSMTP`
 sets that as the connection deadline and closes the connection when the
 context ends. The SMTP host is passed through `hostvalidation.BareHost`

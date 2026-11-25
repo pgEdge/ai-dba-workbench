@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
+	"github.com/pgedge/ai-workbench/pkg/smtpauth"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
@@ -269,6 +270,9 @@ type smtpFake struct {
 	ln       net.Listener
 	b        smtpFakeBehaviour
 	accepted atomic.Int32
+	// auths counts AUTH commands, so a test can show credentials were
+	// never sent.
+	auths    atomic.Int32
 	mu       sync.Mutex
 	messages []string
 }
@@ -355,6 +359,7 @@ func (s *smtpFake) serve(c net.Conn) {
 			r = bufio.NewReader(c)
 			upgraded = true
 		case "AUTH":
+			s.auths.Add(1)
 			if !failed(verb) {
 				reply("235 accepted")
 			}
@@ -406,12 +411,35 @@ func smtpFakeTLS(t *testing.T) (*tls.Config, *x509.CertPool) {
 	return &tls.Config{Certificates: ts.TLS.Certificates, MinVersion: tls.VersionTLS12}, pool
 }
 
+// nonLoopbackPeer is the remote address the SMTP tests' connections
+// report by default, a documentation address (RFC 5737). The fake
+// listens on loopback, and smtpauth.PlainAuth sends credentials without
+// TLS to a loopback address, so without it a refused or succeeding
+// PLAIN could not show whether the session was upgraded.
+const nonLoopbackPeer = "192.0.2.25"
+
+// peerAddrConn is a connection that reports remote as its peer.
+type peerAddrConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (c *peerAddrConn) RemoteAddr() net.Addr { return c.remote }
+
 // smtpTestSender returns a sender that reaches server, whatever port the
 // channel names, through a guarded dialer under policy that resolves
-// example.com to resolveTo.
+// example.com to resolveTo. Its connections report nonLoopbackPeer as
+// their remote address.
 func smtpTestSender(server *smtpFake, pool *x509.CertPool, policy hostvalidation.AddrPolicy, resolveTo string) *notificationTestSender {
-	s := newNotificationTestSender(policy,
-		fakeTestSendResolver(map[string][]string{"example.com": {resolveTo}}))
+	return smtpTestSenderVia(server, pool, policy,
+		map[string][]string{"example.com": {resolveTo}}, nonLoopbackPeer)
+}
+
+// smtpTestSenderVia is smtpTestSender with the resolver's names and the
+// reported peer chosen by the caller; an empty peer leaves the
+// connection's real, loopback, remote address.
+func smtpTestSenderVia(server *smtpFake, pool *x509.CertPool, policy hostvalidation.AddrPolicy, names map[string][]string, peer string) *notificationTestSender {
+	s := newNotificationTestSender(policy, fakeTestSendResolver(names))
 	guarded := s.dial
 	port := server.port()
 	s.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -419,7 +447,11 @@ func smtpTestSender(server *smtpFake, pool *x509.CertPool, policy hostvalidation
 		if err != nil {
 			return nil, err
 		}
-		return guarded(ctx, network, net.JoinHostPort(host, port))
+		conn, err := guarded(ctx, network, net.JoinHostPort(host, port))
+		if err != nil || peer == "" {
+			return conn, err
+		}
+		return &peerAddrConn{Conn: conn, remote: &net.TCPAddr{IP: net.ParseIP(peer), Port: 25}}, nil
 	}
 	s.rootCAs = pool
 	return s
@@ -457,8 +489,8 @@ func TestSendTestEmail_Delivery(t *testing.T) {
 		{"STARTTLS not offered", smtpFakeBehaviour{}, 587, true, false},
 		{"plain", smtpFakeBehaviour{}, 25, false, false},
 		// As in the alerter, an advertised STARTTLS is used with TLS
-		// off too; PLAIN authentication succeeding to a host other than
-		// localhost shows the session was upgraded.
+		// off too; PLAIN authentication succeeding over a connection
+		// that is not to loopback shows the session was upgraded.
 		{"STARTTLS offered with TLS off", smtpFakeBehaviour{startTLS: serverTLS}, 25, false, true},
 		{"a QUIT with no reply still counts as sent", smtpFakeBehaviour{fail: map[string]string{"QUIT": ""}}, 25, false, false},
 	}
@@ -494,8 +526,8 @@ func TestSendTestEmail_Failures(t *testing.T) {
 		{"STARTTLS greeting", smtpFakeBehaviour{greeting: "554 go away"}, 587, true, false, "failed to create SMTP client"},
 		{"STARTTLS hello", smtpFakeBehaviour{fail: map[string]string{"EHLO": "500 no", "HELO": "500 no"}}, 587, true, false, "SMTP HELLO failed"},
 		{"STARTTLS refused", smtpFakeBehaviour{startTLS: serverTLS, fail: map[string]string{"STARTTLS": "454 no"}}, 587, true, false, "STARTTLS failed"},
-		// Without TLS, net/smtp refuses PLAIN to a host other than
-		// localhost before the server is asked.
+		// Without TLS, PLAIN is refused before the server is asked,
+		// because the address connected to is not loopback.
 		{"STARTTLS authentication in the clear", smtpFakeBehaviour{}, 587, true, true, "SMTP authentication failed"},
 		{"plain greeting", smtpFakeBehaviour{greeting: "554 go away"}, 25, false, false, "failed to create SMTP client"},
 		{"plain hello", smtpFakeBehaviour{fail: map[string]string{"EHLO": "500 no", "HELO": "500 no"}}, 25, false, false, "SMTP HELLO failed"},
@@ -513,6 +545,69 @@ func TestSendTestEmail_Failures(t *testing.T) {
 			err := sendSMTPTest(s, tt.port, tt.useTLS, tt.withAuth)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("sendTestEmail = %v, want an error containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestSendTestEmail_PlaintextAuthByConnectedAddress checks that without
+// TLS the credentials are sent only when the address connected to is
+// loopback, whatever the host name (issue #843). A host named localhost
+// whose connection lands elsewhere is refused before AUTH is sent,
+// where net/smtp's own PlainAuth would have sent the credentials in the
+// clear; a genuinely loopback connection is allowed, whatever the name.
+func TestSendTestEmail_PlaintextAuthByConnectedAddress(t *testing.T) {
+	_, pool := smtpFakeTLS(t)
+	tests := []struct {
+		name     string
+		host     string
+		peer     string
+		port     int
+		useTLS   bool
+		wantSent bool
+	}{
+		{"localhost connected elsewhere, TLS off", "localhost", nonLoopbackPeer, 25, false, false},
+		{"localhost connected elsewhere, STARTTLS not offered", "localhost", nonLoopbackPeer, 587, true, false},
+		{"::1 connected elsewhere", "::1", nonLoopbackPeer, 25, false, false},
+		{"localhost connected to loopback", "localhost", "", 25, false, true},
+		{"other name connected to loopback", "example.com", "", 587, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := newSMTPFake(t, smtpFakeBehaviour{})
+			s := smtpTestSenderVia(server, pool, permissiveTestSendPolicy, map[string][]string{
+				"localhost": {"127.0.0.1"}, "example.com": {"127.0.0.1"},
+			}, tt.peer)
+			if tt.host == "::1" {
+				// Reach the IPv4 fake whatever the literal, so the test
+				// needs no IPv6 on the host running it.
+				guarded := s.dial
+				s.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					_, port, _ := net.SplitHostPort(addr) //nolint:errcheck // the sender built addr
+					return guarded(ctx, network, net.JoinHostPort("127.0.0.1", port))
+				}
+			}
+			err := s.sendTestEmail(context.Background(), testEmail{
+				Host: tt.host, Port: tt.port, Username: "Test User", Password: "not-a-real-password",
+				UseTLS: tt.useTLS, FromAddress: "alerts@example.com",
+				To: []string{"jane.doe@example.com"},
+			})
+			if tt.wantSent {
+				if err != nil {
+					t.Fatalf("sendTestEmail = %v", err)
+				}
+				if server.auths.Load() != 1 || server.messageCount() != 1 {
+					t.Errorf("server saw %d AUTH and %d message(s), want 1 and 1",
+						server.auths.Load(), server.messageCount())
+				}
+				return
+			}
+			if !errors.Is(err, smtpauth.ErrUnencryptedConnection) {
+				t.Fatalf("sendTestEmail = %v, want %v", err, smtpauth.ErrUnencryptedConnection)
+			}
+			if server.auths.Load() != 0 || server.messageCount() != 0 {
+				t.Errorf("server saw %d AUTH and %d message(s), want none",
+					server.auths.Load(), server.messageCount())
 			}
 		})
 	}

@@ -19,6 +19,7 @@ moved.
 | `server/src/internal/database/` | Datastore queries; identifier interpolation is allow-listed and quoted |
 | `server/src/internal/llmproxy/` | Outbound proxy to LLM providers with its own `authorize` step and provider API keys |
 | `pkg/crypto/` | Encryption of stored monitored-database passwords (AES-GCM) |
+| `pkg/smtpauth/` | SMTP PLAIN auth for the alerter's email notifier and the server's test send. Every SMTP login goes through `smtpauth.PlainAuth`, built on the dialled connection, which without TLS sends credentials only when that connection's remote address is loopback; `net/smtp.PlainAuth` must not be used, because its `localhost` exception trusts the host name (#843) |
 | `collector/src/database/` | Decrypts credentials through `pkg/crypto` to open monitored connections |
 | `collector/src/database/coldfront_insert.go`, `collector/src/probes/coldfront_insert.go` | ColdFront write path (`use_coldfront_for_metrics`): server-side functions that render monitored-server values into a literal INSERT, and the collector code that batches rows into them |
 | `alerter/src/` | Alert evaluation and outbound notifications (email, webhook, messaging) |

@@ -45,6 +45,30 @@ The following table describes the settings on the `SETTINGS` tab:
 | Enabled | No | On | Toggles the channel on or off. |
 | Estate Default | No | Off | Makes the channel active for every server that has no override; see [Estate Defaults](index.md#estate-defaults). |
 
+## Protecting SMTP Credentials
+
+When a channel has an SMTP username and password, the Workbench sends them
+with the SMTP `PLAIN` mechanism only over an encrypted connection: implicit
+TLS when the port is 465 and `Use TLS` is on, or a connection that the
+Workbench upgrades with STARTTLS because the server advertises it.
+
+If the connection is not encrypted, the Workbench sends the credentials only
+when the address it actually connected to is a loopback address (`127.0.0.0/8`
+or `::1`), so that they cannot leave the host; a local mail relay therefore
+still works without TLS. The decision rests on the connected address rather
+than the host name, so a host named `localhost` that resolves to any other
+address is treated like a remote server. In every other case the delivery or
+test send fails before the credentials are sent. A failed delivery records an
+`SMTP authentication failed` error in the alert's
+[notification history](index.md#retrying-failed-deliveries); a failed test
+send reports only `Failed to send test email`, and the server log records
+the `SMTP authentication failed` reason. A loopback SMTP server is only
+reachable when the alerter's
+[delivery address checks](../../configuration/alerter/configuration_file.md#delivery-address-checks)
+permit it for deliveries, and the server's
+[connection security properties](../../configuration/server/configuration_file.md#connection-security-properties)
+permit it for test sends.
+
 ## Managing Recipients
 
 Each recipient on the `RECIPIENTS` tab has an email address, a display name,

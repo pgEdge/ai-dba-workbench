@@ -22,6 +22,7 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
+	"github.com/pgedge/ai-workbench/pkg/smtpauth"
 )
 
 // sanitizeHeader strips carriage-return and newline characters from a
@@ -156,10 +157,16 @@ func (n *emailNotifier) Send(ctx context.Context, channel *database.Notification
 		}
 	}
 
-	// Setup authentication if credentials provided
-	var auth smtp.Auth
+	// Set up authentication if credentials are provided. The PLAIN
+	// auth is built on the connection the dialer returns, because
+	// whether the credentials may go without TLS depends on the address
+	// actually connected to, not on the host name (issue #843).
+	var newAuth smtpAuthFunc
 	if channel.SMTPUsername != nil && *channel.SMTPUsername != "" && smtpPassword != "" {
-		auth = smtp.PlainAuth("", *channel.SMTPUsername, smtpPassword, smtpHost)
+		username := *channel.SMTPUsername
+		newAuth = func(conn net.Conn) smtp.Auth {
+			return smtpauth.PlainAuth("", username, smtpPassword, smtpHost, conn)
+		}
 	}
 
 	// Build from address with optional display name
@@ -170,14 +177,18 @@ func (n *emailNotifier) Send(ctx context.Context, channel *database.Notification
 	}
 
 	// Send email
-	return n.sendEmail(ctx, addr, auth, from, fromHeader, toAddresses, subject, body, channel.SMTPUseTLS, smtpPort, smtpHost)
+	return n.sendEmail(ctx, addr, newAuth, from, fromHeader, toAddresses, subject, body, channel.SMTPUseTLS, smtpPort, smtpHost)
 }
+
+// smtpAuthFunc builds the SMTP authentication for a connection the
+// notifier has opened; a nil smtpAuthFunc means no authentication.
+type smtpAuthFunc func(conn net.Conn) smtp.Auth
 
 // sendEmail sends an HTML email via SMTP
 func (n *emailNotifier) sendEmail(
 	ctx context.Context,
 	addr string,
-	auth smtp.Auth,
+	newAuth smtpAuthFunc,
 	from string,
 	fromHeader string,
 	to []string,
@@ -207,9 +218,9 @@ func (n *emailNotifier) sendEmail(
 	// which opportunistically upgrades the connection to TLS if the server
 	// supports it.
 	if useTLS && smtpPort == 465 {
-		return n.sendWithTLS(ctx, addr, auth, from, to, msgBytes, smtpHost)
+		return n.sendWithTLS(ctx, addr, newAuth, from, to, msgBytes, smtpHost)
 	}
-	return n.sendWithStartTLS(ctx, addr, auth, from, to, msgBytes, smtpHost)
+	return n.sendWithStartTLS(ctx, addr, newAuth, from, to, msgBytes, smtpHost)
 }
 
 // dialSMTP connects to addr through the guarded dialer and ties the
@@ -241,7 +252,7 @@ func (n *emailNotifier) dialSMTP(ctx context.Context, addr string) (net.Conn, fu
 func (n *emailNotifier) sendWithTLS(
 	ctx context.Context,
 	addr string,
-	auth smtp.Auth,
+	newAuth smtpAuthFunc,
 	from string,
 	to []string,
 	msg []byte,
@@ -273,11 +284,8 @@ func (n *emailNotifier) sendWithTLS(
 	}
 	defer client.Close()
 
-	// Authenticate if credentials provided
-	if auth != nil {
-		if err := client.Auth(auth); err != nil {
-			return fmt.Errorf("SMTP authentication failed: %w", err)
-		}
+	if err := authenticate(client, newAuth, rawConn); err != nil {
+		return err
 	}
 
 	// Send the email
@@ -288,7 +296,7 @@ func (n *emailNotifier) sendWithTLS(
 func (n *emailNotifier) sendWithStartTLS(
 	ctx context.Context,
 	addr string,
-	auth smtp.Auth,
+	newAuth smtpAuthFunc,
 	from string,
 	to []string,
 	msg []byte,
@@ -324,15 +332,27 @@ func (n *emailNotifier) sendWithStartTLS(
 		}
 	}
 
-	// Authenticate if credentials provided
-	if auth != nil {
-		if err := client.Auth(auth); err != nil {
-			return fmt.Errorf("SMTP authentication failed: %w", err)
-		}
+	// Authenticate if credentials provided. Without STARTTLS the
+	// session is still plaintext, and smtpauth.PlainAuth refuses to
+	// send the credentials unless rawConn is to a loopback address.
+	if err := authenticate(client, newAuth, rawConn); err != nil {
+		return err
 	}
 
 	// Send the email
 	return n.sendViaSMTPClient(client, from, to, msg)
+}
+
+// authenticate runs SMTP authentication on client when newAuth is set,
+// building the auth on conn, the connection the notifier opened.
+func authenticate(client *smtp.Client, newAuth smtpAuthFunc, conn net.Conn) error {
+	if newAuth == nil {
+		return nil
+	}
+	if err := client.Auth(newAuth(conn)); err != nil {
+		return fmt.Errorf("SMTP authentication failed: %w", err)
+	}
+	return nil
 }
 
 // sendViaSMTPClient sends the email using an established SMTP client

@@ -58,9 +58,12 @@ or `::1`), so that they cannot leave the host; a local mail relay therefore
 still works without TLS. The decision rests on the connected address rather
 than the host name, so a host named `localhost` that resolves to any other
 address is treated like a remote server. In every other case the delivery or
-test send fails with an `SMTP authentication failed` error before the
-credentials are sent. A loopback SMTP server is only reachable when the
-alerter's
+test send fails before the credentials are sent. A failed delivery records an
+`SMTP authentication failed` error in the alert's
+[notification history](index.md#retrying-failed-deliveries); a failed test
+send reports only `Failed to send test email`, and the server log records
+the `SMTP authentication failed` reason. A loopback SMTP server is only
+reachable when the alerter's
 [delivery address checks](../../configuration/alerter/configuration_file.md#delivery-address-checks)
 permit it for deliveries, and the server's
 [connection security properties](../../configuration/server/configuration_file.md#connection-security-properties)

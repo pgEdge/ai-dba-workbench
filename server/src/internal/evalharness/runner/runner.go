@@ -104,20 +104,25 @@ func (r *Runner) replay(ctx context.Context, inc *incident.Incident, target inve
 	run := &report.Run{Incident: inc.ID, Title: inc.Title, Target: target.String(), Index: index}
 	staged, err := r.Stage(ctx, inc)
 	if err != nil {
+		// A failed rollback may have left the incident's changes on the
+		// instance, so stop as a failed teardown does, and report it even
+		// when ctx is done, since the caller cannot otherwise tell.
+		var rb *stage.RollbackError
+		var rbErr error
+		if errors.As(err, &rb) {
+			rbErr = fmt.Errorf("staging %s: %w", inc.ID, rb)
+		}
 		if ctx.Err() != nil {
+			if rbErr != nil {
+				return nil, errors.Join(ctx.Err(), rbErr)
+			}
 			return nil, ctx.Err()
 		}
 		run.Transcript = investigate.Transcript{
 			Outcome: investigate.OutcomeError,
 			Error:   "staging: " + err.Error(),
 		}
-		// A failed rollback may have left the incident's changes on the
-		// instance, so stop as a failed teardown does.
-		var rb *stage.RollbackError
-		if errors.As(err, &rb) {
-			return run, errors.Join(r.score(run, inc), fmt.Errorf("staging %s: %w", inc.ID, rb))
-		}
-		return run, r.score(run, inc)
+		return run, errors.Join(r.score(run, inc), rbErr)
 	}
 
 	transcript, invErr := r.Investigator.Investigate(ctx, investigate.Request{

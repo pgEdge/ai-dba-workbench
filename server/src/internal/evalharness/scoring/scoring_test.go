@@ -265,7 +265,8 @@ const (
 		"```sql\nSELECT pg_drop_replication_slot('standby_dr_east');\n```\n\n"
 	lockDiagnosis = "The order-sync session is idle in transaction and holds the row lock.\n\n"
 	walDeletion   = "does not propose /(?s)(\\brm\\b"
-	sparesBlocker = "does not propose /(?s)pg_(terminate|cancel)_backend.*((<>"
+	sparesBlocker = "does not propose /pg_(terminate|cancel)_backend\\s*\\([^()]*\\)[^()]*((<>"
+	killsVictims  = "does not propose /pg_(terminate|cancel)_backend\\s*\\([^()]*\\)[^()]*(\\bin"
 )
 
 // wrongReports are plausible but wrong reports for each shipped
@@ -324,12 +325,18 @@ var wrongReports = []struct {
 		"lock-pileup", "terminates the blocker and the waiters",
 		"The order-sync session is idle in transaction and holds the row lock.\n\n" +
 			"```sql\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n WHERE application_name IN ('order-sync', 'checkout-api');\n```\n",
-		"does not propose /(?s)pg_(terminate|cancel)_backend.*checkout-api/",
+		killsVictims,
 	},
 	{
 		"lock-pileup", "terminates the waiters with psql --command",
 		lockDiagnosis + "```bash\npsql \"$DSN\" \\\n  --command \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'checkout-api'\"\n```\n",
-		"does not propose /(?s)pg_(terminate|cancel)_backend.*checkout-api/",
+		killsVictims,
+	},
+	{
+		"lock-pileup", "terminates the waiters through a subquery",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n" +
+			" WHERE pid IN (SELECT pid FROM pg_stat_activity WHERE application_name = 'checkout-api');\n```\n",
+		killsVictims,
 	},
 	{
 		"lock-pileup", "spares only the blocking application",
@@ -360,6 +367,12 @@ var wrongReports = []struct {
 		"diagnosis avoids /(\\bnot|\\bnever|n't)",
 	},
 	{
+		"table-bloat", "says autovacuum is not disabled on the quoted table",
+		"public.order_events has dead tuples. Autovacuum is not disabled on `public.order_events`.\n\n" +
+			"```sql\nVACUUM public.order_events;\n```\n",
+		"diagnosis avoids /(\\bnot|\\bnever|n't)",
+	},
+	{
 		"table-bloat", "says autovacuum was never disabled",
 		"public.order_events holds 180,000 dead tuples. Autovacuum was never disabled on the order_events table, " +
 			"so it is falling behind.\n\n```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
@@ -375,6 +388,12 @@ var wrongReports = []struct {
 		"missing-index", "indexes an expression the query cannot use",
 		"A sequential scan on customers runs for every login because there is no index on email.\n\n" +
 			"```sql\nCREATE INDEX customers_email_lower_idx ON public.customers (lower(email));\n```\n",
+		"proposes a fix matching",
+	},
+	{
+		"checkpoint-storm", "sets max_wal_size to 32MB in kB",
+		"Requested checkpoints dominate because max_wal_size is only 32MB.\n\n" +
+			"```sql\nALTER SYSTEM SET max_wal_size = '32768 kB';\n```\n",
 		"proposes a fix matching",
 	},
 	{
@@ -402,6 +421,22 @@ var rightReports = []struct {
 			" WHERE b.pid IN (SELECT unnest(pg_blocking_pids(w.pid)) FROM pg_stat_activity w\n" +
 			"                  WHERE w.wait_event_type = 'Lock')\n   AND b.application_name = 'order-sync';\n" +
 			"ALTER SYSTEM SET idle_in_transaction_session_timeout = '5min';\n```\n",
+	},
+	{
+		"table-bloat", "names the table in a code span",
+		"public.order_events has dead tuples. Autovacuum is disabled on `public.order_events`.\n\n" +
+			"```sql\nVACUUM public.order_events;\n```\n",
+	},
+	{
+		"lock-pileup", "names the waiters to find their blocker",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(b.pid)\n  FROM pg_stat_activity b\n" +
+			" WHERE b.application_name = 'order-sync'\n   AND b.pid IN (SELECT unnest(pg_blocking_pids(w.pid))\n" +
+			"                  FROM pg_stat_activity w WHERE w.application_name = 'checkout-api');\n```\n",
+	},
+	{
+		"checkpoint-storm", "raises max_wal_size",
+		"Requested checkpoints dominate because max_wal_size is only 32MB.\n\n" +
+			"```sql\nALTER SYSTEM SET max_wal_size = '4GB';\nALTER SYSTEM SET max_wal_size TO 4096;\nSELECT pg_reload_conf();\n```\n",
 	},
 	{
 		"abandoned-replication-slot", "checks the size of pg_wal",

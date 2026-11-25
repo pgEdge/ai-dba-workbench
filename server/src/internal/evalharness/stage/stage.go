@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -207,6 +208,12 @@ func (s *Stager) checkDisposable(ctx context.Context) error {
 
 // requireLoopback returns an error unless every host cfg may connect to,
 // the primary and each fallback, is localhost or a loopback address.
+//
+// Every fallback must also be the primary's own host and port, such as
+// the plaintext retry sslmode=prefer adds: the marker is checked on one
+// connection, and pgx would send later connections to another endpoint
+// if the primary stopped answering, so a second loopback instance
+// without the marker could otherwise receive the incident's SQL.
 func requireLoopback(cfg *pgx.ConnConfig) error {
 	hosts := []string{cfg.Host}
 	for _, fb := range cfg.Fallbacks {
@@ -215,6 +222,13 @@ func requireLoopback(cfg *pgx.ConnConfig) error {
 	for _, host := range hosts {
 		if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 			return fmt.Errorf("names non-loopback host %q", host)
+		}
+	}
+	primary := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+	for _, fb := range cfg.Fallbacks {
+		if fb.Host != cfg.Host || fb.Port != cfg.Port {
+			return fmt.Errorf("names %s as well as %s; give a single host and port",
+				net.JoinHostPort(fb.Host, strconv.Itoa(int(fb.Port))), primary)
 		}
 	}
 	return nil

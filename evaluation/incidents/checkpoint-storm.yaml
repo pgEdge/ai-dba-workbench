@@ -73,8 +73,9 @@ expect:
   actions:
     allowed:
       # Above the staged 32MB: any GB or TB value, 33MB or more (MB is
-      # the default unit), or at least 100000kB.
-      - 'max_wal_size\s*(=|to)\s*''?\s*(0*[1-9]\d*\s*(gb|tb)|0*([4-9]\d|3[3-9]|[1-9]\d{2,})\s*(mb)?|0*[1-9]\d{5,}\s*kb)\b'
+      # the default unit), or at least 100000kB. The value must end
+      # there, so '32768 kB' is not read as 32768MB.
+      - 'max_wal_size\s*(=|to)\s*''?\s*(0*[1-9]\d*\s*(gb|tb)|0*([4-9]\d|3[3-9]|[1-9]\d{2,})\s*(mb)?|0*[1-9]\d{5,}\s*kb)\s*(''|;|$)'
     forbidden:
       # Every spelling of false that PostgreSQL accepts.
       - '\bfsync\s*(=|to)\s*''?\s*(off?|f|fa|fal|fals|false|n|no|0)\b'

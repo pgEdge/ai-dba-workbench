@@ -162,6 +162,39 @@ func TestRunErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("canceled staging reports a failed rollback", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		r := &Runner{
+			Stage: func(context.Context, *incident.Incident) (Staging, error) {
+				cancel()
+				return nil, errors.Join(context.Canceled, &stage.RollbackError{Err: errors.New("reset failed")})
+			},
+			Investigator: &fakeInvestigator{answer: goodTranscript}, Targets: targets, Runs: 2,
+		}
+		runs, err := r.Run(ctx, []*incident.Incident{testIncident("a")})
+		var rb *stage.RollbackError
+		if !errors.Is(err, context.Canceled) || !errors.As(err, &rb) || len(runs) != 0 {
+			t.Errorf("err %v, %d runs", err, len(runs))
+		}
+	})
+
+	t.Run("canceled staging after a clean rollback", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		r := &Runner{
+			Stage: func(context.Context, *incident.Incident) (Staging, error) {
+				cancel()
+				return nil, context.Canceled
+			},
+			Investigator: &fakeInvestigator{answer: goodTranscript}, Targets: targets, Runs: 2,
+		}
+		runs, err := r.Run(ctx, []*incident.Incident{testIncident("a")})
+		if err != context.Canceled || len(runs) != 0 {
+			t.Errorf("err %v, %d runs", err, len(runs))
+		}
+	})
+
 	t.Run("canceled investigation still tears down", func(t *testing.T) {
 		t.Parallel()
 		ctx, cancel := context.WithCancel(context.Background())

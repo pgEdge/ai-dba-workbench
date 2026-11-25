@@ -56,14 +56,14 @@ expect:
     # contains.
     any_of:
       - 'autovacuum_enabled\s*=\s*''?\s*(false|off|f|no|n|0)\b'
-      - '(disabled|turned\s+off|switched\s+off)\s+(for|on)\s+(the\s+|this\s+)?(table|order_events|public\.order_events)'
+      - '(disabled|turned\s+off|switched\s+off)\s+(for|on)\s+(the\s+|this\s+)?`?(table|order_events|public\.order_events)'
       - '\b(table|order_events)\b[^.\n]*\b(disabled|turned\s+off|switched\s+off)'
     # Saying the table's autovacuum is not (isn't, never) disabled. The
     # second pattern stops at the end of a clause, and needs the
     # negation to end it, so "off for order_events only; it is not
     # disabled cluster-wide" is not read as a denial.
     none_of:
-      - '(\bnot|\bnever|n''t)\s+(been\s+)?(disabled|turned\s+off|switched\s+off)\s+(for|on)\s+(the\s+|this\s+)?(table|order_events|public\.order_events)'
+      - '(\bnot|\bnever|n''t)\s+(been\s+)?(disabled|turned\s+off|switched\s+off)\s+(for|on)\s+(the\s+|this\s+)?`?(table|order_events|public\.order_events)'
       - '\b(table|order_events)\b[^.;\n]*(\bnot|\bnever|n''t)\s+(been\s+)?(disabled|turned\s+off|switched\s+off)\s*([.;,:!)\n]|$|\s(but|and|so|yet)\b)'
   actions:
     allowed:

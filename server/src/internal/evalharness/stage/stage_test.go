@@ -529,6 +529,8 @@ func TestDisposableGuard(t *testing.T) {
 		{"remote admin host", "postgres://u@192.0.2.1/x", dsn, "", `admin DSN names non-loopback host "192.0.2.1"`},
 		{"remote fallback host", "host=127.0.0.1,192.0.2.1 user=u dbname=x", dsn, "", `admin DSN names non-loopback host "192.0.2.1"`},
 		{"unix socket", "host=/tmp user=u dbname=x", dsn, "", `admin DSN names non-loopback host "/tmp"`},
+		{"second loopback host", "host=127.0.0.1,127.0.0.2 user=u dbname=x", dsn, "", "admin DSN names 127.0.0.2:5432 as well as 127.0.0.1:5432"},
+		{"second loopback port", dsn, "host=127.0.0.1,127.0.0.1 port=5432,5433 user=u dbname=x", "", "datastore DSN names 127.0.0.1:5433 as well as 127.0.0.1:5432"},
 		{"remote datastore host", dsn, "postgres://u@192.0.2.1/x", "", `datastore DSN names non-loopback host "192.0.2.1"`},
 		{"bad datastore DSN", dsn, "postgres://%zz", "", "parse datastore DSN"},
 		{"admin unreachable", unreachable, dsn, "", "connect with the admin DSN"},
@@ -554,8 +556,9 @@ func TestDisposableGuard(t *testing.T) {
 			}
 		})
 	}
-	// A canceled context fails the check rather than passing it.
-	s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, Registry: &fakeRegistry{}}
+	// A canceled context fails the check rather than passing it. The
+	// marker exists, so only the cancellation can make the check fail.
+	s := &Stager{AdminDSN: dsn, DatastoreDSN: dsn, Registry: &fakeRegistry{}, marker: testMarker(t, dsn)}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := s.checkDisposable(ctx); err == nil {
@@ -573,6 +576,18 @@ func TestRequireLoopback(t *testing.T) {
 		if err := requireLoopback(cfg); (err == nil) != ok {
 			t.Errorf("requireLoopback(%q) = %v", host, err)
 		}
+	}
+	// sslmode=prefer adds a plaintext fallback to the same endpoint,
+	// which is allowed.
+	cfg, err := pgx.ParseConfig("postgres://u@127.0.0.1:5432/x?sslmode=prefer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Fallbacks) == 0 {
+		t.Fatal("sslmode=prefer added no fallback")
+	}
+	if err := requireLoopback(cfg); err != nil {
+		t.Errorf("requireLoopback(sslmode=prefer) = %v", err)
 	}
 }
 

@@ -543,7 +543,7 @@ func TestCreateFailsMidTransaction(t *testing.T) {
 		}
 	}
 	mustExec(`CREATE FUNCTION test_refuse() RETURNS trigger LANGUAGE plpgsql
-        AS $$ BEGIN RAISE EXCEPTION 'refused by test'; END $$`)
+        AS $$ BEGIN RAISE EXCEPTION 'refused by %', TG_NAME; END $$`)
 	tests := []struct {
 		name, trigger, drop, want string
 	}{
@@ -559,7 +559,9 @@ func TestCreateFailsMidTransaction(t *testing.T) {
 			`CREATE CONSTRAINT TRIGGER test_refuse_commit AFTER INSERT ON proposed_actions
                 DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION test_refuse()`,
 			`DROP TRIGGER test_refuse_commit ON proposed_actions`,
-			"create proposed action",
+			// The deferred trigger's own text shows the failure came
+			// from COMMIT, not from an earlier step of the transaction.
+			"create proposed action: ERROR: refused by test_refuse_commit",
 		},
 	}
 	for _, tt := range tests {

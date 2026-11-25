@@ -71,7 +71,18 @@ moved.
   `hostaddr`; `host` goes through `HostValidator.ValidateHost` and a
   non-empty `hostaddr` through `ValidateHostAddr`, which requires a
   literal IP and then applies the same blocklist, allowlist and
-  internal-range checks. The server URL prefers `hostaddr` over
+  internal-range checks. Before either list, `ValidateHost` refuses a
+  literal, or any address a resolved name returns, that
+  `hostvalidation.IsAlwaysBlockedIP` reports (`ErrAlwaysBlockedHost`),
+  matching the connect-time floor; an `allowed_hosts` name match is
+  still accepted without a lookup. Notification channel create and
+  update apply only that floor (`CheckAlwaysBlockedHost`, via
+  `refuseAlwaysBlockedTargets`) to supplied `smtp_host`, `webhook_url`
+  and `endpoint_url` hosts. An update checks only a `host` or
+  `hostaddr` that differs from the stored value (`changedValue`), since
+  the server dialog resends the host on every save; the stored target
+  meets the connect-time checks instead. The server URL prefers
+  `hostaddr` over
   `host`, so skipping either check lets an allowed name front an
   internal address. At connect time `hostvalidation.CheckStoredTarget`
   (in `pkg/`) refuses a stored host carrying `, [ ] / ? @ # %` or

@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 // TestHostValidator_ValidateHost_BracketedIPv6 checks that one pair of
@@ -181,5 +183,58 @@ func TestConnectionHandler_UpdateBracketedIPv6Host(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), "Invalid host") {
 			t.Errorf("host %q: body %q, want Invalid host", bad, rec.Body.String())
 		}
+	}
+}
+
+// TestConnectionHandler_UpdateKeepsStoredTarget checks that an update
+// repeating a stored host and hostaddr that the save-time rules would
+// now refuse (here an always-blocked address, with
+// allow_internal_networks on) succeeds, as the server dialog resends the
+// host on every save, whilst a changed host or hostaddr is still held to
+// the rules. The connect-time checks still refuse the stored target.
+func TestConnectionHandler_UpdateKeepsStoredTarget(t *testing.T) {
+	const (
+		storedHost     = "169.254.10.10"
+		storedHostAddr = "169.254.10.20"
+	)
+	env := newConnCRUDEnv(t)
+	env.handler = NewConnectionHandlerWithSecurity(env.ds, env.store,
+		auth.NewRBACChecker(env.store), true, nil, nil)
+	id := env.seed(t, env.user, storedHost, 5432, "app", "alice", nil)
+	if _, err := env.pool.Exec(context.Background(),
+		"UPDATE connections SET hostaddr = $1 WHERE id = $2", storedHostAddr, id); err != nil {
+		t.Fatalf("set hostaddr: %v", err)
+	}
+	withHostAddr := func(body, hostaddr string) string {
+		return strings.TrimSuffix(body, "}") + fmt.Sprintf(`,"hostaddr":%q}`, hostaddr)
+	}
+
+	rec := env.serve(env.request(http.MethodPut, connPath(id, ""),
+		withHostAddr(dialogBody(storedHost, "edited", "", "", ""), storedHostAddr), true))
+	expectStatus(t, rec, http.StatusOK)
+	if got := descriptionOf(t, env, id); got != "edited" {
+		t.Errorf("description = %q, want edited", got)
+	}
+
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"changed host",
+			dialogBody("169.254.10.11", "x", "", "", ""),
+			"Invalid host: " + ErrAlwaysBlockedHost.Error()},
+		{"changed hostaddr",
+			withHostAddr(dialogBody(storedHost, "x", "", "", ""), "169.254.10.21"),
+			"Invalid hostaddr: " + ErrAlwaysBlockedHost.Error()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := env.serve(env.request(http.MethodPut, connPath(id, ""), tc.body, true))
+			expectStatus(t, rec, http.StatusBadRequest)
+			if !strings.Contains(rec.Body.String(), tc.want) {
+				t.Errorf("body %q, want %q", rec.Body.String(), tc.want)
+			}
+		})
+	}
+	if got := descriptionOf(t, env, id); got != "edited" {
+		t.Errorf("description = %q after refused updates, want edited", got)
 	}
 }

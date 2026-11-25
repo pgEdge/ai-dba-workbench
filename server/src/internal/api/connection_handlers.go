@@ -95,18 +95,30 @@ func (h *ConnectionHandler) validateConnectionTarget(w http.ResponseWriter, host
 	if host != nil {
 		if err := h.hostValidator.ValidateHost(*host); err != nil {
 			log.Printf("[ERROR] Invalid host validation: %v", err)
-			RespondError(w, http.StatusBadRequest, "Invalid host")
+			RespondError(w, http.StatusBadRequest, targetRefusalMessage("Invalid host", err))
 			return false
 		}
 	}
 	if hostaddr != nil && *hostaddr != "" {
 		if err := h.hostValidator.ValidateHostAddr(*hostaddr); err != nil {
 			log.Printf("[ERROR] Invalid hostaddr validation: %v", err)
-			RespondError(w, http.StatusBadRequest, "Invalid hostaddr")
+			RespondError(w, http.StatusBadRequest, targetRefusalMessage("Invalid hostaddr", err))
 			return false
 		}
 	}
 	return true
+}
+
+// targetRefusalMessage is the response to a host or hostaddr that
+// validation refused: prefix alone, or, for an always-blocked address,
+// prefix followed by ErrAlwaysBlockedHost's message, which names
+// neither the host nor the address but tells the user that no
+// configuration change will make the target usable.
+func targetRefusalMessage(prefix string, err error) string {
+	if errors.Is(err, ErrAlwaysBlockedHost) {
+		return prefix + ": " + ErrAlwaysBlockedHost.Error()
+	}
+	return prefix
 }
 
 // validateSSLFilePaths checks the sslcert, sslkey and sslrootcert paths
@@ -132,10 +144,11 @@ func (h *ConnectionHandler) validateSSLFilePaths(w http.ResponseWriter, sslCert,
 	return false
 }
 
-// changedSSLPath returns the SSL path an update request supplies, or nil
-// when the request leaves the field out or repeats the stored value, so
-// that validateSSLFilePaths checks only a path the request changes.
-func changedSSLPath(requested *string, stored sql.NullString) *string {
+// changedValue returns the value an update request supplies for a
+// field, or nil when the request leaves the field out or repeats the
+// stored value, so that validateConnectionTarget and
+// validateSSLFilePaths check only a value the request changes.
+func changedValue(requested *string, stored sql.NullString) *string {
 	if requested != nil && stored.Valid && *requested == stored.String {
 		return nil
 	}
@@ -582,20 +595,24 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate host and hostaddr if being updated (SSRF protection)
-	if !h.validateConnectionTarget(w, req.Host, req.HostAddr) {
+	// The server dialog sends the host and every SSL path back on each
+	// save, so only a value that differs from the stored one is checked
+	// (SSRF protection for the host and hostaddr): a stored target that
+	// the current rules would refuse, such as one the always-blocked
+	// floor now catches, must not block an unrelated edit, whilst any
+	// newly entered value is still held to them. The stored values are
+	// checked again when the server connects (BuildConnectionString and
+	// the dial policy for the target, checkStoredSSLPaths for the SSL
+	// paths), so leaving them in place grants nothing.
+	if !h.validateConnectionTarget(w,
+		changedValue(req.Host, sql.NullString{String: conn.Host, Valid: true}),
+		changedValue(req.HostAddr, conn.HostAddr)) {
 		return
 	}
-	// The server dialog sends every SSL path back on each save, so only
-	// a path that differs from the stored one is checked: a value stored
-	// before the path rules existed must not block an unrelated edit,
-	// whilst any newly entered path is still held to them. The stored
-	// value is checked again when the server connects
-	// (BuildConnectionString), so leaving it in place grants nothing.
 	if !h.validateSSLFilePaths(w,
-		changedSSLPath(req.SSLCert, conn.SSLCert),
-		changedSSLPath(req.SSLKey, conn.SSLKey),
-		changedSSLPath(req.SSLRootCert, conn.SSLRootCert)) {
+		changedValue(req.SSLCert, conn.SSLCert),
+		changedValue(req.SSLKey, conn.SSLKey),
+		changedValue(req.SSLRootCert, conn.SSLRootCert)) {
 		return
 	}
 

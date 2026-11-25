@@ -57,6 +57,12 @@ project adheres to
 
 ### Fixed
 
+- Show the event timeline on a pgEdge ColdFront metrics datastore.
+  Every timeline request, and the estate and scoped snapshots that
+  include it, previously failed with `operator does not exist: json =
+  json`, because ColdFront returns the `pg_ident.conf` mappings that
+  the timeline compares between snapshots as `json`, which has no
+  equality operator; the timeline now compares them as text. (#886)
 - Stop one failing dashboard request from showing the "Disconnected"
   dialog in the web client and logging the user out. Three consecutive
   server or network errors from any requests previously declared the

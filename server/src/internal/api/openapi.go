@@ -2471,7 +2471,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/actions/{id}": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get an action",
-				Description: "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser. For anyone but the proposer or the approver, a superuser included, the statements, rationale, review reasons and results are masked as other statement text is, and the preview, undo, verification and outcome documents are null.",
+				Description: "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser. For anyone but the proposer or the approver, a superuser included, the statements, review reasons and result statements and errors are masked as other statement text is, and the rationale, the rows each statement returned, and the preview, undo, verification and outcome documents are null.",
 				OperationID: "getAction",
 				Tags:        []string{"Actions"},
 				Security:    bearerAuth,

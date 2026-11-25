@@ -24,8 +24,8 @@ project adheres to
   The new `actions` section of the server configuration file sets the
   lock timeout, statement timeout, attempt limit and context size. The
   new action endpoints propose, fetch, execute and cancel an action;
-  fetching an action masks its statements and results for anyone other
-  than its proposer and approver.
+  fetching an action masks its statements and withholds its rationale
+  and result rows for anyone other than its proposer and approver.
   An approved action can be retried only by its approver or a
   superuser, and an overridden one only by the person who overrode it
   or a superuser. Each round trip to the monitored database has a

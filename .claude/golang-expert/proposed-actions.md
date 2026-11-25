@@ -40,8 +40,10 @@ row.
   rationale, review reasons and results as stored only to the proposer
   or the approver. Everyone else, superusers included, gets
   `maskActionText`: statements through `metrics.RedactStatementText`,
-  free text and result cells through `redact.Text`, and the
-  preview/undo/verification/outcome documents nil. Mask a copy; never
+  review reasons and result errors through `redact.Text`, and the
+  rationale, result rows and preview/undo/verification/outcome
+  documents nil (prose and bare cell values cannot be masked
+  reliably, so never switch them back to `redact.Text`). Mask a copy; never
   the slices shared with the stored action. Any new route returning an
   `actions.Action` must go through `viewFor`, and
   `tools/datastore_masking_routes_test.go` checks the GET route.

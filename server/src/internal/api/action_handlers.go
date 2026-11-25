@@ -517,8 +517,8 @@ func (h *ActionHandler) approveAndStart(ctx context.Context, a *actions.Action) 
 // connection can read the action, so only the proposer and the approver,
 // who decided to run that text, see it as stored. Everyone else, a
 // superuser included, gets it masked as the other routes that return
-// statement text mask it (GitHub issues #670 and #724); see
-// maskActionText.
+// statement text mask it (GitHub issues #670 and #724), with the
+// rationale and result rows withheld; see maskActionText.
 func (h *ActionHandler) viewFor(ctx context.Context, a *actions.Action) *actions.Action {
 	username := auth.GetUsernameFromContext(ctx)
 	proposer := username != "" && username == a.ProposedBy
@@ -535,20 +535,21 @@ func (h *ActionHandler) viewFor(ctx context.Context, a *actions.Action) *actions
 }
 
 // maskActionText replaces every text field of a that may hold a secret
-// with a masked copy, leaving the slices a shared with the stored action
-// untouched. Statement text goes through metrics.RedactStatementText,
-// and free text (the rationale, the review's reasons, the run's errors
-// and result rows) through redact.Text, except that a result cell in a
-// secret-named column is masked whole (maskResultRows). The preview,
+// with a masked copy, or withholds it, leaving the slices a shared with
+// the stored action untouched. Statement text goes through
+// metrics.RedactStatementText, and the review's reasons and the run's
+// errors through redact.Text. The rationale and the rows a statement
+// returned are withheld (nil) instead: the rationale is prose, which can
+// state a password in words redact.Text cannot detect ("the new
+// password is ..."), and a result cell can hold a bare credential under
+// any column name, so neither can be masked reliably. The column names
+// are kept, so the caller can see that rows were returned. The preview,
 // undo, verification and outcome documents, which nothing writes yet,
-// are withheld, since their masking cannot be known until something
+// are withheld too, since their masking cannot be known until something
 // does.
 func maskActionText(a *actions.Action) {
 	a.Statements = mapStrings(a.Statements, metrics.RedactStatementText)
-	if a.Rationale != nil {
-		r := redact.Text(*a.Rationale)
-		a.Rationale = &r
-	}
+	a.Rationale = nil
 	if a.Review != nil {
 		v := *a.Review
 		v.Reasons = mapStrings(v.Reasons, redact.Text)
@@ -560,41 +561,13 @@ func maskActionText(a *actions.Action) {
 			res := a.Results[i]
 			res.Statement = metrics.RedactStatementText(res.Statement)
 			res.Error = redact.Text(res.Error)
-			res.Rows = maskResultRows(res.Columns, res.Rows)
+			res.Rows = nil
+			res.Truncated = false
 			results[i] = res
 		}
 		a.Results = results
 	}
 	a.Preview, a.Undo, a.Verification, a.Outcome = nil, nil, nil, nil
-}
-
-// maskResultRows returns a masked copy of a run's result rows, or nil
-// for nil rows. A cell in a column whose name marks a secret, by the
-// rule metrics.IsSecretColumnName applies to metric columns, becomes
-// redact.RedactedValue whatever it holds, since a bare value carries no
-// keyword for redact.Text to find; every other cell goes through
-// redact.Text.
-func maskResultRows(columns []string, rows [][]string) [][]string {
-	if rows == nil {
-		return nil
-	}
-	secret := make([]bool, len(columns))
-	for i, c := range columns {
-		secret[i] = metrics.IsSecretColumnName(c)
-	}
-	masked := make([][]string, len(rows))
-	for j, row := range rows {
-		out := make([]string, len(row))
-		for k, cell := range row {
-			if k < len(secret) && secret[k] {
-				out[k] = redact.RedactedValue
-			} else {
-				out[k] = redact.Text(cell)
-			}
-		}
-		masked[j] = out
-	}
-	return masked
 }
 
 // mapStrings returns a new slice holding f of each element of in, or nil

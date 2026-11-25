@@ -541,7 +541,8 @@ func TestActionRedaction(t *testing.T) {
 // TestActionStatementMasking proves the statement text, and what the
 // run reported, are returned as stored only to the proposer and the
 // approver. Everyone else who can read the action, a superuser
-// included, gets them masked, and the stored action is left as it was.
+// included, gets them masked, with the rationale and result rows
+// withheld, and the stored action is left as it was.
 func TestActionStatementMasking(t *testing.T) {
 	const secret = "example-secret"
 	stmt := "ALTER ROLE app PASSWORD '" + secret + "'"
@@ -560,7 +561,9 @@ func TestActionStatementMasking(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newActionTestEnv(t)
-			rationale := "rotate the password to '" + secret + "'"
+			// Prose, which redact.Text cannot detect as holding a
+			// secret, so it must be withheld rather than masked.
+			rationale := "The new password is " + secret + "."
 			approver := "carol"
 			a := &actions.Action{
 				ID: 1, ConnectionID: 7, ProposedBy: "alice", ReviewStatus: "passed",
@@ -570,9 +573,9 @@ func TestActionStatementMasking(t *testing.T) {
 				Review:     &actions.Verdict{Decision: "pass", Reasons: []string{"sets PASSWORD '" + secret + "'"}},
 				Results: []actions.StatementResult{{
 					Statement: stmt, Error: "near PASSWORD '" + secret + "'",
-					// The second cell is a bare value: only its column's
-					// name marks it as a secret.
-					Columns: []string{"c", "user_password"},
+					// The second cell is a bare value under a column name
+					// nothing marks as secret, so the rows are withheld.
+					Columns: []string{"c", "api_key"},
 					Rows:    [][]string{{"PASSWORD '" + secret + "'", secret}},
 				}},
 				Preview: json.RawMessage(`{"text":"` + secret + `"}`),
@@ -593,9 +596,12 @@ func TestActionStatementMasking(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 				t.Fatal(err)
 			}
-			if len(got.Statements) != 1 || len(got.Results) != 1 || len(got.Results[0].Rows) != 1 ||
-				got.Review == nil || len(got.Review.Reasons) != 1 || got.Rationale == nil {
+			if len(got.Statements) != 1 || len(got.Results) != 1 || len(got.Results[0].Columns) != 2 ||
+				got.Review == nil || len(got.Review.Reasons) != 1 {
 				t.Errorf("a masked field was dropped: %s", body)
+			}
+			if withheld := got.Rationale == nil && got.Results[0].Rows == nil; withheld == tt.shown {
+				t.Errorf("rationale and rows withheld = %v, want %v: %s", withheld, !tt.shown, body)
 			}
 			if a.Statements[0] != stmt || a.Results[0].Statement != stmt ||
 				!strings.Contains(a.Results[0].Rows[0][0], secret) || a.Results[0].Rows[0][1] != secret ||

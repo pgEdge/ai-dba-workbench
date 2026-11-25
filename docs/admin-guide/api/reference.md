@@ -280,11 +280,13 @@ describes the limits.
 | POST | `/api/v1/actions/{id}/cancel` | Cancel a running action (202). |
 
 The `/api/v1/actions/{id}` endpoint returns an action to any caller who can
-see its connection, but returns the `statements` and `results` unmasked only
-to the user who proposed the action and the user who approved it. For any
-other caller, a superuser included, the statement text, results, rationale
-and review reasons are masked in the same way as query text, as described
-under [Masked Credentials](#masked-credentials).
+see its connection, but returns the `statements`, `rationale` and `results`
+as stored only to the user who proposed the action and the user who approved
+it. For any other caller, a superuser included, the statement text, the
+result errors and the review reasons are masked in the same way as query
+text, as described under [Masked Credentials](#masked-credentials), whilst
+the `rationale` and the rows each statement returned are withheld, since
+neither prose nor a bare value can be masked reliably.
 The `evidence` and `conversation_id` fields are returned only to the user who
 proposed the action and to a superuser.
 

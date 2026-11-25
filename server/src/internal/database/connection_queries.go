@@ -397,17 +397,21 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Bound every statement server-side. See
+	// DefaultDatastoreStatementTimeout for why the handlers' own
+	// context deadlines are not enough on their own. The detection
+	// probe runs with the configured value, or the plain default, so a
+	// shorter role or database default cannot cancel it.
+	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = statementTimeout
+
 	coldFront, err := detectColdFrontDatastore(ctx, poolConfig.ConnConfig)
 	if err != nil {
 		return nil, err
 	}
 	poolConfig.ConnConfig.DefaultQueryExecMode = datastoreExecMode(coldFront)
 
-	// Bound every statement server-side. See
-	// DefaultDatastoreStatementTimeout for why the handlers' own
-	// context deadlines are not enough on their own. The default
-	// depends on the datastore kind, so it is settled only now; the
-	// probe connection above ran with PostgreSQL's own setting.
+	// The default statement timeout depends on the datastore kind, so
+	// it is settled only now that detection has run.
 	floor := effectiveQueryTimeoutFloor(configuredQueryTimeout, coldFront)
 	if cfg.StatementTimeout == "" {
 		statementTimeout = statementTimeoutParam(defaultStatementTimeout(floor))

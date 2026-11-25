@@ -321,7 +321,8 @@ database:
   # request never arrives. Accepts any Go duration string; 0 disables
   # the timeout, which is not recommended. When unset, the default
   # rises to match query_timeout, or two minutes on a pgEdge ColdFront
-  # datastore, so leave it unset unless you need a fixed value.
+  # datastore, and a shorter non-zero value is raised to match with a
+  # startup warning, so leave it unset unless you need a longer value.
   # Default: 30s
   # statement_timeout: "30s"
 

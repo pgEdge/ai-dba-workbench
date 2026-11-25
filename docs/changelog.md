@@ -91,9 +91,12 @@ project adheres to
   which a ColdFront metrics view can exceed on its own the first time a
   connection queries it, so they failed with `context deadline
   exceeded`. On a ColdFront datastore every request now has at least
-  two minutes, and the default `statement_timeout` rises to match; the
-  new `database.query_timeout` server property sets a different
-  allowance on any datastore. (#891)
+  two minutes, and the `statement_timeout` rises to match; the new
+  `database.query_timeout` server property sets a different allowance
+  on any datastore. A `statement_timeout` set to a shorter non-zero
+  value, such as the `30s` that earlier example configuration files
+  carried, is raised to the request allowance and the server logs a
+  warning at startup; remove the line to silence the warning. (#891)
 
 - Stop one failing dashboard request from showing the "Disconnected"
   dialog in the web client and logging the user out. Three consecutive

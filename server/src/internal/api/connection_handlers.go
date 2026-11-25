@@ -721,6 +721,11 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// listDatabasesTimeout bounds listing a connection's databases. The
+// listing runs on the monitored server, not the datastore, so it is not
+// raised by Datastore.QueryTimeout.
+const listDatabasesTimeout = 30 * time.Second
+
 // Refusal messages for a caller who can see a connection but may not
 // change it.
 const (
@@ -785,7 +790,7 @@ func (h *ConnectionHandler) listDatabases(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), listDatabasesTimeout)
 	defer cancel()
 
 	databases, err := h.datastore.ListDatabases(ctx, connectionID)

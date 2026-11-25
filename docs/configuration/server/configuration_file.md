@@ -377,7 +377,7 @@ for the server's datastore.
 | `pool_max_conns` | int | `20` | Max pool connections |
 | `pool_min_conns` | int | `0` | Min pool connections |
 | `pool_max_conn_idle_time` | string | `30m` | Max idle time |
-| `statement_timeout` | string | `30s` | Server-side statement timeout |
+| `statement_timeout` | string | `30s`; see below | Server-side statement timeout |
 | `query_timeout` | string | | Least time per request for queries |
 
 The server applies the defaults above to any option that neither the
@@ -397,11 +397,13 @@ server-side timeout is what actually frees the connection.
 The default of `30s` matches the longest deadline the server grants an
 ordinary datastore query, so the timeout rejects nothing that would otherwise
 have completed. When `query_timeout` is set, or the datastore stores metrics
-in pgEdge ColdFront, the default rises to match the longer request deadline;
-an explicit `statement_timeout` is always used as given. Deleting a connection
-is the exception: the deletion also removes the connection's alerts, history
-and other dependent rows, so the server runs it with a transaction-local
-timeout of four minutes that overrides `statement_timeout`.
+in pgEdge ColdFront, the default rises to match the longer request deadline,
+and an explicit non-zero value shorter than that deadline is raised to it, with
+a warning in the server log at startup; a longer value, or `0`, is used as
+given. Deleting a connection is the exception: the deletion also removes the
+connection's alerts, history and other dependent rows, so the server runs it
+with a transaction-local timeout of four minutes that overrides
+`statement_timeout`.
 
 The value accepts any Go duration string, such as `45s` or `1m30s`. The server
 sends the value to PostgreSQL in whole milliseconds and drops any fraction, so
@@ -430,7 +432,8 @@ information, see
 The value accepts a positive Go duration string of up to `4m`, such as `90s`
 or `3m`, which leaves time for the server to write the response within the
 HTTP server's five-minute write timeout. When `statement_timeout` is not set,
-the server raises the statement timeout to match.
+or is set to a shorter non-zero value, the server raises the statement timeout
+to match.
 
 In the following example, the `query_timeout` option gives every datastore
 request at least 90 seconds:

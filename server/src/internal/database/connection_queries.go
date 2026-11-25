@@ -278,20 +278,50 @@ func statementTimeoutParam(timeout time.Duration) string {
 // reject it at connection time, and failing here names the offending
 // configuration key instead.
 func resolveStatementTimeout(value string) (string, error) {
+	timeout, err := parseStatementTimeout(value)
+	if err != nil {
+		return "", err
+	}
+	return statementTimeoutParam(timeout), nil
+}
+
+// parseStatementTimeout parses and validates the configured
+// statement_timeout as resolveStatementTimeout describes, returning the
+// duration rather than the startup parameter.
+func parseStatementTimeout(value string) (time.Duration, error) {
 	timeout := DefaultDatastoreStatementTimeout
 	if value != "" {
 		parsed, err := time.ParseDuration(value)
 		if err != nil {
-			return "", fmt.Errorf("invalid statement_timeout: %w", err)
+			return 0, fmt.Errorf("invalid statement_timeout: %w", err)
 		}
 		timeout = parsed
 	}
 
 	if timeout < 0 {
-		return "", fmt.Errorf("invalid statement_timeout: %s is negative", value)
+		return 0, fmt.Errorf("invalid statement_timeout: %s is negative", value)
 	}
 
-	return statementTimeoutParam(timeout), nil
+	return timeout, nil
+}
+
+// settleStatementTimeout returns the statement timeout for a datastore
+// whose request deadlines are raised to queryTimeoutFloor. An unset
+// statement_timeout (explicit false) takes defaultStatementTimeout. An
+// explicit non-zero value below the floor is raised to the floor, and
+// raised reports it, because PostgreSQL would otherwise cancel
+// statements that the request is still waiting for: installs upgraded
+// from an example configuration that set "30s" would keep failing on
+// ColdFront (issue #891). Zero, which disables the timeout, and values
+// at or above the floor are kept as given.
+func settleStatementTimeout(configured time.Duration, explicit bool, queryTimeoutFloor time.Duration) (timeout time.Duration, raised bool) {
+	if !explicit {
+		return defaultStatementTimeout(queryTimeoutFloor), false
+	}
+	if configured > 0 && configured < queryTimeoutFloor {
+		return queryTimeoutFloor, true
+	}
+	return configured, false
 }
 
 // coldFrontDatastoreQuery reports whether the datastore stores metrics in
@@ -370,7 +400,7 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 	if err != nil {
 		return nil, err
 	}
-	statementTimeout, err := resolveStatementTimeout(cfg.StatementTimeout)
+	configuredStatementTimeout, err := parseStatementTimeout(cfg.StatementTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +432,7 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 	// context deadlines are not enough on their own. The detection
 	// probe runs with the configured value, or the plain default, so a
 	// shorter role or database default cannot cancel it.
-	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = statementTimeout
+	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = statementTimeoutParam(configuredStatementTimeout)
 
 	coldFront, err := detectColdFrontDatastore(ctx, poolConfig.ConnConfig)
 	if err != nil {
@@ -410,13 +440,15 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 	}
 	poolConfig.ConnConfig.DefaultQueryExecMode = datastoreExecMode(coldFront)
 
-	// The default statement timeout depends on the datastore kind, so
-	// it is settled only now that detection has run.
+	// The statement timeout depends on the datastore kind, so it is
+	// settled only now that detection has run.
 	floor := effectiveQueryTimeoutFloor(configuredQueryTimeout, coldFront)
-	if cfg.StatementTimeout == "" {
-		statementTimeout = statementTimeoutParam(defaultStatementTimeout(floor))
+	statementTimeout, raised := settleStatementTimeout(configuredStatementTimeout, cfg.StatementTimeout != "", floor)
+	if raised {
+		log.Printf("[WARN] database.statement_timeout %s is shorter than the %s query timeout; using %s",
+			cfg.StatementTimeout, floor, statementTimeout)
 	}
-	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = statementTimeout
+	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = statementTimeoutParam(statementTimeout)
 
 	// Create pool
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)

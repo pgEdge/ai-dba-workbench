@@ -128,6 +128,36 @@ func TestDefaultStatementTimeout(t *testing.T) {
 	}
 }
 
+func TestSettleStatementTimeout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		configured time.Duration
+		explicit   bool
+		floor      time.Duration
+		want       time.Duration
+		wantRaised bool
+	}{
+		{"unset without floor", DefaultDatastoreStatementTimeout, false, 0, DefaultDatastoreStatementTimeout, false},
+		{"unset with ColdFront floor", DefaultDatastoreStatementTimeout, false, ColdFrontQueryTimeout, ColdFrontQueryTimeout, false},
+		{"explicit without floor", 5 * time.Second, true, 0, 5 * time.Second, false},
+		{"explicit below floor is raised", 30 * time.Second, true, ColdFrontQueryTimeout, ColdFrontQueryTimeout, true},
+		{"explicit equal to floor", ColdFrontQueryTimeout, true, ColdFrontQueryTimeout, ColdFrontQueryTimeout, false},
+		{"explicit above floor", 3 * time.Minute, true, ColdFrontQueryTimeout, 3 * time.Minute, false},
+		{"explicit zero stays disabled", 0, true, ColdFrontQueryTimeout, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, raised := settleStatementTimeout(tt.configured, tt.explicit, tt.floor)
+			if got != tt.want || raised != tt.wantRaised {
+				t.Errorf("settleStatementTimeout(%v, %v, %v) = (%v, %v), want (%v, %v)",
+					tt.configured, tt.explicit, tt.floor, got, raised, tt.want, tt.wantRaised)
+			}
+		})
+	}
+}
+
 // TestNewDatastoreRejectsInvalidQueryTimeout checks that a bad value
 // fails before any connection is attempted, naming the key.
 func TestNewDatastoreRejectsInvalidQueryTimeout(t *testing.T) {
@@ -149,22 +179,29 @@ func TestNewDatastoreRejectsInvalidQueryTimeout(t *testing.T) {
 }
 
 // TestDatastoreAppliesConfiguredQueryTimeout connects a real pool with
-// query_timeout set and no statement_timeout: request deadlines rise to
-// the configured value, and so does the pool's statement timeout.
+// query_timeout set: request deadlines rise to the configured value, and
+// so does the pool's statement timeout, whether statement_timeout is
+// unset or set explicitly to a shorter value (the "30s" that older
+// example configurations carried).
 func TestDatastoreAppliesConfiguredQueryTimeout(t *testing.T) {
-	cfg := testDatastoreConfig(t)
-	cfg.QueryTimeout = "45s"
+	for _, statementTimeout := range []string{"", "30s"} {
+		t.Run("statement_timeout="+statementTimeout, func(t *testing.T) {
+			cfg := testDatastoreConfig(t)
+			cfg.QueryTimeout = "45s"
+			cfg.StatementTimeout = statementTimeout
 
-	ds, err := NewDatastore(cfg, "test-secret")
-	if err != nil {
-		t.Skipf("Could not connect to test database: %v", err)
-	}
-	defer ds.Close()
+			ds, err := NewDatastore(cfg, "test-secret")
+			if err != nil {
+				t.Skipf("Could not connect to test database: %v", err)
+			}
+			defer ds.Close()
 
-	if got := ds.QueryTimeout(ShortQueryTimeout); got != 45*time.Second {
-		t.Errorf("QueryTimeout(%v) = %v, want 45s", ShortQueryTimeout, got)
-	}
-	if got := showStatementTimeout(t, ds); got != "45s" {
-		t.Errorf("statement_timeout = %q, want \"45s\"", got)
+			if got := ds.QueryTimeout(ShortQueryTimeout); got != 45*time.Second {
+				t.Errorf("QueryTimeout(%v) = %v, want 45s", ShortQueryTimeout, got)
+			}
+			if got := showStatementTimeout(t, ds); got != "45s" {
+				t.Errorf("statement_timeout = %q, want \"45s\"", got)
+			}
+		})
 	}
 }

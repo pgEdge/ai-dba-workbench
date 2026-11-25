@@ -155,7 +155,12 @@ falls back to `probeEntityKeyFallback` on ColdFront (see the entity-key
 section below). JSONB
 columns read back as `json` there: `->`, `->>` and `::text`/`::jsonb`
 casts work, but `?`, `@>`, `jsonb_*` functions, `=`, `ORDER BY`,
-`min`/`max` on the raw column do not.
+`min`/`max` on the raw column do not. The same holds for expressions:
+`jsonb_agg` and `jsonb_build_object` over a view return `json`, so
+comparing two of them (`=`, `IS DISTINCT FROM`) fails with "operator
+does not exist: json = json". Compare them as `::text`, as the
+timeline's `identMappingsDiffer` does (#886); `::jsonb` is pushed into
+DuckDB and comes back as `json` again.
 
 ### Writing metrics SQL that runs on ColdFront
 

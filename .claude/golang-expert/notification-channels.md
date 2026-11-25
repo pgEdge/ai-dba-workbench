@@ -255,18 +255,33 @@ pending-retry and reminder workers pass a context with no deadline.
 
 `SendAlertNotification` never shares one budget across channels
 (issue #836). It creates every channel's `notification_history` row
-first, each with `next_retry_at` set to now plus `DeliveryTimeout`
-(`SendTimeout` + `recordTimeout`, also `engine.NotificationTimeout`),
-then sends to all channels concurrently. That `next_retry_at` keeps
-the pending-retry worker off rows the immediate send still owns, so a
-row is never sent twice; a row whose outcome is never recorded (the
-alerter stopped mid-send) becomes due when it passes. `recordOutcome`
-writes each outcome on `context.WithoutCancel(ctx)` bounded by
-`recordTimeout`, so a send that used up the caller's deadline is
-recorded as a failed attempt instead of being left `pending`. Do not
-go back to creating a row and sending in one sequential loop under the
-caller's context: one stalled endpoint then left every later channel
-without a row, and so without the alert.
+first, then sends to all channels concurrently. Do not go back to
+creating a row and sending in one sequential loop under the caller's
+context: one stalled endpoint then left every later channel without a
+row, and so without the alert.
+
+Only one attempt owns a `notification_history` row at a time (issue
+#866). Ownership is a lease held in `next_retry_at`, always set by the
+database's clock (`NOW()` plus `DeliveryTimeout`, which is
+`SendTimeout` + `recordTimeout` and also `engine.NotificationTimeout`),
+because the database's clock also decides when a row is due:
+`CreateNotificationHistory(ctx, h, lease)` creates a row already owned
+(immediate sends and reminders), and the retry worker claims due rows
+one at a time with `ClaimPendingNotification`, a single
+`UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1)
+RETURNING` that moves the lease. Each attempt runs under
+`attemptContext(ctx, claimedAt)`, with `claimedAt` read before the
+claim, which ends `recordTimeout` before the lease. The lease value is
+also a fencing token: `processNotification` keeps `history.NextRetryAt`
+from entry and `UpdateNotificationHistory(ctx, h, lease)` writes only
+if `next_retry_at` still equals it, returning false when another
+attempt has claimed the row since, so a late outcome cannot overwrite
+the newer attempt's. Never create a row with a NULL `next_retry_at`
+(it is due at once) or select rows to send without claiming them.
+`recordOutcome` writes each outcome on `context.WithoutCancel(ctx)`
+bounded by `recordTimeout`, so a send that used up the caller's
+deadline is recorded as a failed attempt instead of being left
+`pending`; keep that detached context.
 
 Because the dialer holds the
 policy, `webhook.go` carries no

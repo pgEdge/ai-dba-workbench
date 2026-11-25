@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -164,71 +165,88 @@ func (d *Datastore) GetEmailRecipients(ctx context.Context, channelID int64) ([]
 	return recipients, nil
 }
 
-// CreateNotificationHistory inserts a new notification history record
-func (d *Datastore) CreateNotificationHistory(ctx context.Context, history *NotificationHistory) error {
+// CreateNotificationHistory inserts a new notification history record,
+// owned by its caller for lease. Ownership is held by next_retry_at,
+// which is set to the database's NOW() plus lease, whatever
+// history.NextRetryAt holds, so that the pending-retry worker, which
+// compares it with the same clock, leaves the row alone until then.
+// history.ID and history.NextRetryAt are set from the new row; the
+// latter is the lease that UpdateNotificationHistory must be given to
+// record the attempt's outcome.
+func (d *Datastore) CreateNotificationHistory(ctx context.Context, history *NotificationHistory, lease time.Duration) error {
 	return d.pool.QueryRow(ctx, `
         INSERT INTO notification_history (
             alert_id, channel_id, connection_id, notification_type, status,
             payload_json, response_code, response_body, error_message,
             attempt_count, max_attempts, next_retry_at, created_at, sent_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        RETURNING id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                  NOW() + $12::bigint * INTERVAL '1 microsecond', $13, $14)
+        RETURNING id, next_retry_at
     `, history.AlertID, history.ChannelID, history.ConnectionID, history.NotificationType,
 		history.Status, history.PayloadJSON, history.ResponseCode, history.ResponseBody,
-		history.ErrorMessage, history.AttemptCount, history.MaxAttempts, history.NextRetryAt,
-		history.CreatedAt, history.SentAt).Scan(&history.ID)
+		history.ErrorMessage, history.AttemptCount, history.MaxAttempts, lease.Microseconds(),
+		history.CreatedAt, history.SentAt).Scan(&history.ID, &history.NextRetryAt)
 }
 
-// UpdateNotificationHistory updates a notification history record
-func (d *Datastore) UpdateNotificationHistory(ctx context.Context, history *NotificationHistory) error {
-	_, err := d.pool.Exec(ctx, `
+// UpdateNotificationHistory records an attempt's outcome in its
+// notification history record, provided the attempt still owns the
+// row: that is, provided its next_retry_at is still lease, the value
+// CreateNotificationHistory or ClaimPendingNotification gave the
+// attempt. It reports whether the row was updated; false means that
+// the lease ran out and another attempt claimed the row, whose outcome
+// is the one to keep.
+func (d *Datastore) UpdateNotificationHistory(ctx context.Context, history *NotificationHistory, lease *time.Time) (bool, error) {
+	tag, err := d.pool.Exec(ctx, `
         UPDATE notification_history
         SET status = $2, response_code = $3, response_body = $4, error_message = $5,
             attempt_count = $6, next_retry_at = $7, sent_at = $8
-        WHERE id = $1
+        WHERE id = $1 AND next_retry_at IS NOT DISTINCT FROM $9
     `, history.ID, history.Status, history.ResponseCode, history.ResponseBody,
-		history.ErrorMessage, history.AttemptCount, history.NextRetryAt, history.SentAt)
+		history.ErrorMessage, history.AttemptCount, history.NextRetryAt, history.SentAt, lease)
 	if err != nil {
-		return fmt.Errorf("failed to update notification history: %w", err)
+		return false, fmt.Errorf("failed to update notification history: %w", err)
 	}
-	return nil
+	return tag.RowsAffected() == 1, nil
 }
 
-// GetPendingNotifications retrieves all notifications with status pending or retrying
-// where next_retry_at is in the past or null
-func (d *Datastore) GetPendingNotifications(ctx context.Context) ([]*NotificationHistory, error) {
-	rows, err := d.pool.Query(ctx, `
-        SELECT id, alert_id, channel_id, connection_id, notification_type, status,
-               payload_json, response_code, response_body, error_message,
-               attempt_count, max_attempts, next_retry_at, created_at, sent_at
-        FROM notification_history
-        WHERE status IN ('pending', 'retrying')
-          AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-        ORDER BY created_at ASC
-    `)
+// ClaimPendingNotification claims the oldest notification that is
+// pending or retrying and due by the database's clock, and returns it,
+// or nil when there is none. Claiming moves the row's next_retry_at to
+// NOW() plus lease in the same statement that selects it, so that no
+// other attempt can claim the row until the lease runs out; the new
+// next_retry_at, in the returned history, is the lease that
+// UpdateNotificationHistory must be given. SKIP LOCKED passes over a
+// row whose outcome another attempt is writing at that moment, rather
+// than waiting for that write and then claiming the row it has just
+// recorded.
+func (d *Datastore) ClaimPendingNotification(ctx context.Context, lease time.Duration) (*NotificationHistory, error) {
+	var n NotificationHistory
+	err := d.pool.QueryRow(ctx, `
+        UPDATE notification_history
+        SET next_retry_at = NOW() + $1::bigint * INTERVAL '1 microsecond'
+        WHERE id = (
+            SELECT id FROM notification_history
+            WHERE status IN ('pending', 'retrying')
+              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING id, alert_id, channel_id, connection_id, notification_type, status,
+                  payload_json, response_code, response_body, error_message,
+                  attempt_count, max_attempts, next_retry_at, created_at, sent_at
+    `, lease.Microseconds()).Scan(
+		&n.ID, &n.AlertID, &n.ChannelID, &n.ConnectionID,
+		&n.NotificationType, &n.Status, &n.PayloadJSON, &n.ResponseCode,
+		&n.ResponseBody, &n.ErrorMessage, &n.AttemptCount, &n.MaxAttempts,
+		&n.NextRetryAt, &n.CreatedAt, &n.SentAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get pending notifications: %w", err)
+		return nil, fmt.Errorf("failed to claim pending notification: %w", err)
 	}
-	defer rows.Close()
-
-	var notifications []*NotificationHistory
-	for rows.Next() {
-		var n NotificationHistory
-		err := rows.Scan(&n.ID, &n.AlertID, &n.ChannelID, &n.ConnectionID,
-			&n.NotificationType, &n.Status, &n.PayloadJSON, &n.ResponseCode,
-			&n.ResponseBody, &n.ErrorMessage, &n.AttemptCount, &n.MaxAttempts,
-			&n.NextRetryAt, &n.CreatedAt, &n.SentAt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan notification history: %w", err)
-		}
-		notifications = append(notifications, &n)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("row iteration error: %w", err)
-	}
-
-	return notifications, nil
+	return &n, nil
 }
 
 // UpsertReminderState inserts or updates a reminder state record

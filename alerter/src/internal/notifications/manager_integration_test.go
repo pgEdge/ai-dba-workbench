@@ -195,6 +195,12 @@ const managerOrphanHistorySQL = `
 INSERT INTO notification_history (alert_id, channel_id, notification_type, status)
 VALUES ($1, NULL, 'alert_fire', 'pending'), (NULL, $2, 'alert_fire', 'pending')`
 
+const managerFailedOrphansSQL = `
+SELECT count(*) FROM notification_history
+WHERE status = 'failed' AND next_retry_at IS NOT NULL AND (
+    (alert_id = $1 AND channel_id IS NULL) OR
+    (alert_id IS NULL AND channel_id = $2))`
+
 const managerMissingTargetsSQL = `
 INSERT INTO notification_history (alert_id, channel_id, notification_type, status)
 VALUES (888888, $1, 'alert_fire', 'pending'), ($2, 888888, 'alert_fire', 'pending')`
@@ -358,7 +364,8 @@ func TestManager_SystemAlertNotificationLifecycle(t *testing.T) {
 		t.Fatalf("history after failed send = %s, connection %v", status, connID)
 	}
 
-	// Rows with no channel or no alert are passed over.
+	// Rows with no channel or no alert are marked failed, so that they
+	// are not claimed again.
 	if _, err := pool.Exec(ctx, managerOrphanHistorySQL, alertID, channelID); err != nil {
 		t.Fatal(err)
 	}
@@ -371,6 +378,10 @@ func TestManager_SystemAlertNotificationLifecycle(t *testing.T) {
 	}
 	if status, _, attempts := historyRow(t, pool, alertID); status != string(database.NotificationStatusSent) || attempts != 2 {
 		t.Errorf("history after retry = %s after %d attempts", status, attempts)
+	}
+	var failed int
+	if err := pool.QueryRow(ctx, managerFailedOrphansSQL, alertID, channelID).Scan(&failed); err != nil || failed != 2 {
+		t.Errorf("failed orphan rows = %d, %v; want 2", failed, err)
 	}
 
 	if err := m.ProcessReminders(ctx); err != nil {
@@ -646,18 +657,16 @@ func TestManager_SlowChannelDoesNotStarveOthers(t *testing.T) {
 	var duringNextRetry *time.Time
 	notifier.whileStalled = func(context.Context) {
 		// The retry worker runs on its own schedule; while the
-		// immediate send is under way it must not see this alert's
-		// rows, or it would send them a second time.
-		pending, err := m.datastore.GetPendingNotifications(ctx)
+		// immediate send is under way it must not be able to claim
+		// this alert's rows, or it would send them a second time.
+		claimed, err := m.datastore.ClaimPendingNotification(ctx, DeliveryTimeout)
 		if err != nil {
 			duringErr = err
 			return
 		}
 		duringPending = 0
-		for _, h := range pending {
-			if h.AlertID != nil && *h.AlertID == alertID {
-				duringPending++
-			}
+		if claimed != nil && claimed.AlertID != nil && *claimed.AlertID == alertID {
+			duringPending++
 		}
 		duringErr = pool.QueryRow(ctx, managerNextRetrySQL, alertID, slowID).Scan(&duringNextRetry)
 	}
@@ -682,7 +691,7 @@ func TestManager_SlowChannelDoesNotStarveOthers(t *testing.T) {
 		t.Fatalf("checking the rows during the send: %v", duringErr)
 	}
 	if duringPending != 0 {
-		t.Errorf("the retry worker could see %d of the alert's rows during the immediate send, want 0", duringPending)
+		t.Errorf("the retry worker could claim %d of the alert's rows during the immediate send, want 0", duringPending)
 	}
 	if duringNextRetry == nil || !duringNextRetry.After(start) ||
 		duringNextRetry.After(start.Add(DeliveryTimeout+time.Second)) {
@@ -759,15 +768,27 @@ func TestManager_RecordOutcome(t *testing.T) {
 		MaxAttempts:      3,
 		CreatedAt:        time.Now(),
 	}
-	if err := m.datastore.CreateNotificationHistory(ctx, history); err != nil {
+	if err := m.datastore.CreateNotificationHistory(ctx, history, DeliveryTimeout); err != nil {
 		t.Fatal(err)
 	}
+	lease := history.NextRetryAt
+	var logged []string
+	m.log = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+
+	// An attempt that no longer holds the row's lease records nothing.
+	history.Status = database.NotificationStatusSent
+	stale := lease.Add(-time.Second)
+	m.recordOutcome(ctx, history, &stale)
+	if len(logged) != 1 || !strings.Contains(logged[0], "claimed by another attempt") {
+		t.Errorf("logged %q, want the lost claim", logged)
+	}
+	logged = nil
 
 	ended, cancel := context.WithCancel(ctx)
 	cancel()
 	history.Status = database.NotificationStatusRetrying
 	history.AttemptCount = 1
-	m.recordOutcome(ended, history)
+	m.recordOutcome(ended, history, lease)
 	var status string
 	var attempts int
 	if err := pool.QueryRow(ctx, managerChannelHistorySQL, alertID, channelID).Scan(&status, &attempts); err != nil {
@@ -783,10 +804,166 @@ func TestManager_RecordOutcome(t *testing.T) {
 	}
 	closed.Close()
 	m.datastore = database.NewTestDatastore(closed)
-	var logged []string
-	m.log = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
-	m.recordOutcome(ctx, history)
+	m.recordOutcome(ctx, history, lease)
 	if len(logged) != 1 || !strings.Contains(logged[0], "Failed to update notification history") {
 		t.Errorf("logged %q, want the failed update", logged)
 	}
+}
+
+// hookNotifier counts its sends and runs onSend, when set, inside each
+// one, with the send's number counting from 1.
+type hookNotifier struct {
+	mu     sync.Mutex
+	sends  int
+	onSend func(ctx context.Context, n int) error
+}
+
+func (h *hookNotifier) Send(ctx context.Context, _ *database.NotificationChannel, _ *database.NotificationPayload) error {
+	h.mu.Lock()
+	h.sends++
+	n := h.sends
+	h.mu.Unlock()
+	if h.onSend != nil {
+		return h.onSend(ctx, n)
+	}
+	return nil
+}
+
+func (h *hookNotifier) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sends
+}
+
+func (h *hookNotifier) Type() database.NotificationChannelType {
+	return database.ChannelTypeSlack
+}
+
+func (h *hookNotifier) Validate(*database.NotificationChannel) error { return nil }
+
+// TestManager_OnlyOneAttemptOwnsARow runs a second pending-retry pass,
+// as a second worker would, from inside a send, and checks that no row
+// is sent by two attempts while one of them owns it, and that an
+// attempt which outran its claim cannot overwrite the outcome of the
+// attempt that claimed the row after it (issue #866).
+func TestManager_OnlyOneAttemptOwnsARow(t *testing.T) {
+	setup := func(t *testing.T) (*Manager, *hookNotifier, *pgxpool.Pool, int64, int64) {
+		t.Helper()
+		m, _, pool := managerTestEnv(t)
+		m.config.MaxRetryAttempts = 3
+		var channelID int64
+		if err := pool.QueryRow(context.Background(), managerInsertChannelSQL, "slack", "estate").Scan(&channelID); err != nil {
+			t.Fatal(err)
+		}
+		notifier := &hookNotifier{}
+		m.notifiers[database.ChannelTypeSlack] = notifier
+		alertID := insertManagerAlert(t, pool, database.AlertTypeSystem, nil)
+		return m, notifier, pool, alertID, channelID
+	}
+	// nestedPass runs a pending-retry pass, recording its error.
+	nestedPass := func(m *Manager, ctx context.Context, errp *error) {
+		*errp = m.ProcessPendingNotifications(ctx)
+	}
+
+	t.Run("retry worker", func(t *testing.T) {
+		m, notifier, pool, alertID, channelID := setup(t)
+		ctx := context.Background()
+		if _, err := pool.Exec(ctx, managerPendingForAlertSQL, alertID, channelID); err != nil {
+			t.Fatal(err)
+		}
+		var nestedErr error
+		notifier.onSend = func(context.Context, int) error {
+			if notifier.count() == 1 {
+				nestedPass(m, ctx, &nestedErr)
+			}
+			return nil
+		}
+		if err := m.ProcessPendingNotifications(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if nestedErr != nil {
+			t.Fatalf("nested pass: %v", nestedErr)
+		}
+		if n := notifier.count(); n != 1 {
+			t.Errorf("sent %d times, want 1", n)
+		}
+		// The row was inserted with the table's attempt_count default
+		// of 1, so one attempt makes 2.
+		if status, _, attempts := historyRow(t, pool, alertID); status != string(database.NotificationStatusSent) || attempts != 2 {
+			t.Errorf("history = %s after %d attempts, want sent after 2", status, attempts)
+		}
+	})
+
+	t.Run("reminder", func(t *testing.T) {
+		m, notifier, pool, alertID, _ := setup(t)
+		ctx := context.Background()
+		var nestedErr error
+		notifier.onSend = func(context.Context, int) error {
+			nestedPass(m, ctx, &nestedErr)
+			return nil
+		}
+		if err := m.ProcessReminders(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if nestedErr != nil {
+			t.Fatalf("nested pass: %v", nestedErr)
+		}
+		if n := notifier.count(); n != 1 {
+			t.Errorf("reminder sent %d times, want 1", n)
+		}
+		if status, _, attempts := historyRow(t, pool, alertID); status != string(database.NotificationStatusSent) || attempts != 1 {
+			t.Errorf("reminder history = %s after %d attempts, want sent after 1", status, attempts)
+		}
+	})
+
+	t.Run("attempt that outran its claim", func(t *testing.T) {
+		m, notifier, pool, alertID, channelID := setup(t)
+		ctx := context.Background()
+		if _, err := pool.Exec(ctx, managerPendingForAlertSQL, alertID, channelID); err != nil {
+			t.Fatal(err)
+		}
+		var logged []string
+		var logMu sync.Mutex
+		m.log = func(format string, args ...any) {
+			logMu.Lock()
+			defer logMu.Unlock()
+			logged = append(logged, fmt.Sprintf(format, args...))
+		}
+		var nestedErr error
+		notifier.onSend = func(context.Context, int) error {
+			if notifier.count() > 1 {
+				return nil // the second attempt delivers
+			}
+			// The first attempt outlives its claim, so the next pass
+			// claims the row and sends it again; then the first fails.
+			if _, err := pool.Exec(ctx, managerRetryNowSQL); err != nil {
+				return err
+			}
+			nestedPass(m, ctx, &nestedErr)
+			return errors.New("first attempt failed late")
+		}
+		if err := m.ProcessPendingNotifications(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if nestedErr != nil {
+			t.Fatalf("nested pass: %v", nestedErr)
+		}
+		if n := notifier.count(); n != 2 {
+			t.Errorf("sent %d times, want 2", n)
+		}
+		// The late failure does not overwrite the second attempt's
+		// delivery, recorded on the table's attempt_count default of 1.
+		if status, _, attempts := historyRow(t, pool, alertID); status != string(database.NotificationStatusSent) || attempts != 2 {
+			t.Errorf("history = %s after %d attempts, want sent after 2", status, attempts)
+		}
+		logMu.Lock()
+		defer logMu.Unlock()
+		var lost bool
+		for _, l := range logged {
+			lost = lost || strings.Contains(l, "claimed by another attempt")
+		}
+		if !lost {
+			t.Errorf("logged %q, want the first attempt's lost claim", logged)
+		}
+	})
 }

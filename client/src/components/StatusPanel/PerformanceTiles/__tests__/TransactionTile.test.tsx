@@ -73,9 +73,9 @@ vi.mock('../../../../contexts/useAICapabilities', () => ({
 }));
 
 // Mock hasCachedAnalysis
-const mockHasCachedAnalysis = vi.fn(() => false);
+const mockHasCachedAnalysis = vi.fn((..._args: unknown[]) => false);
 vi.mock('../../../../hooks/useChartAnalysis', () => ({
-    hasCachedAnalysis: () => mockHasCachedAnalysis(),
+    hasCachedAnalysis: (...args: unknown[]) => mockHasCachedAnalysis(...args),
 }));
 
 const theme = createTheme();
@@ -318,6 +318,30 @@ describe('TransactionTile', () => {
     });
 
     describe('AI analysis', () => {
+        it.each([
+            [1, 'Transaction commit rate and rollback percentage'],
+            [2, 'Transaction commit rate summed across servers, and rollback percentage weighted by each server\'s commit rate'],
+        ])('describes the metric for %i server(s)', (count, description) => {
+            const connections = Array.from(
+                { length: count },
+                (_, i) => createConnectionPerformance(i + 1, `Server ${i + 1}`),
+            );
+
+            renderWithTheme(
+                <TransactionTile
+                    connections={connections}
+                    loading={false}
+                />
+            );
+
+            expect(mockHasCachedAnalysis).toHaveBeenCalledWith(
+                description,
+                1,
+                undefined,
+                undefined,
+            );
+        });
+
         it('shows AI analysis button when AI is enabled and data is present', () => {
             mockAIEnabled.mockReturnValue(true);
             const conn = createConnectionPerformance(1, 'Server 1');

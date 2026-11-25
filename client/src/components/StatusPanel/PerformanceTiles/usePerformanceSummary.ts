@@ -51,19 +51,21 @@ const mergeSummaries = async (
  * Margin by which a shared window ends before the client's clock, in
  * milliseconds. See sharedWindowQuery.
  */
-const SHARED_WINDOW_END_MARGIN_MS = 60_000;
+const SHARED_WINDOW_END_MARGIN_MS = 120_000;
 
 /**
- * Length of a shared window: a day plus 59 seconds. The server's bucket
- * width is the window's length in whole seconds divided by 60, rounded
- * down, so any length from one day to one day plus 59 seconds gives the
- * same 1440-second width as a plain 24-hour window.
+ * Length of a shared window: exactly one day. The server's bucket width
+ * is the window's length in whole seconds divided by 60, rounded down,
+ * and date_bin starts the buckets at the window's start, so a day gives
+ * the 1440-second width and 60 full buckets of a plain 24-hour window.
+ * A longer window would add a partial bucket at the end that only some
+ * servers have a sample in, so the summed tiles would end on a drop.
  */
-const SHARED_WINDOW_SPAN_MS = (24 * 60 * 60 + 59) * 1000;
+const SHARED_WINDOW_SPAN_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Build the query string for an explicit window of about 24 hours that
- * every batch of one fetch shares.
+ * Build the query string for an explicit 24-hour window that every
+ * batch of one fetch shares.
  *
  * The server buckets each response with date_bin, using the window's
  * start as the origin and a width derived from the window's length. With
@@ -74,16 +76,11 @@ const SHARED_WINDOW_SPAN_MS = (24 * 60 * 60 + 59) * 1000;
  * batch gives them all the same origin and width.
  *
  * The server clamps an end in its own future to its own now, which
- * shortens each batch's window by a different amount. Every batch still
- * shares the origin, since the start is never clamped, so the buckets
- * line up as long as the width does not change. Two things keep it
- * fixed: the end sits a minute behind the client's clock, so a clock up
- * to a minute ahead of the server's causes no clamp at all, and the
- * window is 59 seconds longer than a day, so a clamp of up to 59 seconds
- * more still leaves the width at 1440 seconds. A client clock more than
- * two minutes ahead of the server's can still give batches different
- * widths; the bounds are whole seconds so the width calculation sees
- * exactly the span sent.
+ * would shorten the window and so narrow the bucket width. The end
+ * therefore sits two minutes behind the client's clock, so a client
+ * clock up to two minutes ahead of the server's causes no clamp; one
+ * further ahead can still give batches different widths. The bounds are
+ * whole seconds so the width calculation sees exactly the span sent.
  */
 const sharedWindowQuery = (nowMs: number): string => {
     const endMs = Math.floor((nowMs - SHARED_WINDOW_END_MARGIN_MS) / 1000) * 1000;

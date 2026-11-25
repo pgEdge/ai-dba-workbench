@@ -83,9 +83,9 @@ vi.mock('../../../../contexts/useAICapabilities', () => ({
 }));
 
 // Mock hasCachedAnalysis
-const mockHasCachedAnalysis = vi.fn(() => false);
+const mockHasCachedAnalysis = vi.fn((..._args: unknown[]) => false);
 vi.mock('../../../../hooks/useChartAnalysis', () => ({
-    hasCachedAnalysis: () => mockHasCachedAnalysis(),
+    hasCachedAnalysis: (...args: unknown[]) => mockHasCachedAnalysis(...args),
 }));
 
 const theme = createTheme();
@@ -348,6 +348,30 @@ describe('CheckpointTile', () => {
     });
 
     describe('AI analysis', () => {
+        it.each([
+            [1, 'Checkpoint write time and sync time'],
+            [2, 'Checkpoint write time and sync time, summed across servers'],
+        ])('describes the metric for %i server(s)', (count, description) => {
+            const connections = Array.from(
+                { length: count },
+                (_, i) => createConnectionPerformance(i + 1, `Server ${i + 1}`),
+            );
+
+            renderWithTheme(
+                <CheckpointTile
+                    connections={connections}
+                    loading={false}
+                />
+            );
+
+            expect(mockHasCachedAnalysis).toHaveBeenCalledWith(
+                description,
+                1,
+                undefined,
+                undefined,
+            );
+        });
+
         it('shows AI analysis button when AI is enabled and data is present', () => {
             mockAIEnabled.mockReturnValue(true);
             const conn = createConnectionPerformance(1, 'Server 1');

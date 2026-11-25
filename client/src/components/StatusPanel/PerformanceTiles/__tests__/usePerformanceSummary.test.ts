@@ -343,8 +343,14 @@ describe('usePerformanceSummary connection_ids batching', () => {
         mockApiFetch.mockImplementation((url: string) =>
             Promise.resolve(okResponse(bodyFor(url))),
         );
-        const now = Date.parse('2026-05-01T12:34:56.789Z');
-        const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now);
+        // Each call to Date.now moves the clock on by a second, so a
+        // window built per batch would differ between the batches.
+        let now = Date.parse('2026-05-01T12:34:56.789Z');
+        const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+            const value = now;
+            now += 1000;
+            return value;
+        });
 
         const selection = bigCluster(150);
         const { result } = renderHook(() => usePerformanceSummary(selection));
@@ -360,10 +366,10 @@ describe('usePerformanceSummary connection_ids batching', () => {
         expect(params).toHaveLength(2);
         params.forEach(p => {
             expect(p.get('time_range')).toBe('custom');
-            // Whole seconds, ending a minute behind the client's clock,
-            // spanning a day and 59 seconds.
-            expect(p.get('time_end')).toBe('2026-05-01T12:33:56Z');
-            expect(p.get('time_start')).toBe('2026-04-30T12:32:57Z');
+            // Whole seconds, ending two minutes behind the client's
+            // clock, spanning exactly one day.
+            expect(p.get('time_end')).toBe('2026-05-01T12:32:56Z');
+            expect(p.get('time_start')).toBe('2026-04-30T12:32:56Z');
         });
     });
 

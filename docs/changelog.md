@@ -135,6 +135,11 @@ project adheres to
   `exclude_system_schemas` to leave out `pg_catalog`,
   `information_schema`, and `pg_toast*` relations, as
   `GET /api/v1/metrics/latest` does. (#869)
+- Show estate totals in the Transactions and Checkpoints graphs when
+  several servers are selected, rather than one line that jumped
+  between the servers' values. Commits per second and checkpoint write
+  and sync times are summed for each point in time, and the rollback
+  percentage is weighted by each server's commit rate. (#837)
 
 ### Security
 

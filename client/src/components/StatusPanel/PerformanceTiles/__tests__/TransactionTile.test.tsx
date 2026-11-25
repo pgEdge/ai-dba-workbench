@@ -15,6 +15,12 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import TransactionTile from '../TransactionTile';
 import type { ConnectionPerformance } from '../types';
 
+// The options object as last passed to Chart, functions included,
+// so that the axis label formatters can be exercised directly.
+const capturedChart = vi.hoisted(() => ({
+    options: undefined as Record<string, unknown> | undefined,
+}));
+
 // Mock the Chart component to avoid ECharts complexity in tests
 vi.mock('../../../Chart/Chart', () => ({
     Chart: ({
@@ -25,19 +31,22 @@ vi.mock('../../../Chart/Chart', () => ({
         data: { series: Array<{ name: string }> };
         showLegend?: boolean;
         echartsOptions?: Record<string, unknown>;
-    }) => (
-        <div data-testid="mock-chart">
-            {data.series.map(s => (
-                <span key={s.name} data-testid={`series-${s.name}`}>{s.name}</span>
-            ))}
-            <span data-testid="show-legend">{String(showLegend)}</span>
-            {echartsOptions && (
-                <span data-testid="echarts-options">
-                    {JSON.stringify(echartsOptions)}
-                </span>
-            )}
-        </div>
-    ),
+    }) => {
+        capturedChart.options = echartsOptions;
+        return (
+            <div data-testid="mock-chart">
+                {data.series.map(s => (
+                    <span key={s.name} data-testid={`series-${s.name}`}>{s.name}</span>
+                ))}
+                <span data-testid="show-legend">{String(showLegend)}</span>
+                {echartsOptions && (
+                    <span data-testid="echarts-options">
+                        {JSON.stringify(echartsOptions)}
+                    </span>
+                )}
+            </div>
+        );
+    },
 }));
 
 // Mock ChartAnalysisDialog
@@ -64,9 +73,9 @@ vi.mock('../../../../contexts/useAICapabilities', () => ({
 }));
 
 // Mock hasCachedAnalysis
-const mockHasCachedAnalysis = vi.fn(() => false);
+const mockHasCachedAnalysis = vi.fn((..._args: unknown[]) => false);
 vi.mock('../../../../hooks/useChartAnalysis', () => ({
-    hasCachedAnalysis: () => mockHasCachedAnalysis(),
+    hasCachedAnalysis: (...args: unknown[]) => mockHasCachedAnalysis(...args),
 }));
 
 const theme = createTheme();
@@ -278,11 +287,61 @@ describe('TransactionTile', () => {
                 />
             );
 
-            expect(screen.getByTestId('mock-chart')).toBeInTheDocument();
+            const options = JSON.parse(screen.getByTestId('echarts-options').textContent || '{}');
+            expect(options.series[0].data).toEqual([100, 200]);
+            expect(options.series[1].data).toEqual([0.5, 1]);
+        });
+
+        it('sums commits and weights rollback % per time bucket across connections', () => {
+            const conn1 = createConnectionPerformance(1, 'Server 1', [
+                { time: '2024-01-01T10:00:00Z', commits_per_sec: 300, rollback_percent: 1 },
+                { time: '2024-01-01T11:00:00Z', commits_per_sec: 50, rollback_percent: 2 },
+            ]);
+            const conn2 = createConnectionPerformance(2, 'Server 2', [
+                { time: '2024-01-01T10:00:00Z', commits_per_sec: 100, rollback_percent: 5 },
+                { time: '2024-01-01T11:00:00Z', commits_per_sec: 150, rollback_percent: 6 },
+            ]);
+
+            renderWithTheme(
+                <TransactionTile
+                    connections={[conn1, conn2]}
+                    loading={false}
+                />
+            );
+
+            const options = JSON.parse(screen.getByTestId('echarts-options').textContent || '{}');
+            // Two buckets, not four interleaved samples.
+            expect(options.series[0].data).toEqual([400, 200]);
+            // (300 * 1 + 100 * 5) / 400 = 2; (50 * 2 + 150 * 6) / 200 = 5.
+            expect(options.series[1].data).toEqual([2, 5]);
         });
     });
 
     describe('AI analysis', () => {
+        it.each([
+            [1, 'Transaction commit rate and rollback percentage'],
+            [2, 'Transaction commit rate summed across servers, and rollback percentage weighted by each server\'s commit rate'],
+        ])('describes the metric for %i server(s)', (count, description) => {
+            const connections = Array.from(
+                { length: count },
+                (_, i) => createConnectionPerformance(i + 1, `Server ${i + 1}`),
+            );
+
+            renderWithTheme(
+                <TransactionTile
+                    connections={connections}
+                    loading={false}
+                />
+            );
+
+            expect(mockHasCachedAnalysis).toHaveBeenCalledWith(
+                description,
+                1,
+                undefined,
+                undefined,
+            );
+        });
+
         it('shows AI analysis button when AI is enabled and data is present', () => {
             mockAIEnabled.mockReturnValue(true);
             const conn = createConnectionPerformance(1, 'Server 1');
@@ -454,6 +513,25 @@ describe('TransactionTile', () => {
             );
             expect(rollbackSeries.yAxisIndex).toBe(1);
             expect(rollbackSeries.lineStyle.type).toBe('dashed');
+        });
+    });
+
+    describe('axis label formatters', () => {
+        it('formats x-axis times as hours and minutes', () => {
+            renderWithTheme(
+                <TransactionTile
+                    connections={[createConnectionPerformance(1, 'Server 1')]}
+                    loading={false}
+                />
+            );
+
+            const options = capturedChart.options as {
+                xAxis: { axisLabel: { formatter: (v: string) => string } };
+            };
+            const time = '2024-01-01T10:05:00Z';
+            expect(options.xAxis.axisLabel.formatter(time)).toBe(
+                new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            );
         });
     });
 

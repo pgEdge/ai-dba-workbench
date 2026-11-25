@@ -142,16 +142,24 @@ const connectionGroupsQueryByUser = connectionGroupsQueryHead +
 	`NULL::text` +
 	connectionGroupsQueryTail
 
-// A NULL client_addr means the backend arrived over a Unix-domain socket, so
-// it is labeled "local" rather than treated as unknown. host() is used in
-// preference to a plain ::text cast because casting an inet to text appends
-// the netmask, which would label every client as "192.0.2.10/32" rather than
-// "192.0.2.10". client_addr is cast to inet first: on a pgEdge ColdFront
-// datastore it is stored as text, since DuckDB has no inet type, and
-// host() takes only an inet; on plain PostgreSQL the cast is a no-op
-// (issue #755).
+// clientAddrLabelExpr renders client_addr as a bare address, or "local"
+// when it is NULL, which means the backend arrived over a Unix-domain socket
+// rather than that the client is unknown. It is shared by the client
+// grouping below and by the top-queries last_client CTE, so the two label a
+// client identically.
+//
+// It uses no inet type at all, so that it runs unchanged on plain PostgreSQL
+// and on a pgEdge ColdFront datastore (issue #889). On PostgreSQL an inet
+// cast to text carries its prefix length ("192.0.2.10/32", "::1/128"), and
+// split_part drops it, giving what host() gives. On ColdFront client_addr is
+// already text holding the bare address, so split_part leaves it alone.
+// host(client_addr::inet) is not portable: the cast makes DuckDB load its
+// inet extension, which a ColdFront bundle with extension autoinstall
+// disabled cannot do, so every query using it fails there.
+const clientAddrLabelExpr = `COALESCE(split_part(client_addr::text, '/', 1), 'local')`
+
 const connectionGroupsQueryByClient = connectionGroupsQueryHead +
-	`COALESCE(host(client_addr::inet), 'local')` +
+	clientAddrLabelExpr +
 	connectionGroupsQueryLabelSuffix +
 	`MIN(client_hostname)` +
 	connectionGroupsQueryTail

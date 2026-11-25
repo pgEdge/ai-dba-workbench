@@ -96,10 +96,20 @@ failures in rule 3, so reproduce with pgx, never psql.
    a predicate). sum/min/max of bigint are fine.
 4. **No PostgreSQL-only types or functions.** DuckDB has no `pg_lsn`
    or `make_interval()`. LSNs and inet columns are stored as text.
-   `host()` runs only over an inet cast: `host(client_addr::inet)`
-   works on ColdFront, but `host()` over the text (varchar) column
-   fails. Cast to `inet` nowhere else; it is unverified there and an
-   inet result column is not one the Workbench scans.
+   Use no `host()` and no `::inet` cast at all: `host()` over the text
+   (varchar) column fails, and `host(client_addr::inet)` runs only
+   where DuckDB can load its `inet` extension. A locked-down ColdFront
+   bundle (`duckdb.autoinstall_known_extensions = false`, extension not
+   shipped) cannot, so every query with the cast fails with "Extension
+   Autoloading Error ... 'inet'" (issue #889; the #755 finding that it
+   worked held only where autoload succeeded). Enabling autoinstall is
+   not the fix. Render an address as
+   `split_part(client_addr::text, '/', 1)`: on PostgreSQL the inet text
+   form is `192.0.2.10/32` or `::1/128` and `split_part` drops the
+   length as `host()` does; on ColdFront the collector stores the bare
+   address (`inetToText` in `collector/src/coldfront/convert.go`). The
+   server's shared form is `clientAddrLabelExpr` in
+   `internal/api/perf_summary_connection_groups.go`.
    `LSNDiffBytesSQL` in `pkg/anomaly/metrics.go` computes `from - to`
    in bytes from two text LSNs with `split_part`, `lpad`, `upper`,
    `substr` and `strpos`, all present in both engines; it is exactly
@@ -153,16 +163,17 @@ The textual rules live in one place, `coldfrontsql.Violations` in
 `$n::type` (spaces allowed around `::`) nor as `CAST($n AS type)`,
 `ANY(`, an `ALL(` or `SOME(` after a comparison operator or `LIKE`, an
 `ARRAY[` literal, `unnest(`, an array cast, `pg_lsn`, `make_interval(`,
-a `host(` whose argument does not end in `::inet`, an `::inet` that is
-not such an argument, a NULL test (`IS [NOT] NULL`, `ISNULL`,
-`NOTNULL`) on a `$n`, bare, cast either way or parenthesised, a
-`COALESCE($n`, `infinity` (any case), an `IN (...)` list (not a
-subquery) holding two or more `$n` not cast to `text`, and an
-`avg(...)` not cast to float in place. Only `ANY(`, the array cast,
-`unnest(` and the `IN` list failed live; `ALL(`, `SOME(` and `ARRAY[`
-are barred as the same array typing. The
-parenthesis matcher behind `host(` and `avg(` skips quoted literals
-and identifiers, but the forbidden-word checks still see inside them.
+any `host(` call, any `::inet` cast, a NULL test (`IS [NOT] NULL`,
+`ISNULL`, `NOTNULL`) on a `$n`, bare, cast either way or
+parenthesised, a `COALESCE($n`, `infinity` (any case), an `IN (...)`
+list (not a subquery) holding two or more `$n` not cast to `text`, and
+an `avg(...)` not cast to float in place. Only `ANY(`, the array cast,
+`unnest(`, the `IN` list and the `::inet` cast (#889) failed live;
+`ALL(`, `SOME(` and `ARRAY[` are barred as the same array typing. The
+parenthesis matcher behind `avg(` and the `IN` list skips quoted
+literals and identifiers, but the forbidden-word checks still see
+inside them. The server's equivalent, `coldfrontcheck.InetShape`,
+flags the same `host(` and `::inet` shapes.
 `TestViolations` in `pkg/coldfrontsql/coldfrontsql_test.go` pins them
 against the shapes that failed live and the replacements that worked.
 A module that adds a `metrics.*` reader runs its SQL through

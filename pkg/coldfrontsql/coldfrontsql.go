@@ -76,12 +76,11 @@ var forbidden = []struct {
 		"DuckDB may subtract infinite timestamps in a range join and fail; leave open column bounds NULL and bind a finite far-future timestamp for an open parameter"},
 }
 
-// hostCall matches the start of a host() call, inetCast a cast to inet,
-// and inetArg a host() argument that ends in a cast to inet.
+// hostCall matches the start of a host() call, and inetCast a cast to
+// inet.
 var (
 	hostCall = regexp.MustCompile(`(?i)\bhost\s*\(`)
 	inetCast = regexp.MustCompile(`(?i)::\s*inet\b`)
-	inetArg  = regexp.MustCompile(`(?i)::\s*inet\s*$`)
 )
 
 // floatCast matches a cast to double precision directly after a closing
@@ -103,11 +102,10 @@ var (
 // Violations returns a description of every ColdFront rule sql breaks,
 // or nil when it breaks none: an uncast bound parameter, ANY(), ALL()
 // or SOME() over an array, an ARRAY[...] literal, unnest(), an array
-// cast, pg_lsn, make_interval(), host() over anything but an inet cast,
-// an inet cast outside host(), a NULL test on a parameter, a COALESCE
-// over a parameter, an infinite timestamp, an IN list holding two or
-// more parameters that are not text, or an avg() not cast to float where
-// it stands.
+// cast, pg_lsn, make_interval(), any host() call, any cast to inet, a
+// NULL test on a parameter, a COALESCE over a parameter, an infinite
+// timestamp, an IN list holding two or more parameters that are not
+// text, or an avg() not cast to float where it stands.
 //
 // It is a textual check and does not parse SQL, so it also reports a
 // forbidden word inside a string literal or comment; keep such words out
@@ -186,35 +184,30 @@ func paramCast(sql string, loc []int) bool {
 	return castOpen.MatchString(sql[:loc[0]]) && castAs.MatchString(sql[loc[1]:])
 }
 
-// inetViolations reports each host() call whose argument is not cast to
-// inet, and each inet cast that is not such an argument. inet columns are
-// text on ColdFront, and DuckDB rejects host() over text but runs
-// host(col::inet); an inet cast anywhere else is unverified there, and
-// would return a result type the Workbench does not scan.
+// inetViolations reports each host() call and each cast to inet. inet
+// columns are text on ColdFront, so host() over one fails, and a cast to
+// inet makes DuckDB load its inet extension, which a ColdFront bundle with
+// extension autoinstall disabled cannot do (issue #889). The portable way
+// to render an address is split_part(col::text, '/', 1): on PostgreSQL it
+// drops the prefix length inet's text form carries, as host() does, and
+// on ColdFront the text column already holds the bare address.
 func inetViolations(sql string) []string {
 	var problems []string
-	excused := map[int]bool{}
-	for _, loc := range hostCall.FindAllStringIndex(sql, -1) {
-		end := matchingParen(sql, loc[1]-1)
-		if end >= 0 {
-			if m := inetArg.FindStringIndex(sql[loc[1]:end]); m != nil {
-				excused[loc[1]+m[0]] = true
-				continue
-			}
-		}
-		problems = append(problems, "host(...) without an inet cast: "+
-			"DuckDB rejects host() over text, which inet columns are on "+
-			"ColdFront; write host(col::inet)")
+	for range hostCall.FindAllStringIndex(sql, -1) {
+		problems = append(problems, "host(...): host() needs an inet, which "+
+			"inet columns are not on ColdFront; write "+inetHint)
 	}
-	for _, loc := range inetCast.FindAllStringIndex(sql, -1) {
-		if !excused[loc[0]] {
-			problems = append(problems, "::inet outside host(...::inet): "+
-				"inet columns are text on ColdFront; cast to inet only as "+
-				"the argument of host()")
-		}
+	for range inetCast.FindAllStringIndex(sql, -1) {
+		problems = append(problems, "::inet: the cast needs DuckDB's inet "+
+			"extension, which a ColdFront bundle may be unable to load; write "+
+			inetHint)
 	}
 	return problems
 }
+
+// inetHint is the portable rendering of an inet column, named in each
+// inetViolations report.
+const inetHint = "split_part(col::text, '/', 1)"
 
 // matchingParen returns the index of the parenthesis closing the one at
 // open, or -1 when it is unbalanced. Parentheses inside a single-quoted

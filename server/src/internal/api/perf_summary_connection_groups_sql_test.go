@@ -42,7 +42,7 @@ func TestBuildConnectionGroupsSQL_GroupingExpressions(t *testing.T) {
 			wantLabel: `COALESCE(NULLIF(usename, ''), '(unknown)') AS group_label`,
 			wantHost:  `NULL::text AS client_hostname`,
 			absentLabel: []string{
-				`COALESCE(host(client_addr::inet), 'local')`,
+				`COALESCE(split_part(client_addr::text, '/', 1), 'local')`,
 				`COALESCE(NULLIF(datname, ''), '(none)')`,
 				`MIN(client_hostname)`,
 			},
@@ -50,7 +50,7 @@ func TestBuildConnectionGroupsSQL_GroupingExpressions(t *testing.T) {
 		{
 			name:      "client",
 			groupBy:   "client",
-			wantLabel: `COALESCE(host(client_addr::inet), 'local') AS group_label`,
+			wantLabel: `COALESCE(split_part(client_addr::text, '/', 1), 'local') AS group_label`,
 			wantHost:  `MIN(client_hostname) AS client_hostname`,
 			absentLabel: []string{
 				`COALESCE(NULLIF(usename, ''), '(unknown)')`,
@@ -65,7 +65,7 @@ func TestBuildConnectionGroupsSQL_GroupingExpressions(t *testing.T) {
 			wantHost:  `NULL::text AS client_hostname`,
 			absentLabel: []string{
 				`COALESCE(NULLIF(usename, ''), '(unknown)')`,
-				`COALESCE(host(client_addr::inet), 'local')`,
+				`COALESCE(split_part(client_addr::text, '/', 1), 'local')`,
 				`MIN(client_hostname)`,
 			},
 		},

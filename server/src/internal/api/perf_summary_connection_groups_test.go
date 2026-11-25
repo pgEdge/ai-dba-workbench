@@ -28,8 +28,8 @@ import (
 
 // connectionGroupsTestSchema mirrors the columns of metrics.pg_stat_activity
 // that the connection-groups aggregation reads. The types match the
-// collector's schema, notably client_addr as INET, so that the host()
-// extraction behaves exactly as it does in production.
+// collector's schema, notably client_addr as INET, so that the address
+// rendering (clientAddrLabelExpr) behaves exactly as it does in production.
 const connectionGroupsTestSchema = `
 CREATE SCHEMA IF NOT EXISTS metrics;
 DROP TABLE IF EXISTS metrics.pg_stat_activity CASCADE;
@@ -149,7 +149,7 @@ func seedConnectionGroupsFixture(
          'idle', 'client backend'),
         ($1, $2, 103, 'app_rw', 'sales', '192.0.2.10', NULL,
          'idle in transaction', 'client backend'),
-        ($1, $2, 104, 'app_rw', 'reporting', '192.0.2.11', NULL,
+        ($1, $2, 104, 'app_rw', 'reporting', '2001:db8::11', NULL,
          'idle in transaction (aborted)', 'client backend'),
         ($1, $2, 105, 'reporter', 'reporting', NULL, NULL,
          'fastpath function call', 'client backend'),
@@ -310,7 +310,8 @@ func TestConnectionGroups_GroupByUser(t *testing.T) {
 }
 
 // TestConnectionGroups_GroupByClient verifies the client grouping: a NULL
-// client_addr is labeled "local", the group's first non-NULL client_hostname
+// client_addr is labeled "local", IPv4 and IPv6 addresses are labeled
+// without their prefix length, the group's first non-NULL client_hostname
 // is reported, and groups with equal totals fall back to label ordering.
 func TestConnectionGroups_GroupByClient(t *testing.T) {
 	h, pool, cleanup := newConnectionGroupsTestHandler(t, newTestAuthStore(t))
@@ -330,7 +331,7 @@ func TestConnectionGroups_GroupByClient(t *testing.T) {
 			Total:          3, Active: 1, Idle: 1,
 			IdleInTransaction: 1},
 		{GroupLabel: "local", Total: 3, Active: 1, Other: 2},
-		{GroupLabel: "192.0.2.11", Total: 1, IdleInTransaction: 1},
+		{GroupLabel: "2001:db8::11", Total: 1, IdleInTransaction: 1},
 	})
 }
 

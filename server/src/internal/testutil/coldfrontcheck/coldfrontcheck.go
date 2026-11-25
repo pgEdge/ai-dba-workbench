@@ -26,8 +26,23 @@ import (
 	"strings"
 )
 
-// BareHost matches host() over client_addr without the inet cast.
-var BareHost = regexp.MustCompile(`(?i)\bhost\s*\(\s*client_addr\s*\)`)
+// InetShape matches any host() call and any cast to inet. client_addr is
+// text on ColdFront, so host() over it fails, and a cast to inet makes
+// DuckDB load its inet extension, which a ColdFront bundle with extension
+// autoinstall disabled cannot do (issue #889).
+var InetShape = regexp.MustCompile(`(?i)\bhost\s*\(|::\s*inet\b`)
+
+// ClientAddrInet matches host() over client_addr and a cast of client_addr
+// to inet: the InetShape matches that are SQL wherever they stand, since
+// client_addr is a column of the metrics schema alone. It is for scanning
+// text not known to read that schema, where InetShape would also match
+// prose such as "SMTP host (email)".
+var ClientAddrInet = regexp.MustCompile(`(?i)\bhost\s*\(\s*client_addr\b|\bclient_addr\s*::\s*inet\b`)
+
+// InetShapeHint is the advice for an InetShape match.
+const InetShapeHint = "host() needs an inet and a cast to inet needs DuckDB's inet extension, " +
+	"which a locked-down ColdFront bundle cannot load; render the address as " +
+	"split_part(client_addr::text, '/', 1)"
 
 // coldFrontBadShapes are the SQL shapes a ColdFront datastore cannot plan
 // or describes with a type PostgreSQL does not expect, each with the
@@ -40,8 +55,7 @@ var coldFrontBadShapes = []struct {
 		"an array parameter cannot be typed; bind the list with IntListArg and expand it with IntArrayExpr"},
 	{regexp.MustCompile(`(?i)\bIN\s*\(\s*\$(\d+|%d)(::(int|int4|int8|integer|bigint|smallint))?\s*,`),
 		"an IN list of untyped or integer parameters cannot be typed; use IntArrayExpr for integers, or $n::text for each text value"},
-	{BareHost,
-		"client_addr is text on ColdFront and host() takes an inet; write host(client_addr::inet)"},
+	{InetShape, InetShapeHint},
 	{regexp.MustCompile(`\$(\d+|%d)(::[a-z ]+)?\s*[-+*/]\s`), paramArithmeticHint},
 	{regexp.MustCompile(`(?i)[-*/]\s*\$(\d+|%d)\b`), paramArithmeticHint},
 	{regexp.MustCompile(`(?i)\bpg_lsn\b`),

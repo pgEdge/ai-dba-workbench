@@ -19,7 +19,8 @@ Issue #774. A write is never sent to `/query` for execution.
   Put new permission logic in `deriveActionFlags`, not the component.
 - UI copy is asserted by tests; keep it in step with the user guide
   (`docs/user-guide/ai/ai-analysis.md`, Reviewed Write Actions):
-  "Supervisor reviewing…", "Approved by Ellie's supervisor", "Vetoed
+  "Supervisor reviewing…", "Not yet reviewed" (what the stub reviewer
+  produces today), "Approved by Ellie's supervisor", "Vetoed
   by Ellie's supervisor", "Running…", "Succeeded", "Failed",
   "Cancelled", "Outcome unknown: check the database", and the buttons
   Execute, Retry, Cancel and "Override and run".

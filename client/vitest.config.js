@@ -41,7 +41,7 @@ export default defineConfig({
             // line today and is raised towards 90 as coverage grows.
             thresholds: {
                 lines: 94.9,
-                statements: 94.0,
+                statements: 94.1,
                 functions: 93.0,
                 branches: 85.9,
             },

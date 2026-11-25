@@ -30,6 +30,7 @@ import {
     getQueryErrorSx,
 } from './markdownStyles';
 import type { ActionFlags } from './actionBlockState';
+import { neutralButtonSx } from './actionButtonSx';
 import {
     dangerLabelOf,
     pluralise,
@@ -250,7 +251,7 @@ export const ExecStatus: React.FC<ExecStatusProps> = ({ current, onCancel }) => 
                     <Button
                         size="small"
                         onClick={onCancel}
-                        sx={{ textTransform: 'none' }}
+                        sx={neutralButtonSx}
                     >
                         Cancel
                     </Button>
@@ -423,7 +424,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
                     variant="outlined"
                     disabled={busy}
                     onClick={canRetryOverride ? onOpenOverride : onExecute}
-                    sx={{ textTransform: 'none' }}
+                    sx={neutralButtonSx}
                 >
                     Retry
                 </Button>

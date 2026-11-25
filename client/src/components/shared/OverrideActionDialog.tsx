@@ -24,6 +24,7 @@ import Typography from '@mui/material/Typography';
 import { dangerColour } from '../../types/actions';
 import type { Action } from '../../types/actions';
 import { MONO_CAPTION_SX } from '../../theme/tokens';
+import { neutralButtonSx, runAnywayButtonSx } from './actionButtonSx';
 
 export interface OverrideActionDialogProps {
     open: boolean;
@@ -113,7 +114,7 @@ const OverrideActionDialog: React.FC<OverrideActionDialogProps> = ({
                 />
             </DialogContent>
             <DialogActions>
-                <Button onClick={onClose} sx={{ textTransform: 'none' }}>
+                <Button onClick={onClose} sx={neutralButtonSx}>
                     Cancel
                 </Button>
                 <Button
@@ -121,7 +122,7 @@ const OverrideActionDialog: React.FC<OverrideActionDialogProps> = ({
                     color="error"
                     disabled={!matches}
                     onClick={() => { onConfirm(typed); }}
-                    sx={{ textTransform: 'none' }}
+                    sx={runAnywayButtonSx}
                 >
                     Run anyway
                 </Button>

@@ -21,6 +21,7 @@ import type { Action } from '../../../types/actions';
 import type { UseActionResult } from '../../../hooks/useAction';
 import { createPgedgeTheme } from '../../../theme/pgedgeTheme';
 import { contrastRatio, WCAG_AA_NORMAL_TEXT } from '../../../test/contrast';
+import { runAnywayButtonSx } from '../actionButtonSx';
 
 const hook: UseActionResult = {
     action: null,
@@ -718,6 +719,37 @@ describe('ActionBlock', () => {
             expect(contrastRatio(label, theme.palette.warning.main))
                 .toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
             expect(contrastRatio(label, theme.palette.warning.dark))
+                .toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
+        });
+
+        it.each<[string, Partial<Action>]>([
+            ['Retry', { approval: 'approved', approved_by: 'testuser' }],
+            ['Cancel', { approval: 'approved', exec_status: 'executing' }],
+        ])('gives %s at least 4.5:1 on the surface', (name, over) => {
+            renderThemed(makeAction(over));
+            const button = screen.getByRole('button', { name });
+            expect(contrastRatio(colourOf(button), paper))
+                .toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
+        });
+
+        it('gives the override dialog buttons at least 4.5:1', async () => {
+            const user = userEvent.setup();
+            renderThemed(makeAction({ review_status: 'vetoed' }));
+            await user.click(screen.getByRole('button', { name: 'Override and run' }));
+            await user.type(
+                screen.getByRole('textbox', { name: 'Connection name' }),
+                'prod-1',
+            );
+            const cancel = screen.getByRole('button', { name: 'Cancel' });
+            expect(contrastRatio(colourOf(cancel), paper))
+                .toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
+            const run = colourOf(screen.getByRole('button', { name: 'Run anyway' }));
+            expect(contrastRatio(run, theme.palette.error.main))
+                .toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
+            // jsdom does not apply :hover, so the hover label is read
+            // from the style itself.
+            const hover = runAnywayButtonSx(theme)['&:hover'].color;
+            expect(contrastRatio(hover, theme.palette.error.dark))
                 .toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
         });
     });

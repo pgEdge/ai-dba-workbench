@@ -10,7 +10,9 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -298,6 +300,116 @@ func TestFormatOptionalInt(t *testing.T) {
 				t.Errorf("formatOptionalInt() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// get_metric_baselines paging tests
+// ---------------------------------------------------------------------------
+
+func TestGetMetricBaselinesPagingSchema(t *testing.T) {
+	tool := GetMetricBaselinesTool(nil, nil, nil, nil)
+	props := tool.Definition.InputSchema.Properties
+
+	limit, ok := props["limit"].(map[string]any)
+	if !ok {
+		t.Fatal("expected limit property in input schema")
+	}
+	if limit["minimum"] != 1 || limit["maximum"] != baselinesMaxLimit {
+		t.Errorf("limit bounds = %v..%v; want 1..%d", limit["minimum"], limit["maximum"], baselinesMaxLimit)
+	}
+	if _, ok := props["offset"].(map[string]any); !ok {
+		t.Fatal("expected offset property in input schema")
+	}
+
+	// The prose states the limits as literals; keep it in step with the
+	// constants.
+	want := fmt.Sprintf("default: %d, max: %d", baselinesDefaultLimit, baselinesMaxLimit)
+	for name, text := range map[string]string{
+		"description":       tool.Definition.Description,
+		"limit description": limit["description"].(string),
+	} {
+		if !strings.Contains(strings.ToLower(text), want) {
+			t.Errorf("%s does not state %q", name, want)
+		}
+	}
+	compact := fmt.Sprintf("Returns %d rows by default (limit, max %d)", baselinesDefaultLimit, baselinesMaxLimit)
+	if !strings.Contains(tool.Definition.CompactDescription, compact) {
+		t.Errorf("compact description does not state %q", compact)
+	}
+}
+
+func TestParseBaselinesPage(t *testing.T) {
+	limitErr := fmt.Sprintf("Invalid 'limit' parameter: must be an integer between 1 and %d", baselinesMaxLimit)
+	offsetErr := fmt.Sprintf("Invalid 'offset' parameter: must be an integer of 0 or more (at most %d)", math.MaxInt32)
+
+	cases := []struct {
+		name    string
+		args    map[string]any
+		want    baselinesPage
+		wantErr string
+	}{
+		{"defaults", map[string]any{}, baselinesPage{limit: baselinesDefaultLimit}, ""},
+		{"nil values are absent", map[string]any{"limit": nil, "offset": nil}, baselinesPage{limit: baselinesDefaultLimit}, ""},
+		{"float values", map[string]any{"limit": float64(25), "offset": float64(50)}, baselinesPage{limit: 25, offset: 50}, ""},
+		{"int values", map[string]any{"limit": 1, "offset": 0}, baselinesPage{limit: 1}, ""},
+		{"json number", map[string]any{"limit": json.Number("300")}, baselinesPage{limit: baselinesMaxLimit}, ""},
+		{"largest offset", map[string]any{"offset": float64(math.MaxInt32)}, baselinesPage{limit: baselinesDefaultLimit, offset: math.MaxInt32}, ""},
+		{"zero limit", map[string]any{"limit": float64(0)}, baselinesPage{}, limitErr},
+		{"negative limit", map[string]any{"limit": -1}, baselinesPage{}, limitErr},
+		{"limit above max", map[string]any{"limit": float64(baselinesMaxLimit + 1)}, baselinesPage{}, limitErr},
+		{"fractional limit", map[string]any{"limit": 2.5}, baselinesPage{}, limitErr},
+		{"string limit", map[string]any{"limit": "10"}, baselinesPage{}, limitErr},
+		{"bool limit", map[string]any{"limit": true}, baselinesPage{}, limitErr},
+		{"negative offset", map[string]any{"offset": float64(-1)}, baselinesPage{}, offsetErr},
+		{"offset too large", map[string]any{"offset": float64(math.MaxInt32) + 1}, baselinesPage{}, offsetErr},
+		{"fractional offset", map[string]any{"offset": 0.5}, baselinesPage{}, offsetErr},
+		{"string offset", map[string]any{"offset": "5"}, baselinesPage{}, offsetErr},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, errMsg := parseBaselinesPage(tc.args)
+			if errMsg != tc.wantErr {
+				t.Fatalf("error = %q; want %q", errMsg, tc.wantErr)
+			}
+			if tc.wantErr == "" && got != tc.want {
+				t.Errorf("page = %+v; want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBaselinesCountLine(t *testing.T) {
+	cases := []struct {
+		name  string
+		total int
+		shown int
+		page  baselinesPage
+		want  string
+	}{
+		{"all on first page", 32, 32, baselinesPage{limit: 100}, "Showing all 32 baselines"},
+		{"first of several", 640, 100, baselinesPage{limit: 100}, "Showing rows 1-100 of 640 baselines (more available - use offset=100 for next page)"},
+		{"middle page", 640, 100, baselinesPage{limit: 100, offset: 100}, "Showing rows 101-200 of 640 baselines (more available - use offset=200 for next page)"},
+		{"last page", 640, 40, baselinesPage{limit: 100, offset: 600}, "Showing rows 601-640 of 640 baselines (last page)"},
+		{"exact last page", 200, 100, baselinesPage{limit: 100, offset: 100}, "Showing rows 101-200 of 200 baselines (last page)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := baselinesCountLine(tc.total, tc.shown, tc.page); got != tc.want {
+				t.Errorf("got %q; want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBaselineMetricPattern(t *testing.T) {
+	if got := baselineMetricPattern(nil); got != nil {
+		t.Errorf("nil metric name gave pattern %q; want nil", *got)
+	}
+	name := "cache_hit"
+	got := baselineMetricPattern(&name)
+	if got == nil || *got != `%cache\_hit%` {
+		t.Errorf("pattern = %v; want %q", got, `%cache\_hit%`)
 	}
 }
 

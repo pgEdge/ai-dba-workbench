@@ -79,6 +79,12 @@ project adheres to
   JSON-RPC batch with an `Invalid Request` error, and a request whose
   `Origin` header does not match `cors_origin` with `403 Forbidden`.
 
+- Return metric baselines from the `get_metric_baselines` MCP tool one
+  page at a time. The tool returned every matching row, so one
+  connection's baselines ran to more than 50,000 characters. The tool
+  now returns 100 rows by default and accepts `limit` (up to 300) and
+  `offset` arguments; the line after the title states how many
+  baselines match and which offset holds the next page.
 - Stop one failing dashboard request from showing the "Disconnected"
   dialog in the web client and logging the user out. Three consecutive
   server or network errors from any requests previously declared the

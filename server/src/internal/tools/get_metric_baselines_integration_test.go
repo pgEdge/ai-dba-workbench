@@ -113,7 +113,7 @@ func TestGetMetricBaselinesSingleShorthandMatchIntegration(t *testing.T) {
 			if !strings.Contains(body, "pg_stat_database.cache_hit_ratio") {
 				t.Errorf("expected fully-qualified name in output for %q, got: %s", tc.metric, body)
 			}
-			if !strings.Contains(body, "(1 baselines)") {
+			if !strings.Contains(body, "Showing all 1 baselines") {
 				t.Errorf("expected exactly one baseline for %q, got: %s", tc.metric, body)
 			}
 		})
@@ -144,7 +144,7 @@ func TestGetMetricBaselinesSingleLiteralEscapeIntegration(t *testing.T) {
 		"connection_id": connID,
 		"metric_name":   "%",
 	})
-	if strings.Contains(body, "(1 baselines)") || strings.Contains(body, "(2 baselines)") {
+	if strings.Contains(body, "Showing all 1 baselines") || strings.Contains(body, "Showing all 2 baselines") {
 		t.Errorf("literal '%%' should not match any baseline, got: %s", body)
 	}
 	// Should fall through to the helpful "no match" message listing names.
@@ -174,7 +174,7 @@ func TestGetMetricBaselinesSingleLiteralUnderscoreIntegration(t *testing.T) {
 		"metric_name":   "a_b",
 	})
 	// With escaping, "a_b" is a literal substring and must NOT match "aXb".
-	if strings.Contains(body, "(1 baselines)") {
+	if strings.Contains(body, "Showing all 1 baselines") {
 		t.Errorf("literal '_' should not act as a wildcard; 'a_b' must not match 'aXb', got: %s", body)
 	}
 	if !strings.Contains(body, "schema.aXb") {

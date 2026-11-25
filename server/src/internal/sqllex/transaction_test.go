@@ -42,6 +42,7 @@ func TestRequiresNoTransaction(t *testing.T) {
 		{"reindex concurrently quoted on", "REINDEX (CONCURRENTLY 'on') TABLE t", true},
 		{"reindex concurrently escape string true", "REINDEX (CONCURRENTLY E'TRUE') TABLE t", true},
 		{"reindex concurrently unicode string on", "REINDEX (CONCURRENTLY U&'on') TABLE t", true},
+		{"reindex concurrently unicode string on with uescape", "REINDEX (CONCURRENTLY U&'on' UESCAPE '!') TABLE t", true},
 		{"reindex concurrently quoted identifier on", `REINDEX (CONCURRENTLY "ON") TABLE t`, true},
 		{"reindex concurrently dollar quoted true", "REINDEX (CONCURRENTLY $$true$$) TABLE t", true},
 		{"reindex concurrently tagged dollar quote", "REINDEX (CONCURRENTLY $t$on$t$) TABLE t", true},
@@ -225,6 +226,11 @@ func TestBuildsIndexConcurrently(t *testing.T) {
 		// even for a kind that runs outside a transaction anyway.
 		{"reindex escaped option", `REINDEX (CONCURRENTLY E'\157n') SCHEMA public`, true},
 		{"reindex unicode-escaped option", `REINDEX (CONCURRENTLY U&'o\006E') TABLE t`, true},
+		{"reindex uescape option", `REINDEX (CONCURRENTLY U&'o!006E' UESCAPE '!') SCHEMA public`, true},
+		{"reindex uescape option with comments", "REINDEX (CONCURRENTLY U&'o!006E' /* c */ uescape -- d\n '!', VERBOSE) SCHEMA public", true},
+		{"reindex uescape identifier option", `REINDEX (CONCURRENTLY U&"o!006E" UESCAPE '!') SCHEMA public`, true},
+		{"reindex continued literal option", "REINDEX (CONCURRENTLY 'o'\n'n') SCHEMA public", true},
+		{"reindex doubled quote option", "REINDEX (CONCURRENTLY 'o''n') SCHEMA public", true},
 
 		{"create index", "CREATE INDEX i ON t (a)", false},
 		{"create unique index", "CREATE UNIQUE INDEX i ON t (a)", false},
@@ -234,6 +240,10 @@ func TestBuildsIndexConcurrently(t *testing.T) {
 		{"reindex option off", "REINDEX (CONCURRENTLY OFF) TABLE t", false},
 		{"reindex quoted option off", "REINDEX (CONCURRENTLY 'off') TABLE t", false},
 		{"reindex last option off wins", "REINDEX (CONCURRENTLY ON, CONCURRENTLY OFF) TABLE t", false},
+		{"reindex last option off wins after uescape", "REINDEX (CONCURRENTLY U&'o!006E' UESCAPE '!', CONCURRENTLY OFF) TABLE t", false},
+		{"reindex uescape without a literal", "REINDEX (CONCURRENTLY U&'on' UESCAPE x) TABLE t", false},
+		{"reindex uescape at the end", "REINDEX (CONCURRENTLY U&'on' UESCAPE", false},
+		{"reindex word starting uescape", "REINDEX (CONCURRENTLY U&'on' UESCAPED '!') TABLE t", false},
 		{"reindex unbalanced", "REINDEX (CONCURRENTLY TABLE t", false},
 		{"bare reindex", "REINDEX", false},
 		{"drop index concurrently", "DROP INDEX CONCURRENTLY i", false},
@@ -304,6 +314,9 @@ func TestQuotedValue(t *testing.T) {
 		{`E'\157n'`, valueUndecided},   // an escape may spell on
 		{`'\157n'`, valueUndecided},    // so may a plain literal read with escapes
 		{`U&'o!006E'`, valueUndecided}, // UESCAPE may name any character
+		{"'o''n'", valueUndecided},     // a doubled quote is not decoded
+		{"'o'\n'n'", valueUndecided},   // nor is a continued literal
+		{`"o""n"`, valueOff},           // an identifier is never continued
 		{"$$on", valueOff},             // unterminated dollar quote
 		{"$on", valueOff},              // no closing tag delimiter
 		{"$x$", valueOff},              // shorter than its two tags

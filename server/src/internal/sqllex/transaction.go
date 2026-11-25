@@ -206,10 +206,39 @@ func maskKeepingValues(s string, reading StringReading, undecidedOn bool) string
 			if v := quotedValue(s[i:j]); v == valueOn || (v == valueUndecided && undecidedOn) {
 				masked[i+1] = '1'
 			}
+			// A UESCAPE clause belongs to the U& value before it, so it
+			// is masked with it rather than read as another word.
+			if end := uescapeEnd(s, i, j, reading); end > j {
+				for k := j; k < end; k++ {
+					masked[k] = ' '
+				}
+				j = end
+			}
 		}
 		i = j
 	}
 	return string(masked)
+}
+
+// uescapeEnd returns the index just past the UESCAPE clause that
+// follows the U&'...' or U&"..." value s[start:end], or end when the
+// value has no U& prefix or no complete clause follows it. White space
+// and comments may sit either side of the UESCAPE keyword.
+func uescapeEnd(s string, start, end int, reading StringReading) int {
+	if end-start < 3 || (s[start] != 'U' && s[start] != 'u') || s[start+1] != '&' {
+		return end
+	}
+	const kw = "UESCAPE"
+	k := skipSpaceAndComments(s, end)
+	if len(s)-k < len(kw) || !strings.EqualFold(s[k:k+len(kw)], kw) ||
+		(k+len(kw) < len(s) && IsIdentChar(s[k+len(kw)])) {
+		return end
+	}
+	k = skipSpaceAndComments(s, k+len(kw))
+	if k >= len(s) || s[k] != '\'' {
+		return end
+	}
+	return SkipNonCode(s, k, reading)
 }
 
 // optionValue is how a quoted boolean option value reads.
@@ -227,9 +256,11 @@ const (
 // option value: on when its text is TRUE or ON in any case. It strips
 // the E and U& prefixes, the quotes, and a dollar quote's tags, but does
 // not decode escapes, so any other text holding a backslash (E'\157n'
-// is 'on', as is a plain literal read with backslash escapes), and any
+// is 'on', as is a plain literal read with backslash escapes), any
 // other U& text (whose UESCAPE clause may name any escape character),
-// is undecided rather than off. Deciding where a statement runs reads
+// and a single-quoted literal holding a quote (a doubled quote, or a
+// literal continued on another line, which PostgreSQL joins to the one
+// before it: 'o' <newline> 'n' is 'on') is undecided rather than off. Deciding where a statement runs reads
 // an undecided value as off, so it runs in a transaction block, where
 // PostgreSQL refuses a concurrent rebuild and nothing is applied;
 // deciding whether a failure may have left an invalid index reads it
@@ -243,6 +274,8 @@ func quotedValue(q string) optionValue {
 	case strings.EqualFold(body, "on") || strings.EqualFold(body, "true"):
 		return valueOn
 	case strings.ContainsRune(body, '\\') || len(q)-len(stripped) == 2:
+		return valueUndecided
+	case stripped[0] == '\'' && strings.ContainsRune(body, '\''):
 		return valueUndecided
 	}
 	return valueOff

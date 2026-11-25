@@ -493,6 +493,11 @@ type stmtRunner struct {
 	// its cancel request is sent.
 	mu       sync.Mutex
 	inFlight bool
+	// cancelSent records that a cancel request was sent while the
+	// current statement was in flight. Only then can a 57014
+	// (query_canceled) error be the stop's doing rather than the
+	// statement timeout's, which PostgreSQL reports with the same code.
+	cancelSent bool
 }
 
 // dispatch sends stmt, unless the run has been stopped, in which case it
@@ -507,6 +512,7 @@ func (r *stmtRunner) dispatch(ctx context.Context, stmt string) *pgconn.MultiRes
 		r.state.sent = true
 	}
 	r.inFlight = true
+	r.cancelSent = false
 	return r.pgConn.Exec(ctx, stmt)
 }
 
@@ -527,9 +533,20 @@ func (r *stmtRunner) cancelInFlight() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cancelRequestTimeout)
 	defer cancel()
+	// Even a cancel request that reports failure may have reached the
+	// server, so it counts as sent.
+	r.cancelSent = true
 	if err := r.pgConn.CancelRequest(ctx); err != nil {
 		log.Printf("[WARN] Action %d: cancel request failed: %v", r.actionID, err)
 	}
+}
+
+// stoppedByCancel reports whether a cancel request was sent while the
+// last statement was in flight.
+func (r *stmtRunner) stoppedByCancel() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cancelSent
 }
 
 // roundTrip returns the context for one round trip to the target: the
@@ -710,6 +727,11 @@ func (r *stmtRunner) runIndividually(st *runState) {
 // reports whether its outcome is unknown, marking st so when it is: the
 // server did not answer, or a cancel request stopped the statement part
 // way through, which may leave partial work (an invalid index, say).
+// PostgreSQL reports a statement timeout and a cancel request with the
+// same code, 57014, so the error counts as the stop's only when a cancel
+// request was sent whilst the statement was in flight; a stop that came
+// after the statement had already failed leaves its error, and its
+// known outcome, as they were.
 func (r *stmtRunner) outcomeUnknown(st *runState, i int, ran bool, err error) bool {
 	if err == nil {
 		return false
@@ -717,7 +739,7 @@ func (r *stmtRunner) outcomeUnknown(st *runState, i int, ran bool, err error) bo
 	res := &st.results[i]
 	var pgErr *pgconn.PgError
 	isPgErr := errors.As(err, &pgErr)
-	stopped := isPgErr && pgErr.Code == "57014" && r.ctx.Err() != nil
+	stopped := isPgErr && pgErr.Code == "57014" && r.stoppedByCancel()
 	if ran {
 		noteFailure(res, !isPgErr || stopped)
 	}

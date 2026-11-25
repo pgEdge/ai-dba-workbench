@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type execFunc = func(ctx context.Context, sql string) error
@@ -215,4 +217,39 @@ func TestRunnerCancelInFlightIdle(t *testing.T) {
 	t.Parallel()
 	r := &stmtRunner{}
 	r.cancelInFlight() // a nil connection would panic if it were used
+}
+
+// TestOutcomeUnknownTimeoutAfterStop proves a 57014 error counts as the
+// stop's, and so leaves the outcome unknown, only when a cancel request
+// was sent whilst the statement was in flight. PostgreSQL reports a
+// statement timeout with the same code, so a stop that arrives after a
+// statement has already timed out must leave the timeout, and its known
+// outcome, in place.
+func TestOutcomeUnknownTimeoutAfterStop(t *testing.T) {
+	t.Parallel()
+	timeout := &pgconn.PgError{Code: "57014", Message: "canceling statement due to statement timeout"}
+	for _, tt := range []struct {
+		name        string
+		cancelSent  bool
+		wantUnknown bool
+	}{
+		{"stop after the timeout", false, false},
+		{"cancel sent in flight", true, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			r := &stmtRunner{ctx: ctx, cancelSent: tt.cancelSent}
+			st := &runState{results: newResults([]string{"UPDATE t SET a = 1"})}
+			st.results[0].Error = timeout.Message
+			got := r.outcomeUnknown(st, 0, true, timeout)
+			if got != tt.wantUnknown || st.unknown != tt.wantUnknown {
+				t.Fatalf("outcomeUnknown = %v, st.unknown = %v, want %v", got, st.unknown, tt.wantUnknown)
+			}
+			if !tt.wantUnknown && st.results[0].Error != timeout.Message {
+				t.Errorf("error = %q, want the timeout kept", st.results[0].Error)
+			}
+		})
+	}
 }

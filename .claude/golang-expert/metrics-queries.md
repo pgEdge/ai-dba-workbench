@@ -212,6 +212,21 @@ in 8 under the default statement cache, and 0 in 8 under describe-exec
 and under Exec mode. The collector and
 alerter pools are not covered by this change.
 
+Server request deadlines on the datastore go through
+`Datastore.WithQueryTimeout(ctx, base)` / `QueryTimeout(base)`
+(`database/query_timeout.go`, issue #891), never a bare
+`context.WithTimeout` with a literal. `base` is the plain-PostgreSQL
+budget (`ShortQueryTimeout` 10s, `LongQueryTimeout` 30s, or the
+handler's own figure); the result is raised to `queryTimeoutFloor`,
+which `NewDatastore` sets to `database.query_timeout` when configured,
+else `ColdFrontQueryTimeout` (2m) on ColdFront, else zero. A cold
+ColdFront connection's first metrics-view query (the Iceberg attach)
+measured about 29s, so 10s/30s fail there. An unset
+`statement_timeout` defaults to `max(30s, floor)`
+(`defaultStatementTimeout`), and top-queries passes the raised value to
+its transaction-local timeout. Deadlines for work on a monitored
+server (`queryTimeout`, `ListDatabases`) stay fixed.
+
 - **Result types must agree.** A cast helps only when it changes the
   PostgreSQL type; casting to the type PostgreSQL already infers is a
   no-op and the bytes stay wrong. `avg()` and `EXTRACT(EPOCH ...)` are

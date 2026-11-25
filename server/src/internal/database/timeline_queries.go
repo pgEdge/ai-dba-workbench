@@ -70,7 +70,7 @@ func (d *Datastore) GetTimelineEvents(ctx context.Context, filter TimelineFilter
 	defer d.mu.RUnlock()
 
 	// Apply query timeout
-	queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	queryCtx, cancel := d.WithQueryTimeout(ctx, LongQueryTimeout)
 	defer cancel()
 
 	// Set default limit

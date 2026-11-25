@@ -319,9 +319,21 @@ database:
   # PostgreSQL cancels the statement itself when it is exceeded, which
   # releases the pool connection even if the server's own cancel
   # request never arrives. Accepts any Go duration string; 0 disables
-  # the timeout, which is not recommended.
+  # the timeout, which is not recommended. When unset, the default
+  # rises to match query_timeout, or two minutes on a pgEdge ColdFront
+  # datastore, so leave it unset unless you need a fixed value.
   # Default: 30s
-  statement_timeout: "30s"
+  # statement_timeout: "30s"
+
+  # Least time the server allows any API request for its datastore
+  # queries. Requests otherwise get 10 or 30 seconds, depending on the
+  # work they do; a longer deadline of a request's own is kept. When
+  # unset, the server uses each request's own deadline on a standard
+  # datastore and at least two minutes on a pgEdge ColdFront datastore,
+  # whose metrics views are much slower. Accepts a positive Go duration
+  # string of up to 4m.
+  # Default: none
+  # query_timeout: "90s"
 
 #=========================================================================
 # EMBEDDING GENERATION

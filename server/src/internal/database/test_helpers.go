@@ -9,7 +9,11 @@
  */
 package database
 
-import "github.com/jackc/pgx/v5/pgxpool"
+import (
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
 
 // NewTestClient creates a database client for testing with mock data
 // This allows tests in other packages to create clients with predetermined metadata
@@ -44,6 +48,17 @@ func NewTestDatastore(pool *pgxpool.Pool) *Datastore {
 	return &Datastore{
 		pool:         pool,
 		serverSecret: "",
+	}
+}
+
+// NewTestDatastoreWithQueryTimeoutFloor behaves like NewTestDatastore
+// but gives the Datastore a query timeout floor, as NewDatastore does
+// for a configured query_timeout or a ColdFront datastore, so handler
+// tests can observe the raised deadlines.
+func NewTestDatastoreWithQueryTimeoutFloor(pool *pgxpool.Pool, floor time.Duration) *Datastore {
+	return &Datastore{
+		pool:              pool,
+		queryTimeoutFloor: floor,
 	}
 }
 

@@ -85,6 +85,16 @@ project adheres to
   were registered; the error now stays in place, without being
   re-announced, whilst a retry or the automatic refresh runs. (#890)
 
+- Stop the server's API requests timing out against a pgEdge ColdFront
+  datastore. The cluster, connection, alert, blackout, estate and
+  timeline requests allowed their datastore queries 10 or 30 seconds,
+  which a ColdFront metrics view can exceed on its own the first time a
+  connection queries it, so they failed with `context deadline
+  exceeded`. On a ColdFront datastore every request now has at least
+  two minutes, and the default `statement_timeout` rises to match; the
+  new `database.query_timeout` server property sets a different
+  allowance on any datastore. (#891)
+
 - Stop one failing dashboard request from showing the "Disconnected"
   dialog in the web client and logging the user out. Three consecutive
   server or network errors from any requests previously declared the

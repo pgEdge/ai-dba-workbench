@@ -297,7 +297,7 @@ func (h *MetricsHandler) handleMetricsQuery(
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.LongQueryTimeout)
 	defer cancel()
 
 	if !h.applyStatementDatabaseFilter(ctx, w, r, probeName, connectionIDs, &filters) {
@@ -377,7 +377,7 @@ func (h *MetricsHandler) handleLatestRows(
 		return // error already sent
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.LongQueryTimeout)
 	defer cancel()
 
 	if !h.applyStatementDatabaseFilter(ctx, w, r, probeName, connectionIDs, &filters) {
@@ -469,7 +469,7 @@ func (h *MetricsHandler) handleMetricsBaselines(
 		opts.DatabaseName = &dbName
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.LongQueryTimeout)
 	defer cancel()
 
 	pool := h.datastore.GetPool()
@@ -693,7 +693,7 @@ func (h *MetricsHandler) handleAnomalyComparison(
 		return // error already sent
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.LongQueryTimeout)
 	defer cancel()
 
 	loadFn := h.loadComparisonFn

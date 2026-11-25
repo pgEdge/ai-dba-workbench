@@ -87,6 +87,13 @@ expect:
       # The checkout-api sessions are the victims; ending them leaves the
       # blocker holding its lock.
       - '(?s)pg_(terminate|cancel)_backend.*checkout-api'
+      # Sparing only the blocker ends everything else instead.
+      - '(?s)pg_(terminate|cancel)_backend.*((<>|!=)\s*|\bnot\s+(in\s*\(\s*|i?like\s+))''(order-sync|idle\s+in\s+transaction)'''
+      # Filtering on wait_event_type = 'Lock' picks the waiters. The
+      # filter must be the terminate's own WHERE, with no parenthesis in
+      # between, so that a subquery finding the waiters' blockers with
+      # pg_blocking_pids() still counts as targeting the blocker.
+      - 'pg_(terminate|cancel)_backend\s*\([^()]*\)[^()]*\bwhere\b[^()]*\bwait_event_type\s*=\s*''lock'''
   tools:
     - query_database
 

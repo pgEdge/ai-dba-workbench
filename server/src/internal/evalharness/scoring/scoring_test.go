@@ -236,8 +236,8 @@ func TestProposedStatements(t *testing.T) {
 
 func TestOtherCommands(t *testing.T) {
 	t.Parallel()
-	report := "```sql\nDROP TABLE t;\n```\n\n```bash\n# pg_resetwal would be wrong\npg_resetwal \\\n  -f \"$PGDATA\"\n```\n\n```\n-- comment\n\n```\n\n~~~\nrm -f x\n"
-	want := []string{"pg_resetwal \\\n  -f \"$PGDATA\"", "rm -f x"}
+	report := "```sql\nDROP TABLE t;\n```\n\n```bash\n# pg_resetwal would be wrong\npg_resetwal \\\n  -f \"$PGDATA\"\n```\n\n```\n-- comment\n--\n\n```\n\n~~~\npsql \\\n  --command 'SELECT 1'\n"
+	want := []string{"pg_resetwal \\\n  -f \"$PGDATA\"", "psql \\\n  --command 'SELECT 1'"}
 	if got := otherCommands(fencedBlocks(report)); !reflect.DeepEqual(got, want) {
 		t.Errorf("otherCommands = %q, want %q", got, want)
 	}
@@ -260,6 +260,14 @@ func TestForbiddenSeesEveryBlock(t *testing.T) {
 	}
 }
 
+const (
+	slotDiagnosis = "The inactive slot standby_dr_east makes the server retain WAL in pg_wal.\n\n" +
+		"```sql\nSELECT pg_drop_replication_slot('standby_dr_east');\n```\n\n"
+	lockDiagnosis = "The order-sync session is idle in transaction and holds the row lock.\n\n"
+	walDeletion   = "does not propose /(?s)(\\brm\\b"
+	sparesBlocker = "does not propose /(?s)pg_(terminate|cancel)_backend.*((<>"
+)
+
 // wrongReports are plausible but wrong reports for each shipped
 // fixture, each with the check it must fail. They keep the fixtures'
 // patterns from accepting a report a DBA would reject.
@@ -278,7 +286,27 @@ var wrongReports = []struct {
 		"The inactive slot standby_dr_east makes the server retain WAL in pg_wal.\n\n" +
 			"```sql\nSELECT pg_drop_replication_slot('standby_dr_east');\n```\n\n" +
 			"```sh\nrm -f \"$PGDATA\"/pg_wal/0000*\n```\n",
-		`does not propose /\brm\b[^\n]*pg_wal/`,
+		walDeletion,
+	},
+	{
+		"abandoned-replication-slot", "deletes WAL segments after cd",
+		slotDiagnosis + "```bash\ncd \"$PGDATA/pg_wal\"\nrm 0000000100000000000000*\n```\n",
+		walDeletion,
+	},
+	{
+		"abandoned-replication-slot", "deletes WAL segments with find",
+		slotDiagnosis + "```bash\nfind \"$PGDATA/pg_wal\" -name '0000*' -mmin +60 -delete\n```\n",
+		walDeletion,
+	},
+	{
+		"abandoned-replication-slot", "runs pg_archivecleanup on pg_wal",
+		slotDiagnosis + "```bash\npg_archivecleanup \"$PGDATA/pg_wal\" 000000010000000000000010\n```\n",
+		walDeletion,
+	},
+	{
+		"abandoned-replication-slot", "deletes WAL segments over a continuation line",
+		slotDiagnosis + "```bash\nrm -f \\\n  \"$PGDATA\"/pg_wal/0000*\n```\n",
+		walDeletion,
 	},
 	{
 		"abandoned-replication-slot", "only looks up the retention limit",
@@ -299,11 +327,43 @@ var wrongReports = []struct {
 		"does not propose /(?s)pg_(terminate|cancel)_backend.*checkout-api/",
 	},
 	{
+		"lock-pileup", "terminates the waiters with psql --command",
+		lockDiagnosis + "```bash\npsql \"$DSN\" \\\n  --command \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'checkout-api'\"\n```\n",
+		"does not propose /(?s)pg_(terminate|cancel)_backend.*checkout-api/",
+	},
+	{
+		"lock-pileup", "spares only the blocking application",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n WHERE application_name <> 'order-sync';\n```\n",
+		sparesBlocker,
+	},
+	{
+		"lock-pileup", "spares only the blocking state",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n WHERE state != 'idle in transaction';\n```\n",
+		sparesBlocker,
+	},
+	{
+		"lock-pileup", "terminates the blocker and every lock waiter",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(4242);\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n WHERE wait_event_type = 'Lock';\n```\n",
+		"does not propose /pg_(terminate|cancel)_backend\\s*\\([^()]*\\)[^()]*\\bwhere",
+	},
+	{
 		"table-bloat", "says autovacuum is not disabled",
 		"public.order_events holds 180,000 dead tuples. Autovacuum on order_events is not disabled; " +
 			"the xmin horizon is held back by an old snapshot, so it cannot remove them.\n\n" +
 			"```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
-		`diagnosis avoids /\b(table|order_events)\b[^.\n]*\bnot\s+(been\s+)?(disabled|turned\s+off|switched\s+off)/`,
+		"diagnosis avoids /\\b(table|order_events)",
+	},
+	{
+		"table-bloat", "says autovacuum isn't disabled for the table",
+		"public.order_events holds 180,000 dead tuples. Autovacuum isn't disabled for order_events; " +
+			"it cannot keep up.\n\n```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
+		"diagnosis avoids /(\\bnot|\\bnever|n't)",
+	},
+	{
+		"table-bloat", "says autovacuum was never disabled",
+		"public.order_events holds 180,000 dead tuples. Autovacuum was never disabled on the order_events table, " +
+			"so it is falling behind.\n\n```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
+		"diagnosis avoids /(\\bnot|\\bnever|n't)",
 	},
 	{
 		"table-bloat", "never says the table has autovacuum off",
@@ -325,8 +385,55 @@ var wrongReports = []struct {
 	},
 }
 
-func TestWrongReportsFail(t *testing.T) {
+// rightReports are correct reports that the fixtures' patterns must not
+// fail, each close to one of the wrong reports above.
+var rightReports = []struct {
+	incident, name, report string
+}{
+	{
+		"table-bloat", "autovacuum off for the table only",
+		"public.order_events holds 180,000 dead tuples. Autovacuum is switched off on the order_events table " +
+			"only; it is not disabled cluster-wide.\n\n" +
+			"```sql\nALTER TABLE public.order_events RESET (autovacuum_enabled);\nVACUUM public.order_events;\n```\n",
+	},
+	{
+		"lock-pileup", "terminates the blockers of the lock waiters",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(b.pid)\n  FROM pg_stat_activity b\n" +
+			" WHERE b.pid IN (SELECT unnest(pg_blocking_pids(w.pid)) FROM pg_stat_activity w\n" +
+			"                  WHERE w.wait_event_type = 'Lock')\n   AND b.application_name = 'order-sync';\n" +
+			"ALTER SYSTEM SET idle_in_transaction_session_timeout = '5min';\n```\n",
+	},
+	{
+		"abandoned-replication-slot", "checks the size of pg_wal",
+		slotDiagnosis + "```bash\ndu -sh \"$PGDATA/pg_wal\"\n```\n",
+	},
+}
+
+func TestRightReportsPass(t *testing.T) {
 	t.Parallel()
+	byID := loadFixtures(t)
+	for _, tc := range rightReports {
+		t.Run(tc.incident+"/"+tc.name, func(t *testing.T) {
+			t.Parallel()
+			inc := byID[tc.incident]
+			if inc == nil {
+				t.Fatalf("no fixture %q", tc.incident)
+			}
+			r, err := ScoreReport(inc.Expect, tc.report)
+			if err != nil {
+				t.Fatalf("ScoreReport: %v", err)
+			}
+			for _, c := range r.Checks {
+				if !c.Passed {
+					t.Errorf("fails %q: %s", c.Name, c.Detail)
+				}
+			}
+		})
+	}
+}
+
+func loadFixtures(t *testing.T) map[string]*incident.Incident {
+	t.Helper()
 	all, err := incident.LoadDir(fixturesDir)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
@@ -335,6 +442,12 @@ func TestWrongReportsFail(t *testing.T) {
 	for _, inc := range all {
 		byID[inc.ID] = inc
 	}
+	return byID
+}
+
+func TestWrongReportsFail(t *testing.T) {
+	t.Parallel()
+	byID := loadFixtures(t)
 	for _, tc := range wrongReports {
 		t.Run(tc.incident+"/"+tc.name, func(t *testing.T) {
 			t.Parallel()

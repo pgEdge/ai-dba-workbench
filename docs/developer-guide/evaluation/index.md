@@ -186,7 +186,9 @@ enough that a fix aimed at the wrong object fails, such as terminating
 the waiting sessions rather than the blocker. Add a plausible wrong
 report for the fixture to `wrongReports` in
 `server/src/internal/evalharness/scoring/scoring_test.go`, which checks
-that each one fails the check it names.
+that each one fails the check it names. When a pattern is tightened,
+add a correct report close to the wrong one to `rightReports` in the
+same file, which checks that every report there passes.
 
 Before opening a pull request with a new fixture, run the unit tests,
 which load every fixture and check its reference report, then replay

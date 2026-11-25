@@ -268,8 +268,10 @@ func sqlStatements(blocks []block) []string {
 }
 
 // commentLine matches a line that is wholly a comment in a shell, SQL
-// or C-like language.
-var commentLine = regexp.MustCompile(`^\s*(#|--|//)`)
+// or C-like language. A "--" counts only when a space or the end of the
+// line follows it, so that a shell line starting with a long option,
+// such as psql's --command, is kept.
+var commentLine = regexp.MustCompile(`^\s*(#|//|--(\s|$))`)
 
 // otherCommands returns the contents of the blocks that are not SQL,
 // one entry per block with its whole-line comments removed, so that a

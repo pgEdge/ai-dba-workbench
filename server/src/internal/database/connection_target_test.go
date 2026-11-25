@@ -13,9 +13,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // TestBuildConnectionStringRefusesUnsafeTarget checks the connect-time
@@ -67,7 +70,9 @@ func TestBuildConnectionStringRefusesUnsafeTarget(t *testing.T) {
 }
 
 // TestBuildConnectionStringHostAddrPreferred checks that a valid
-// hostaddr, bracketed or not, is the single address pgx dials.
+// hostaddr, bracketed or not, is the single address pgx dials, whilst
+// the host stays the name pgx connects as (its TLS ServerName), and
+// that hostaddr never reaches the server as a startup parameter.
 func TestBuildConnectionStringHostAddrPreferred(t *testing.T) {
 	for _, hostaddr := range []string{"192.0.2.10", "2001:db8::1", "[2001:db8::1]"} {
 		t.Run(hostaddr, func(t *testing.T) {
@@ -84,10 +89,142 @@ func TestBuildConnectionStringHostAddrPreferred(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseConfig failed: %v", err)
 			}
+			if cfg.Host != "db.example.com" || len(cfg.Fallbacks) != 0 {
+				t.Errorf("host = %q with %d fallbacks, want db.example.com alone",
+					cfg.Host, len(cfg.Fallbacks))
+			}
+
+			(&Datastore{}).GuardMonitoredConnConfig(cfg)
+			if v, ok := cfg.RuntimeParams["hostaddr"]; ok {
+				t.Errorf("hostaddr = %q left in the startup parameters", v)
+			}
+			addrs, err := cfg.LookupFunc(context.Background(), cfg.Host)
 			want := trimOneBracketPairForTest(hostaddr)
-			if cfg.Host != want || len(cfg.Fallbacks) != 0 {
-				t.Errorf("host = %q with %d fallbacks, want %q alone",
-					cfg.Host, len(cfg.Fallbacks), want)
+			if err != nil || len(addrs) != 1 || addrs[0] != want {
+				t.Errorf("lookup = %v, %v; want [%s]", addrs, err, want)
+			}
+		})
+	}
+}
+
+// TestBuildConnectionStringHostAddrOnly checks that a connection with a
+// hostaddr and no host connects to the address, as libpq does.
+func TestBuildConnectionStringHostAddrOnly(t *testing.T) {
+	conn := &MonitoredConnection{
+		HostAddr:     sql.NullString{String: "[2001:db8::1]", Valid: true},
+		SSLMode:      sql.NullString{String: "disable", Valid: true},
+		Port:         5432,
+		DatabaseName: "mydb",
+		Username:     "user",
+	}
+	cfg, err := pgconn.ParseConfig(mustBuildConnString(t, &Datastore{}, conn, "", ""))
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+	if cfg.Host != "2001:db8::1" {
+		t.Errorf("host = %q, want 2001:db8::1", cfg.Host)
+	}
+}
+
+// TestGuardConnConfigBadHostAddr checks that a hostaddr that is not an
+// IP address, which BuildConnectionString never emits, fails the
+// connection rather than resolving the host, and is still kept out of
+// the startup parameters.
+func TestGuardConnConfigBadHostAddr(t *testing.T) {
+	cfg, err := pgconn.ParseConfig(
+		"postgres://user@db.example.com:5432/mydb?sslmode=disable&hostaddr=evil.example.com")
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+	GuardConnConfig(cfg, nil)
+	if _, ok := cfg.RuntimeParams["hostaddr"]; ok {
+		t.Error("hostaddr left in the startup parameters")
+	}
+	addrs, err := cfg.LookupFunc(context.Background(), cfg.Host)
+	if !errors.Is(err, hostvalidation.ErrHostAddrNotIP) || addrs != nil {
+		t.Errorf("lookup = %v, %v; want ErrHostAddrNotIP", addrs, err)
+	}
+}
+
+// TestGuardConnConfigHostAddrJudgedAsItself checks that, with a
+// hostaddr, the dial policy is asked about the address under its own
+// name and not under the host name pgx looks up, so a policy that
+// permits the host name by name (an allowed_hosts entry) cannot carry
+// an address it refuses. Without a hostaddr the host name is still
+// what the policy sees.
+func TestGuardConnConfigHostAddrJudgedAsItself(t *testing.T) {
+	// Permits db.example.com by name, and otherwise only 192.0.2.10.
+	policy := func(host string, ip net.IP) error {
+		if host == "db.example.com" || host == "192.0.2.10" {
+			return nil
+		}
+		return errors.New("refused")
+	}
+	cases := []struct {
+		name   string
+		query  string
+		wantOK bool
+	}{
+		{"refused hostaddr behind allowed name", "&hostaddr=198.51.100.7", false},
+		{"permitted hostaddr", "&hostaddr=192.0.2.10", true},
+		{"allowed name without hostaddr", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := pgconn.ParseConfig(
+				"postgres://user@db.example.com:5432/mydb?sslmode=disable" + tc.query)
+			if err != nil {
+				t.Fatalf("ParseConfig failed: %v", err)
+			}
+			if tc.query == "" {
+				cfg.LookupFunc = func(context.Context, string) ([]string, error) {
+					return []string{"198.51.100.7"}, nil
+				}
+			}
+			GuardConnConfig(cfg, policy)
+			addrs, err := cfg.LookupFunc(context.Background(), cfg.Host)
+			if gotOK := err == nil && len(addrs) == 1; gotOK != tc.wantOK {
+				t.Errorf("lookup = %v, %v; want permitted %v", addrs, err, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestGuardConnConfigHostAddrNilPolicy checks that a nil policy with a
+// hostaddr still applies the always-blocked floor to the address, and
+// that an ordinary address reaches the nil-policy fallback and is
+// returned rather than panicking on a nil function.
+func TestGuardConnConfigHostAddrNilPolicy(t *testing.T) {
+	tests := []struct {
+		name     string
+		hostaddr string
+		wantErr  bool
+	}{
+		{name: "metadata address refused", hostaddr: "169.254.169.254", wantErr: true},
+		{name: "ordinary address permitted", hostaddr: "192.0.2.10"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := pgconn.ParseConfig(
+				"postgres://user@db.example.com:5432/mydb?sslmode=disable&hostaddr=" + tt.hostaddr)
+			if err != nil {
+				t.Fatalf("ParseConfig failed: %v", err)
+			}
+			GuardConnConfig(cfg, nil)
+			addrs, err := cfg.LookupFunc(context.Background(), cfg.Host)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("lookup = %v; want %s refused", addrs, tt.hostaddr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("lookup failed: %v", err)
+			}
+			if len(addrs) != 1 || addrs[0] != tt.hostaddr {
+				t.Errorf("lookup = %v; want [%s]", addrs, tt.hostaddr)
 			}
 		})
 	}

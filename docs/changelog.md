@@ -156,6 +156,13 @@ project adheres to
   the server connects. An update checks a connection's host and
   hostaddr only when they change, so an existing connection can still
   be edited. (#842)
+- Make the server verify a monitored connection that has both a `host`
+  and a `hostaddr` against the host name, as the collector already
+  does. The server connected to the `hostaddr` as though it were the
+  host, so with `sslmode=verify-full` it checked the certificate
+  against the IP address and sent no TLS server name, and the query
+  tools and the MCP tools failed against a certificate that names only
+  the host. (#840)
 
 ### Security
 

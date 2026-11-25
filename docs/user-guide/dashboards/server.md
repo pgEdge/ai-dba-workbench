@@ -334,9 +334,9 @@ slot invalidated because it stayed idle for longer than
 
 ## Reviewing Database Summaries
 
-The `Database Summaries` pane lists all databases on the server with high-level
-metrics for each database. Click a database tile to navigate to the
-[database dashboard](database.md) for that database.
+The `Database Summaries` pane lists all databases on the server in database
+name order, with high-level metrics for each database. Click a database tile
+to navigate to the [database dashboard](database.md) for that database.
 
 ![Reviewing Database Summaries](../../images/database_summaries.png)
 

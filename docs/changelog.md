@@ -115,6 +115,11 @@ project adheres to
   header and cluster navigator out of view; chart tooltips now also
   close when the dashboard scrolls rather than staying on screen at
   their old position. (#882)
+- List the cards in the server dashboard's Database Summaries section
+  in database name order. The `/api/v1/metrics/database-summaries`
+  endpoint returned the databases in a random order, so the cards
+  could move each time the dashboard loaded; it now sorts them by
+  name. (#875)
 
 ### Security
 

@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -429,7 +430,14 @@ func TestNotificationHistoryLifecycle(t *testing.T) {
 		"SELECT 1 FROM notification_history WHERE id = $1 FOR UPDATE", older.ID); err != nil {
 		t.Fatalf("locking row: %v", err)
 	}
-	if got := claim(); got != nil {
+	// Bound the claim, so that a claim which waits for the lock fails
+	// here instead of hanging until the go test timeout.
+	lockedCtx, lockedCancel := context.WithTimeout(ctx, 5*time.Second)
+	got, err := ds.ClaimPendingNotification(lockedCtx, time.Minute)
+	lockedCancel()
+	if err != nil {
+		t.Errorf("claim while another session held the row's lock = %v; want it passed over, not waited for", err)
+	} else if got != nil {
 		t.Errorf("claimed row %d while another session held its lock", got.ID)
 	}
 	if err := tx.Rollback(ctx); err != nil {
@@ -437,6 +445,65 @@ func TestNotificationHistoryLifecycle(t *testing.T) {
 	}
 	if got := claim(); got == nil || got.ID != older.ID {
 		t.Errorf("claim after the lock was released = %+v, want row %d", got, older.ID)
+	}
+
+	// Workers claiming at once on separate connections, as concurrent
+	// retry passes do, claim each due row exactly once between them.
+	const dueRows, workers = 200, 8
+	seeded := make(map[int64]bool, dueRows)
+	for i := 0; i < dueRows; i++ {
+		h := newHistory(NotificationTypeAlertFire)
+		h.CreatedAt = older.CreatedAt.Add(time.Duration(i) * time.Millisecond)
+		if err := ds.CreateNotificationHistory(ctx, h, -time.Minute); err != nil {
+			t.Fatalf("CreateNotificationHistory (due row %d): %v", i, err)
+		}
+		seeded[h.ID] = true
+	}
+	var (
+		mu      sync.Mutex
+		claims  = make(map[int64]int, dueRows)
+		wg      sync.WaitGroup
+		start   = make(chan struct{})
+		errs    = make(chan error, workers)
+		claimed int
+	)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for {
+				got, err := ds.ClaimPendingNotification(ctx, time.Minute)
+				if err != nil {
+					errs <- err
+					return
+				}
+				if got == nil {
+					return
+				}
+				mu.Lock()
+				claims[got.ID]++
+				mu.Unlock()
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent ClaimPendingNotification: %v", err)
+	}
+	for id, n := range claims {
+		if !seeded[id] {
+			t.Errorf("concurrent workers claimed row %d, which was not due", id)
+		}
+		if n != 1 {
+			t.Errorf("row %d claimed %d times by concurrent workers, want once", id, n)
+		}
+		claimed++
+	}
+	if claimed != dueRows {
+		t.Errorf("concurrent workers claimed %d distinct rows, want %d", claimed, dueRows)
 	}
 
 	canceled, cancel := context.WithCancel(ctx)

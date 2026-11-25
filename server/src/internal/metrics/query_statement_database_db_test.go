@@ -26,7 +26,7 @@ import (
 // which database the statement's readings count under.
 func TestStatementDatabaseFallbackAfterCopies_Integration(t *testing.T) {
 	pool, closePool := newLatestRowsTestPool(t)
-	defer closePool()
+	t.Cleanup(closePool)
 	ctx := context.Background()
 
 	dropTable(ctx, pool, "pg_stat_statements")
@@ -116,7 +116,7 @@ func TestStatementDatabaseFallbackAfterCopies_Integration(t *testing.T) {
 // filter keeps the statement only when that newest reading matches.
 func TestQueryLatestRowsStatementReadings_Integration(t *testing.T) {
 	pool, closePool := newLatestRowsTestPool(t)
-	defer closePool()
+	t.Cleanup(closePool)
 	ctx := context.Background()
 
 	dropTable(ctx, pool, "pg_stat_statements")

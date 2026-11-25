@@ -23,7 +23,7 @@ import (
 // scan and a failed read.
 func TestLookupStatementDatabases_Integration(t *testing.T) {
 	pool, closePool := newLatestRowsTestPool(t)
-	defer closePool()
+	t.Cleanup(closePool)
 	ctx := context.Background()
 
 	tables := []string{"pg_stat_statements", "pg_stat_database", "pg_stat_activity"}

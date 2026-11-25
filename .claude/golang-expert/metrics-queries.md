@@ -2605,9 +2605,11 @@ pulled down into the scan), and keep the
 `ORDER BY d.queryid` in `samples`, which lets `latest_sample` use an
 incremental sort. `/metrics/query-stats` resolves and filters the same
 way as the list, so it finds a statement by the name the list reported.
-`/metrics/query` filters on the probing `database_name`, which is why
-the list also returns `sample_database_name` and the drill-down charts
-bind that. Tests: `perf_summary_dbid_resolution_test.go`.
+The drill-down charts send the statement's database to `/metrics/query`
+as `statement_database_name`, without `database_name`: the probing
+database can change between collections (#762), so filtering on the
+list's `sample_database_name` would drop the readings taken through
+another database. Tests: `perf_summary_dbid_resolution_test.go`.
 
 `totals` and `latest_sample` must stay `MATERIALIZED`. The planner
 cannot see through the `samples` CTE, estimates both at one row, and

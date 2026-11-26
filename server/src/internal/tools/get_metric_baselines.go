@@ -12,6 +12,8 @@ package tools
 import (
 	"context"
 	"fmt"
+	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,76 +32,37 @@ func GetMetricBaselinesTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, v
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "get_metric_baselines",
-			Description: `Query statistical baselines for metrics used in anomaly detection.
-
-<database_context>
-This tool queries the DATASTORE to retrieve statistical baselines that have
-been calculated from historical metric data. These baselines are used for
-anomaly detection to identify unusual metric values.
-</database_context>
+			Description: `Query the statistical baselines (from the DATASTORE) that anomaly detection compares live metric values against.
 
 <important_behavior>
-ALWAYS check pg://connection_info first to find the current connection.
-
-If a connection IS selected (connected: true):
-- Specify connection_id to filter baselines for that connection
-- "My database" or "the database" means the currently selected connection
-
-If NO connection is selected (connected: false):
-- Omit connection_id to see baselines across ALL accessible connections
-- The user can also specify a connection_id to filter to one connection
-
-When connection_id is omitted, returns baselines across all connections the
-user has access to. Each row includes connection_id and connection_name
-so you can identify which connection each baseline belongs to.
+Check pg://connection_info first. If a connection is selected, pass its
+connection_id ("my database" means that connection); otherwise omit
+connection_id to search every accessible connection, and each row then
+carries connection_id and connection_name.
 </important_behavior>
 
-<usecase>
-Use this tool to:
-- View established baselines for metrics
-- Understand normal ranges for different time periods
-- Provide context for anomaly alerts
-- Compare current values against historical norms
-</usecase>
-
 <parameters>
-- connection_id: (optional) ID of a monitored connection. Omit to return baselines across all accessible connections.
-- metric_name: (optional) Filter by metric name. Stored names are fully-qualified as view.metric (e.g. pg_stat_database.cache_hit_ratio). Matching is partial and case-insensitive, so a shorthand like "cache_hit_ratio" or "cache_hit" matches "pg_stat_database.cache_hit_ratio".
+- connection_id: (optional) monitored connection; omit for all accessible connections.
+- metric_name: (optional) partial, case-insensitive match against fully-qualified view.metric names (e.g. "cache_hit_ratio" matches pg_stat_database.cache_hit_ratio). If nothing matches, the response lists the available names.
+- period_type: (optional) all, hourly (one row per hour_of_day 0-23) or daily (one row per day_of_week, 0=Sunday).
+- order_by: (optional) metric (default), mean_desc, mean_asc or stddev_desc.
+- limit: (optional) rows per page (default: 100, max: 100).
+- offset: (optional) rows to skip (default: 0).
 </parameters>
 
-<metric_naming>
-Stored metric names are fully-qualified in the form view.metric, where view
-is the source statistics view and metric is the column (for example,
-pg_stat_database.cache_hit_ratio or pg_stat_bgwriter.checkpoints_timed).
-You do not need the full name: metric_name matching is partial and
-case-insensitive, so passing "cache_hit_ratio" matches
-"pg_stat_database.cache_hit_ratio". If a filter matches nothing, the tool
-returns the list of available metric names so you can retry with a correct
-value.
-</metric_naming>
+<narrow_dont_page>
+Each metric has up to 32 baselines, so a connection has hundreds. The line
+after the title gives the matching total and the next offset. For a highest
+or lowest value, filter and sort so one small call holds the answer instead
+of paging, e.g. highest hourly baseline:
+period_type='hourly', order_by='mean_desc', limit=5
+</narrow_dont_page>
 
 <output>
-Returns TSV data with:
-- connection_id: Connection ID (included when querying across all connections)
-- connection_name: Connection name (included when querying across all connections)
-- metric_name: Name of the metric
-- period_type: Baseline period (hourly, daily, weekly)
-- day_of_week: Day of week for weekly baselines (0=Sunday, 6=Saturday)
-- hour_of_day: Hour for hourly baselines (0-23)
-- mean: Average value
-- stddev: Standard deviation
-- min: Minimum observed value
-- max: Maximum observed value
-- sample_count: Number of samples in the baseline
-</output>
-
-<examples>
-- get_metric_baselines() - baselines across all accessible connections
-- get_metric_baselines(metric_name="cache_hit_ratio") - matches the fully-qualified pg_stat_database.cache_hit_ratio across all connections
-- get_metric_baselines(connection_id=5, metric_name="xact_commit") - matches pg_stat_database.xact_commit for a specific connection
-- get_metric_baselines(metric_name="pg_stat_database.cache_hit_ratio") - the fully-qualified name also works
-</examples>`,
-			CompactDescription: `Query statistical baselines for metrics used in anomaly detection. Omit connection_id to see baselines across all accessible connections. Returns mean, stddev, min, max, and sample count. Filter by metric_name (partial, case-insensitive match against fully-qualified view.metric names, e.g. pg_stat_database.cache_hit_ratio).`,
+A count line, then TSV: [connection_id, connection_name,] metric_name,
+period_type, day_of_week, hour_of_day, mean, stddev, min, max, sample_count.
+</output>`,
+			CompactDescription: `Query statistical baselines (mean, stddev, min, max, sample count) used in anomaly detection. Omit connection_id for all accessible connections. metric_name is a partial, case-insensitive match on view.metric names. For a highest or lowest value, filter and sort instead of paging, e.g. period_type='hourly', order_by='mean_desc', limit=5. Returns 100 rows by default (limit, max 100); the line after the title gives the total and the next offset.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]any{
@@ -109,7 +72,29 @@ Returns TSV data with:
 					},
 					"metric_name": map[string]any{
 						"type":        "string",
-						"description": "Filter by metric name. Stored names are fully-qualified as view.metric (e.g. pg_stat_database.cache_hit_ratio). Matching is partial and case-insensitive, so a shorthand such as \"cache_hit_ratio\" matches \"pg_stat_database.cache_hit_ratio\". If nothing matches, the response lists the available metric names.",
+						"description": "Partial, case-insensitive match against fully-qualified view.metric names (e.g. \"cache_hit_ratio\" matches pg_stat_database.cache_hit_ratio).",
+					},
+					"period_type": map[string]any{
+						"type":        "string",
+						"description": "Return only baselines of this period.",
+						"enum":        baselinePeriodTypes,
+					},
+					"order_by": map[string]any{
+						"type":        "string",
+						"description": "Row order. Default: metric.",
+						"enum":        baselineOrderNames,
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "Maximum number of baselines to return. Default: 100, max: 100.",
+						"minimum":     1,
+						"maximum":     baselinesMaxLimit,
+					},
+					"offset": map[string]any{
+						"type":        "integer",
+						"description": "Number of baselines to skip, for paging. Default: 0.",
+						"minimum":     0,
+						"maximum":     math.MaxInt32,
 					},
 				},
 				Required: []string{},
@@ -118,6 +103,15 @@ Returns TSV data with:
 		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			if pool == nil {
 				return mcp.NewToolError("Datastore not configured. The get_metric_baselines tool requires a datastore connection.")
+			}
+
+			page, errMsg := parseBaselinesPage(args)
+			if errMsg != "" {
+				return mcp.NewToolError(errMsg)
+			}
+			view, errMsg := parseBaselinesView(args)
+			if errMsg != "" {
+				return mcp.NewToolError(errMsg)
 			}
 
 			// Extract context from args (injected by registry.Execute)
@@ -173,9 +167,9 @@ Returns TSV data with:
 			}
 
 			if singleConnection {
-				return baselinesSingleConnection(ctx, pool, connectionID, connName, metricName)
+				return baselinesSingleConnection(ctx, pool, connectionID, connName, metricName, page, view)
 			}
-			return baselinesAllConnections(ctx, pool, allConnections, accessibleIDs, metricName)
+			return baselinesAllConnections(ctx, pool, allConnections, accessibleIDs, metricName, page, view)
 		},
 	}
 }
@@ -195,52 +189,210 @@ func escapeLikePattern(s string) string {
 	return replacer.Replace(s)
 }
 
-// baselinesSingleConnection queries baselines for a single connection (original behavior)
+// Row limits for one page of get_metric_baselines output. A page of 100
+// rows runs to about 10,000 characters. The maximum equals the default
+// because a chat client resends every result on each later call, so a
+// larger page multiplies its cost; period_type and order_by narrow a
+// question to one small page instead.
+const (
+	baselinesDefaultLimit = 100
+	baselinesMaxLimit     = 100
+)
+
+// baselinePeriodTypes are the period_type values the alerter writes.
+var baselinePeriodTypes = []string{"all", "hourly", "daily"}
+
+// baselineOrderNames lists the order_by values, default first, and
+// baselineOrderLeads maps each to the fixed ORDER BY fragment placed ahead
+// of the default ordering, which then breaks every tie.
+var (
+	baselineOrderNames = []string{"metric", "mean_desc", "mean_asc", "stddev_desc"}
+	baselineOrderLeads = map[string]string{
+		"metric":      "",
+		"mean_desc":   "mb.mean DESC, ",
+		"mean_asc":    "mb.mean ASC, ",
+		"stddev_desc": "mb.stddev DESC, ",
+	}
+)
+
+// baselinesView is the requested row filter and order.
+type baselinesView struct {
+	periodType *string
+	orderLead  string
+	orderBy    string
+}
+
+// parseBaselinesView reads the optional period_type and order_by
+// arguments. It returns the error text for the caller when either is not
+// one of its allowed values, and an empty string otherwise.
+func parseBaselinesView(args map[string]any) (baselinesView, string) {
+	view := baselinesView{orderBy: baselineOrderNames[0]}
+	if v, ok := args["period_type"]; ok && v != nil {
+		s, isString := v.(string)
+		if !isString || !slices.Contains(baselinePeriodTypes, s) {
+			return view, "Invalid 'period_type' parameter: must be one of " +
+				strings.Join(baselinePeriodTypes, ", ")
+		}
+		view.periodType = &s
+	}
+	if v, ok := args["order_by"]; ok && v != nil {
+		s, isString := v.(string)
+		lead, known := baselineOrderLeads[s]
+		if !isString || !known {
+			return view, "Invalid 'order_by' parameter: must be one of " +
+				strings.Join(baselineOrderNames, ", ")
+		}
+		view.orderBy, view.orderLead = s, lead
+	}
+	return view, ""
+}
+
+// baselinesTitle describes the filters and order of a result for its
+// title line, naming only what the caller set.
+func baselinesTitle(metricName *string, view baselinesView) string {
+	title := "all metrics"
+	if metricName != nil {
+		title = "metric: " + *metricName
+	}
+	if view.periodType != nil {
+		title += " | period_type: " + *view.periodType
+	}
+	if view.orderLead != "" {
+		title += " | order_by: " + view.orderBy
+	}
+	return title
+}
+
+// baselinesNoMatchFilter describes the filters for the "no match" helper.
+func baselinesNoMatchFilter(metricName string, view baselinesView) string {
+	desc := fmt.Sprintf("%q", metricName)
+	if view.periodType != nil {
+		desc += " with period_type " + *view.periodType
+	}
+	return desc
+}
+
+// baselinesPeriodEmpty is the "no match" helper for a period_type with no
+// baselines at all in scope, where listing metric names cannot help.
+func baselinesPeriodEmpty(periodType, scope string) string {
+	return fmt.Sprintf("No metric baselines with period_type %s exist %s. "+
+		"Omit period_type or change it (valid values: %s).",
+		periodType, scope, strings.Join(baselinePeriodTypes, ", "))
+}
+
+// baselinesPage is one requested page of baseline rows.
+type baselinesPage struct {
+	limit  int
+	offset int
+}
+
+// parseBaselinesPage reads the optional limit and offset arguments. It
+// returns the error text for the caller when either is invalid, and an
+// empty string otherwise.
+func parseBaselinesPage(args map[string]any) (baselinesPage, string) {
+	page := baselinesPage{limit: baselinesDefaultLimit}
+	if v, ok := args["limit"]; ok && v != nil {
+		n, ok := integerValue(v)
+		if !ok || n < 1 || n > baselinesMaxLimit {
+			return page, fmt.Sprintf("Invalid 'limit' parameter: must be an integer between 1 and %d", baselinesMaxLimit)
+		}
+		page.limit = int(n)
+	}
+	if v, ok := args["offset"]; ok && v != nil {
+		n, ok := integerValue(v)
+		if !ok || n < 0 || n > math.MaxInt32 {
+			return page, fmt.Sprintf("Invalid 'offset' parameter: must be an integer of 0 or more (at most %d)", math.MaxInt32)
+		}
+		page.offset = int(n)
+	}
+	return page, ""
+}
+
+// baselinesCountLine describes which of the total matching rows a page
+// shows, naming the offset of the next page when more rows exist.
+func baselinesCountLine(total, shown int, page baselinesPage) string {
+	switch {
+	case page.offset == 0 && shown == total:
+		return fmt.Sprintf("Showing all %d baselines", total)
+	case page.offset+shown < total:
+		return fmt.Sprintf("Showing rows %d-%d of %d baselines (more available - use offset=%d for next page)",
+			page.offset+1, page.offset+shown, total, page.offset+shown)
+	default:
+		return fmt.Sprintf("Showing rows %d-%d of %d baselines (last page)",
+			page.offset+1, page.offset+shown, total)
+	}
+}
+
+// baselinesPastEnd reports whether rows match the filter in fromWhere
+// even though the page at offset came back empty, and if so returns the
+// message telling the caller which offsets hold rows.
+func baselinesPastEnd(ctx context.Context, pool *pgxpool.Pool, fromWhere string, args []any, offset int) (string, error) {
+	if offset == 0 {
+		return "", nil
+	}
+	var total int
+	if err := pool.QueryRow(ctx, "SELECT COUNT(*) "+fromWhere, args...).Scan(&total); err != nil {
+		return "", err
+	}
+	if total == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("No rows at offset %d: %d baselines match, so use an offset below %d.",
+		offset, total, total), nil
+}
+
+// baselineMetricPattern returns the bound parameter for the metric_name
+// ILIKE filter: nil when no metric_name was supplied, in which case the
+// filter is a no-op, and otherwise the user's text escaped and wrapped in
+// '%' ... '%' so it matches the fully-qualified stored name as a
+// case-insensitive substring (e.g. "cache_hit_ratio" matches
+// "pg_stat_database.cache_hit_ratio").
+func baselineMetricPattern(metricName *string) *string {
+	if metricName == nil {
+		return nil
+	}
+	p := "%" + escapeLikePattern(*metricName) + "%"
+	return &p
+}
+
+// baselinesSingleConnection queries one page of baselines for a single connection
 func baselinesSingleConnection(
 	ctx context.Context, pool *pgxpool.Pool,
-	connectionID int, connName string, metricName *string,
+	connectionID int, connName string, metricName *string, page baselinesPage,
+	view baselinesView,
 ) (mcp.ToolResponse, error) {
-	// metricPattern is the bound parameter for the ILIKE filter. It is nil
-	// when no metric_name was supplied, in which case the filter is a no-op.
-	// When supplied, the user's text is escaped and wrapped in '%' ... '%'
-	// so it matches the fully-qualified stored name as a case-insensitive
-	// substring (e.g. "cache_hit_ratio" matches
-	// "pg_stat_database.cache_hit_ratio").
-	var metricPattern *string
-	if metricName != nil {
-		p := "%" + escapeLikePattern(*metricName) + "%"
-		metricPattern = &p
-	}
+	fromWhere := `
+        FROM metric_baselines mb
+        WHERE mb.connection_id = $1
+          AND ($2::text IS NULL OR mb.metric_name ILIKE $2 ESCAPE '\')
+          AND ($3::text IS NULL OR mb.period_type = $3)`
+	filterArgs := []any{connectionID, baselineMetricPattern(metricName), view.periodType}
 
+	// id breaks ties between rows that differ only in database_name, so
+	// consecutive pages neither repeat nor skip a row, provided the sort
+	// keys do not change between calls: an alerter update to mean or
+	// stddev can move a row across a page boundary.
 	query := `
-        SELECT metric_name, period_type, day_of_week, hour_of_day,
-               mean, stddev, min, max, sample_count, last_calculated
-        FROM metric_baselines
-        WHERE connection_id = $1
-          AND ($2::text IS NULL OR metric_name ILIKE $2 ESCAPE '\')
-        ORDER BY metric_name, period_type, day_of_week, hour_of_day
+        SELECT mb.metric_name, mb.period_type, mb.day_of_week, mb.hour_of_day,
+               mb.mean, mb.stddev, mb.min, mb.max, mb.sample_count, mb.last_calculated,
+               COUNT(*) OVER () AS total` + fromWhere + `
+        ORDER BY ` + view.orderLead + `mb.metric_name, mb.period_type,
+                 mb.day_of_week, mb.hour_of_day, mb.id
+        LIMIT $4 OFFSET $5
     `
 
-	rows, err := pool.Query(ctx, query, connectionID, metricPattern)
+	queryArgs := append(append([]any{}, filterArgs...), page.limit, page.offset)
+
+	rows, err := pool.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return mcp.NewToolError(fmt.Sprintf("Failed to query metric baselines: %v", err))
 	}
 	defer rows.Close()
 
-	// Build TSV output
-	var sb strings.Builder
-	metricInfo := "all metrics"
-	if metricName != nil {
-		metricInfo = fmt.Sprintf("metric: %s", *metricName)
-	}
-	fmt.Fprintf(&sb, "Metric Baselines | Connection: %d | %s\n\n",
-		connectionID, metricInfo)
-
-	// Header
-	sb.WriteString("metric_name\tperiod_type\tday_of_week\thour_of_day\tmean\tstddev\tmin\tmax\tsample_count\n")
-
 	// Data rows
+	var data strings.Builder
 	rowCount := 0
+	total := 0
 	for rows.Next() {
 		var (
 			metricNameVal  string
@@ -256,12 +408,12 @@ func baselinesSingleConnection(
 		)
 
 		if err := rows.Scan(&metricNameVal, &periodType, &dayOfWeek, &hourOfDay,
-			&mean, &stddev, &minVal, &maxVal, &sampleCount, &lastCalculated); err != nil {
+			&mean, &stddev, &minVal, &maxVal, &sampleCount, &lastCalculated, &total); err != nil {
 			return mcp.NewToolError(fmt.Sprintf("Failed to scan row: %v", err))
 		}
 
 		// Format row
-		fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\t%.4f\t%.4f\t%.4f\t%.4f\t%d\n",
+		fmt.Fprintf(&data, "%s\t%s\t%s\t%s\t%.4f\t%.4f\t%.4f\t%.4f\t%d\n",
 			metricNameVal,
 			periodType,
 			formatOptionalInt(dayOfWeek),
@@ -279,61 +431,82 @@ func baselinesSingleConnection(
 	}
 
 	if rowCount == 0 {
+		msg, err := baselinesPastEnd(ctx, pool, fromWhere, filterArgs, page.offset)
+		if err != nil {
+			return mcp.NewToolError(fmt.Sprintf("Failed to count metric baselines: %v", err))
+		}
+		if msg != "" {
+			return mcp.NewToolSuccess(msg)
+		}
 		// When a metric_name filter was supplied but nothing matched, the
 		// LLM most likely used a shorthand that does not appear in any
 		// stored fully-qualified name. List the available metric names for
 		// this connection so it can retry with a correct value.
 		if metricName != nil {
-			available := availableMetricNamesSingle(ctx, pool, connectionID)
+			available, lookupErr := availableMetricNamesSingle(ctx, pool, connectionID, view.periodType)
 			if len(available) > 0 {
 				return mcp.NewToolSuccess(fmt.Sprintf(
-					"No metric baselines matched %q for connection %d. "+
+					"No metric baselines matched %s for connection %d. "+
 						"Stored metric names are fully-qualified (view.metric); "+
 						"available metric names for this connection are: %s. "+
 						"Retry with one of these (partial, case-insensitive matching is supported).",
-					*metricName, connectionID, strings.Join(available, ", ")))
+					baselinesNoMatchFilter(*metricName, view), connectionID, strings.Join(available, ", ")))
+			}
+			if lookupErr == nil && view.periodType != nil {
+				return mcp.NewToolSuccess(baselinesPeriodEmpty(*view.periodType, fmt.Sprintf("for connection %d", connectionID)))
 			}
 		}
 		return mcp.NewToolSuccess(fmt.Sprintf("No metric baselines found for connection %d. Baselines are calculated after sufficient historical data is collected.", connectionID))
 	}
 
-	fmt.Fprintf(&sb, "\n(%d baselines)\n", rowCount)
+	// Build TSV output
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Metric Baselines | Connection: %d | %s\n%s\n\n",
+		connectionID, baselinesTitle(metricName, view), baselinesCountLine(total, rowCount, page))
+
+	// Header
+	sb.WriteString("metric_name\tperiod_type\tday_of_week\thour_of_day\tmean\tstddev\tmin\tmax\tsample_count\n")
+	sb.WriteString(data.String())
 
 	return mcp.NewToolSuccess(sb.String())
 }
 
-// baselinesAllConnections queries baselines across all accessible connections
+// baselinesAllConnections queries one page of baselines across all accessible connections
 func baselinesAllConnections(
 	ctx context.Context, pool *pgxpool.Pool,
-	allConnections bool, accessibleIDs []int, metricName *string,
+	allConnections bool, accessibleIDs []int, metricName *string, page baselinesPage,
+	view baselinesView,
 ) (mcp.ToolResponse, error) {
 	connFilter, connArgs := buildConnectionFilter("mb.connection_id", allConnections, accessibleIDs)
 
-	// metricPattern is the bound parameter for the ILIKE filter. When
-	// supplied, the user's text is escaped and wrapped in '%' ... '%' so it
-	// matches the fully-qualified stored name as a case-insensitive
-	// substring (see escapeLikePattern).
-	var metricPattern *string
-	if metricName != nil {
-		p := "%" + escapeLikePattern(*metricName) + "%"
-		metricPattern = &p
-	}
-
 	paramIdx := len(connArgs) + 1
-	query := fmt.Sprintf(`
-        SELECT mb.connection_id, c.name AS connection_name,
-               mb.metric_name, mb.period_type, mb.day_of_week, mb.hour_of_day,
-               mb.mean, mb.stddev, mb.min, mb.max, mb.sample_count, mb.last_calculated
+	fromWhere := fmt.Sprintf(`
         FROM metric_baselines mb
         JOIN connections c ON c.id = mb.connection_id AND c.deleted_at IS NULL
         WHERE %s
           AND ($%d::text IS NULL OR mb.metric_name ILIKE $%d ESCAPE '\')
-        ORDER BY c.name, mb.metric_name, mb.period_type, mb.day_of_week, mb.hour_of_day
-    `, connFilter, paramIdx, paramIdx)
+          AND ($%d::text IS NULL OR mb.period_type = $%d)`,
+		connFilter, paramIdx, paramIdx, paramIdx+1, paramIdx+1)
 
-	queryArgs := make([]any, 0, len(connArgs)+1)
-	queryArgs = append(queryArgs, connArgs...)
-	queryArgs = append(queryArgs, metricPattern)
+	filterArgs := make([]any, 0, len(connArgs)+2)
+	filterArgs = append(filterArgs, connArgs...)
+	filterArgs = append(filterArgs, baselineMetricPattern(metricName), view.periodType)
+
+	// connection_id and id break ties between connections sharing a name
+	// and between rows that differ only in database_name, so consecutive
+	// pages neither repeat nor skip a row, provided the sort keys do not
+	// change between calls (see baselinesSingleConnection).
+	query := fmt.Sprintf(`
+        SELECT mb.connection_id, c.name AS connection_name,
+               mb.metric_name, mb.period_type, mb.day_of_week, mb.hour_of_day,
+               mb.mean, mb.stddev, mb.min, mb.max, mb.sample_count, mb.last_calculated,
+               COUNT(*) OVER () AS total%s
+        ORDER BY %sc.name, mb.connection_id, mb.metric_name, mb.period_type,
+                 mb.day_of_week, mb.hour_of_day, mb.id
+        LIMIT $%d OFFSET $%d
+    `, fromWhere, view.orderLead, paramIdx+2, paramIdx+3)
+
+	queryArgs := append(append([]any{}, filterArgs...), page.limit, page.offset)
 
 	rows, err := pool.Query(ctx, query, queryArgs...)
 	if err != nil {
@@ -341,19 +514,10 @@ func baselinesAllConnections(
 	}
 	defer rows.Close()
 
-	// Build TSV output
-	var sb strings.Builder
-	metricInfo := "all metrics"
-	if metricName != nil {
-		metricInfo = fmt.Sprintf("metric: %s", *metricName)
-	}
-	fmt.Fprintf(&sb, "Metric Baselines | All accessible connections | %s\n\n", metricInfo)
-
-	// Header - includes connection columns
-	sb.WriteString("connection_id\tconnection_name\tmetric_name\tperiod_type\tday_of_week\thour_of_day\tmean\tstddev\tmin\tmax\tsample_count\n")
-
 	// Data rows
+	var data strings.Builder
 	rowCount := 0
+	total := 0
 	for rows.Next() {
 		var (
 			connID         int
@@ -371,11 +535,11 @@ func baselinesAllConnections(
 		)
 
 		if err := rows.Scan(&connID, &connNameVal, &metricNameVal, &periodType, &dayOfWeek, &hourOfDay,
-			&mean, &stddev, &minVal, &maxVal, &sampleCount, &lastCalculated); err != nil {
+			&mean, &stddev, &minVal, &maxVal, &sampleCount, &lastCalculated, &total); err != nil {
 			return mcp.NewToolError(fmt.Sprintf("Failed to scan row: %v", err))
 		}
 
-		fmt.Fprintf(&sb, "%d\t%s\t%s\t%s\t%s\t%s\t%.4f\t%.4f\t%.4f\t%.4f\t%d\n",
+		fmt.Fprintf(&data, "%d\t%s\t%s\t%s\t%s\t%s\t%.4f\t%.4f\t%.4f\t%.4f\t%d\n",
 			connID,
 			connNameVal,
 			metricNameVal,
@@ -395,24 +559,41 @@ func baselinesAllConnections(
 	}
 
 	if rowCount == 0 {
+		msg, err := baselinesPastEnd(ctx, pool, fromWhere, filterArgs, page.offset)
+		if err != nil {
+			return mcp.NewToolError(fmt.Sprintf("Failed to count metric baselines: %v", err))
+		}
+		if msg != "" {
+			return mcp.NewToolSuccess(msg)
+		}
 		// When a metric_name filter was supplied but nothing matched,
 		// list the available metric names across the accessible
 		// connections so the LLM can retry with a correct value.
 		if metricName != nil {
-			available := availableMetricNamesMulti(ctx, pool, allConnections, accessibleIDs)
+			available, lookupErr := availableMetricNamesMulti(ctx, pool, allConnections, accessibleIDs, view.periodType)
 			if len(available) > 0 {
 				return mcp.NewToolSuccess(fmt.Sprintf(
-					"No metric baselines matched %q across accessible connections. "+
+					"No metric baselines matched %s across accessible connections. "+
 						"Stored metric names are fully-qualified (view.metric); "+
 						"available metric names are: %s. "+
 						"Retry with one of these (partial, case-insensitive matching is supported).",
-					*metricName, strings.Join(available, ", ")))
+					baselinesNoMatchFilter(*metricName, view), strings.Join(available, ", ")))
+			}
+			if lookupErr == nil && view.periodType != nil {
+				return mcp.NewToolSuccess(baselinesPeriodEmpty(*view.periodType, "across accessible connections"))
 			}
 		}
 		return mcp.NewToolSuccess("No metric baselines found across accessible connections. Baselines are calculated after sufficient historical data is collected.")
 	}
 
-	fmt.Fprintf(&sb, "\n(%d baselines)\n", rowCount)
+	// Build TSV output
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Metric Baselines | All accessible connections | %s\n%s\n\n",
+		baselinesTitle(metricName, view), baselinesCountLine(total, rowCount, page))
+
+	// Header - includes connection columns
+	sb.WriteString("connection_id\tconnection_name\tmetric_name\tperiod_type\tday_of_week\thour_of_day\tmean\tstddev\tmin\tmax\tsample_count\n")
+	sb.WriteString(data.String())
 
 	return mcp.NewToolSuccess(sb.String())
 }
@@ -422,66 +603,72 @@ func baselinesAllConnections(
 const availableMetricNamesLimit = 50
 
 // availableMetricNamesSingle returns the distinct metric names that have
-// baselines for the given connection, bounded by availableMetricNamesLimit.
-// It is used only to build a helpful "no match" message; any query error is
-// treated as "no names available" so the caller falls back to the generic
-// message rather than surfacing an error.
-func availableMetricNamesSingle(ctx context.Context, pool *pgxpool.Pool, connectionID int) []string {
+// baselines for the given connection, of periodType when it is not nil,
+// bounded by availableMetricNamesLimit. It feeds only the "no match"
+// message, so callers fall back to the generic message on error.
+func availableMetricNamesSingle(ctx context.Context, pool *pgxpool.Pool, connectionID int, periodType *string) ([]string, error) {
 	rows, err := pool.Query(ctx, `
         SELECT DISTINCT metric_name
         FROM metric_baselines
         WHERE connection_id = $1
+          AND ($2::text IS NULL OR period_type = $2)
         ORDER BY metric_name
-        LIMIT $2
-    `, connectionID, availableMetricNamesLimit)
+        LIMIT $3
+    `, connectionID, periodType, availableMetricNamesLimit)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	return scanMetricNames(rows)
 }
 
 // availableMetricNamesMulti returns the distinct metric names that have
-// baselines across the accessible connections, bounded by
-// availableMetricNamesLimit. It reuses buildConnectionFilter so the lookup
-// respects the same RBAC scoping as the main query. Query errors yield nil.
-func availableMetricNamesMulti(ctx context.Context, pool *pgxpool.Pool, allConnections bool, accessibleIDs []int) []string {
+// baselines across the accessible connections, of periodType when it is
+// not nil, bounded by availableMetricNamesLimit. It reuses buildConnectionFilter so the lookup
+// respects the same RBAC scoping as the main query.
+func availableMetricNamesMulti(ctx context.Context, pool *pgxpool.Pool, allConnections bool, accessibleIDs []int, periodType *string) ([]string, error) {
 	connFilter, connArgs := buildConnectionFilter("mb.connection_id", allConnections, accessibleIDs)
+	paramIdx := len(connArgs) + 1
 	query := fmt.Sprintf(`
         SELECT DISTINCT mb.metric_name
         FROM metric_baselines mb
         WHERE %s
+          AND ($%d::text IS NULL OR mb.period_type = $%d)
         ORDER BY mb.metric_name
         LIMIT $%d
-    `, connFilter, len(connArgs)+1)
+    `, connFilter, paramIdx, paramIdx, paramIdx+1)
 
-	queryArgs := make([]any, 0, len(connArgs)+1)
+	queryArgs := make([]any, 0, len(connArgs)+2)
 	queryArgs = append(queryArgs, connArgs...)
-	queryArgs = append(queryArgs, availableMetricNamesLimit)
+	queryArgs = append(queryArgs, periodType, availableMetricNamesLimit)
 
 	rows, err := pool.Query(ctx, query, queryArgs...)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	return scanMetricNames(rows)
 }
 
 // scanMetricNames collects metric_name values from a single-column result
-// set. Scan errors abort the collection and return what was gathered so far.
+// set, returning the first scan or iteration error.
 func scanMetricNames(rows interface {
 	Next() bool
 	Scan(...any) error
-}) []string {
+	Err() error
+}) ([]string, error) {
 	var names []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			break
+			return nil, err
 		}
 		names = append(names, name)
 	}
-	return names
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return names, nil
 }
 
 // formatOptionalInt formats an optional int pointer for TSV output

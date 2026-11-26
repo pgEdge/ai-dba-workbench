@@ -10,7 +10,9 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -191,14 +193,15 @@ func TestEscapeLikePattern(t *testing.T) {
 // scanMetricNames helper tests
 // ---------------------------------------------------------------------------
 
-// fakeRows implements the minimal Next/Scan interface used by
-// scanMetricNames, allowing the Scan-error branch to be exercised without a
+// fakeRows implements the minimal Next/Scan/Err interface used by
+// scanMetricNames, allowing the error branches to be exercised without a
 // real database.
 type fakeRows struct {
 	values  []string
 	idx     int
 	failAt  int // index at which Scan returns an error; -1 to never fail
 	scanErr error
+	iterErr error // returned by Err once iteration ends
 }
 
 func (f *fakeRows) Next() bool {
@@ -218,33 +221,44 @@ func (f *fakeRows) Scan(dest ...any) error {
 	return nil
 }
 
+func (f *fakeRows) Err() error {
+	return f.iterErr
+}
+
 func TestScanMetricNames(t *testing.T) {
 	t.Run("collects all rows", func(t *testing.T) {
 		rows := &fakeRows{values: []string{"a", "b", "c"}, failAt: -1}
-		got := scanMetricNames(rows)
-		if strings.Join(got, ",") != "a,b,c" {
-			t.Errorf("expected a,b,c got %v", got)
+		got, err := scanMetricNames(rows)
+		if err != nil || strings.Join(got, ",") != "a,b,c" {
+			t.Errorf("expected a,b,c and no error, got %v, %v", got, err)
 		}
 	})
 
-	t.Run("stops on scan error", func(t *testing.T) {
+	t.Run("reports scan error", func(t *testing.T) {
 		rows := &fakeRows{
 			values:  []string{"a", "b", "c"},
 			failAt:  1,
 			scanErr: fmt.Errorf("boom"),
 		}
-		got := scanMetricNames(rows)
-		// Should have collected only the first value before the error.
-		if strings.Join(got, ",") != "a" {
-			t.Errorf("expected only [a] before error, got %v", got)
+		got, err := scanMetricNames(rows)
+		if err == nil || got != nil {
+			t.Errorf("expected nil names and an error, got %v, %v", got, err)
+		}
+	})
+
+	t.Run("reports iteration error", func(t *testing.T) {
+		rows := &fakeRows{values: []string{"a"}, failAt: -1, iterErr: fmt.Errorf("conn lost")}
+		got, err := scanMetricNames(rows)
+		if err == nil || got != nil {
+			t.Errorf("expected nil names and an error, got %v, %v", got, err)
 		}
 	})
 
 	t.Run("empty result", func(t *testing.T) {
 		rows := &fakeRows{values: nil, failAt: -1}
-		got := scanMetricNames(rows)
-		if got != nil {
-			t.Errorf("expected nil for empty result, got %v", got)
+		got, err := scanMetricNames(rows)
+		if err != nil || got != nil {
+			t.Errorf("expected nil names and no error, got %v, %v", got, err)
 		}
 	})
 }
@@ -298,6 +312,231 @@ func TestFormatOptionalInt(t *testing.T) {
 				t.Errorf("formatOptionalInt() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// get_metric_baselines paging tests
+// ---------------------------------------------------------------------------
+
+func TestGetMetricBaselinesPagingSchema(t *testing.T) {
+	tool := GetMetricBaselinesTool(nil, nil, nil, nil)
+	props := tool.Definition.InputSchema.Properties
+
+	limit, ok := props["limit"].(map[string]any)
+	if !ok {
+		t.Fatal("expected limit property in input schema")
+	}
+	if limit["minimum"] != 1 || limit["maximum"] != baselinesMaxLimit {
+		t.Errorf("limit bounds = %v..%v; want 1..%d", limit["minimum"], limit["maximum"], baselinesMaxLimit)
+	}
+	offset, ok := props["offset"].(map[string]any)
+	if !ok {
+		t.Fatal("expected offset property in input schema")
+	}
+	if offset["minimum"] != 0 || offset["maximum"] != math.MaxInt32 {
+		t.Errorf("offset bounds = %v..%v; want 0..%d", offset["minimum"], offset["maximum"], math.MaxInt32)
+	}
+
+	// The prose states the limits as literals; keep it in step with the
+	// constants.
+	want := fmt.Sprintf("default: %d, max: %d", baselinesDefaultLimit, baselinesMaxLimit)
+	for name, text := range map[string]string{
+		"description":       tool.Definition.Description,
+		"limit description": limit["description"].(string),
+	} {
+		if !strings.Contains(strings.ToLower(text), want) {
+			t.Errorf("%s does not state %q", name, want)
+		}
+	}
+	compact := fmt.Sprintf("Returns %d rows by default (limit, max %d)", baselinesDefaultLimit, baselinesMaxLimit)
+	if !strings.Contains(tool.Definition.CompactDescription, compact) {
+		t.Errorf("compact description does not state %q", compact)
+	}
+}
+
+func TestParseBaselinesPage(t *testing.T) {
+	limitErr := fmt.Sprintf("Invalid 'limit' parameter: must be an integer between 1 and %d", baselinesMaxLimit)
+	offsetErr := fmt.Sprintf("Invalid 'offset' parameter: must be an integer of 0 or more (at most %d)", math.MaxInt32)
+
+	cases := []struct {
+		name    string
+		args    map[string]any
+		want    baselinesPage
+		wantErr string
+	}{
+		{"defaults", map[string]any{}, baselinesPage{limit: baselinesDefaultLimit}, ""},
+		{"nil values are absent", map[string]any{"limit": nil, "offset": nil}, baselinesPage{limit: baselinesDefaultLimit}, ""},
+		{"float values", map[string]any{"limit": float64(25), "offset": float64(50)}, baselinesPage{limit: 25, offset: 50}, ""},
+		{"int values", map[string]any{"limit": 1, "offset": 0}, baselinesPage{limit: 1}, ""},
+		{"json number", map[string]any{"limit": json.Number("100")}, baselinesPage{limit: baselinesMaxLimit}, ""},
+		{"largest offset", map[string]any{"offset": float64(math.MaxInt32)}, baselinesPage{limit: baselinesDefaultLimit, offset: math.MaxInt32}, ""},
+		{"zero limit", map[string]any{"limit": float64(0)}, baselinesPage{}, limitErr},
+		{"negative limit", map[string]any{"limit": -1}, baselinesPage{}, limitErr},
+		{"limit above max", map[string]any{"limit": float64(baselinesMaxLimit + 1)}, baselinesPage{}, limitErr},
+		{"fractional limit", map[string]any{"limit": 2.5}, baselinesPage{}, limitErr},
+		{"string limit", map[string]any{"limit": "10"}, baselinesPage{}, limitErr},
+		{"bool limit", map[string]any{"limit": true}, baselinesPage{}, limitErr},
+		{"negative offset", map[string]any{"offset": float64(-1)}, baselinesPage{}, offsetErr},
+		{"offset too large", map[string]any{"offset": float64(math.MaxInt32) + 1}, baselinesPage{}, offsetErr},
+		{"fractional offset", map[string]any{"offset": 0.5}, baselinesPage{}, offsetErr},
+		{"string offset", map[string]any{"offset": "5"}, baselinesPage{}, offsetErr},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, errMsg := parseBaselinesPage(tc.args)
+			if errMsg != tc.wantErr {
+				t.Fatalf("error = %q; want %q", errMsg, tc.wantErr)
+			}
+			if tc.wantErr == "" && got != tc.want {
+				t.Errorf("page = %+v; want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBaselinesCountLine(t *testing.T) {
+	cases := []struct {
+		name  string
+		total int
+		shown int
+		page  baselinesPage
+		want  string
+	}{
+		{"all on first page", 32, 32, baselinesPage{limit: 100}, "Showing all 32 baselines"},
+		{"first of several", 640, 100, baselinesPage{limit: 100}, "Showing rows 1-100 of 640 baselines (more available - use offset=100 for next page)"},
+		{"middle page", 640, 100, baselinesPage{limit: 100, offset: 100}, "Showing rows 101-200 of 640 baselines (more available - use offset=200 for next page)"},
+		{"last page", 640, 40, baselinesPage{limit: 100, offset: 600}, "Showing rows 601-640 of 640 baselines (last page)"},
+		{"exact last page", 200, 100, baselinesPage{limit: 100, offset: 100}, "Showing rows 101-200 of 200 baselines (last page)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := baselinesCountLine(tc.total, tc.shown, tc.page); got != tc.want {
+				t.Errorf("got %q; want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBaselineMetricPattern(t *testing.T) {
+	if got := baselineMetricPattern(nil); got != nil {
+		t.Errorf("nil metric name gave pattern %q; want nil", *got)
+	}
+	name := "cache_hit"
+	got := baselineMetricPattern(&name)
+	if got == nil || *got != `%cache\_hit%` {
+		t.Errorf("pattern = %v; want %q", got, `%cache\_hit%`)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// get_metric_baselines filter and sort tests
+// ---------------------------------------------------------------------------
+
+func TestParseBaselinesView(t *testing.T) {
+	periodErr := "Invalid 'period_type' parameter: must be one of all, hourly, daily"
+	orderErr := "Invalid 'order_by' parameter: must be one of metric, mean_desc, mean_asc, stddev_desc"
+
+	cases := []struct {
+		name       string
+		args       map[string]any
+		wantPeriod string
+		wantOrder  string
+		wantLead   string
+		wantErr    string
+	}{
+		{"defaults", map[string]any{}, "", "metric", "", ""},
+		{"nil is absent", map[string]any{"period_type": nil, "order_by": nil}, "", "metric", "", ""},
+		{"empty period", map[string]any{"period_type": ""}, "", "", "", periodErr},
+		{"empty order", map[string]any{"order_by": ""}, "", "", "", orderErr},
+		{"hourly by mean desc", map[string]any{"period_type": "hourly", "order_by": "mean_desc"}, "hourly", "mean_desc", "mb.mean DESC, ", ""},
+		{"all by mean asc", map[string]any{"period_type": "all", "order_by": "mean_asc"}, "all", "mean_asc", "mb.mean ASC, ", ""},
+		{"daily by stddev", map[string]any{"period_type": "daily", "order_by": "stddev_desc"}, "daily", "stddev_desc", "mb.stddev DESC, ", ""},
+		{"explicit metric order", map[string]any{"order_by": "metric"}, "", "metric", "", ""},
+		{"weekly is not written", map[string]any{"period_type": "weekly"}, "", "", "", periodErr},
+		{"wrong case period", map[string]any{"period_type": "Hourly"}, "", "", "", periodErr},
+		{"numeric period", map[string]any{"period_type": 1}, "", "", "", periodErr},
+		{"unknown order", map[string]any{"order_by": "mean"}, "", "", "", orderErr},
+		{"injected order", map[string]any{"order_by": "mean; DROP TABLE x"}, "", "", "", orderErr},
+		{"numeric order", map[string]any{"order_by": 2}, "", "", "", orderErr},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, errMsg := parseBaselinesView(tc.args)
+			if errMsg != tc.wantErr {
+				t.Fatalf("error = %q; want %q", errMsg, tc.wantErr)
+			}
+			if tc.wantErr != "" {
+				return
+			}
+			period := ""
+			if got.periodType != nil {
+				period = *got.periodType
+			}
+			if period != tc.wantPeriod || got.orderBy != tc.wantOrder || got.orderLead != tc.wantLead {
+				t.Errorf("view = {%q %q %q}; want {%q %q %q}", period, got.orderBy, got.orderLead,
+					tc.wantPeriod, tc.wantOrder, tc.wantLead)
+			}
+		})
+	}
+}
+
+func TestBaselinesTitle(t *testing.T) {
+	hourly := "hourly"
+	metric := "cache_hit"
+	cases := []struct {
+		name   string
+		metric *string
+		view   baselinesView
+		want   string
+	}{
+		{"defaults", nil, baselinesView{orderBy: "metric"}, "all metrics"},
+		{"metric only", &metric, baselinesView{orderBy: "metric"}, "metric: cache_hit"},
+		{"filter and order", nil, baselinesView{periodType: &hourly, orderBy: "mean_desc", orderLead: "mb.mean DESC, "},
+			"all metrics | period_type: hourly | order_by: mean_desc"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := baselinesTitle(tc.metric, tc.view); got != tc.want {
+				t.Errorf("got %q; want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBaselinesOrderAllowList(t *testing.T) {
+	if len(baselineOrderNames) != len(baselineOrderLeads) {
+		t.Fatalf("%d order names but %d fragments", len(baselineOrderNames), len(baselineOrderLeads))
+	}
+	for _, name := range baselineOrderNames {
+		if _, ok := baselineOrderLeads[name]; !ok {
+			t.Errorf("order %q has no SQL fragment", name)
+		}
+	}
+
+	tool := GetMetricBaselinesTool(nil, nil, nil, nil)
+	props := tool.Definition.InputSchema.Properties
+	for prop, want := range map[string][]string{
+		"period_type": baselinePeriodTypes,
+		"order_by":    baselineOrderNames,
+	} {
+		p, ok := props[prop].(map[string]any)
+		if !ok {
+			t.Fatalf("expected %s property in input schema", prop)
+		}
+		if got, _ := p["enum"].([]string); strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s enum = %v; want %v", prop, p["enum"], want)
+		}
+	}
+
+	example := "period_type='hourly', order_by='mean_desc', limit=5"
+	for name, text := range map[string]string{
+		"description":         tool.Definition.Description,
+		"compact description": tool.Definition.CompactDescription,
+	} {
+		if !strings.Contains(text, example) {
+			t.Errorf("%s does not give the example %q", name, example)
+		}
 	}
 }
 

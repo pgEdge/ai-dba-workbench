@@ -2945,10 +2945,14 @@ the first database (default first, then the sorted list) whose
 not stop the walk. The rows keep that database as `database_name`.
 `TestExecuteProbeForAllDatabases_ServerWideViewReadOnce` pins this.
 Readers must still not treat `database_name` as part of a statement's
-identity or filter on it: rows from older collectors hold one copy per
-probing database, and the first database with the extension can change
-between collections. Resolve the statement's database from `dbid`, and
-keep the `DISTINCT ON` that picks one copy per collection.
+identity or use it to attribute a statement to a database: rows from
+older collectors hold one copy per probing database, and the first
+database with the extension can change between collections. Resolve
+the statement's database from `dbid`, and keep the `DISTINCT ON` that
+picks one copy per collection. A `database_name` filter that a caller
+asks for explicitly is a probing-database filter, not attribution, so
+keep it, applied to the copy kept (see `sampleSource` and
+`latestStatementSource`).
 
 ## Related Issues
 

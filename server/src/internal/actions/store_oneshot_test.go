@@ -89,7 +89,7 @@ func TestOverrideAfterVeto(t *testing.T) {
 	if err := s.Approve(ctx, a.ID, "overridden", "bob", "session"); err != nil {
 		t.Fatalf("override: %v", err)
 	}
-	if ok, err := s.ClaimForExecution(ctx, a.ID); err != nil || !ok {
+	if ok, err := s.claimNew(ctx, a.ID); err != nil || !ok {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
 }

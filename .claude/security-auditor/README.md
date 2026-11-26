@@ -17,6 +17,7 @@ moved.
 | `server/src/internal/tools/` | MCP tools, including ones that execute SQL against monitored databases |
 | `server/src/internal/sqllex/` | Shared SQL lexer and side-effecting-function classifier used by the query endpoint and the MCP query tools. The read-only transaction is the defence against data writes; this classifier is the only defence against side-effecting functions such as `pg_terminate_backend`, which run inside a read-only transaction. `test_query` is exempt from the tool-level privilege check (`context_aware_provider.go`) and needs only read access to the connection, so it must never execute what it validates |
 | `server/src/internal/database/` | Datastore queries; identifier interpolation is allow-listed and quoted |
+| `server/src/internal/actions/` | Proposed actions: the only path that writes to monitored databases. The store is the final gate on what may run (claim, release, approval), and the executor runs the stored statements as written; the HTTP gates are in `api/action_handlers.go` |
 | `server/src/internal/llmproxy/` | Outbound proxy to LLM providers with its own `authorize` step and provider API keys |
 | `pkg/crypto/` | Encryption of stored monitored-database passwords (AES-GCM) |
 | `pkg/smtpauth/` | SMTP PLAIN auth for the alerter's email notifier and the server's test send. Every SMTP login goes through `smtpauth.PlainAuth`, built on the dialled connection, which without TLS sends credentials only when that connection's remote address is loopback; `net/smtp.PlainAuth` must not be used, because its `localhost` exception trusts the host name (#843) |
@@ -836,6 +837,39 @@ moved.
   bounded by 16 MiB of JSON as well as 5,000 rows, and a row ColdFront
   refuses is dropped with only its table, connection and SQLSTATE
   logged. See `../golang-expert/coldfront-metrics.md`.
+
+- Proposed actions (`server/src/internal/actions/`, #774, #888). The
+  claim (`Store.claim`) is the only way to `executing`: one UPDATE
+  guarded on `not_started` plus a recorded decision (passed and
+  approved, or vetoed and overridden), writing a fresh random
+  `claim_token`, so exactly one caller wins. It runs in a transaction
+  under local `lock_timeout` 5s, `statement_timeout` 10s and
+  `idle_in_transaction_session_timeout` 5s (the datastore pool sets
+  only `statement_timeout`, default 30s, and no `lock_timeout`), so a
+  claim the client gave up on commits or dies within
+  `claimSettledAfter` (40s). Only a failed COMMIT is ambiguous: a
+  read-back that finds the row executing under the token runs it;
+  anything else is `errClaimUnsettled`, and the executor never runs it
+  later. Instead `settleClaim` returns it to `not_started` through
+  `releaseClaim`, an UPDATE guarded on `executing` and the token, so it
+  can never touch a claim held under another token or a row that has
+  moved on; a release matching nothing is final only after
+  `claimSettledAfter`. Settling is per action (Start refuses an action
+  being claimed or settled with `ErrAlreadyStarted`), capped at
+  `maxPendingClaims`, bounded in attempts and time, and continues after
+  `Shutdown` only within its context. Only `Executor.Start` may call
+  `claim`, since only it settles an unsettled claim. Approval is
+  one-shot (`Approve` applies only with no decision recorded); a retry
+  of an approved action is allowed only to its approver or a
+  scope-aware superuser, and of an overridden one only to whoever
+  overrode it or a superuser, through the same kind of request
+  (`isExecuteRetry`), with `Reapprove` a compare-and-swap on the
+  approver; an override is session-only and needs write access and the
+  connection name typed exactly. `MarkInterruptedUnknown` runs once at
+  startup, before requests are served, and marks every `executing` row
+  `unknown`; it assumes one server per datastore, and
+  `FinishExecution` still accepts a sweep-marked row with no results
+  so a live run's real outcome replaces the guess.
 
 ## The RBAC Audit Log
 

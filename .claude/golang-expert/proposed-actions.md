@@ -91,20 +91,28 @@ row.
   sweep runs still records its outcome; a second finish is
   `ErrInvalidState`.
 - `Executor.Start` claims on `context.WithoutCancel(ctx)` bounded by
-  `claimTimeout`, so a client disconnect cannot strand the claim.
-  Each claim writes a fresh `claim_token` (UUID); when the UPDATE
-  errors, `Store.claim` reads the row back on a detached context and
-  counts the claim only if it is `executing` under that token, so a
-  commit whose reply was lost still gets a run and another server's
-  claim is never taken over. Test it through `claim` with a fixed token.
-  When the read-back fails too, `claim` wraps `errClaimUnsettled`;
-  `Start` returns that error, starts no run, and hands its WaitGroup
-  slot to `settleClaim`, which retries `Store.releaseClaim` (one UPDATE
-  guarded on `executing` and the token, back to `not_started` with
-  `executed_at` and `claim_token` cleared, approval kept) up to
-  `settleAttempts` with backoff, on `Executor.lifetime`, which
-  `Shutdown` cancels. It never runs the action late (#888). Test it by
-  swapping `Executor.claims` for a wrapper over `*Store`.
+  `claimTimeout`, so a client disconnect cannot strand the claim. It is
+  the only caller of `Store.claim` (there is no exported claim): each
+  claim writes a fresh `claim_token` (UUID) in a transaction under
+  local `lock_timeout`, `statement_timeout` and
+  `idle_in_transaction_session_timeout`, all below `claimTimeout`, so
+  the server commits or aborts it within `claimSettledAfter`. An error
+  before COMMIT means nothing was claimed. When COMMIT fails, the row is
+  read back on a detached context: `executing` under the token runs;
+  anything else wraps `errClaimUnsettled`. `Start` then returns the
+  error, starts no run, and hands its WaitGroup slot and its
+  `Executor.pending` entry to `settleClaim`, which retries
+  `Store.releaseClaim` (one UPDATE guarded on `executing` and the
+  token, back to `not_started` with `executed_at` and `claim_token`
+  cleared, approval kept). A zero-row release is final only after
+  `claimSettledAfter`; failures stop after `settleAttempts`; after
+  `Shutdown` it uses `pause`, like outcome writes. It never runs the
+  action late (#888). `Start` refuses an action in `pending` with
+  `ErrAlreadyStarted` and any action once `maxPendingClaims` are
+  pending. Test the store through `claimNew` (test-only) or `claim`
+  with a fixed token and `Store.commitClaim` to lose the COMMIT's
+  reply; test the executor by swapping `Executor.claims` for a wrapper
+  over `*Store`.
   Outcome writes retry until `Shutdown`'s context ends
   (`shutdownDone`), not merely until `stopping` closes.
 - A statement that calls `nextval`/`setval` (matched as a call by

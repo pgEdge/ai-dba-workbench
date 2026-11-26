@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/server/internal/testutil/scratchdb"
@@ -67,7 +69,7 @@ func TestStoreLifecycle(t *testing.T) {
 	}
 
 	// Not yet reviewed or approved: the claim must refuse.
-	ok, err := s.ClaimForExecution(ctx, a.ID)
+	ok, err := s.claimNew(ctx, a.ID)
 	if err != nil || ok {
 		t.Fatalf("claim before review: ok=%v err=%v", ok, err)
 	}
@@ -92,7 +94,7 @@ func TestStoreLifecycle(t *testing.T) {
 		t.Errorf("updated_at not advanced: %v vs %v", got.UpdatedAt, a.UpdatedAt)
 	}
 
-	ok, err = s.ClaimForExecution(ctx, a.ID)
+	ok, err = s.claimNew(ctx, a.ID)
 	if err != nil || !ok {
 		t.Fatalf("first claim: ok=%v err=%v", ok, err)
 	}
@@ -103,7 +105,7 @@ func TestStoreLifecycle(t *testing.T) {
 	if claimed.ExecStatus != "executing" || claimed.ExecutedAt == nil {
 		t.Fatalf("claim must record the start time: %+v", claimed)
 	}
-	ok, err = s.ClaimForExecution(ctx, a.ID)
+	ok, err = s.claimNew(ctx, a.ID)
 	if err != nil || ok {
 		t.Fatalf("second claim: ok=%v err=%v", ok, err)
 	}
@@ -157,7 +159,7 @@ func TestStoreLifecycle(t *testing.T) {
 	if err := s.Approve(ctx, a.ID, "approved", "bob", "session"); !errors.Is(err, ErrInvalidState) {
 		t.Errorf("approve after execution should be refused: %v", err)
 	}
-	if ok, err := s.ClaimForExecution(ctx, 999999); err != nil || ok {
+	if ok, err := s.claimNew(ctx, 999999); err != nil || ok {
 		t.Errorf("claim missing: ok=%v err=%v", ok, err)
 	}
 
@@ -169,13 +171,13 @@ func TestStoreLifecycle(t *testing.T) {
 	if err := s.SetReview(ctx, b.ID, "vetoed", Verdict{Decision: "veto", Danger: "high"}); err != nil {
 		t.Fatalf("veto: %v", err)
 	}
-	if ok, err := s.ClaimForExecution(ctx, b.ID); err != nil || ok {
+	if ok, err := s.claimNew(ctx, b.ID); err != nil || ok {
 		t.Errorf("vetoed, unapproved action must not be claimable: ok=%v err=%v", ok, err)
 	}
 	if err := s.Approve(ctx, b.ID, "overridden", "bob", "session"); err != nil {
 		t.Fatalf("override: %v", err)
 	}
-	if ok, err := s.ClaimForExecution(ctx, b.ID); err != nil || !ok {
+	if ok, err := s.claimNew(ctx, b.ID); err != nil || !ok {
 		t.Fatalf("claim overridden: ok=%v err=%v", ok, err)
 	}
 
@@ -238,7 +240,7 @@ func TestClaimRequiresRecordedDecision(t *testing.T) {
 			a.ID, tc.review, tc.approval); err != nil {
 			t.Fatalf("%s: set state: %v", tc.name, err)
 		}
-		ok, err := s.ClaimForExecution(ctx, a.ID)
+		ok, err := s.claimNew(ctx, a.ID)
 		if err != nil || ok != tc.want {
 			t.Errorf("%s: claim ok=%v err=%v, want %v", tc.name, ok, err, tc.want)
 		}
@@ -269,7 +271,7 @@ func TestClaimForExecutionConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			ok, err := s.ClaimForExecution(ctx, a.ID)
+			ok, err := s.claimNew(ctx, a.ID)
 			if err != nil {
 				errs <- err
 				return
@@ -308,7 +310,7 @@ func TestMarkInterruptedUnknown(t *testing.T) {
 	if err := s.Approve(ctx, running.ID, "approved", "bob", "session"); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := s.ClaimForExecution(ctx, running.ID); err != nil || !ok {
+	if ok, err := s.claimNew(ctx, running.ID); err != nil || !ok {
 		t.Fatalf("claim: %v %v", ok, err)
 	}
 
@@ -428,8 +430,8 @@ func TestStoreErrorsOnClosedPool(t *testing.T) {
 	if err := s.Reapprove(ctx, a.ID, "approved", "b", "c", "session"); err == nil || errors.Is(err, ErrInvalidState) {
 		t.Error("reapprove")
 	}
-	if _, err := s.ClaimForExecution(ctx, a.ID); !errors.Is(err, errClaimUnsettled) {
-		t.Errorf("claim = %v, want errClaimUnsettled when the read-back fails too", err)
+	if _, err := s.claimNew(ctx, a.ID); err == nil || errors.Is(err, errClaimUnsettled) {
+		t.Errorf("claim = %v, want a plain error: nothing was sent", err)
 	}
 	if _, err := s.releaseClaim(ctx, a.ID, "6f1c2a52-6a9a-4c39-9a53-7d0f2d1f0a01"); err == nil {
 		t.Error("release claim")
@@ -488,7 +490,7 @@ func TestReapprove(t *testing.T) {
 	if got.ApprovedBy == nil || *got.ApprovedBy != "root" || got.ApprovedVia == nil || *got.ApprovedVia != "token" {
 		t.Errorf("approved_by = %v via %v, want root via token", got.ApprovedBy, got.ApprovedVia)
 	}
-	if ok, err := s.ClaimForExecution(ctx, a.ID); err != nil || !ok {
+	if ok, err := s.claimNew(ctx, a.ID); err != nil || !ok {
 		t.Fatalf("claim = %v, %v", ok, err)
 	}
 	if err := s.Reapprove(ctx, a.ID, "approved", "root", "bob", "session"); !errors.Is(err, ErrInvalidState) {
@@ -589,11 +591,18 @@ func TestCreateFailsMidTransaction(t *testing.T) {
 	}
 }
 
-// TestClaimReconcilesFailedClaim proves a claim that reports an error
-// still counts when the row holds its token, as when the claim commits
-// but its reply is lost, and fails when the row is unclaimed or holds
-// another claim's token. A statement trigger in the test's own scratch
-// database makes every UPDATE of the table fail.
+// claimNew claims the action under a fresh token, as Executor.Start
+// does.
+func (s *Store) claimNew(ctx context.Context, id int64) (bool, error) {
+	return s.claim(ctx, id, uuid.NewString())
+}
+
+// TestClaimReconcilesFailedClaim proves how claim settles each failure.
+// A claim whose COMMIT landed but lost its reply counts, read back by
+// its token; one whose COMMIT did not land, or whose read-back fails
+// too, is unsettled, since the claim may yet commit or may have; and a
+// failure before the COMMIT, or a row not claimable, is a plain refusal
+// that leaves the row alone. It also checks the claim's local limits.
 func TestClaimReconcilesFailedClaim(t *testing.T) {
 	s, pool, connID := newTestStore(t, "_act_claim")
 	ctx := context.Background()
@@ -611,56 +620,94 @@ func TestClaimReconcilesFailedClaim(t *testing.T) {
 		}
 		return a.ID
 	}
-	mine := "6f1c2a52-6a9a-4c39-9a53-7d0f2d1f0a01"
-	theirs := "6f1c2a52-6a9a-4c39-9a53-7d0f2d1f0a02"
+	lost := errors.New("connection reset")
+	landsThenLost := func(ctx context.Context, tx pgx.Tx) error {
+		var lock, stmt, idle string
+		if err := tx.QueryRow(ctx, `SELECT current_setting('lock_timeout'),
+                current_setting('statement_timeout'),
+                current_setting('idle_in_transaction_session_timeout')`).Scan(&lock, &stmt, &idle); err != nil {
+			return err
+		}
+		if lock != "5s" || stmt != "10s" || idle != "5s" {
+			t.Errorf("claim limits = %s, %s, %s; want 5s, 10s, 5s", lock, stmt, idle)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		return lost
+	}
+	neverLands := func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.Rollback(ctx); err != nil {
+			return err
+		}
+		return lost
+	}
+	// landsThenUnreadable also hides the table, so the read-back fails.
+	landsThenUnreadable := func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		if _, err := pool.Exec(ctx, `ALTER TABLE proposed_actions RENAME TO test_hidden_actions`); err != nil {
+			return err
+		}
+		return lost
+	}
+	unhide := func() {
+		mustExec(t, pool, `ALTER TABLE test_hidden_actions RENAME TO proposed_actions`)
+	}
 
 	held := newApproved()
-	if ok, err := s.claim(ctx, held, mine); err != nil || !ok {
+	if ok, err := s.claimNew(ctx, held); err != nil || !ok {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
-	var token string
-	if err := pool.QueryRow(ctx, `SELECT claim_token::text FROM proposed_actions WHERE id = $1`,
-		held).Scan(&token); err != nil || token != mine {
-		t.Fatalf("claim_token = %q (%v), want %q", token, err, mine)
-	}
-	unclaimed := newApproved()
-
-	for _, sql := range []string{
-		`CREATE FUNCTION test_refuse_claim() RETURNS trigger LANGUAGE plpgsql
-            AS $$ BEGIN RAISE EXCEPTION 'refused by test'; END $$`,
-		`CREATE TRIGGER test_refuse_claim BEFORE UPDATE ON proposed_actions
-            FOR EACH STATEMENT EXECUTE FUNCTION test_refuse_claim()`,
-	} {
-		if _, err := pool.Exec(ctx, sql); err != nil {
-			t.Fatal(err)
-		}
-	}
 	tests := []struct {
-		name   string
-		id     int64
-		token  string
-		wantOK bool
+		name          string
+		id            int64
+		commit        func(context.Context, pgx.Tx) error
+		after         func()
+		wantOK        bool
+		wantUnsettled bool
+		wantStatus    string
 	}{
-		{"own claim took effect", held, mine, true},
-		{"another claim holds it", held, theirs, false},
-		{"claim did not take effect", unclaimed, mine, false},
-		{"no such action", 999999, mine, false},
+		{"COMMIT landed, reply lost", newApproved(), landsThenLost, nil, true, false, "executing"},
+		{"COMMIT did not land", newApproved(), neverLands, nil, false, true, "not_started"},
+		{"COMMIT landed, read-back failed", newApproved(), landsThenUnreadable, unhide, false, true, "executing"},
+		{"already claimed", held, landsThenLost, nil, false, false, "executing"},
+		{"no such action", 999999, landsThenLost, nil, false, false, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ok, err := s.claim(ctx, tt.id, tt.token)
-			if ok != tt.wantOK || (err == nil) != tt.wantOK {
-				t.Errorf("claim = %v, %v; want ok=%v and an error only when not ok", ok, err, tt.wantOK)
+			s.commitClaim = tt.commit
+			defer func() { s.commitClaim = nil }()
+			ok, err := s.claimNew(ctx, tt.id)
+			if tt.after != nil {
+				tt.after()
 			}
-			// The read-back succeeded, so the outcome is settled.
-			if errors.Is(err, errClaimUnsettled) {
-				t.Errorf("claim = %v; a read-back that succeeded must not be unsettled", err)
+			if ok != tt.wantOK || errors.Is(err, errClaimUnsettled) != tt.wantUnsettled ||
+				(err != nil) != tt.wantUnsettled {
+				t.Errorf("claim = %v, %v; want ok=%v, unsettled=%v", ok, err, tt.wantOK, tt.wantUnsettled)
+			}
+			if tt.wantStatus == "" {
+				return
+			}
+			got, err := s.Get(ctx, tt.id)
+			if err != nil || got.ExecStatus != tt.wantStatus {
+				t.Errorf("action = %+v (%v), want %s", got, err, tt.wantStatus)
 			}
 		})
 	}
-	got, err := s.Get(ctx, unclaimed)
-	if err != nil || got.ExecStatus != "not_started" {
-		t.Errorf("unclaimed action = %+v (%v), want not_started", got, err)
+
+	// An UPDATE that fails never committed: a plain error, row untouched.
+	failing := newApproved()
+	mustExec(t, pool, `CREATE FUNCTION test_refuse_claim() RETURNS trigger LANGUAGE plpgsql
+            AS $$ BEGIN RAISE EXCEPTION 'refused by test'; END $$`)
+	mustExec(t, pool, `CREATE TRIGGER test_refuse_claim BEFORE UPDATE ON proposed_actions
+            FOR EACH STATEMENT EXECUTE FUNCTION test_refuse_claim()`)
+	if ok, err := s.claimNew(ctx, failing); ok || err == nil || errors.Is(err, errClaimUnsettled) {
+		t.Errorf("claim with a failing UPDATE = %v, %v; want a plain error", ok, err)
+	}
+	if got, err := s.Get(ctx, failing); err != nil || got.ExecStatus != "not_started" {
+		t.Errorf("action = %+v (%v), want not_started", got, err)
 	}
 }
 

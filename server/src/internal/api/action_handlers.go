@@ -728,7 +728,7 @@ func (h *ActionHandler) executeApproval(w http.ResponseWriter, r *http.Request,
 // (scope-aware, so not through a narrowed token), and only through the
 // same kind of request: an overridden action is retried as an override,
 // so the override rules have been applied again. Anyone else falls
-// through to Approve, which refuses it. ClaimForExecution in Start stays
+// through to Approve, which refuses it. The claim in Start stays
 // the atomic gate either way.
 func (h *ActionHandler) isExecuteRetry(ctx context.Context, a *actions.Action, approval, by string) bool {
 	if a.Approval != approval || a.ExecStatus != "not_started" {

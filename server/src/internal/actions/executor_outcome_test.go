@@ -67,7 +67,7 @@ func claimedAction(t *testing.T, store *Store, connID int) int64 {
 	if err := store.Approve(ctx, a.ID, "approved", "tester", "session"); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := store.ClaimForExecution(ctx, a.ID); err != nil || !ok {
+	if ok, err := store.claimNew(ctx, a.ID); err != nil || !ok {
 		t.Fatalf("claim = %v, %v", ok, err)
 	}
 	return a.ID

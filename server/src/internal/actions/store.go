@@ -15,9 +15,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,6 +43,9 @@ var (
 // updated_at trigger, so every UPDATE here sets updated_at itself.
 type Store struct {
 	pool *pgxpool.Pool
+	// commitClaim commits a claim's transaction; nil selects
+	// tx.Commit. Tests replace it to lose the COMMIT's reply.
+	commitClaim func(ctx context.Context, tx pgx.Tx) error
 }
 
 // NewStore returns a Store backed by pool, the datastore pool.
@@ -290,41 +293,71 @@ func (s *Store) Reapprove(ctx context.Context, id int64, approval, previousBy, b
 	return nil
 }
 
-// ClaimForExecution atomically moves a not-started action that has
-// a recorded decision to executing: it passed review and was approved,
-// or was vetoed and then overridden. A passed but unapproved action is
-// never claimable, so the database is the final gate whatever the
-// callers do. The claim records the start time in executed_at. It
-// returns true for exactly one caller however many race for the same
-// action; every other caller, and any action not eligible, gets false.
-//
-// The claim may commit even when its reply is lost, so each claim
-// writes a fresh random claim_token, and on an error the row is read
-// back: a claim that holds this call's token took effect and returns
-// true, so the caller runs the action rather than leaving it executing
-// with no run behind it (see claim).
-func (s *Store) ClaimForExecution(ctx context.Context, id int64) (bool, error) {
-	return s.claim(ctx, id, uuid.NewString())
-}
-
 // claimReconcileTimeout bounds the read that settles a claim whose
-// reply was lost. It runs on a context detached from the claim's, whose
+// COMMIT failed. It runs on a context detached from the claim's, whose
 // deadline may be what ended the claim.
 const claimReconcileTimeout = 10 * time.Second
 
-// errClaimUnsettled marks a claim error after which the row could not be
-// read back either, so whether the claim committed is not known.
-// Executor.Start then settles it in the background (settleClaim).
-var errClaimUnsettled = errors.New("the claim could not be read back")
+// The claim runs in a transaction under these local limits, so that
+// once its client has given up the server either commits it or aborts
+// it within claimSettledAfter: lock_timeout and statement_timeout end
+// an UPDATE that waits or runs too long (the pool's own
+// statement_timeout is configurable, and its default equals
+// claimTimeout), and idle_in_transaction_session_timeout ends the
+// session if the COMMIT does not arrive soon after, as when the client
+// has gone. All of them are below claimTimeout, so the server gives up
+// first.
+const (
+	claimLockTimeout      = 5 * time.Second
+	claimStatementTimeout = 10 * time.Second
+	claimIdleTimeout      = 5 * time.Second
+)
 
-// claim is ClaimForExecution with the claim's token given. When the
-// UPDATE fails it returns true only if the row is executing under
-// token, which no other claim can have written; otherwise it returns
-// the UPDATE's error, and never touches a claim it does not hold. When
-// the read fails too, the error also wraps errClaimUnsettled, and the
-// action is left as it was: the claim may have committed.
+// claimSettledAfter is how long after a claim begins it can no longer
+// commit: two statements (the UPDATE and the COMMIT) of at most
+// claimStatementTimeout each, two idle gaps before them of at most
+// claimIdleTimeout each, and a margin. A release that matches nothing
+// after this is final; before it, the COMMIT may still be on its way.
+const claimSettledAfter = 2*claimStatementTimeout + 2*claimIdleTimeout + 10*time.Second
+
+// errClaimUnsettled marks a claim whose COMMIT failed and that the
+// read-back did not find held, so it may yet commit, or may have
+// committed with the read-back failing. Executor.Start then settles it
+// in the background (settleClaim).
+var errClaimUnsettled = errors.New("the claim's outcome is not known")
+
+// claim atomically moves a not-started action that has a recorded
+// decision to executing under token, a fresh random value no other
+// claim can have written: it passed review and was approved, or was
+// vetoed and then overridden. A passed but unapproved action is never
+// claimable, so the database is the final gate whatever the callers do.
+// The claim records the start time in executed_at. It returns true for
+// exactly one caller however many race for the same action; every other
+// caller, and any action not eligible, gets false.
+//
+// The UPDATE runs in a transaction under the claim limits above, so an
+// error before the COMMIT means nothing was claimed. Only a failed
+// COMMIT leaves the outcome open: the row is then read back, and a row
+// executing under token took effect and returns true, so the caller
+// runs the action rather than leaving it executing with no run behind
+// it. Otherwise the error wraps errClaimUnsettled, and the action is
+// left as it is. Executor.Start is the only caller, since only it
+// settles an unsettled claim.
 func (s *Store) claim(ctx context.Context, id int64, token string) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("claim action: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+	if _, err := tx.Exec(ctx, `
+        SELECT set_config('lock_timeout', $1, true),
+               set_config('statement_timeout', $2, true),
+               set_config('idle_in_transaction_session_timeout', $3, true)`,
+		pgMillis(claimLockTimeout), pgMillis(claimStatementTimeout),
+		pgMillis(claimIdleTimeout)); err != nil {
+		return false, fmt.Errorf("claim action: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
         UPDATE proposed_actions
            SET exec_status = 'executing', executed_at = now(),
                updated_at = now(), claim_token = $2
@@ -332,8 +365,18 @@ func (s *Store) claim(ctx context.Context, id int64, token string) (bool, error)
            AND exec_status = 'not_started'
            AND ((review_status = 'passed' AND approval = 'approved')
                 OR (review_status = 'vetoed' AND approval = 'overridden'))`, id, token)
-	if err == nil {
-		return tag.RowsAffected() == 1, nil
+	if err != nil {
+		return false, fmt.Errorf("claim action: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return false, nil
+	}
+	commit := s.commitClaim
+	if commit == nil {
+		commit = func(ctx context.Context, tx pgx.Tx) error { return tx.Commit(ctx) }
+	}
+	if err := commit(ctx, tx); err == nil {
+		return true, nil
 	}
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimReconcileTimeout)
 	defer cancel()
@@ -344,17 +387,24 @@ func (s *Store) claim(ctx context.Context, id int64, token string) (bool, error)
 	if rerr == nil && held {
 		return true, nil
 	}
-	if rerr != nil && !errors.Is(rerr, pgx.ErrNoRows) {
-		return false, fmt.Errorf("claim action: %w; %w: %v", err, errClaimUnsettled, rerr)
+	if rerr != nil {
+		return false, fmt.Errorf("claim action: %w; read back: %v", errClaimUnsettled, rerr)
 	}
-	return false, fmt.Errorf("claim action: %w", err)
+	return false, fmt.Errorf("claim action: %w", errClaimUnsettled)
+}
+
+// pgMillis renders d as a whole number of milliseconds, the unit
+// PostgreSQL assumes for a bare timeout value.
+func pgMillis(d time.Duration) string {
+	return strconv.FormatInt(d.Milliseconds(), 10)
 }
 
 // releaseClaim returns an action that is executing under token to
 // not_started, clearing the start time and the token as though it had
 // never been claimed, and reports whether it did. It is only for a
 // claim that no run was started under (one that reported
-// errClaimUnsettled), so nothing has reached the target. The approval
+// errClaimUnsettled), so nothing has reached the target. A false
+// result is final only after claimSettledAfter (see settleClaim). The approval
 // stands, so the action can be started again. A row that is in any
 // other state, or held under another token, is left alone.
 func (s *Store) releaseClaim(ctx context.Context, id int64, token string) (bool, error) {

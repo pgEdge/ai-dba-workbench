@@ -224,8 +224,8 @@ func maskKeepingValues(s string, reading StringReading, undecidedOn bool) string
 // follows the U&'...' or U&"..." value s[start:end], or end when the
 // value has no U& prefix or no complete clause follows it. White space
 // and comments may sit either side of the UESCAPE keyword, and the
-// escape character may be given as an E'...' literal, which PostgreSQL
-// accepts as it does a plain one.
+// escape character may be given as an E'...' or dollar-quoted literal,
+// which PostgreSQL accepts as it does a plain one.
 func uescapeEnd(s string, start, end int, reading StringReading) int {
 	if end-start < 3 || (s[start] != 'U' && s[start] != 'u') || s[start+1] != '&' {
 		return end
@@ -241,7 +241,7 @@ func uescapeEnd(s string, start, end int, reading StringReading) int {
 	if q < len(s) && (s[q] == 'E' || s[q] == 'e') {
 		q++
 	}
-	if q >= len(s) || s[q] != '\'' {
+	if (q >= len(s) || s[q] != '\'') && ScanDollarTag(s, k) == "" {
 		return end
 	}
 	return SkipNonCode(s, k, reading)

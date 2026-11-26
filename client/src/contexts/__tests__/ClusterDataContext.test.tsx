@@ -439,6 +439,70 @@ describe('ClusterDataContext', () => {
         });
     });
 
+    describe('out-of-order completions', () => {
+        it('ignores a failure that finishes after a newer fetch succeeded', async () => {
+            const { result } = renderHook(() => useClusterData(), { wrapper });
+            await waitFor(() => {
+                expect(result.current.clusterData).toEqual(defaultData);
+            });
+
+            let rejectOlder: (err: Error) => void = () => {};
+            mockApiGet.mockImplementationOnce(
+                () => new Promise<ClusterGroup[]>((_resolve, reject) => {
+                    rejectOlder = reject;
+                }),
+            );
+            let older: Promise<void> = Promise.resolve();
+            act(() => {
+                older = result.current.fetchClusterData();
+            });
+
+            // A newer fetch starts and succeeds whilst the older one hangs
+            await act(async () => {
+                await result.current.fetchClusterData();
+            });
+            expect(result.current.error).toBeNull();
+
+            await act(async () => {
+                rejectOlder(new Error('stale'));
+                await older;
+            });
+            expect(result.current.error).toBeNull();
+            expect(result.current.refreshing).toBe(false);
+        });
+
+        it('ignores data that finishes after a newer fetch failed', async () => {
+            const { result } = renderHook(() => useClusterData(), { wrapper });
+            await waitFor(() => {
+                expect(result.current.clusterData).toEqual(defaultData);
+            });
+
+            let resolveOlder: (value: ClusterGroup[]) => void = () => {};
+            mockApiGet.mockImplementationOnce(
+                () => new Promise<ClusterGroup[]>((resolve) => {
+                    resolveOlder = resolve;
+                }),
+            );
+            let older: Promise<void> = Promise.resolve();
+            act(() => {
+                older = result.current.fetchClusterData();
+            });
+
+            mockApiGet.mockRejectedValueOnce(new Error('newer failure'));
+            await act(async () => {
+                await result.current.fetchClusterData();
+            });
+            expect(result.current.error).toBe('newer failure');
+
+            await act(async () => {
+                resolveOlder([]);
+                await older;
+            });
+            expect(result.current.error).toBe('newer failure');
+            expect(result.current.clusterData).toEqual(defaultData);
+        });
+    });
+
     describe('error messages', () => {
         it.each([
             [

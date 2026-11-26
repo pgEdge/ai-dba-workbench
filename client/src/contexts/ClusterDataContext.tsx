@@ -121,6 +121,10 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
     const isInitialLoadRef = useRef<boolean>(true);
     // Number of requested fetches in flight, behind `refreshing`
     const requestedCountRef = useRef<number>(0);
+    // Sequence numbers of the last fetch started and the last one whose
+    // result was applied, so a slow fetch cannot overwrite a newer result
+    const requestSeqRef = useRef<number>(0);
+    const appliedSeqRef = useRef<number>(0);
     // Stable ref for the background poll to avoid resetting the interval
     const pollRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
@@ -131,10 +135,21 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
      * successfully once; a background poll never does, so the auto-refresh
      * does not swap an error panel for the skeleton every 30 seconds.
      * The error is cleared only on success, so it persists across failed
-     * retries.
+     * retries. A fetch that finishes after a newer one has already been
+     * applied is ignored.
      */
     const loadClusterData = useCallback(async (background: boolean): Promise<void> => {
         if (!user) {return;}
+
+        requestSeqRef.current += 1;
+        const seq = requestSeqRef.current;
+        // True, and records this fetch as applied, unless a newer fetch's
+        // result has already been applied
+        const claimResult = (): boolean => {
+            if (seq < appliedSeqRef.current) {return false;}
+            appliedSeqRef.current = seq;
+            return true;
+        };
 
         const showLoading = isInitialLoadRef.current && !background;
         if (showLoading) {
@@ -162,6 +177,8 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
                 }
             }
 
+            if (!claimResult()) {return;}
+
             // Generate fingerprint for the new data
             const newFingerprint = generateDataFingerprint(newData ?? []);
 
@@ -177,7 +194,9 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
             isInitialLoadRef.current = false;
         } catch (err) {
             logger.error('Error fetching cluster data:', err);
-            setError(describeLoadError(err));
+            if (claimResult()) {
+                setError(describeLoadError(err));
+            }
         } finally {
             if (showLoading) {
                 setLoading(false);

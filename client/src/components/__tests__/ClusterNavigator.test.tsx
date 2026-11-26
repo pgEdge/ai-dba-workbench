@@ -526,6 +526,23 @@ describe('ClusterNavigator', () => {
             expect(onRefresh).not.toHaveBeenCalled();
         });
 
+        it('drives Retry from refreshing, not from loading', () => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    loading
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            const retry = screen.getByRole('button', { name: 'Retry' });
+            expect(retry).toHaveAttribute('aria-disabled', 'false');
+            fireEvent.click(retry);
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
         it('shows a loaded tree rather than the skeleton whilst still loading', () => {
             renderWithTheme(
                 <ClusterNavigator

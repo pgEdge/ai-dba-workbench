@@ -116,8 +116,9 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
 
     // Track data fingerprint to detect actual changes
     const dataFingerprintRef = useRef<string>('');
-    // True until the first successful fetch; while set, every fetch
-    // (including retries after a failed first load) shows the loading state
+    // True until the first successful fetch; while set, every requested
+    // fetch (including a Retry after a failed first load) shows the loading
+    // state, but background polls do not
     const isInitialLoadRef = useRef<boolean>(true);
     // Number of requested fetches in flight, behind `refreshing`
     const requestedCountRef = useRef<number>(0);
@@ -192,6 +193,10 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
             setLastRefresh(new Date());
             setError(null);
             isInitialLoadRef.current = false;
+            // A poll can succeed whilst the first load or a Retry is still
+            // pending; stop showing the loading state now rather than when
+            // that request settles
+            setLoading(false);
         } catch (err) {
             logger.error('Error fetching cluster data:', err);
             if (claimResult()) {

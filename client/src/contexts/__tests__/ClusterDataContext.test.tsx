@@ -439,6 +439,25 @@ describe('ClusterDataContext', () => {
         });
     });
 
+    describe('a poll that succeeds whilst a requested fetch is pending', () => {
+        it('clears loading without waiting for the pending fetch', async () => {
+            vi.useFakeTimers();
+            // The first load never settles
+            mockApiGet.mockImplementationOnce(() => new Promise<ClusterGroup[]>(() => {}));
+            mockApiGet.mockResolvedValue([]);
+
+            const { result } = renderHook(() => useClusterData(), { wrapper });
+            expect(result.current.loading).toBe(true);
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(30000);
+            });
+
+            expect(result.current.loading).toBe(false);
+            expect(result.current.clusterData).toEqual([]);
+        });
+    });
+
     describe('out-of-order completions', () => {
         it('ignores a failure that finishes after a newer fetch succeeded', async () => {
             const { result } = renderHook(() => useClusterData(), { wrapper });

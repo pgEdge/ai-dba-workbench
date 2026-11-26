@@ -193,6 +193,7 @@ describe('ClusterContext', () => {
             // Data properties
             expect(result.current).toHaveProperty('clusterData');
             expect(result.current).toHaveProperty('loading');
+            expect(result.current).toHaveProperty('refreshing');
             expect(result.current).toHaveProperty('error');
             expect(result.current).toHaveProperty('lastRefresh');
             expect(result.current).toHaveProperty('autoRefreshEnabled');

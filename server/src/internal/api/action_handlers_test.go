@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -546,6 +547,7 @@ func TestActionRedaction(t *testing.T) {
 func TestActionStatementMasking(t *testing.T) {
 	const secret = "example-secret"
 	stmt := "ALTER ROLE app PASSWORD '" + secret + "'"
+	tokenStmt := "UPDATE svc SET api_token = '" + secret + "' WHERE id = 1"
 	tests := []struct {
 		name      string
 		user      string
@@ -575,8 +577,21 @@ func TestActionStatementMasking(t *testing.T) {
 					Statement: stmt, Error: "near PASSWORD '" + secret + "'",
 					// The second cell is a bare value under a column name
 					// nothing marks as secret, so the rows are withheld.
-					Columns: []string{"c", "api_key"},
-					Rows:    [][]string{{"PASSWORD '" + secret + "'", secret}},
+					Columns:   []string{"c", "api_key"},
+					Rows:      [][]string{{"PASSWORD '" + secret + "'", secret}},
+					Truncated: true,
+				}, {
+					// A failed cast quotes the literal in a form
+					// redact.Text cannot detect, so the error of a
+					// statement that held a credential is withheld.
+					Statement: tokenStmt,
+					Error:     `invalid input syntax for type uuid: "` + secret + `"`,
+				}, {
+					// A statement with no credential keeps its error,
+					// masked by redact.Text.
+					Statement: "SELECT 1", Error: "near PASSWORD '" + secret + "'",
+				}, {
+					Statement: tokenStmt, Applied: true,
 				}},
 				Preview: json.RawMessage(`{"text":"` + secret + `"}`),
 			}
@@ -587,8 +602,8 @@ func TestActionStatementMasking(t *testing.T) {
 				t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 			}
 			body := rec.Body.String()
-			if got := strings.Count(body, secret); tt.shown && got != 8 {
-				t.Errorf("the secret appears %d times, want 8: %s", got, body)
+			if got := strings.Count(body, secret); tt.shown && got != 12 {
+				t.Errorf("the secret appears %d times, want 12: %s", got, body)
 			} else if !tt.shown && got != 0 {
 				t.Errorf("the secret leaked: %s", body)
 			}
@@ -596,12 +611,21 @@ func TestActionStatementMasking(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 				t.Fatal(err)
 			}
-			if len(got.Statements) != 1 || len(got.Results) != 1 || len(got.Results[0].Columns) != 2 ||
+			if len(got.Statements) != 1 || len(got.Results) != 4 || len(got.Results[0].Columns) != 2 ||
 				got.Review == nil || len(got.Review.Reasons) != 1 {
 				t.Errorf("a masked field was dropped: %s", body)
 			}
-			if withheld := got.Rationale == nil && got.Results[0].Rows == nil; withheld == tt.shown {
-				t.Errorf("rationale and rows withheld = %v, want %v: %s", withheld, !tt.shown, body)
+			if withheld := got.Rationale == nil && got.Results[0].Rows == nil &&
+				!got.Results[0].Truncated; withheld == tt.shown {
+				t.Errorf("rationale, rows and truncated withheld = %v, want %v: %s", withheld, !tt.shown, body)
+			}
+			errs := []string{got.Results[0].Error, got.Results[1].Error, got.Results[2].Error, got.Results[3].Error}
+			want := []string{withheldResultError, withheldResultError, "near PASSWORD '********'", ""}
+			if tt.shown {
+				want = []string{a.Results[0].Error, a.Results[1].Error, a.Results[2].Error, ""}
+			}
+			if !slices.Equal(errs, want) {
+				t.Errorf("result errors = %q, want %q", errs, want)
 			}
 			if a.Statements[0] != stmt || a.Results[0].Statement != stmt ||
 				!strings.Contains(a.Results[0].Rows[0][0], secret) || a.Results[0].Rows[0][1] != secret ||

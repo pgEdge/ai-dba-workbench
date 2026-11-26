@@ -534,15 +534,23 @@ func (h *ActionHandler) viewFor(ctx context.Context, a *actions.Action) *actions
 	return &c
 }
 
+// withheldResultError replaces the error of a statement whose text held
+// a credential, for anyone but the proposer and the approver.
+const withheldResultError = "error withheld: the statement holds a credential"
+
 // maskActionText replaces every text field of a that may hold a secret
 // with a masked copy, or withholds it, leaving the slices a shared with
 // the stored action untouched. Statement text goes through
 // metrics.RedactStatementText, and the review's reasons and the run's
-// errors through redact.Text. The rationale and the rows a statement
-// returned are withheld (nil) instead: the rationale is prose, which can
-// state a password in words redact.Text cannot detect ("the new
-// password is ..."), and a result cell can hold a bare credential under
-// any column name, so neither can be masked reliably. The column names
+// errors through redact.Text. The error of a statement whose text held
+// a credential is replaced with withheldResultError instead, since
+// PostgreSQL quotes the offending literal in errors such as a failed
+// cast, in a form redact.Text cannot tell from any other quoted value.
+// The rationale and the rows a statement returned are withheld (nil)
+// instead: the rationale is prose, which can state a password in words
+// redact.Text cannot detect ("the new password is ..."), and a result
+// cell can hold a bare credential under any column name, so neither can
+// be masked reliably. The column names
 // are kept, so the caller can see that rows were returned. The preview,
 // undo, verification and outcome documents, which nothing writes yet,
 // are withheld too, since their masking cannot be known until something
@@ -559,8 +567,15 @@ func maskActionText(a *actions.Action) {
 		results := make([]actions.StatementResult, len(a.Results))
 		for i := range a.Results {
 			res := a.Results[i]
-			res.Statement = metrics.RedactStatementText(res.Statement)
-			res.Error = redact.Text(res.Error)
+			masked := metrics.RedactStatementText(res.Statement)
+			switch {
+			case res.Error == "":
+			case masked != res.Statement:
+				res.Error = withheldResultError
+			default:
+				res.Error = redact.Text(res.Error)
+			}
+			res.Statement = masked
 			res.Rows = nil
 			res.Truncated = false
 			results[i] = res

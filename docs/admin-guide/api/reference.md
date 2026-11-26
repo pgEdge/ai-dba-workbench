@@ -286,7 +286,9 @@ it. For any other caller, a superuser included, the statement text, the
 result errors and the review reasons are masked in the same way as query
 text, as described under [Masked Credentials](#masked-credentials), whilst
 the `rationale` and the rows each statement returned are withheld, since
-neither prose nor a bare value can be masked reliably.
+neither prose nor a bare value can be masked reliably. The error of a
+statement that held a credential is withheld too, and replaced with a fixed
+message, because an error such as a failed cast quotes the value.
 The `evidence` and `conversation_id` fields are returned only to the user who
 proposed the action and to a superuser.
 

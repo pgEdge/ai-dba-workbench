@@ -1668,6 +1668,24 @@ func TestBuildIdentChangeQuery(t *testing.T) {
 	}
 }
 
+// TestIdentChangeQueriesCompareMappingsAsText checks that both ident
+// change queries compare the aggregated mappings as text, since on a
+// ColdFront datastore they come back as json, which has no equality
+// operator (issue #886).
+func TestIdentChangeQueriesCompareMappingsAsText(t *testing.T) {
+	for name, query := range map[string]string{
+		"events": buildIdentChangeQuery(""),
+		"count":  buildIdentChangeCountQuery(""),
+	} {
+		if !strings.Contains(query, "cur.mappings::text IS DISTINCT FROM prev.mappings::text") {
+			t.Errorf("%s query does not compare the mappings as text:\n%s", name, query)
+		}
+		if strings.Contains(query, "cur.mappings IS DISTINCT FROM") {
+			t.Errorf("%s query compares the raw mappings:\n%s", name, query)
+		}
+	}
+}
+
 func TestBuildRestartQuery(t *testing.T) {
 	query := buildRestartQuery("")
 

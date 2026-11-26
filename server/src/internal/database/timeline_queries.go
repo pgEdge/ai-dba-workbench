@@ -653,6 +653,17 @@ func identSnapshotMappings(alias string) string {
                 ) ORDER BY %[1]s.map_number)`, alias)
 }
 
+// identMappingsDiffer is the condition that a snapshot's mappings differ
+// from those of the previous snapshot. The aggregates are compared as
+// text because on a pgEdge ColdFront datastore DuckDB returns the
+// jsonb_agg result as json, which has no equality operator, so a
+// comparison of the raw values fails with "operator does not exist:
+// json = json" (issue #886). A ::jsonb cast does not help, as pg_duckdb
+// pushes it into DuckDB and the value comes back as json again. The
+// aggregate is ordered by map number, so equal mapping sets produce
+// equal text on both datastores.
+const identMappingsDiffer = "cur.mappings::text IS DISTINCT FROM prev.mappings::text"
+
 // identPreviousSnapshotJoin is the LATERAL join that fetches, as
 // prev.mappings, the mappings of the snapshot stored immediately before
 // cur.collected_at for cur.connection_id. It looks back across the
@@ -721,8 +732,9 @@ func buildIdentChangeQuery(whereClause string) string {
         JOIN connections c ON cur.connection_id = c.id AND c.deleted_at IS NULL
         %s
         WHERE prev.mappings IS NOT NULL
-          AND cur.mappings IS DISTINCT FROM prev.mappings
-    `, EventTypeIdentChange, identCurrentSnapshots(whereClause), identPreviousSnapshotJoin())
+          AND %s
+    `, EventTypeIdentChange, identCurrentSnapshots(whereClause), identPreviousSnapshotJoin(),
+		identMappingsDiffer)
 }
 
 // buildIdentChangeCountQuery creates the count query for ident mapping
@@ -735,8 +747,8 @@ func buildIdentChangeCountQuery(whereClause string) string {
         ) cur
         %s
         WHERE prev.mappings IS NOT NULL
-          AND cur.mappings IS DISTINCT FROM prev.mappings
-    `, identCurrentSnapshots(whereClause), identPreviousSnapshotJoin())
+          AND %s
+    `, identCurrentSnapshots(whereClause), identPreviousSnapshotJoin(), identMappingsDiffer)
 }
 
 // buildRestartQuery creates the subquery for server restarts (postmaster_start_time changes)

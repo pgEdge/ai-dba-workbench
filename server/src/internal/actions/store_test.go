@@ -247,7 +247,7 @@ func TestClaimRequiresRecordedDecision(t *testing.T) {
 	}
 }
 
-func TestClaimForExecutionConcurrent(t *testing.T) {
+func TestClaimConcurrent(t *testing.T) {
 	s, _, connID := newTestStore(t, "_act_claim")
 	ctx := context.Background()
 	a, err := s.Create(ctx, sampleAction(connID, "alice"))

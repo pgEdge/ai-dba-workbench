@@ -37,10 +37,10 @@ var (
 	// it or settling its claim.
 	ErrAlreadyStarted = errors.New("action cannot be started")
 
-	// errTooManyPending is returned by Start when maxPendingClaims
+	// ErrTooManyPending is returned by Start when maxPendingClaims
 	// actions are already being claimed or having their claims settled,
-	// which means the datastore is failing.
-	errTooManyPending = errors.New("too many action claims are unsettled")
+	// which means the datastore is failing; a later try may succeed.
+	ErrTooManyPending = errors.New("too many action claims are unsettled")
 
 	// ErrShuttingDown is returned by Start after Shutdown has been called.
 	ErrShuttingDown = errors.New("executor is shutting down")
@@ -90,7 +90,7 @@ const (
 // attempts that doubles from settleBackoffBase up to settleBackoffMax.
 // A failed attempt is retried up to settleAttempts times, and an
 // attempt that finds nothing to release is retried until
-// claimSettledAfter has passed, so settling takes at most about four
+// claimSettledAfter has passed, so settling takes at most about five
 // minutes. After Shutdown, retries continue only within its context.
 const (
 	settleAttempts    = 8
@@ -102,6 +102,13 @@ const (
 // settled at once, so a failing datastore cannot pile up settling
 // goroutines.
 const maxPendingClaims = 64
+
+// maxConcurrentSettles caps the release attempts in flight at once. An
+// attempt holds a datastore connection for up to claimReconcileTimeout
+// whilst it waits on the claim's row lock, and the datastore pool has
+// only 20 connections by default (config.DefaultPoolMaxConns), so
+// maxPendingClaims attempts at once could starve every other request.
+const maxConcurrentSettles = 2
 
 // claimStore is the part of Store used to claim an action, and to
 // release a claim that no run was started under.
@@ -172,6 +179,9 @@ type Executor struct {
 	// responseGrace is added to statementTimeout to give the deadline
 	// for each round trip to the target.
 	responseGrace time.Duration
+	// settleSlots holds maxConcurrentSettles tokens, one taken for each
+	// release attempt settleClaim makes.
+	settleSlots chan struct{}
 
 	mu      sync.Mutex
 	closed  bool
@@ -199,6 +209,7 @@ func NewExecutor(store *Store, opener Opener, lockTimeout, statementTimeout time
 		settleBackoff:     settleBackoffBase,
 		claimSettledAfter: claimSettledAfter,
 		pending:           make(map[int64]struct{}),
+		settleSlots:       newSettleSlots(maxConcurrentSettles),
 		finishBackoff:     finishBackoffBase,
 		stopping:          make(chan struct{}),
 		responseGrace:     responseGrace,
@@ -258,11 +269,25 @@ func (e *Executor) Start(ctx context.Context, actionID int64) error {
 	}
 	if len(e.pending) >= maxPendingClaims {
 		e.mu.Unlock()
-		return errTooManyPending
+		return ErrTooManyPending
 	}
 	e.pending[actionID] = struct{}{}
 	e.wg.Add(1)
 	e.mu.Unlock()
+
+	// Until they are handed on, the pending entry and the WaitGroup slot
+	// are this call's to give back, panic included; the slot is kept
+	// only once a run or the settling goroutine owns it.
+	handedOff, keepSlot := false, false
+	defer func() {
+		if handedOff {
+			return
+		}
+		e.unpend(actionID)
+		if !keepSlot {
+			e.wg.Done()
+		}
+	}()
 
 	token := uuid.NewString()
 	began := time.Now()
@@ -273,6 +298,7 @@ func (e *Executor) Start(ctx context.Context, actionID int64) error {
 		// The WaitGroup slot and the pending entry pass to the settling
 		// goroutine, so Shutdown waits for it and Start refuses the
 		// action until it is done.
+		handedOff = true
 		go func() {
 			defer e.wg.Done()
 			defer e.unpend(actionID)
@@ -280,12 +306,10 @@ func (e *Executor) Start(ctx context.Context, actionID int64) error {
 		}()
 		return err
 	}
-	e.unpend(actionID)
-	if err != nil || !ok {
-		e.wg.Done()
-		if err != nil {
-			return err
-		}
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return ErrAlreadyStarted
 	}
 
@@ -300,6 +324,9 @@ func (e *Executor) Start(ctx context.Context, actionID int64) error {
 	}
 	e.mu.Unlock()
 
+	// The run owns the WaitGroup slot from here; the pending entry is
+	// given back by the deferred call, the claim now guarding the row.
+	keepSlot = true
 	go func() {
 		defer e.wg.Done()
 		defer func() {
@@ -331,20 +358,27 @@ func (e *Executor) unpend(id int64) {
 // moved on, and is left alone.
 //
 // Each attempt is one guarded UPDATE, so a claim taken meanwhile under
-// another token can never be touched. An attempt that finds nothing to
-// release is final only once claimSettledAfter has passed since began,
-// when the server can no longer commit the claim; before that it is
-// retried, since the claim's COMMIT may still arrive. A failed attempt
-// is retried up to settleAttempts times. After Shutdown, retries
-// continue only within its context, as outcome writes do; a committed
-// claim left then is marked unknown by the startup sweep
-// (MarkInterruptedUnknown).
+// another token can never be touched. The claim's UPDATE took the row,
+// so whilst its transaction is open the release waits on the row lock
+// and then re-evaluates its WHERE clause: an attempt that finds nothing
+// to release ran after the claim aborted. It is nevertheless treated as
+// final only once claimSettledAfter has passed since began, as an extra
+// margin, and retried before that. A failed attempt is retried up to
+// settleAttempts times. At most maxConcurrentSettles attempts run at
+// once across the executor. After Shutdown, retries continue only
+// within its context, as outcome writes do; a committed claim left then
+// is marked unknown by the startup sweep (MarkInterruptedUnknown).
 func (e *Executor) settleClaim(id int64, token string, began time.Time) {
 	delay := e.settleBackoff
 	for failures := 0; ; {
+		if !awaitOrShutdown(e, e.settleSlots) {
+			log.Printf("[ERROR] Stopped settling the claim on action %d at shutdown; if it committed, the next start marks it unknown", id)
+			return
+		}
 		actx, cancel := context.WithTimeout(context.Background(), claimReconcileTimeout)
 		released, err := e.claims.releaseClaim(actx, id, token)
 		cancel()
+		e.settleSlots <- struct{}{}
 		switch {
 		case err == nil && released:
 			log.Printf("[WARN] Action %d: a claim whose outcome was lost was returned to not_started", id)
@@ -354,7 +388,7 @@ func (e *Executor) settleClaim(id int64, token string, began time.Time) {
 		case err != nil:
 			failures++
 			if failures == settleAttempts {
-				log.Printf("[ERROR] Gave up settling the claim on action %d; if it committed, the next start marks it unknown: %v", id, err)
+				log.Printf("[ERROR] Action %d needs manual review: gave up settling a claim whose outcome was lost; if the claim committed, the next server start marks the action unknown although nothing ran: %v", id, err)
 				return
 			}
 			log.Printf("[WARN] Settling the claim on action %d failed (attempt %d of %d), retrying: %v",
@@ -453,8 +487,14 @@ func (e *Executor) finishOnce(ctx context.Context, id int64, status string, st *
 func (e *Executor) pause(d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
+	return awaitOrShutdown(e, t.C)
+}
+
+// awaitOrShutdown receives from ready and reports true, or reports false
+// if the context passed to Shutdown ends first.
+func awaitOrShutdown[T any](e *Executor, ready <-chan T) bool {
 	select {
-	case <-t.C:
+	case <-ready:
 		return true
 	case <-e.stopping:
 	}
@@ -463,11 +503,21 @@ func (e *Executor) pause(d time.Duration) bool {
 	done := e.shutdownDone
 	e.mu.Unlock()
 	select {
-	case <-t.C:
+	case <-ready:
 		return true
 	case <-done:
 		return false
 	}
+}
+
+// newSettleSlots returns a channel holding n tokens; settleClaim takes
+// one for each release attempt and puts it back after.
+func newSettleSlots(n int) chan struct{} {
+	slots := make(chan struct{}, n)
+	for range n {
+		slots <- struct{}{}
+	}
+	return slots
 }
 
 // markPanic records a panic in st. A non-transactional run may already

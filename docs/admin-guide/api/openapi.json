@@ -252,7 +252,15 @@
             }
           },
           "503": {
-            "description": "The server is shutting down",
+            "description": "The server is shutting down, or is busy settling action claims and asks the caller to retry",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before trying again; sent only when the server is busy",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

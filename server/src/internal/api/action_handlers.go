@@ -497,8 +497,11 @@ func (h *ActionHandler) approveAndStart(ctx context.Context, a *actions.Action) 
 	if err := h.executor.Start(ctx, a.ID); err != nil {
 		log.Printf("[ERROR] Start action %d failed: %v", a.ID, err)
 		failure = "The action was approved but could not be started"
-		if errors.Is(err, actions.ErrShuttingDown) {
+		switch {
+		case errors.Is(err, actions.ErrShuttingDown):
 			failure = "The action was approved but the server is shutting down"
+		case errors.Is(err, actions.ErrTooManyPending):
+			failure = "The action was approved but the server is busy; try again shortly"
 		}
 	}
 	if fresh, err := h.store.Get(ctx, a.ID); err == nil {
@@ -767,6 +770,11 @@ func (h *ActionHandler) approveForExecute(ctx context.Context, w http.ResponseWr
 	return false
 }
 
+// actionStartRetryAfter is the Retry-After, in seconds, sent when too
+// many action claims are unsettled; it matches the longest delay between
+// attempts to settle one.
+const actionStartRetryAfter = "30"
+
 // startExecution starts an approved action, answering the refusal
 // itself.
 func (h *ActionHandler) startExecution(ctx context.Context, w http.ResponseWriter, id int64) bool {
@@ -777,6 +785,9 @@ func (h *ActionHandler) startExecution(ctx context.Context, w http.ResponseWrite
 		RespondError(w, http.StatusConflict, "The action has already been started or cannot be started")
 	case errors.Is(err, actions.ErrShuttingDown):
 		RespondError(w, http.StatusServiceUnavailable, "The server is shutting down")
+	case errors.Is(err, actions.ErrTooManyPending):
+		w.Header().Set("Retry-After", actionStartRetryAfter)
+		RespondError(w, http.StatusServiceUnavailable, "The server is busy; try again shortly")
 	default:
 		log.Printf("[ERROR] Start action %d failed: %v", id, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to start the action")

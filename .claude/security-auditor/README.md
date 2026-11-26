@@ -845,19 +845,26 @@ moved.
   `claim_token`, so exactly one caller wins. It runs in a transaction
   under local `lock_timeout` 5s, `statement_timeout` 10s and
   `idle_in_transaction_session_timeout` 5s (the datastore pool sets
-  only `statement_timeout`, default 30s, and no `lock_timeout`), so a
-  claim the client gave up on commits or dies within
-  `claimSettledAfter` (40s). Only a failed COMMIT is ambiguous: a
+  only `statement_timeout`, default 30s, and no `lock_timeout`), so an
+  abandoned claim does not linger. Only a failed COMMIT is ambiguous: a
   read-back that finds the row executing under the token runs it;
   anything else is `errClaimUnsettled`, and the executor never runs it
   later. Instead `settleClaim` returns it to `not_started` through
   `releaseClaim`, an UPDATE guarded on `executing` and the token, so it
   can never touch a claim held under another token or a row that has
-  moved on; a release matching nothing is final only after
-  `claimSettledAfter`. Settling is per action (Start refuses an action
-  being claimed or settled with `ErrAlreadyStarted`), capped at
-  `maxPendingClaims`, bounded in attempts and time, and continues after
-  `Shutdown` only within its context. Only `Executor.Start` may call
+  moved on. What makes a release matching nothing final is the row
+  lock: the claim's UPDATE took the row, so the release waits for its
+  transaction to end and re-evaluates its WHERE under READ COMMITTED;
+  `claimSettledAfter` (about 55s from before the pool acquire, covering
+  the client-side window) is only an extra margin, since a stalled
+  commit-record flush cannot be interrupted. Settling is per action
+  (Start refuses an action being claimed or settled with
+  `ErrAlreadyStarted`), capped at `maxPendingClaims` (then
+  `ErrTooManyPending`, answered 503 with `Retry-After`), limited to
+  `maxConcurrentSettles` release attempts at once so it cannot drain
+  the datastore pool, bounded in attempts and time, and continues after
+  `Shutdown` only within its context; giving up logs that the action
+  needs manual review. Only `Executor.Start` may call
   `claim`, since only it settles an unsettled claim. Approval is
   one-shot (`Approve` applies only with no decision recorded); a retry
   of an approved action is allowed only to its approver or a

@@ -253,8 +253,8 @@ func TestStartRefusesWhilstClaimPending(t *testing.T) {
 		e.pending[-1-i] = struct{}{}
 	}
 	e.mu.Unlock()
-	if err := e.Start(context.Background(), id+1); !errors.Is(err, errTooManyPending) {
-		t.Errorf("Start at the cap = %v, want errTooManyPending", err)
+	if err := e.Start(context.Background(), id+1); !errors.Is(err, ErrTooManyPending) {
+		t.Errorf("Start at the cap = %v, want ErrTooManyPending", err)
 	}
 	e.mu.Lock()
 	for i := range int64(maxPendingClaims - 1) {
@@ -322,5 +322,128 @@ func TestSettleClaimShutdown(t *testing.T) {
 				t.Errorf("action = %+v (%v), want %s", a, err, tc.wantStatus)
 			}
 		})
+	}
+}
+
+// stubClaims is a claimStore with no database behind it. claim panics
+// when panicMsg is set; releaseClaim reports each call on entered, if
+// set, then waits for gate, if set, before releasing.
+type stubClaims struct {
+	panicMsg string
+	entered  chan struct{}
+	gate     chan struct{}
+
+	mu       sync.Mutex
+	inFlight int
+	maxIn    int
+	calls    int
+}
+
+func (s *stubClaims) claim(context.Context, int64, string) (bool, error) {
+	if s.panicMsg != "" {
+		panic(s.panicMsg)
+	}
+	return false, nil
+}
+
+func (s *stubClaims) releaseClaim(context.Context, int64, string) (bool, error) {
+	s.mu.Lock()
+	s.calls++
+	s.inFlight++
+	s.maxIn = max(s.maxIn, s.inFlight)
+	s.mu.Unlock()
+	if s.entered != nil {
+		s.entered <- struct{}{}
+	}
+	if s.gate != nil {
+		<-s.gate
+	}
+	s.mu.Lock()
+	s.inFlight--
+	s.mu.Unlock()
+	return true, nil
+}
+
+// TestStartReleasesPendingOnPanic proves a panic in the claim gives back
+// the pending entry and the WaitGroup slot, so the action can be tried
+// again and Shutdown does not wait for a goroutine that never started.
+func TestStartReleasesPendingOnPanic(t *testing.T) {
+	t.Parallel()
+	e := NewExecutor(nil, nil, time.Second, time.Minute, 1)
+	e.claims = &stubClaims{panicMsg: "claim exploded"}
+	func() {
+		defer func() {
+			if r := recover(); r != "claim exploded" {
+				t.Errorf("recovered %v, want the claim's panic", r)
+			}
+		}()
+		_ = e.Start(context.Background(), 7)
+	}()
+	e.mu.Lock()
+	left := len(e.pending)
+	e.mu.Unlock()
+	if left != 0 {
+		t.Errorf("pending entries after the panic = %d, want 0", left)
+	}
+	// A leaked WaitGroup slot would hold Shutdown until its deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := e.Shutdown(ctx); err != nil {
+		t.Errorf("Shutdown = %v, want the WaitGroup empty", err)
+	}
+}
+
+// TestSettleClaimLimitsConcurrentReleases proves no more than
+// maxConcurrentSettles release attempts run at once, so settling cannot
+// take more of the datastore pool than that.
+func TestSettleClaimLimitsConcurrentReleases(t *testing.T) {
+	t.Parallel()
+	e := NewExecutor(nil, nil, time.Second, time.Minute, 1)
+	claims := &stubClaims{entered: make(chan struct{}), gate: make(chan struct{})}
+	e.claims = claims
+	const settlers = 2 * maxConcurrentSettles
+	var wg sync.WaitGroup
+	for i := range int64(settlers) {
+		wg.Go(func() { e.settleClaim(i, "token", time.Now()) })
+	}
+	for range maxConcurrentSettles {
+		<-claims.entered
+	}
+	if free := len(e.settleSlots); free != 0 {
+		t.Errorf("free slots with %d attempts in flight = %d, want 0", maxConcurrentSettles, free)
+	}
+	go func() {
+		for range settlers - maxConcurrentSettles {
+			<-claims.entered
+		}
+	}()
+	close(claims.gate)
+	wg.Wait()
+	if claims.maxIn > maxConcurrentSettles || claims.calls != settlers {
+		t.Errorf("max in flight = %d over %d calls, want at most %d over %d",
+			claims.maxIn, claims.calls, maxConcurrentSettles, settlers)
+	}
+	if free := len(e.settleSlots); free != maxConcurrentSettles {
+		t.Errorf("free slots afterwards = %d, want %d", free, maxConcurrentSettles)
+	}
+}
+
+// TestSettleClaimStopsWaitingForSlotAtShutdown proves a settle waiting
+// for a slot gives up once Shutdown's budget is spent, without making an
+// attempt.
+func TestSettleClaimStopsWaitingForSlotAtShutdown(t *testing.T) {
+	t.Parallel()
+	e := NewExecutor(nil, nil, time.Second, time.Minute, 1)
+	claims := &stubClaims{}
+	e.claims = claims
+	for range maxConcurrentSettles {
+		<-e.settleSlots
+	}
+	spent, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = e.Shutdown(spent)
+	e.settleClaim(1, "token", time.Now())
+	if claims.calls != 0 {
+		t.Errorf("release attempts = %d, want 0", claims.calls)
 	}
 }

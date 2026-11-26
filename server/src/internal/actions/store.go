@@ -298,32 +298,38 @@ func (s *Store) Reapprove(ctx context.Context, id int64, approval, previousBy, b
 // deadline may be what ended the claim.
 const claimReconcileTimeout = 10 * time.Second
 
-// The claim runs in a transaction under these local limits, so that
-// once its client has given up the server either commits it or aborts
-// it within claimSettledAfter: lock_timeout and statement_timeout end
-// an UPDATE that waits or runs too long (the pool's own
-// statement_timeout is configurable, and its default equals
+// The claim runs in a transaction under these local limits, so that a
+// claim whose client has given up does not linger: lock_timeout and
+// statement_timeout end an UPDATE that waits or runs too long (the
+// pool's own statement_timeout is configurable, and its default equals
 // claimTimeout), and idle_in_transaction_session_timeout ends the
 // session if the COMMIT does not arrive soon after, as when the client
-// has gone. All of them are below claimTimeout, so the server gives up
-// first.
+// has gone.
 const (
 	claimLockTimeout      = 5 * time.Second
 	claimStatementTimeout = 10 * time.Second
 	claimIdleTimeout      = 5 * time.Second
 )
 
-// claimSettledAfter is how long after a claim begins it can no longer
-// commit: two statements (the UPDATE and the COMMIT) of at most
-// claimStatementTimeout each, two idle gaps before them of at most
-// claimIdleTimeout each, and a margin. A release that matches nothing
-// after this is final; before it, the COMMIT may still be on its way.
-const claimSettledAfter = 2*claimStatementTimeout + 2*claimIdleTimeout + 10*time.Second
+// claimSettledAfter is an extra margin, not the guarantee, for treating
+// a release that matches nothing as final (settleClaim). The guarantee
+// is the row lock: a claim is unsettled only after its UPDATE took the
+// row (RowsAffected 1), so its transaction holds the row lock until it
+// commits or aborts, and releaseClaim's UPDATE waits for that lock and
+// then re-evaluates its WHERE clause under READ COMMITTED. A release
+// that matches nothing therefore ran after the claim aborted. The
+// margin covers the client-side window, which counts from before the
+// pool acquire: the client may send COMMIT until the claim's context
+// ends (claimTimeout), the server then waits up to claimIdleTimeout for
+// it, and a synchronous-replication wait adds up to
+// claimStatementTimeout; plus 10 seconds. A stall flushing the commit
+// record cannot be interrupted at all, which only the row lock covers.
+const claimSettledAfter = claimTimeout + claimIdleTimeout + claimStatementTimeout + 10*time.Second
 
-// errClaimUnsettled marks a claim whose COMMIT failed and that the
-// read-back did not find held, so it may yet commit, or may have
-// committed with the read-back failing. Executor.Start then settles it
-// in the background (settleClaim).
+// errClaimUnsettled marks a claim whose UPDATE took the row but whose
+// COMMIT failed, and that the read-back did not find held, so it may
+// yet commit, or may have committed with the read-back failing.
+// Executor.Start then settles it in the background (settleClaim).
 var errClaimUnsettled = errors.New("the claim's outcome is not known")
 
 // claim atomically moves a not-started action that has a recorded
@@ -403,10 +409,12 @@ func pgMillis(d time.Duration) string {
 // not_started, clearing the start time and the token as though it had
 // never been claimed, and reports whether it did. It is only for a
 // claim that no run was started under (one that reported
-// errClaimUnsettled), so nothing has reached the target. A false
-// result is final only after claimSettledAfter (see settleClaim). The approval
-// stands, so the action can be started again. A row that is in any
-// other state, or held under another token, is left alone.
+// errClaimUnsettled), so nothing has reached the target. Whilst the
+// claim's transaction is open its UPDATE waits on the row lock, so a
+// false result means that transaction ended without the claim
+// committing (see claimSettledAfter). The approval stands, so the
+// action can be started again. A row that is in any other state, or
+// held under another token, is left alone.
 func (s *Store) releaseClaim(ctx context.Context, id int64, token string) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
         UPDATE proposed_actions

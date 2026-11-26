@@ -34,7 +34,9 @@ project adheres to
   concurrent index build is flagged as a possible invalid index, and an
   action whose start could not be confirmed because the datastore
   stopped answering is returned to not started once the datastore
-  recovers, so it can be run again. (#774, #888)
+  recovers, so it can be run again; whilst many such starts are
+  unresolved, the execute endpoint answers 503 with `Retry-After`.
+  (#774, #888)
 - Add a top-level `make test-changed` target that runs `test-all` only
   in the sub-projects a branch changes, including those that depend on
   a changed shared package, collector schema, or example

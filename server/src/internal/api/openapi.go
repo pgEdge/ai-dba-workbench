@@ -2502,7 +2502,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"404": jsonResponse("ErrorResponse", "Action not found"),
 					"409": jsonResponse("ErrorResponse", "The action has already been approved or started, or has not passed review"),
 					"500": jsonResponse("ErrorResponse", "Failed to start the action"),
-					"503": jsonResponse("ErrorResponse", "The server is shutting down"),
+					"503": actionStartUnavailableResponse(),
 				},
 			},
 		},
@@ -5279,6 +5279,20 @@ func jsonArrayResponseWithHeaders(
 ) OpenAPIResponse {
 	resp := jsonArrayResponse(itemSchemaRef, description)
 	resp.Headers = headers
+	return resp
+}
+
+// actionStartUnavailableResponse documents the 503 the execute endpoint
+// returns when the server is shutting down, or when too many action
+// claims are unsettled, in which case it carries Retry-After.
+func actionStartUnavailableResponse() OpenAPIResponse {
+	resp := jsonResponse("ErrorResponse", "The server is shutting down, or is busy settling action claims and asks the caller to retry")
+	resp.Headers = map[string]OpenAPIHeader{
+		"Retry-After": {
+			Description: "Seconds to wait before trying again; sent only when the server is busy",
+			Schema:      &OpenAPISchema{Type: "integer"},
+		},
+	}
 	return resp
 }
 

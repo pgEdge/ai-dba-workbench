@@ -369,6 +369,13 @@ func TestCreateActionExecuteFailuresStillCreate(t *testing.T) {
 		t.Errorf("shutdown response = %v", resp)
 	}
 
+	e.b.startErr = actions.ErrTooManyPending
+	e.b.actions[1].Approval = "none"
+	resp = create("busy")
+	if resp["execute_error"] != "The action was approved but the server is busy; try again shortly" {
+		t.Errorf("busy response = %v", resp)
+	}
+
 	e.b.startErr, e.b.getErr = nil, nil
 	e.b.actions[1].Approval = "none"
 	resp = create("success")
@@ -919,6 +926,8 @@ func TestExecuteActionStatuses(t *testing.T) {
 			func(b *fakeActionBackend) { b.startErr = actions.ErrAlreadyStarted }, 409},
 		{"shutting down", "1", "", "passed",
 			func(b *fakeActionBackend) { b.startErr = actions.ErrShuttingDown }, 503},
+		{"too many pending", "1", "", "passed",
+			func(b *fakeActionBackend) { b.startErr = actions.ErrTooManyPending }, 503},
 		{"start fails", "1", "", "passed",
 			func(b *fakeActionBackend) { b.startErr = errors.New("x") }, 500},
 		{"store error", "1", "", "passed",
@@ -934,6 +943,13 @@ func TestExecuteActionStatuses(t *testing.T) {
 			rec := e.do("POST", "/api/v1/actions/"+tt.id+"/execute", tt.body, false)
 			if rec.Code != tt.status {
 				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.status, rec.Body)
+			}
+			wantRetry := ""
+			if errors.Is(e.b.startErr, actions.ErrTooManyPending) {
+				wantRetry = actionStartRetryAfter
+			}
+			if got := rec.Header().Get("Retry-After"); got != wantRetry {
+				t.Errorf("Retry-After = %q, want %q", got, wantRetry)
 			}
 		})
 	}

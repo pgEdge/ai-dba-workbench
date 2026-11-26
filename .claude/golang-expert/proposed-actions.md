@@ -29,8 +29,8 @@ row.
   again). A superuser's retry of someone else's approval goes through
   `Store.Reapprove`, which rewrites `approved_by`/`approved_via`/
   `approved_at` only if the row still holds the approval it read, so
-  the record names who actually started the run. `ClaimForExecution`
-  is the atomic gate and sets `executed_at` (the start time).
+  the record names who actually started the run. The claim in
+  `Executor.Start` (`Store.claim`) is the atomic gate and sets `executed_at` (the start time).
 - Every superuser decision in the handler (evidence redaction, retry)
   uses the scope-aware `actionAccess.IsSuperuser`
   (`auth.RBACChecker.IsSuperuser`), never the raw context flag, so a
@@ -95,8 +95,8 @@ row.
   the only caller of `Store.claim` (there is no exported claim): each
   claim writes a fresh `claim_token` (UUID) in a transaction under
   local `lock_timeout`, `statement_timeout` and
-  `idle_in_transaction_session_timeout`, all below `claimTimeout`, so
-  the server commits or aborts it within `claimSettledAfter`. An error
+  `idle_in_transaction_session_timeout`, so an abandoned claim does not
+  linger; these limits are not what makes settling safe. An error
   before COMMIT means nothing was claimed. When COMMIT fails, the row is
   read back on a detached context: `executing` under the token runs;
   anything else wraps `errClaimUnsettled`. `Start` then returns the
@@ -104,12 +104,25 @@ row.
   `Executor.pending` entry to `settleClaim`, which retries
   `Store.releaseClaim` (one UPDATE guarded on `executing` and the
   token, back to `not_started` with `executed_at` and `claim_token`
-  cleared, approval kept). A zero-row release is final only after
-  `claimSettledAfter`; failures stop after `settleAttempts`; after
-  `Shutdown` it uses `pause`, like outcome writes. It never runs the
-  action late (#888). `Start` refuses an action in `pending` with
-  `ErrAlreadyStarted` and any action once `maxPendingClaims` are
-  pending. Test the store through `claimNew` (test-only) or `claim`
+  cleared, approval kept). The guarantee is the row lock: a claim is
+  unsettled only after its UPDATE took the row, so its open transaction
+  makes the release wait, then re-evaluate its WHERE under READ
+  COMMITTED, so a zero-row release ran after the claim aborted.
+  `claimSettledAfter` (`claimTimeout` + `claimIdleTimeout` +
+  `claimStatementTimeout` + 10s, measured from before the pool acquire)
+  is only an extra margin before a zero-row release counts as final;
+  failures stop after `settleAttempts`, logging that the action needs
+  manual review; at most `maxConcurrentSettles` (2) release attempts run
+  at once, since each can hold a datastore connection (pool default 20)
+  whilst it waits on the lock; after `Shutdown` it waits for a slot and
+  between attempts through `awaitOrShutdown`/`pause`, like outcome
+  writes. It never runs the action late (#888). `Start` refuses an
+  action in `pending` with `ErrAlreadyStarted` and any action once
+  `maxPendingClaims` are pending with `ErrTooManyPending`, which the
+  execute endpoint answers with 503 and `Retry-After`. `Start` gives
+  back its `pending` entry and WaitGroup slot in a defer unless it has
+  handed them to a run or to `settleClaim`, so a panic in the claim
+  leaks neither. Test the store through `claimNew` (test-only) or `claim`
   with a fixed token and `Store.commitClaim` to lose the COMMIT's
   reply; test the executor by swapping `Executor.claims` for a wrapper
   over `*Store`.

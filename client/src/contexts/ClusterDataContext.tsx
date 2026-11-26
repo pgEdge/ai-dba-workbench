@@ -203,13 +203,17 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
                 setError(describeLoadError(err));
             }
         } finally {
-            if (showLoading) {
-                setLoading(false);
-            }
-            if (!background) {
-                requestedCountRef.current -= 1;
-                if (requestedCountRef.current === 0) {
-                    setRefreshing(false);
+            // A previous user's fetch was already dropped from the loading
+            // and refreshing state when the user changed
+            if (isCurrentUser()) {
+                if (showLoading) {
+                    setLoading(false);
+                }
+                if (!background) {
+                    requestedCountRef.current -= 1;
+                    if (requestedCountRef.current === 0) {
+                        setRefreshing(false);
+                    }
                 }
             }
         }
@@ -226,9 +230,13 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
     }, [loadClusterData]);
 
     // Fetch cluster data when user changes, ignoring any fetch still in
-    // flight for the previous user
+    // flight for the previous user and dropping it from the loading and
+    // refreshing state, which the new user's fetch sets again as needed
     useEffect(() => {
         minSeqRef.current = requestSeqRef.current + 1;
+        requestedCountRef.current = 0;
+        setLoading(false);
+        setRefreshing(false);
         if (user) {
             fetchClusterData();
         } else {

@@ -570,6 +570,62 @@ describe('ClusterDataContext', () => {
             expect(result.current.refreshing).toBe(false);
         });
 
+        it('keeps a previous user\'s pending fetch out of loading and refreshing', async () => {
+            mockApiGet.mockReset();
+            const calls: Array<{
+                resolve: (value: ClusterGroup[]) => void;
+                reject: (err: Error) => void;
+            }> = [];
+            mockApiGet.mockImplementation(
+                () => new Promise<ClusterGroup[]>((resolve, reject) => {
+                    calls.push({ resolve, reject });
+                }),
+            );
+
+            // User A's first load is still pending when user B logs in
+            const { result, rerender } = renderHook(() => useClusterData(), {
+                wrapper,
+            });
+            expect(result.current.loading).toBe(true);
+            expect(result.current.refreshing).toBe(true);
+
+            mockUser = { username: 'otheruser' };
+            rerender();
+            expect(calls).toHaveLength(2);
+            expect(result.current.loading).toBe(true);
+            expect(result.current.refreshing).toBe(true);
+
+            // B's fetch fails; B can retry whilst A's request still hangs
+            await act(async () => {
+                calls[1].reject(new Error('boom'));
+            });
+            expect(result.current.error).toBe('boom');
+            expect(result.current.loading).toBe(false);
+            expect(result.current.refreshing).toBe(false);
+
+            // B retries; A's request then settles without touching B's state
+            act(() => {
+                void result.current.fetchClusterData();
+            });
+            expect(result.current.loading).toBe(true);
+            expect(result.current.refreshing).toBe(true);
+
+            await act(async () => {
+                calls[0].resolve(defaultData);
+            });
+            expect(result.current.loading).toBe(true);
+            expect(result.current.refreshing).toBe(true);
+            expect(result.current.clusterData).toEqual([]);
+            expect(result.current.error).toBe('boom');
+
+            await act(async () => {
+                calls[2].resolve([]);
+            });
+            expect(result.current.loading).toBe(false);
+            expect(result.current.refreshing).toBe(false);
+            expect(result.current.error).toBeNull();
+        });
+
         it('ignores a fetch that finishes after the user changed', async () => {
             const { result, rerender } = renderHook(() => useClusterData(), {
                 wrapper,

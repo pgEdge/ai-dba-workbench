@@ -206,6 +206,11 @@ project adheres to
   that extension was not already installed and
   `duckdb.autoinstall_known_extensions` was off. The server now reads
   the address as text, without needing the extension. (#889)
+- Count only the active alerts on the estate's servers in the estate
+  dashboard's Alert Distribution chart, which stopped at 200 alerts,
+  included acknowledged alerts, system alerts and alerts on other
+  servers, and never refreshed; the chart now refreshes with the rest
+  of the dashboard. (#864)
 
 ### Security
 
@@ -231,11 +236,6 @@ project adheres to
   connection with the same fixed message, which no longer names the
   cause. A wrong host or port therefore takes 10 seconds to report.
   (#850)
-- Count only the active alerts on the estate's servers in the estate
-  dashboard's Alert Distribution chart, which stopped at 200 alerts,
-  included acknowledged alerts, system alerts and alerts on other
-  servers, and never refreshed; the chart now refreshes with the rest
-  of the dashboard. (#864)
 
 ## [2.0.0-beta1] - 2026-11-12
 

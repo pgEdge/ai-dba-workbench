@@ -604,6 +604,6 @@ describe('HealthOverviewSection alert distribution', () => {
             expect(screen.getByTestId('chart-Servers').textContent)
                 .toBe('OK=3 Warning=0 Offline=0');
         });
-        expect(screen.getByText('No active alerts')).toBeInTheDocument();
+        expect(await screen.findByText('No active alerts')).toBeInTheDocument();
     });
 });

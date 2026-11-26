@@ -705,6 +705,16 @@ own fixture probe table and clearing `tableColumnCache` and
 `tableDBColCache` for it, because both caches hold column metadata for
 five minutes.
 
+`systemSchemaPredicate` is also the definition of a per-database dead
+tuple ratio: `queryDeadTupleRatios` (`/metrics/database-summaries`)
+always appends it, so the ratio covers user relations only, as
+`pg_stat_user_tables` does (issue #868; the shared catalogs report the
+same counts in every database and used to set the ratio of databases
+with little data of their own). The latest snapshot is still picked
+over every row, and a database with no user tuples reports 0. Reuse the
+constant, rather than a new schema list, for any other per-database
+ratio (the Database Dashboard KPI is issue #869).
+
 ### Identifier safety and the Codacy suppression
 
 Latest-row SQL interpolates only identifiers drawn from a live-discovered

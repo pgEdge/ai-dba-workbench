@@ -59,6 +59,7 @@ CREATE TABLE metrics.pg_stat_all_tables (
     connection_id  integer     NOT NULL,
     collected_at   timestamptz NOT NULL,
     database_name  text,
+    schemaname     text        NOT NULL DEFAULT 'public',
     n_live_tup     bigint      NOT NULL DEFAULT 0,
     n_dead_tup     bigint      NOT NULL DEFAULT 0
 );
@@ -1248,9 +1249,14 @@ func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
 		install string
 		drop    string
 		run     func(pgx.Tx, map[string]*DatabaseSummary) error
+		// wantErr is the helper's scan wrapper, so a query error, such as
+		// a view missing a column the query needs, cannot pass as the
+		// scan failure this test is about.
+		wantErr string
 	}{
 		{
-			name: "sizes",
+			name:    "sizes",
+			wantErr: "scan database size:",
 			install: `DROP TABLE metrics.pg_database;
                 CREATE VIEW metrics.pg_database AS
                 SELECT 1 AS connection_id,
@@ -1263,12 +1269,14 @@ func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
 			},
 		},
 		{
-			name: "dead tuples",
+			name:    "dead tuples",
+			wantErr: "scan dead tuple ratio:",
 			install: `DROP TABLE metrics.pg_stat_all_tables;
                 CREATE VIEW metrics.pg_stat_all_tables AS
                 SELECT 1 AS connection_id,
                        now() - INTERVAL '1 minute' AS collected_at,
                        ARRAY['app'] AS database_name,
+                       'public'::text AS schemaname,
                        1::bigint AS n_live_tup, 1::bigint AS n_dead_tup`,
 			drop: "DROP VIEW IF EXISTS metrics.pg_stat_all_tables",
 			run: func(tx pgx.Tx, m map[string]*DatabaseSummary) error {
@@ -1296,8 +1304,8 @@ func TestDatabaseSummaries_ScanTypeMismatchIsAnError(t *testing.T) {
 				"app": {DatabaseName: "app"},
 			}
 			err := tc.run(tx, dbMap)
-			if err == nil || isUndefinedTableError(err) {
-				t.Errorf("err = %v, want a scan error", err)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want an error containing %q", err, tc.wantErr)
 			}
 		})
 	}
@@ -1362,5 +1370,139 @@ func TestSortedDatabaseSummaries_EmptyTimeSeries(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `"databases":[]`) {
 		t.Errorf("empty response = %s, want databases to be []", body)
+	}
+}
+
+// TestDatabaseSummaries_DeadTupleRatioCountsUserTablesOnly verifies that
+// the dead tuple ratio covers user relations only, as pg_stat_user_tables
+// does (issue #868). The pg_stat_all_tables probe stores system catalogs
+// too, and the shared catalogs (pg_shdepend, pg_authid, pg_database, ...)
+// report the same counts in every database, so including them gave
+// databases with little data of their own the same ratio. Rows in
+// pg_catalog, information_schema, pg_toast and pg_toast_temp_N must be
+// ignored, and a database with no user tuples reports 0.
+func TestDatabaseSummaries_DeadTupleRatioCountsUserTablesOnly(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 868
+	ctx := context.Background()
+	now := time.Now().UTC()
+	latest := now.Add(-1 * time.Minute)
+	older := now.Add(-30 * time.Minute)
+
+	exec := func(sql string, args ...any) {
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("seed exec failed: %v\nSQL: %s", err, sql)
+		}
+	}
+
+	exec(`INSERT INTO metrics.pg_database
+        (connection_id, collected_at, datname, datistemplate,
+         database_size_bytes)
+        VALUES ($1, $2, 'app', false, 1000),
+               ($1, $2, 'catalogonly', false, 1000),
+               ($1, $2, 'emptytables', false, 1000)`, connID, latest)
+
+	// Every database carries the same shared-catalog counts (56 dead /
+	// 313 live, 15.18%), which used to set the ratio of the databases
+	// with no data of their own.
+	for _, db := range []string{"app", "catalogonly", "emptytables"} {
+		exec(`INSERT INTO metrics.pg_stat_all_tables
+            (connection_id, collected_at, database_name, schemaname,
+             n_live_tup, n_dead_tup)
+            VALUES ($1, $2, $3, 'pg_catalog', 313, 56),
+                   ($1, $2, $3, 'information_schema', 0, 40),
+                   ($1, $2, $3, 'pg_toast', 10, 90),
+                   ($1, $2, $3, 'pg_toast_temp_3', 0, 25)`,
+			connID, latest, db)
+	}
+
+	// "app" has user tables in three schemas: 1050 live and 350 dead, so
+	// 25%. "pgXtoast" is a user schema: the escaped underscore in the
+	// TOAST prefix must not match the X, so its rows count (an unescaped
+	// 'pg_toast%' would drop them and give 10%). Its older snapshot must
+	// not count.
+	exec(`INSERT INTO metrics.pg_stat_all_tables
+        (connection_id, collected_at, database_name, schemaname,
+         n_live_tup, n_dead_tup)
+        VALUES ($1, $2, 'app', 'public', 600, 75),
+               ($1, $2, 'app', 'sales', 300, 25),
+               ($1, $2, 'app', 'pgXtoast', 150, 250),
+               ($1, $3, 'app', 'public', 10, 990)`, connID, latest, older)
+
+	// "emptytables" has a user table holding no tuples at all.
+	exec(`INSERT INTO metrics.pg_stat_all_tables
+        (connection_id, collected_at, database_name, schemaname,
+         n_live_tup, n_dead_tup)
+        VALUES ($1, $2, 'emptytables', 'public', 0, 0)`, connID, latest)
+
+	summaries := buildDatabaseSummaries(t, h, pool, connID,
+		now.Add(-24*time.Hour), now, "60 seconds")
+
+	want := map[string]float64{
+		"app":         25.0,
+		"catalogonly": 0,
+		"emptytables": 0,
+	}
+	for name, ratio := range want {
+		db, ok := summaries[name]
+		if !ok {
+			t.Fatalf("database %q missing from summaries: %#v", name,
+				summaries)
+		}
+		if db.DeadTupleRatio != ratio {
+			t.Errorf("%s: DeadTupleRatio = %v, want %v", name,
+				db.DeadTupleRatio, ratio)
+		}
+	}
+}
+
+// TestDatabaseSummaries_DeadTupleRatioNewestSnapshotSystemOnly verifies
+// that the newest pg_stat_all_tables snapshot is chosen over every row
+// before the system-schema filter applies. When that snapshot holds only
+// system rows, the ratio is 0, not the ratio of an older snapshot that
+// still had user rows; filtering inside the MAX(collected_at) subquery
+// would wrongly report the older snapshot's 50%.
+func TestDatabaseSummaries_DeadTupleRatioNewestSnapshotSystemOnly(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 8681
+	ctx := context.Background()
+	now := time.Now().UTC()
+	newest := now.Add(-1 * time.Minute)
+	older := now.Add(-30 * time.Minute)
+
+	exec := func(sql string, args ...any) {
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("seed exec failed: %v\nSQL: %s", err, sql)
+		}
+	}
+
+	exec(`INSERT INTO metrics.pg_database
+        (connection_id, collected_at, datname, datistemplate,
+         database_size_bytes)
+        VALUES ($1, $2, 'stale', false, 1000)`, connID, newest)
+
+	// The newest snapshot holds only system rows; the older one has a
+	// user table at 50%.
+	exec(`INSERT INTO metrics.pg_stat_all_tables
+        (connection_id, collected_at, database_name, schemaname,
+         n_live_tup, n_dead_tup)
+        VALUES ($1, $2, 'stale', 'pg_catalog', 313, 56),
+               ($1, $2, 'stale', 'pg_toast_temp_3', 10, 90),
+               ($1, $3, 'stale', 'public', 50, 50)`, connID, newest, older)
+
+	summaries := buildDatabaseSummaries(t, h, pool, connID,
+		now.Add(-24*time.Hour), now, "60 seconds")
+
+	db, ok := summaries["stale"]
+	if !ok {
+		t.Fatalf("database %q missing from summaries: %#v", "stale",
+			summaries)
+	}
+	if db.DeadTupleRatio != 0 {
+		t.Errorf("stale: DeadTupleRatio = %v, want 0", db.DeadTupleRatio)
 	}
 }

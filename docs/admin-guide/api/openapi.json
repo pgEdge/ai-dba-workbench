@@ -13051,7 +13051,7 @@
           },
           "dead_tuple_ratio": {
             "type": "number",
-            "description": "Dead tuples as a percentage of live plus dead tuples"
+            "description": "Dead tuples as a percentage of live plus dead tuples across the database's user tables in the latest pg_stat_all_tables snapshot of the window, excluding the pg_catalog, information_schema and pg_toast* schemas as pg_stat_user_tables does; 0 when the database has no user tuples"
           },
           "size_bytes": {
             "type": "integer",

@@ -223,7 +223,9 @@ func maskKeepingValues(s string, reading StringReading, undecidedOn bool) string
 // uescapeEnd returns the index just past the UESCAPE clause that
 // follows the U&'...' or U&"..." value s[start:end], or end when the
 // value has no U& prefix or no complete clause follows it. White space
-// and comments may sit either side of the UESCAPE keyword.
+// and comments may sit either side of the UESCAPE keyword, and the
+// escape character may be given as an E'...' literal, which PostgreSQL
+// accepts as it does a plain one.
 func uescapeEnd(s string, start, end int, reading StringReading) int {
 	if end-start < 3 || (s[start] != 'U' && s[start] != 'u') || s[start+1] != '&' {
 		return end
@@ -235,7 +237,11 @@ func uescapeEnd(s string, start, end int, reading StringReading) int {
 		return end
 	}
 	k = skipSpaceAndComments(s, k+len(kw))
-	if k >= len(s) || s[k] != '\'' {
+	q := k
+	if q < len(s) && (s[q] == 'E' || s[q] == 'e') {
+		q++
+	}
+	if q >= len(s) || s[q] != '\'' {
 		return end
 	}
 	return SkipNonCode(s, k, reading)

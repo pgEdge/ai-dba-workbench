@@ -228,6 +228,8 @@ func TestBuildsIndexConcurrently(t *testing.T) {
 		{"reindex unicode-escaped option", `REINDEX (CONCURRENTLY U&'o\006E') TABLE t`, true},
 		{"reindex uescape option", `REINDEX (CONCURRENTLY U&'o!006E' UESCAPE '!') SCHEMA public`, true},
 		{"reindex uescape option with comments", "REINDEX (CONCURRENTLY U&'o!006E' /* c */ uescape -- d\n '!', VERBOSE) SCHEMA public", true},
+		{"reindex uescape escape-string option", `REINDEX (CONCURRENTLY U&'o!006E' UESCAPE E'!') SCHEMA public`, true},
+		{"reindex uescape lower-case escape-string option", `REINDEX (CONCURRENTLY U&'o!006E' uescape e'!', VERBOSE) TABLE t`, true},
 		{"reindex uescape identifier option", `REINDEX (CONCURRENTLY U&"o!006E" UESCAPE '!') SCHEMA public`, true},
 		{"reindex continued literal option", "REINDEX (CONCURRENTLY 'o'\n'n') SCHEMA public", true},
 		{"reindex doubled quote option", "REINDEX (CONCURRENTLY 'o''n') SCHEMA public", true},
@@ -242,6 +244,8 @@ func TestBuildsIndexConcurrently(t *testing.T) {
 		{"reindex last option off wins", "REINDEX (CONCURRENTLY ON, CONCURRENTLY OFF) TABLE t", false},
 		{"reindex last option off wins after uescape", "REINDEX (CONCURRENTLY U&'o!006E' UESCAPE '!', CONCURRENTLY OFF) TABLE t", false},
 		{"reindex uescape without a literal", "REINDEX (CONCURRENTLY U&'on' UESCAPE x) TABLE t", false},
+		{"reindex uescape before a comma", "REINDEX (CONCURRENTLY U&'on' UESCAPE, VERBOSE) TABLE t", false},
+		{"reindex uescape with a bare E", "REINDEX (CONCURRENTLY U&'on' UESCAPE E) TABLE t", false},
 		{"reindex uescape at the end", "REINDEX (CONCURRENTLY U&'on' UESCAPE", false},
 		{"reindex word starting uescape", "REINDEX (CONCURRENTLY U&'on' UESCAPED '!') TABLE t", false},
 		{"reindex unbalanced", "REINDEX (CONCURRENTLY TABLE t", false},
@@ -317,6 +321,7 @@ func TestQuotedValue(t *testing.T) {
 		{"'o''n'", valueUndecided},     // a doubled quote is not decoded
 		{"'o'\n'n'", valueUndecided},   // nor is a continued literal
 		{`"o""n"`, valueOff},           // an identifier is never continued
+		{`"o'n"`, valueOff},            // nor is a quote in one a doubled quote
 		{"$$on", valueOff},             // unterminated dollar quote
 		{"$on", valueOff},              // no closing tag delimiter
 		{"$x$", valueOff},              // shorter than its two tags

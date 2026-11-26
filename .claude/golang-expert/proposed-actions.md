@@ -75,7 +75,10 @@ row.
   $$true$$) turns it on, as PostgreSQL accepts those; any other value,
   or a quoted one spelled with escapes, reads as off, which is safe
   because PostgreSQL then refuses the statement inside the transaction.
-  `maskKeepingValues` keeps each quoted value as a word (1 or X).
+  `maskKeepingValues` keeps each quoted value as a word (1 or X), and
+  masks a U& value's `UESCAPE '!'` or `UESCAPE E'!'` clause with it.
+  `BuildsIndexConcurrently` reads an escape-spelled value as on (it
+  only adds a warning); the transaction choice reads it as off.
 - `Store.MarkInterruptedUnknown` runs once at startup and marks every
   `executing` row `unknown`. This assumes one server per datastore;
   keep the assumption documented in the user and configuration docs.

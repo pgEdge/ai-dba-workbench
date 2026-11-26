@@ -67,6 +67,23 @@ func TestCallbackWithARefreshTokenSetsABrowserSessionCookie(t *testing.T) {
 	}
 }
 
+// A federated session ends when its ID token does, rather than lasting the
+// server's default session lifetime, so that the refresh which catches a
+// user removed at the provider runs on time.
+func TestCallbackSetsTheSessionExpiryFromTheIDToken(t *testing.T) {
+	env := newTestOIDCEnv(t)
+
+	exp := time.Now().Add(30 * time.Minute).Truncate(time.Second)
+	rec := env.login(t, "/", map[string]any{"exp": exp.Unix()})
+	session := findCookie(rec, SessionCookieName)
+	if session == nil || session.Value == "" {
+		t.Fatalf("the login set no session cookie: %s", describeResponse(rec))
+	}
+	if !session.Expires.Equal(exp) {
+		t.Fatalf("cookie Expires = %v, want the ID token's %v", session.Expires, exp)
+	}
+}
+
 // The whole path: a federated session reaches its ID token's expiry, the
 // next request redeems the refresh token, and the session carries on.
 func TestFederatedSessionIsRefreshedThroughTheProvider(t *testing.T) {

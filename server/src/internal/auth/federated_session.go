@@ -348,9 +348,10 @@ func (s *AuthStore) sweepExpiredSessions(now time.Time) {
 // it; the next ValidateSessionToken then treats the session exactly as
 // it would one that expired on its own. It reports false when there is
 // no such session, or when the session changed between being read and
-// being replaced, as a concurrent refresh would change it. It is exported for the reason AuditKeyForTesting is,
-// since its callers include the internal/api test binary, and the same
-// testing.Testing guard keeps it unreachable from the server.
+// being replaced, as a concurrent refresh would change it. It is exported
+// for the reason AuditKeyForTesting is, since its callers include the
+// internal/api test binary, and the same testing.Testing guard keeps it
+// unreachable from the server.
 func ExpireSessionForTesting(s *AuthStore, rawToken string) bool {
 	if !testing.Testing() {
 		panic("auth.ExpireSessionForTesting was called outside a test " +

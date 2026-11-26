@@ -160,6 +160,12 @@ authentication is enabled. Browsers disallow combining
 per the Fetch spec. Use an explicit origin, or leave the option empty for
 same-origin deployments.
 
+The `cors_origin` value is also the only browser origin the MCP endpoint
+(`/mcp/v1`) accepts. The server answers a request to that endpoint with
+`403 Forbidden` when the request carries any other `Origin` header, or any
+`Origin` header at all when `cors_origin` is empty. MCP clients that send no
+`Origin` header are unaffected.
+
 In the following example, the `http` section allows cross-origin requests from
 a dedicated workbench host:
 

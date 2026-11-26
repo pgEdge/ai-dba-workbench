@@ -46,6 +46,38 @@ curl -X POST http://localhost:8080/mcp/v1 \
 Replace the URL and token with values that match your
 environment.
 
+### Protocol Versions
+
+The server supports MCP protocol versions `2025-11-25`,
+`2025-06-18`, `2025-03-26`, and `2024-11-05`. During
+`initialize`, the server answers with the version the
+client requests when it supports that version, and with
+`2025-11-25` otherwise.
+
+After `initialize`, the server checks the
+`MCP-Protocol-Version` request header. A request with an
+unsupported version in the header receives a
+`400 Bad Request` response; a request without the header
+is treated as version `2025-03-26`.
+
+The endpoint accepts only `POST` requests, each carrying a
+single JSON-RPC message. A `GET` request receives
+`405 Method Not Allowed` because the server offers no
+event stream, and a JSON array (batch) body receives a
+JSON-RPC `Invalid Request` error. The server refuses
+batches for every protocol version, including
+`2025-03-26`, which permits them.
+
+### Browser Origins
+
+The server rejects a request to the MCP endpoint with
+`403 Forbidden` when the request carries an `Origin`
+header that does not match the `cors_origin` property.
+Command-line and desktop MCP clients send no `Origin`
+header and are unaffected. To call the endpoint from a
+browser-based MCP client, set `cors_origin` to that
+client's origin.
+
 ## Configuring Popular Clients
 
 The following sections describe how to configure

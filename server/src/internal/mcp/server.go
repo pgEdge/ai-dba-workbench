@@ -178,12 +178,12 @@ func (s *Server) handleInitialize(req JSONRPCRequest) {
 		return
 	}
 
-	// Accept the client's protocol version for compatibility
-	protocolVersion := params.ProtocolVersion
-	if protocolVersion == "" {
-		protocolVersion = ProtocolVersion
-	}
+	sendResponse(req.ID, s.initializeResult(params.ProtocolVersion))
+}
 
+// initializeResult builds the initialize answer shared by both
+// transports, negotiating the protocol version the client requested.
+func (s *Server) initializeResult(requestedVersion string) InitializeResult {
 	capabilities := map[string]any{
 		"tools": map[string]any{},
 	}
@@ -198,16 +198,14 @@ func (s *Server) handleInitialize(req JSONRPCRequest) {
 		capabilities["prompts"] = map[string]any{}
 	}
 
-	result := InitializeResult{
-		ProtocolVersion: protocolVersion,
+	return InitializeResult{
+		ProtocolVersion: mcp.NegotiateProtocolVersion(requestedVersion),
 		Capabilities:    capabilities,
 		ServerInfo: Implementation{
 			Name:    ServerName,
 			Version: ServerVersion,
 		},
 	}
-
-	sendResponse(req.ID, result)
 }
 
 func (s *Server) handleToolsList(req JSONRPCRequest) {

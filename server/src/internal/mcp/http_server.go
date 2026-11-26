@@ -10,6 +10,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/pgedge/ai-workbench/pkg/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/tracing"
@@ -76,43 +78,10 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 	// Create secure IP extractor with configured trusted proxies
 	s.ipExtractor = auth.NewIPExtractor(config.TrustedProxies)
 
-	// Create HTTP handler
-	mux := http.NewServeMux()
-	mux.HandleFunc("/mcp/v1", s.handleHTTPRequest)
-	mux.HandleFunc("/health", s.handleHealthCheck)
-
-	// Call custom handler setup if provided (allows main.go to add LLM proxy endpoints)
-	if config.SetupHandlers != nil {
-		if err := config.SetupHandlers(mux); err != nil {
-			return fmt.Errorf("failed to setup custom handlers: %w", err)
-		}
-	}
-
-	// Validate CORS configuration before binding any listener so
-	// misconfigurations fail fast at startup rather than producing
-	// browsers that silently reject responses at runtime.
-	// Auth is enabled whenever AuthStore is non-nil: AuthMiddleware below
-	// is always constructed with enabled=true, so it authenticates every
-	// request (issuing Set-Cookie / reading Authorization headers)
-	// precisely when AuthStore != nil.
-	if err := validateCORSOrigin(config.CORSOrigin, config.AuthStore != nil); err != nil {
+	handler, err := s.buildHTTPHandler(config)
+	if err != nil {
 		return err
 	}
-
-	// Wrap with auth middleware
-	var handler http.Handler = mux
-	handler = auth.AuthMiddleware(config.AuthStore, true)(handler)
-
-	// Apply request body size limit middleware to prevent memory exhaustion attacks
-	handler = MaxBytesMiddleware(apiconst.MaxRequestBodySize)(handler)
-
-	// Apply CORS middleware if an origin is configured (skip for same-origin deployments)
-	if config.CORSOrigin != "" {
-		handler = CORSMiddleware(config.CORSOrigin)(handler)
-	}
-
-	// Apply security headers middleware (outermost to ensure headers on all responses)
-	handler = SecurityHeadersMiddleware(config.HSTSEnabled)(handler)
 
 	// Configure server with timeouts to prevent slowloris DoS attacks
 	httpServer := &http.Server{
@@ -160,6 +129,53 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 	return serveErr
 }
 
+// buildHTTPHandler assembles the routes and middleware chain RunHTTP
+// serves.
+func (s *Server) buildHTTPHandler(config *HTTPConfig) (http.Handler, error) {
+	mux := http.NewServeMux()
+	mux.HandleFunc(mcpEndpointPath, s.handleHTTPRequest)
+	mux.HandleFunc("/health", s.handleHealthCheck)
+
+	// Call custom handler setup if provided (allows main.go to add LLM proxy endpoints)
+	if config.SetupHandlers != nil {
+		if err := config.SetupHandlers(mux); err != nil {
+			return nil, fmt.Errorf("failed to setup custom handlers: %w", err)
+		}
+	}
+
+	// Validate CORS configuration before binding any listener so
+	// misconfigurations fail fast at startup rather than producing
+	// browsers that silently reject responses at runtime.
+	// Auth is enabled whenever AuthStore is non-nil: AuthMiddleware below
+	// is always constructed with enabled=true, so it authenticates every
+	// request (issuing Set-Cookie / reading Authorization headers)
+	// precisely when AuthStore != nil.
+	if err := validateCORSOrigin(config.CORSOrigin, config.AuthStore != nil); err != nil {
+		return nil, err
+	}
+
+	// Wrap with auth middleware
+	var handler http.Handler = mux
+	handler = auth.AuthMiddleware(config.AuthStore, true)(handler)
+
+	// Outside auth, so an invalid Origin gets 403 before credentials
+	// are examined.
+	handler = mcpOriginMiddleware(config.CORSOrigin)(handler)
+
+	// Apply request body size limit middleware to prevent memory exhaustion attacks
+	handler = MaxBytesMiddleware(apiconst.MaxRequestBodySize)(handler)
+
+	// Apply CORS middleware if an origin is configured (skip for same-origin deployments)
+	if config.CORSOrigin != "" {
+		handler = CORSMiddleware(config.CORSOrigin)(handler)
+	}
+
+	// Apply security headers middleware (outermost to ensure headers on all responses)
+	handler = SecurityHeadersMiddleware(config.HSTSEnabled)(handler)
+
+	return handler, nil
+}
+
 // loadTLSConfig loads TLS certificates and creates a TLS configuration
 func (s *Server) loadTLSConfig(config *HTTPConfig) (*tls.Config, error) {
 	// Load certificate and key
@@ -199,8 +215,9 @@ func (s *Server) loadTLSConfig(config *HTTPConfig) (*tls.Config, error) {
 func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 
-	// Only accept POST requests
+	// Only accept POST requests; there is no SSE stream for a GET to open
 	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -243,6 +260,13 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// JSON-RPC batching was removed in protocol 2025-06-18.
+	if trimmed := bytes.TrimLeft(body, " \t\r\n"); len(trimmed) > 0 && trimmed[0] == '[' {
+		writeHTTPError(w, http.StatusBadRequest, nil, -32600, "Invalid Request",
+			"JSON-RPC batches are not supported")
+		return
+	}
+
 	// Parse the JSON-RPC message. Result and Error are only present when
 	// the client is answering a server-initiated request.
 	var msg struct {
@@ -257,6 +281,25 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	req := msg.JSONRPCRequest
 	isClientResponse := req.Method == "" && (msg.Result != nil || msg.Error != nil)
 
+	// The header is sent only after initialize, so initialize itself is
+	// never refused over it.
+	protocolVersion := defaultHTTPProtocolVersion
+	if req.Method != "initialize" {
+		var ok bool
+		protocolVersion, ok = requestProtocolVersion(r.Header)
+		if !ok {
+			// Code -32600, not the 2026-07-28 UnsupportedProtocolVersionError
+			// (-32022): a dual-era client falls back to initialize only
+			// when the 400 carries no error it recognizes as modern.
+			writeHTTPError(w, http.StatusBadRequest, req.ID, -32600,
+				"Unsupported protocol version", map[string]any{
+					"supported": mcp.SupportedProtocolVersions(),
+					"requested": protocolVersion,
+				})
+			return
+		}
+	}
+
 	// Trace incoming request
 	if tracing.IsEnabled() {
 		var params any
@@ -268,7 +311,7 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Debug logging: log incoming request
 	if s.debug {
-		fmt.Fprintf(os.Stderr, "[DEBUG] Incoming request: method=%s id=%v ip=%s\n", req.Method, req.ID, ipAddress)
+		fmt.Fprintf(os.Stderr, "[DEBUG] Incoming request: method=%s id=%v ip=%s protocol=%s\n", req.Method, req.ID, ipAddress, protocolVersion)
 		if req.Params != nil {
 			if paramsJSON, err := json.Marshal(req.Params); err == nil {
 				fmt.Fprintf(os.Stderr, "[DEBUG] Request params: %s\n", string(paramsJSON))
@@ -358,33 +401,19 @@ func (s *Server) handleRequestHTTP(ctx context.Context, req JSONRPCRequest) JSON
 // HTTP-specific handlers that return responses instead of sending them
 
 func (s *Server) handleInitializeHTTP(req JSONRPCRequest) JSONRPCResponse {
-	capabilities := map[string]any{
-		"tools": map[string]any{},
+	paramsJSON, err := json.Marshal(req.Params)
+	if err != nil {
+		return createErrorResponse(req.ID, -32602, "Invalid params", err.Error())
 	}
-
-	// Add resources capability if resource provider is set
-	if s.resources != nil {
-		capabilities["resources"] = map[string]any{}
-	}
-
-	// Add prompts capability if prompt provider is set
-	if s.prompts != nil {
-		capabilities["prompts"] = map[string]any{}
-	}
-
-	result := InitializeResult{
-		ProtocolVersion: ProtocolVersion,
-		Capabilities:    capabilities,
-		ServerInfo: Implementation{
-			Name:    ServerName,
-			Version: ServerVersion,
-		},
+	var params InitializeParams
+	if err := json.Unmarshal(paramsJSON, &params); err != nil {
+		return createErrorResponse(req.ID, -32602, "Invalid params", err.Error())
 	}
 
 	return JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result:  result,
+		Result:  s.initializeResult(params.ProtocolVersion),
 	}
 }
 
@@ -601,7 +630,7 @@ func CORSMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, MCP-Protocol-Version")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			// Expose the pagination total so cross-origin browser clients
 			// can read it; response headers other than the CORS-safelisted

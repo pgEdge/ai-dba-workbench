@@ -68,6 +68,17 @@ project adheres to
   json`, because ColdFront returns the `pg_ident.conf` mappings that
   the timeline compares between snapshots as `json`, which has no
   equality operator; the timeline now compares them as text. (#886)
+
+- Negotiate the MCP protocol version during `initialize`. The server
+  supports versions `2025-11-25`, `2025-06-18`, `2025-03-26`, and
+  `2024-11-05`; it answers with the requested version when it supports
+  that version and with `2025-11-25` otherwise. Over HTTP, the server
+  previously always answered `2024-11-05`, and over stdio it echoed any
+  version the client sent. The HTTP endpoint now also answers an
+  unsupported `MCP-Protocol-Version` header with `400 Bad Request`, a
+  JSON-RPC batch with an `Invalid Request` error, and a request whose
+  `Origin` header does not match `cors_origin` with `403 Forbidden`.
+
 - Stop one failing dashboard request from showing the "Disconnected"
   dialog in the web client and logging the user out. Three consecutive
   server or network errors from any requests previously declared the

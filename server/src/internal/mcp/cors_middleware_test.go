@@ -12,6 +12,7 @@ package mcp
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -42,7 +43,7 @@ func TestCORSMiddleware_SetsHeadersAndCallsNext(t *testing.T) {
 	want := map[string]string{
 		"Access-Control-Allow-Origin":      "https://dba.example.com",
 		"Access-Control-Allow-Methods":     "GET, POST, PUT, DELETE, OPTIONS",
-		"Access-Control-Allow-Headers":     "Content-Type, Authorization",
+		"Access-Control-Allow-Headers":     "Content-Type, Authorization, MCP-Protocol-Version",
 		"Access-Control-Allow-Credentials": "true",
 		"Access-Control-Expose-Headers":    "X-Total-Count",
 		"X-Total-Count":                    "42",
@@ -79,5 +80,27 @@ func TestCORSMiddleware_PreflightShortCircuits(t *testing.T) {
 		"X-Total-Count" {
 		t.Errorf("Access-Control-Expose-Headers = %q, want \"X-Total-Count\"",
 			got)
+	}
+}
+
+// TestCORSMiddleware_PreflightAllowsProtocolVersionHeader verifies a
+// browser preflight for the MCP-Protocol-Version request header succeeds.
+func TestCORSMiddleware_PreflightAllowsProtocolVersionHeader(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+	handler := CORSMiddleware("https://dba.example.com")(next)
+	req := httptest.NewRequest(http.MethodOptions, "/mcp/v1", nil)
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	req.Header.Set("Access-Control-Request-Headers", "mcp-protocol-version")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want 204", rec.Code)
+	}
+	allowed := rec.Header().Get("Access-Control-Allow-Headers")
+	if !strings.Contains(allowed, "MCP-Protocol-Version") {
+		t.Errorf("Access-Control-Allow-Headers = %q, want it to contain "+
+			"\"MCP-Protocol-Version\"", allowed)
 	}
 }

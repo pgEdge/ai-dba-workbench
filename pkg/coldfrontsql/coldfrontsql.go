@@ -76,11 +76,14 @@ var forbidden = []struct {
 		"DuckDB may subtract infinite timestamps in a range join and fail; leave open column bounds NULL and bind a finite far-future timestamp for an open parameter"},
 }
 
-// hostCall matches the start of a host() call, and inetCast a cast to
-// inet, written x::inet or CAST(x AS inet).
+// hostCall matches the start of a host() call, inetCast a cast written
+// x::inet, castCall the start of a CAST() call, and inetTarget the inet
+// type after a CAST's AS.
 var (
-	hostCall = regexp.MustCompile(`(?i)\bhost\s*\(`)
-	inetCast = regexp.MustCompile(`(?i)::\s*inet\b|\bAS\s+inet\b`)
+	hostCall   = regexp.MustCompile(`(?i)\bhost\s*\(`)
+	inetCast   = regexp.MustCompile(`(?i)::\s*inet\b`)
+	castCall   = regexp.MustCompile(`(?i)\bCAST\s*\(`)
+	inetTarget = regexp.MustCompile(`(?i)^\s+inet\b`)
 )
 
 // floatCast matches a cast to double precision directly after a closing
@@ -198,12 +201,65 @@ func inetViolations(sql string) []string {
 		problems = append(problems, "host(...): host() needs an inet, which "+
 			"inet columns are not on ColdFront; write "+inetHint)
 	}
-	for range inetCast.FindAllStringIndex(sql, -1) {
+	for range InetCasts(sql) {
 		problems = append(problems, "cast to inet: ::inet and CAST(... AS "+
 			"inet) need DuckDB's inet extension, which a ColdFront bundle "+
 			"may be unable to load; write "+inetHint)
 	}
 	return problems
+}
+
+// InetCasts returns the text of each cast to inet in sql: the ::inet of
+// each x::inet, and the whole call of each CAST(x AS inet). A CAST's
+// target is the text after its AS at the call's own parenthesis depth,
+// so CAST(CAST(x AS text) AS inet) is a cast to inet but neither
+// CAST(x AS text) AS inet nor the output alias in x::text AS inet is. An
+// unbalanced CAST( is read to the end of sql. Like Violations, it does
+// not parse SQL, so a cast inside a string literal or comment counts.
+func InetCasts(sql string) []string {
+	casts := inetCast.FindAllString(sql, -1)
+	for _, loc := range castCall.FindAllStringIndex(sql, -1) {
+		end := matchingParen(sql, loc[1]-1)
+		if end < 0 {
+			end = len(sql)
+		}
+		as := topLevelAS(sql, loc[1], end)
+		if as >= 0 && inetTarget.MatchString(sql[as+2:end]) {
+			casts = append(casts, sql[loc[0]:min(end+1, len(sql))])
+		}
+	}
+	return casts
+}
+
+// topLevelAS returns the index of the first AS keyword in s[from:to] at
+// depth zero, outside nested parentheses and quoted literals or
+// identifiers, or -1 when there is none.
+func topLevelAS(s string, from, to int) int {
+	depth := 0
+	for i := from; i < to; i++ {
+		switch c := s[i]; {
+		case c == '\'' || c == '"':
+			end := strings.IndexByte(s[i+1:to], c)
+			if end < 0 {
+				return -1
+			}
+			i += end + 1
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+		case depth == 0 && i+2 < to && strings.EqualFold(s[i:i+2], "AS") &&
+			(i == from || !identByte(s[i-1])) && !identByte(s[i+2]):
+			return i
+		}
+	}
+	return -1
+}
+
+// identByte reports whether c can be part of an unquoted SQL identifier.
+func identByte(c byte) bool {
+	return c == '_' || c == '$' || c >= '0' && c <= '9' ||
+		c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 // inetHint is the portable rendering of an inet column, named in each

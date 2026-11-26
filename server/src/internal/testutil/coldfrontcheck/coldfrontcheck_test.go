@@ -33,6 +33,8 @@ func TestShapeProblems(t *testing.T) {
 		{"CAST AS inet", "SELECT CAST(x AS inet) FROM metrics.x", true},
 		{"spaced CAST AS INET", "SELECT cast ( x  as  INET ) FROM metrics.x", true},
 		{"alias starting with inet", "SELECT client_addr::text AS inet_addr FROM metrics.x", false},
+		{"alias named inet", "SELECT client_addr::text AS inet FROM metrics.x", false},
+		{"CAST to text aliased inet", "SELECT CAST(client_addr AS text) AS inet FROM metrics.x", false},
 		{"split host", "COALESCE(split_part(client_addr::text, '/', 1), 'local')", false},
 		{"word ending in host", "SELECT ghost(x), localhost FROM metrics.x", false},
 		{"parameter minus interval", "collected_at >= $3 - INTERVAL '1 hour'", true},
@@ -106,15 +108,23 @@ func TestShapeProblems(t *testing.T) {
 		{"SELECT client_addr :: INET", true},
 		{"SELECT CAST(client_addr AS inet)", true},
 		{"SELECT cast(s.client_addr as INET)", true},
+		{`SELECT CAST( "s".client_addr AS inet)`, true},
+		{"SELECT CAST(CAST(client_addr AS text) AS inet)", false},
+		{"COALESCE(host(s.client_addr), 'local')", true},
+		{`COALESCE(host( "s" . "client_addr" ), 'local')`, true},
+		{`SELECT "client_addr"::inet`, true},
 		{"SELECT client_addr::text AS inet_addr", false},
+		{"SELECT client_addr AS inet", false},
+		{"SELECT client_addr::text AS inet", false},
+		{"SELECT host(client_address)", false},
 		{"SELECT CAST(server_addr AS inet)", false},
 		{"COALESCE(split_part(client_addr::text, '/', 1), 'local')", false},
 		{"SMTP host (email)", false},
 		{"SELECT server_addr::inet", false},
 	}
 	for _, tt := range clientAddrTests {
-		if got := ClientAddrInet.MatchString(tt.text); got != tt.bad {
-			t.Errorf("ClientAddrInet.MatchString(%q) = %v, want %v", tt.text, got, tt.bad)
+		if got := ClientAddrInet(tt.text); (got != "") != tt.bad {
+			t.Errorf("ClientAddrInet(%q) = %q, want bad = %v", tt.text, got, tt.bad)
 		}
 	}
 	for _, tt := range listTests {

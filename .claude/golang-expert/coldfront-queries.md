@@ -165,8 +165,8 @@ The textual rules live in one place, `coldfrontsql.Violations` in
 `ANY(`, an `ALL(` or `SOME(` after a comparison operator or `LIKE`, an
 `ARRAY[` literal, `unnest(`, an array cast, `pg_lsn`, `make_interval(`,
 any `host(` call, any cast to inet (`::inet` or `CAST(... AS inet)`;
-the latter fails on ColdFront as `::inet` does), a NULL test (`IS [NOT] NULL`,
-`ISNULL`, `NOTNULL`) on a `$n`, bare, cast either way or
+the latter fails on ColdFront as `::inet` does), a NULL test
+(`IS [NOT] NULL`, `ISNULL`, `NOTNULL`) on a `$n`, bare, cast either way or
 parenthesised, a `COALESCE($n`, `infinity` (any case), an `IN (...)`
 list (not a subquery) holding two or more `$n` not cast to `text`, and
 an `avg(...)` not cast to float in place. Only `ANY(`, the array cast,
@@ -174,8 +174,11 @@ an `avg(...)` not cast to float in place. Only `ANY(`, the array cast,
 `ALL(`, `SOME(` and `ARRAY[` are barred as the same array typing. The
 parenthesis matcher behind `avg(` and the `IN` list skips quoted
 literals and identifiers, but the forbidden-word checks still see
-inside them. The server's equivalent, `coldfrontcheck.InetShape`,
-flags the same `host(` and inet-cast shapes.
+inside them. `InetCasts` finds the casts: a `CAST(`'s target is the
+text after its `AS` at the call's own parenthesis depth, so an output
+alias named `inet` (`x::text AS inet`, `CAST(x AS text) AS inet`) is
+not one. The server's equivalent, `coldfrontcheck.InetShape`, uses
+`InetCasts` too and flags the same `host(` and inet-cast shapes.
 `TestViolations` in `pkg/coldfrontsql/coldfrontsql_test.go` pins them
 against the shapes that failed live and the replacements that worked.
 A module that adds a `metrics.*` reader runs its SQL through

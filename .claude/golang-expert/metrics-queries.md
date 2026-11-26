@@ -375,16 +375,18 @@ interval times an integer-cast parameter (`intervalTimesIntParam`), an
 uncast `avg` or `EXTRACT`, an untyped run-time IN list, any `host(`
 call or cast to inet, `::inet` or `CAST(... AS inet)`
 (`coldfrontcheck.InetShape`; units that do not read `metrics.*` are
-scanned for the `client_addr` forms alone, `ClientAddrInet`, since
-`host (` also appears in prose), a schema-qualified table other than
-`metrics.` (no unit is exempt), an untyped JSON builder
-value, `pg_lsn`, an `'infinity'`/`'-infinity'` literal, a `'{...}'`
+scanned for the `client_addr` forms alone, bare, qualified or quoted,
+`ClientAddrInet`, since `host (` also appears in prose), a
+schema-qualified table other than `metrics.` (no unit is exempt), an
+untyped JSON builder value, `pg_lsn`, an `'infinity'`/`'-infinity'` literal, a `'{...}'`
 literal not cast to json or jsonb, and a `$n [::type] IS [NOT] NULL`
 test. These rules mirror `coldfrontsql.Violations`, the shared checker
 the alerter branch adds in `pkg/coldfrontsql`; once that lands, consider
 running server SQL through it too. On `inet` the two agree: both flag
 every `host()` call and every cast to inet, `::inet` or
-`CAST(... AS inet)` (issue #889). They still differ on parameters: the
+`CAST(... AS inet)`, the server finding the casts with
+`coldfrontsql.InetCasts`, so an output alias named `inet` is not one
+(issue #889). They still differ on parameters: the
 alerter's checker requires a cast on every parameter, whereas the server
 keeps untyped comparison parameters, which ran live.
 It cannot see column types, so an integer `sum` or `/` is left to

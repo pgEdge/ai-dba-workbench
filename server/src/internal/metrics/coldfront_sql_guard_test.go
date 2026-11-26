@@ -181,7 +181,7 @@ func TestMetricsSQLAvoidsColdFrontShapes(t *testing.T) {
 			// joined to the statement elsewhere, as clientAddrLabelExpr
 			// is.
 			for i, lit := range u.literals {
-				if m := coldfrontcheck.ClientAddrInet.FindString(lit); m != "" {
+				if m := coldfrontcheck.ClientAddrInet(lit); m != "" {
 					problems = append(problems, u.lines[i]+" ("+u.unit+"): "+strconv.Quote(m)+
 						": "+coldfrontcheck.InetShapeHint)
 				}

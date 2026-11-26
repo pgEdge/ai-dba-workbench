@@ -59,12 +59,34 @@ export const TOOL_GET_ALERT_RULES: AnalysisTool = {
 
 export const TOOL_GET_METRIC_BASELINES: AnalysisTool = {
     name: "get_metric_baselines",
-    description: "Get statistical baselines for metrics (mean, stddev, min, max)",
+    description: "Get statistical baselines for metrics (mean, stddev, min, max). Returns at most 100 rows per call; filter and sort rather than paging.",
     inputSchema: {
         type: "object",
         properties: {
             connection_id: { type: "integer", description: "Connection ID to query" },
             metric_name: { type: "string", description: "Filter to specific metric" },
+            period_type: {
+                type: "string",
+                description: "Return only baselines of this period.",
+                enum: ["all", "hourly", "daily"],
+            },
+            order_by: {
+                type: "string",
+                description: "Row order. Default: metric.",
+                enum: ["metric", "mean_desc", "mean_asc", "stddev_desc"],
+            },
+            limit: {
+                type: "integer",
+                description: "Maximum number of baselines to return. Default: 100, max: 100.",
+                minimum: 1,
+                maximum: 100,
+            },
+            offset: {
+                type: "integer",
+                description: "Number of baselines to skip, for paging. Default: 0.",
+                minimum: 0,
+                maximum: 2147483647,
+            },
         },
         required: ["connection_id"],
     },

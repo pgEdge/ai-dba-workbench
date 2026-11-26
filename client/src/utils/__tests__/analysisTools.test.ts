@@ -143,3 +143,41 @@ describe('database_name parameters', () => {
         expect(properties.schema_name.description).toContain('all schemas');
     });
 });
+
+// ---------------------------------------------------------------------------
+// get_metric_baselines paging and filtering
+// ---------------------------------------------------------------------------
+
+describe('TOOL_GET_METRIC_BASELINES', () => {
+    const properties = TOOL_GET_METRIC_BASELINES.inputSchema.properties as Record<
+        string, Record<string, unknown>
+    >;
+
+    it('still requires only connection_id', () => {
+        expect(TOOL_GET_METRIC_BASELINES.inputSchema.required).toEqual(['connection_id']);
+    });
+
+    it('declares the period_type and order_by enums the server accepts', () => {
+        expect(properties.period_type).toMatchObject({
+            type: 'string',
+            enum: ['all', 'hourly', 'daily'],
+        });
+        expect(properties.order_by).toMatchObject({
+            type: 'string',
+            enum: ['metric', 'mean_desc', 'mean_asc', 'stddev_desc'],
+        });
+    });
+
+    it('bounds limit and offset as the server does', () => {
+        expect(properties.limit).toMatchObject({
+            type: 'integer', minimum: 1, maximum: 100,
+        });
+        expect(properties.offset).toMatchObject({
+            type: 'integer', minimum: 0, maximum: 2147483647,
+        });
+    });
+
+    it('tells the model results are capped per call', () => {
+        expect(TOOL_GET_METRIC_BASELINES.description).toContain('at most 100 rows');
+    });
+});

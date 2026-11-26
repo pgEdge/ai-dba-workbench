@@ -28,7 +28,15 @@ func TestShapeProblems(t *testing.T) {
 		{"single typed IN", "WHERE connection_id IN ($1::integer)", false},
 		{"subquery IN", "WHERE dbid IN (SELECT datid FROM db_names)", false},
 		{"bare host", "COALESCE(host(client_addr), 'local')", true},
-		{"inet host", "COALESCE(host(client_addr::inet), 'local')", false},
+		{"inet host", "COALESCE(host(client_addr::inet), 'local')", true},
+		{"inet cast", "SELECT client_addr :: INET FROM metrics.x", true},
+		{"CAST AS inet", "SELECT CAST(x AS inet) FROM metrics.x", true},
+		{"spaced CAST AS INET", "SELECT cast ( x  as  INET ) FROM metrics.x", true},
+		{"alias starting with inet", "SELECT client_addr::text AS inet_addr FROM metrics.x", false},
+		{"alias named inet", "SELECT client_addr::text AS inet FROM metrics.x", false},
+		{"CAST to text aliased inet", "SELECT CAST(client_addr AS text) AS inet FROM metrics.x", false},
+		{"split host", "COALESCE(split_part(client_addr::text, '/', 1), 'local')", false},
+		{"word ending in host", "SELECT ghost(x), localhost FROM metrics.x", false},
 		{"parameter minus interval", "collected_at >= $3 - INTERVAL '1 hour'", true},
 		{"interval times parameter", "INTERVAL '1 day' * $1", true},
 		{"interval times int parameter", "NOW() - INTERVAL '1 day' * $1::int", false},
@@ -90,6 +98,34 @@ func TestShapeProblems(t *testing.T) {
 		{"run-time list with no placeholder literal", []string{"name IN (%s)"}, true},
 		{"untyped placeholder without a list", []string{"$%d", "LIMIT %s"}, false},
 		{"no list", []string{"name = $1"}, false},
+	}
+	clientAddrTests := []struct {
+		text string
+		bad  bool
+	}{
+		{"COALESCE(host(client_addr::inet), 'local')", true},
+		{"COALESCE(host(client_addr), 'local')", true},
+		{"SELECT client_addr :: INET", true},
+		{"SELECT CAST(client_addr AS inet)", true},
+		{"SELECT cast(s.client_addr as INET)", true},
+		{`SELECT CAST( "s".client_addr AS inet)`, true},
+		{"SELECT CAST(CAST(client_addr AS text) AS inet)", false},
+		{"COALESCE(host(s.client_addr), 'local')", true},
+		{`COALESCE(host( "s" . "client_addr" ), 'local')`, true},
+		{`SELECT "client_addr"::inet`, true},
+		{"SELECT client_addr::text AS inet_addr", false},
+		{"SELECT client_addr AS inet", false},
+		{"SELECT client_addr::text AS inet", false},
+		{"SELECT host(client_address)", false},
+		{"SELECT CAST(server_addr AS inet)", false},
+		{"COALESCE(split_part(client_addr::text, '/', 1), 'local')", false},
+		{"SMTP host (email)", false},
+		{"SELECT server_addr::inet", false},
+	}
+	for _, tt := range clientAddrTests {
+		if got := ClientAddrInet(tt.text); (got != "") != tt.bad {
+			t.Errorf("ClientAddrInet(%q) = %q, want bad = %v", tt.text, got, tt.bad)
+		}
 	}
 	for _, tt := range listTests {
 		if got := UnitProblems(tt.literals); (len(got) > 0) != tt.bad {

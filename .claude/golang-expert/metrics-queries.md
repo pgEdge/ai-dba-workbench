@@ -295,7 +295,10 @@ alerter pools are not covered by this change.
   literals. pkg/anomaly's `pg_stat_replication.lag_bytes` historical
   query used it; that SQL is the alerter branch's to change.
 - **Types read back differently.** `inet` is text, so write
-  `host(client_addr::inet)`; text is `character varying`, oid is
+  `split_part(client_addr::text, '/', 1)`, never `host()` or a cast to
+  inet, `::inet` or `CAST(... AS inet)` (the cast needs DuckDB's
+  `inet` extension, which a ColdFront bundle with autoinstall disabled
+  cannot load; issue #889); text is `character varying`, oid is
   bigint, jsonb is json. The collector's ColdFront spec
   (`mappedTypes` in `collector/src/coldfront/types.go`) widens oid and
   xid to bigint, inet, `"char"` and name to text, and numeric to
@@ -368,25 +371,30 @@ alerter pools are not covered by this change.
 
 The checker is `internal/testutil/coldfrontcheck` (`ShapeProblems` for
 one statement or literal, `UnitProblems` for a unit's literals together,
-`BareHost`), a test-only package like `scratchdb` that the server binary
-must never import. `UnitProblems` requires every bare placeholder
-literal (`$%d`, `$%d::int`, ...) in a unit that formats an `IN (%s)` to
-be `$%d::text`, so one typed list cannot excuse an untyped one beside it.
+`InetShape` and `ClientAddrInet`), a test-only package like
+`scratchdb` that the server binary must never import. `UnitProblems`
+requires every bare placeholder literal (`$%d`, `$%d::int`, ...) in a
+unit that formats an `IN (%s)` to be `$%d::text`, so one typed list
+cannot excuse an untyped one beside it.
 `TestMetricsSQLAvoidsColdFrontShapes` (`coldfront_sql_guard_test.go`)
 scans every server unit that reads `metrics.*` for an array parameter,
 an untyped or integer IN list, parameter arithmetic other than an
 interval times an integer-cast parameter (`intervalTimesIntParam`), an
-uncast `avg` or `EXTRACT`, an untyped run-time IN list, a bare
-`host(client_addr)`, a schema-qualified table other than `metrics.`
-(no unit is exempt), an untyped JSON builder
-value, `pg_lsn`, an `'infinity'`/`'-infinity'` literal, a `'{...}'`
+uncast `avg` or `EXTRACT`, an untyped run-time IN list, any `host(`
+call or cast to inet, `::inet` or `CAST(... AS inet)`
+(`coldfrontcheck.InetShape`; units that do not read `metrics.*` are
+scanned for the `client_addr` forms alone, bare, qualified or quoted,
+`ClientAddrInet`, since `host (` also appears in prose), a
+schema-qualified table other than `metrics.` (no unit is exempt), an
+untyped JSON builder value, `pg_lsn`, an `'infinity'`/`'-infinity'` literal, a `'{...}'`
 literal not cast to json or jsonb, and a `$n [::type] IS [NOT] NULL`
 test. These rules mirror `coldfrontsql.Violations`, the shared checker
 the alerter branch adds in `pkg/coldfrontsql`; once that lands, consider
-running server SQL through it too. On `inet` the two now agree: #791's
-checker allows `host(<expr>::inet)` and flags a `host()` whose argument
-is not cast to inet and an `::inet` cast anywhere else, as the server's
-`BareHost` rule intends. They still differ on parameters: the
+running server SQL through it too. On `inet` the two agree: both flag
+every `host()` call and every cast to inet, `::inet` or
+`CAST(... AS inet)`, the server finding the casts with
+`coldfrontsql.InetCasts`, so an output alias named `inet` is not one
+(issue #889). They still differ on parameters: the
 alerter's checker requires a cast on every parameter, whereas the server
 keeps untyped comparison parameters, which ran live.
 It cannot see column types, so an integer `sum` or `/` is left to
@@ -2613,7 +2621,7 @@ it takes `DISTINCT ON (query_id, datid, usesysid)` over the same window,
 ordered by `collected_at DESC`, and is `LEFT JOIN`ed on all three of
 `latest_sample`'s `queryid`, `dbid` and `userid` (the identity of each
 statement's most recent sample in the window) to fill the `client_addr`
-(via `host(client_addr::inet)`, the repo's convention for rendering `inet`),
+(via `clientAddrLabelExpr`, the repo's convention for rendering `inet`),
 `client_hostname` and `client_observed_at` columns of `TopQueryRow`.
 
 The three-way key is not optional. `pg_stat_statements` is keyed on
@@ -2631,7 +2639,8 @@ off, and on idle backends, so the join resolves nothing on such servers.
 Because `pg_stat_activity` is sampled, the attribution is the most
 recently observed client, not the only one; keep any UI wording to
 "last observed client". `client_addr` is rendered
-`COALESCE(host(client_addr::inet), 'local')`, so it is non-null for every
+`COALESCE(split_part(client_addr::text, '/', 1), 'local')`
+(`clientAddrLabelExpr`), so it is non-null for every
 observed row and a statement never caught in flight is signaled solely
 by a null `client_observed_at`; both the `TopQueryRow` doc comment and
 the OpenAPI descriptions say so, and any UI logic must test
@@ -2760,12 +2769,15 @@ Two further conventions matter when reading `metrics.pg_stat_activity`:
   autovacuum workers, and counting those as "connections" inflates
   every total.
 
-- Never render `client_addr` with a `::text` cast. `client_addr` is
-  `inet`, and the standard `inet` text output carries the netmask on
-  every supported PostgreSQL version (it reproduces identically on 16
-  and 18), so a cast yields `192.0.2.10/32` rather than `192.0.2.10`.
-  Use `host(client_addr::inet)` instead (the cast is a no-op on
-  PostgreSQL and required on ColdFront, where the column is text). A
+- Never render `client_addr` with a bare `::text` cast. `client_addr`
+  is `inet`, and its text cast carries the netmask on every supported
+  PostgreSQL version (it reproduces identically on 16 and 18), so a
+  cast yields `192.0.2.10/32` rather than `192.0.2.10`. Use
+  `clientAddrLabelExpr`, `split_part(client_addr::text, '/', 1)`, which
+  drops the length on PostgreSQL and leaves ColdFront's text column
+  (already a bare address) alone. Not `host(client_addr::inet)`: the
+  cast needs DuckDB's `inet` extension, which a ColdFront bundle with
+  autoinstall disabled cannot load (issue #889). A
   NULL `client_addr` means the backend arrived over a Unix-domain
   socket, which is worth labelling as local rather than unknown.
 

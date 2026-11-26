@@ -549,7 +549,8 @@ func TestTopQueries_LastClientAttribution(t *testing.T) {
 	// Query 1001 was seen twice inside the window, from two different
 	// clients, so the newer sample must win. Query 1002 was only seen
 	// before the window opened. Query 1005 was seen once, with no
-	// resolved hostname, as happens when log_hostname is off. Query 1003
+	// resolved hostname, as happens when log_hostname is off, and over
+	// IPv6, so the address must come back without its /128. Query 1003
 	// never appears with a query_id at all. The other connection's
 	// sample for 1003 must not leak in.
 	if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_stat_activity
@@ -558,7 +559,7 @@ func TestTopQueries_LastClientAttribution(t *testing.T) {
         VALUES ($1, $3, 100, 'alpha', 10, 'alice', '192.0.2.10', 'app-old.example.com', 1001),
                ($1, $2, 100, 'alpha', 10, 'alice', '192.0.2.20', 'app-new.example.com', 1001),
                ($1, $4, 100, 'alpha', 10, 'alice', '192.0.2.30', 'stale.example.com', 1002),
-               ($1, $2, 200, 'beta', 20, 'bob', '198.51.100.7', NULL, 1005),
+               ($1, $2, 200, 'beta', 20, 'bob', '2001:db8::7', NULL, 1005),
                ($5, $2, 100, 'alpha', 10, 'alice', '203.0.113.9', 'other.example.com', 1003)`,
 		topQueriesConnID, newest, older, outsideWindow,
 		topQueriesConnID+1); err != nil {
@@ -589,7 +590,7 @@ func TestTopQueries_LastClientAttribution(t *testing.T) {
 		{"1001", strPtr("192.0.2.20"), strPtr("app-new.example.com"), &newest},
 		{"1002", nil, nil, nil},
 		{"1003", nil, nil, nil},
-		{"1005", strPtr("198.51.100.7"), nil, &newest},
+		{"1005", strPtr("2001:db8::7"), nil, &newest},
 	}
 	for _, tc := range tests {
 		t.Run("queryid_"+tc.queryID, func(t *testing.T) {

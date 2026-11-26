@@ -242,9 +242,10 @@ var ReplicationLagBytesExpr = LSNDiffBytesSQL("r.sent_lsn", "r.replay_lsn")
 // ($1::int, never a bare $1, which DuckDB types as UNKNOWN and refuses),
 // bind no arrays, cast avg() and EXTRACT() results to float before they
 // are selected, and use no PostgreSQL-only type or function (pg_lsn,
-// make_interval(), host() over text; host(col::inet) runs). The
-// golang-expert knowledge base
-// (coldfront-queries.md) has the reasons and the tests that enforce them.
+// make_interval(), host() or a cast to inet; render an address as
+// split_part(col::text, '/', 1), issue #889). The golang-expert
+// knowledge base (coldfront-queries.md) has the reasons and the tests
+// that enforce them.
 //
 // Name and PerDatabase are filled in by Metric.
 var metricDefs = map[string]MetricDef{

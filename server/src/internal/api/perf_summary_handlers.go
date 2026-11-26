@@ -1760,12 +1760,10 @@ func buildTopQueriesSQL(
 	//
 	// A NULL client_addr means the backend arrived over a Unix-domain
 	// socket rather than that the client is unknown, so it is reported as
-	// "local", matching connectionGroupsQueryByClient, and is cast to inet
-	// for host() as it is there, since a ColdFront datastore stores it as
-	// text (issue #755). client_addr is
-	// therefore non-null for every row last_client observed, and a query
-	// never caught in flight is distinguished solely by a null
-	// client_observed_at.
+	// "local" by clientAddrLabelExpr, as connectionGroupsQueryByClient
+	// reports it. client_addr is therefore non-null for every row
+	// last_client observed, and a query never caught in flight is
+	// distinguished solely by a null client_observed_at.
 	//
 	// The window bound matters: pg_stat_activity has no index on datid,
 	// usesysid or query_id, so DISTINCT ON has to sort every row it reads,
@@ -1911,7 +1909,7 @@ func buildTopQueriesSQL(
         last_client AS (
             SELECT DISTINCT ON (query_id, datid, usesysid)
                 query_id, datid, usesysid,
-                COALESCE(host(client_addr::inet), 'local') AS client_addr,
+                `+clientAddrLabelExpr+` AS client_addr,
                 client_hostname, collected_at
             FROM metrics.pg_stat_activity
             WHERE connection_id = $1

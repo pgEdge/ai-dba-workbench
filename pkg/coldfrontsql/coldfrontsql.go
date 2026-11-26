@@ -76,12 +76,14 @@ var forbidden = []struct {
 		"DuckDB may subtract infinite timestamps in a range join and fail; leave open column bounds NULL and bind a finite far-future timestamp for an open parameter"},
 }
 
-// hostCall matches the start of a host() call, inetCast a cast to inet,
-// and inetArg a host() argument that ends in a cast to inet.
+// hostCall matches the start of a host() call, inetCast a cast written
+// x::inet, castCall the start of a CAST() call, and inetTarget the inet
+// type after a CAST's AS.
 var (
-	hostCall = regexp.MustCompile(`(?i)\bhost\s*\(`)
-	inetCast = regexp.MustCompile(`(?i)::\s*inet\b`)
-	inetArg  = regexp.MustCompile(`(?i)::\s*inet\s*$`)
+	hostCall   = regexp.MustCompile(`(?i)\bhost\s*\(`)
+	inetCast   = regexp.MustCompile(`(?i)::\s*inet\b`)
+	castCall   = regexp.MustCompile(`(?i)\bCAST\s*\(`)
+	inetTarget = regexp.MustCompile(`(?i)^\s+inet\b`)
 )
 
 // floatCast matches a cast to double precision directly after a closing
@@ -103,11 +105,10 @@ var (
 // Violations returns a description of every ColdFront rule sql breaks,
 // or nil when it breaks none: an uncast bound parameter, ANY(), ALL()
 // or SOME() over an array, an ARRAY[...] literal, unnest(), an array
-// cast, pg_lsn, make_interval(), host() over anything but an inet cast,
-// an inet cast outside host(), a NULL test on a parameter, a COALESCE
-// over a parameter, an infinite timestamp, an IN list holding two or
-// more parameters that are not text, or an avg() not cast to float where
-// it stands.
+// cast, pg_lsn, make_interval(), any host() call, any cast to inet, a
+// NULL test on a parameter, a COALESCE over a parameter, an infinite
+// timestamp, an IN list holding two or more parameters that are not
+// text, or an avg() not cast to float where it stands.
 //
 // It is a textual check and does not parse SQL, so it also reports a
 // forbidden word inside a string literal or comment; keep such words out
@@ -186,35 +187,84 @@ func paramCast(sql string, loc []int) bool {
 	return castOpen.MatchString(sql[:loc[0]]) && castAs.MatchString(sql[loc[1]:])
 }
 
-// inetViolations reports each host() call whose argument is not cast to
-// inet, and each inet cast that is not such an argument. inet columns are
-// text on ColdFront, and DuckDB rejects host() over text but runs
-// host(col::inet); an inet cast anywhere else is unverified there, and
-// would return a result type the Workbench does not scan.
+// inetViolations reports each host() call and each cast to inet, whether
+// written ::inet or CAST(... AS inet). inet columns are text on
+// ColdFront, so host() over one fails, and a cast to inet makes DuckDB
+// load its inet extension, which a ColdFront bundle with extension
+// autoinstall disabled cannot do (issue #889). The portable way to render
+// an address is split_part(col::text, '/', 1): on PostgreSQL it drops the
+// prefix length inet's text form carries, as host() does, and on
+// ColdFront the text column already holds the bare address.
 func inetViolations(sql string) []string {
 	var problems []string
-	excused := map[int]bool{}
-	for _, loc := range hostCall.FindAllStringIndex(sql, -1) {
-		end := matchingParen(sql, loc[1]-1)
-		if end >= 0 {
-			if m := inetArg.FindStringIndex(sql[loc[1]:end]); m != nil {
-				excused[loc[1]+m[0]] = true
-				continue
-			}
-		}
-		problems = append(problems, "host(...) without an inet cast: "+
-			"DuckDB rejects host() over text, which inet columns are on "+
-			"ColdFront; write host(col::inet)")
+	for range hostCall.FindAllStringIndex(sql, -1) {
+		problems = append(problems, "host(...): host() needs an inet, which "+
+			"inet columns are not on ColdFront; write "+inetHint)
 	}
-	for _, loc := range inetCast.FindAllStringIndex(sql, -1) {
-		if !excused[loc[0]] {
-			problems = append(problems, "::inet outside host(...::inet): "+
-				"inet columns are text on ColdFront; cast to inet only as "+
-				"the argument of host()")
-		}
+	for range InetCasts(sql) {
+		problems = append(problems, "cast to inet: ::inet and CAST(... AS "+
+			"inet) need DuckDB's inet extension, which a ColdFront bundle "+
+			"may be unable to load; write "+inetHint)
 	}
 	return problems
 }
+
+// InetCasts returns the text of each cast to inet in sql: the ::inet of
+// each x::inet, and the whole call of each CAST(x AS inet). A CAST's
+// target is the text after its AS at the call's own parenthesis depth,
+// so CAST(CAST(x AS text) AS inet) is a cast to inet but neither
+// CAST(x AS text) AS inet nor the output alias in x::text AS inet is. An
+// unbalanced CAST( is read to the end of sql. Like Violations, it does
+// not parse SQL, so a cast inside a string literal or comment counts.
+func InetCasts(sql string) []string {
+	casts := inetCast.FindAllString(sql, -1)
+	for _, loc := range castCall.FindAllStringIndex(sql, -1) {
+		end := matchingParen(sql, loc[1]-1)
+		if end < 0 {
+			end = len(sql)
+		}
+		as := topLevelAS(sql, loc[1], end)
+		if as >= 0 && inetTarget.MatchString(sql[as+2:end]) {
+			casts = append(casts, sql[loc[0]:min(end+1, len(sql))])
+		}
+	}
+	return casts
+}
+
+// topLevelAS returns the index of the first AS keyword in s[from:to] at
+// depth zero, outside nested parentheses and quoted literals or
+// identifiers, or -1 when there is none.
+func topLevelAS(s string, from, to int) int {
+	depth := 0
+	for i := from; i < to; i++ {
+		switch c := s[i]; {
+		case c == '\'' || c == '"':
+			end := strings.IndexByte(s[i+1:to], c)
+			if end < 0 {
+				return -1
+			}
+			i += end + 1
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+		case depth == 0 && i+2 < to && strings.EqualFold(s[i:i+2], "AS") &&
+			(i == from || !identByte(s[i-1])) && !identByte(s[i+2]):
+			return i
+		}
+	}
+	return -1
+}
+
+// identByte reports whether c can be part of an unquoted SQL identifier.
+func identByte(c byte) bool {
+	return c == '_' || c == '$' || c >= '0' && c <= '9' ||
+		c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// inetHint is the portable rendering of an inet column, named in each
+// inetViolations report.
+const inetHint = "split_part(col::text, '/', 1)"
 
 // matchingParen returns the index of the parenthesis closing the one at
 // open, or -1 when it is unbalanced. Parentheses inside a single-quoted

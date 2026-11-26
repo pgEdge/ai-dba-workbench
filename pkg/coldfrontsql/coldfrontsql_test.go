@@ -10,7 +10,10 @@
 
 package coldfrontsql
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // TestViolations checks the rules against the shapes that failed live on
 // ColdFront, and against the replacements that worked, so the guard
@@ -46,10 +49,18 @@ func TestViolations(t *testing.T) {
 		"make_interval":                `SELECT 1 FROM metrics.t WHERE collected_at > NOW() - make_interval(days => $1::int)`,
 		"host over text":               `SELECT host(client_addr) FROM metrics.t`,
 		"host over a text cast":        `SELECT HOST(client_addr::text) FROM metrics.t`,
-		"inet cast before host ends":   `SELECT host(client_addr::inet || '') FROM metrics.t`,
+		"host over an inet cast":       `SELECT host(client_addr::inet) FROM metrics.t`,
+		"spaced host over a cast":      `SELECT Host ( s.server_addr :: INET ) FROM metrics.t s`,
 		"unbalanced host":              `SELECT host(client_addr::inet FROM metrics.t`,
 		"inet cast":                    `SELECT client_addr::inet FROM metrics.t`,
-		"inet cast beside host":        `SELECT host(client_addr::inet), server_addr::inet FROM metrics.t`,
+		"spaced host alone":            `SELECT host (x) FROM metrics.t`,
+		"spaced inet cast alone":       `SELECT x :: inet FROM metrics.t`,
+		"upper-case inet cast alone":   `SELECT x::INET FROM metrics.t`,
+		"CAST AS inet":                 `SELECT CAST(client_addr AS inet) FROM metrics.t`,
+		"upper-case CAST AS inet":      `SELECT CAST(x AS INET) FROM metrics.t`,
+		"spaced CAST AS inet":          `SELECT cast ( s.client_addr  as  inet ) FROM metrics.t s`,
+		"nested CAST to inet":          `SELECT CAST(CAST(client_addr AS text) AS inet) FROM metrics.t`,
+		"unbalanced CAST to inet":      `SELECT CAST(client_addr AS inet FROM metrics.t`,
 		"COALESCE-open upper bound":    `SELECT 1 FROM metrics.t WHERE collected_at <= COALESCE($2::timestamptz, collected_at)`,
 		"spaced COALESCE parameter":    `SELECT 1 FROM metrics.t WHERE collected_at <= coalesce ( $2::timestamptz, NOW())`,
 		"infinite upper bound":         `SELECT COALESCE(LEAD(collected_at) OVER w, 'infinity'::timestamptz) FROM metrics.t`,
@@ -76,7 +87,11 @@ func TestViolations(t *testing.T) {
 		"cast avg":                  `SELECT avg(numbackends)::float, AVG(x) :: float8 FROM metrics.t`,
 		"array_agg subscript":       `SELECT (array_agg(x ORDER BY y DESC))[1] FROM metrics.t`,
 		"uncast EXTRACT":            `SELECT MAX(EXTRACT(EPOCH FROM (collected_at - xact_start)))::float FROM metrics.t`,
-		"host over an inet cast":    `SELECT host(client_addr::inet), Host ( s.server_addr :: INET ) FROM metrics.t s`,
+		"split_part over text":      `SELECT COALESCE(split_part(client_addr::text, '/', 1), 'local') FROM metrics.t`,
+		"words ending in host":      `SELECT ghost(x), localhost FROM metrics.t`,
+		"alias starting with inet":  `SELECT client_addr::text AS inet_addr FROM metrics.t`,
+		"alias named inet":          `SELECT client_addr::text AS inet FROM metrics.t`,
+		"CAST to text aliased inet": `SELECT CAST(client_addr AS text) AS inet FROM metrics.t`,
 		"spaced cast parameter":     `SELECT 1 FROM metrics.t WHERE connection_id = $1 ::int AND name = $2 :: text`,
 		"CAST parameter":            `SELECT 1 FROM metrics.t WHERE connection_id = CAST($1 AS int) AND name = cast( $2 as text )`,
 		"UNION ALL subquery":        `SELECT 1 FROM metrics.t UNION ALL (SELECT 2 FROM metrics.u)`,
@@ -108,13 +123,39 @@ func TestViolationsReportsEach(t *testing.T) {
 	}
 }
 
-// TestViolationsExcusesOnlyHostInetArgs checks that an inet cast is
-// excused only where it is the argument of host(), so a second cast in
-// the same statement is still reported, once.
-func TestViolationsExcusesOnlyHostInetArgs(t *testing.T) {
-	sql := `SELECT host(a::inet), b::inet, host(c::inet) FROM metrics.t`
-	if got := Violations(sql); len(got) != 1 {
-		t.Errorf("Violations reported %d problems, want 1: %v", len(got), got)
+// TestViolationsReportsEachInetShape checks that every host() call and
+// every inet cast, written ::inet or CAST(... AS inet), is reported, so
+// host(col::inet) reports both its call and its cast.
+func TestViolationsReportsEachInetShape(t *testing.T) {
+	sql := `SELECT host(a::inet), b::inet, host(c), CAST(d AS inet) FROM metrics.t`
+	if got := Violations(sql); len(got) != 5 {
+		t.Errorf("Violations reported %d problems, want 5: %v", len(got), got)
+	}
+}
+
+// TestInetCasts pins what InetCasts reports for each cast to inet, and
+// that the AS of an alias or of an inner CAST is not read as one.
+func TestInetCasts(t *testing.T) {
+	cases := []struct {
+		sql  string
+		want []string
+	}{
+		{`SELECT a::inet, b :: INET`, []string{"::inet", ":: INET"}},
+		{`SELECT CAST(a AS inet)`, []string{"CAST(a AS inet)"}},
+		{`SELECT cast ( gas  as  INET[] )`, []string{"cast ( gas  as  INET[] )"}},
+		{`SELECT CAST(CAST(a AS text) AS inet)`, []string{"CAST(CAST(a AS text) AS inet)"}},
+		{`SELECT CAST(f(a, 'x AS y') AS inet)`, []string{"CAST(f(a, 'x AS y') AS inet)"}},
+		{`SELECT CAST(a AS inet`, []string{"CAST(a AS inet"}},
+		{`SELECT a::text AS inet, CAST(b AS text) AS inet`, nil},
+		{`SELECT CAST(a AS inet_t), CAST(a AS text)`, nil},
+		{`SELECT CAST(has_inet AS text), CAST(a)`, nil},
+		{`SELECT CAST('a AS inet' AS text)`, nil},
+		{`SELECT CAST('a AS inet`, nil},
+	}
+	for _, c := range cases {
+		if got := InetCasts(c.sql); !slices.Equal(got, c.want) {
+			t.Errorf("InetCasts(%q) = %q, want %q", c.sql, got, c.want)
+		}
 	}
 }
 

@@ -175,6 +175,13 @@ project adheres to
   neither service could start. Both now connect to the `hostaddr`
   address and use `host` for SSL certificate verification, as libpq
   does. (#841)
+- Show top queries, and connections grouped by client, on a ColdFront
+  datastore whose DuckDB cannot install extensions. Both read the
+  client address through a cast to `inet`, which needs DuckDB's `inet`
+  extension, so they failed with an `Extension Autoloading Error` when
+  that extension was not already installed and
+  `duckdb.autoinstall_known_extensions` was off. The server now reads
+  the address as text, without needing the extension. (#889)
 
 ### Security
 

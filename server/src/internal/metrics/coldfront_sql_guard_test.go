@@ -157,7 +157,7 @@ var wrapperParam = regexp.MustCompile(`\$\d+(::)?`)
 // holds SQL in a shape a pgEdge ColdFront datastore cannot run or
 // describes with a type PostgreSQL does not expect (issue #755): an
 // array or untyped IN-list parameter, arithmetic on a parameter, an avg
-// or EXTRACT left numeric, or host() over the text client_addr. It
+// or EXTRACT left numeric, or a host() call or inet cast. It
 // cannot see a column's type, so an integer sum and an integer division
 // are left to review; AggregateExpr and the rules in portable_sql.go
 // cover those.
@@ -176,13 +176,14 @@ func TestMetricsSQLAvoidsColdFrontShapes(t *testing.T) {
 	for _, u := range units {
 		if !u.reads {
 			// client_addr is a column of the metrics schema alone, so a
-			// fragment holding host(client_addr) is metrics SQL wherever
-			// it is declared, even in a constant joined to the statement
-			// elsewhere.
+			// fragment holding host(client_addr) or client_addr::inet is
+			// metrics SQL wherever it is declared, even in a constant
+			// joined to the statement elsewhere, as clientAddrLabelExpr
+			// is.
 			for i, lit := range u.literals {
-				if m := coldfrontcheck.BareHost.FindString(lit); m != "" {
+				if m := coldfrontcheck.ClientAddrInet(lit); m != "" {
 					problems = append(problems, u.lines[i]+" ("+u.unit+"): "+strconv.Quote(m)+
-						": write host(client_addr::inet)")
+						": "+coldfrontcheck.InetShapeHint)
 				}
 			}
 			continue

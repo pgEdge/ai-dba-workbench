@@ -132,11 +132,62 @@ func TestGetMetricBaselinesPeriodTypeFilterIntegration(t *testing.T) {
 	})
 }
 
+// TestGetMetricBaselinesNoMatchPeriodIntegration verifies that, with
+// period_type set, the no-match helper lists only metric names that have
+// baselines of that period, and says so when the period has none.
+func TestGetMetricBaselinesNoMatchPeriodIntegration(t *testing.T) {
+	pool, _, cleanup := newToolsTestPool(t)
+	defer cleanup()
+
+	connID := seedBaselineConnection(t, pool, "no-match-period", true, "")
+	seedBaseline(t, pool, connID, "pg_stat_database.hourly_only")
+	if _, err := pool.Exec(context.Background(), `
+        INSERT INTO metric_baselines (connection_id, metric_name, period_type, mean, stddev)
+        VALUES ($1, 'pg_stat_database.all_only', 'all', 1, 1)`, connID); err != nil {
+		t.Fatalf("failed to seed baseline: %v", err)
+	}
+
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil, nil))
+
+	scopes := map[string]string{
+		"single": fmt.Sprintf("for connection %d", connID),
+		"multi":  "across accessible connections",
+	}
+	for _, mode := range []string{"single", "multi"} {
+		t.Run("names of the period/"+mode, func(t *testing.T) {
+			body := mustSuccess(t, tool, baselineModeArgs(mode, connID,
+				map[string]any{"metric_name": "no_such_metric", "period_type": "hourly"}))
+			if !strings.Contains(body, "pg_stat_database.hourly_only") ||
+				strings.Contains(body, "pg_stat_database.all_only") {
+				t.Errorf("want only the hourly metric suggested, got %q", body)
+			}
+		})
+		t.Run("period with no baselines/"+mode, func(t *testing.T) {
+			body := mustSuccess(t, tool, baselineModeArgs(mode, connID,
+				map[string]any{"metric_name": "no_such_metric", "period_type": "daily"}))
+			want := "No metric baselines with period_type daily exist " + scopes[mode] +
+				". Omit period_type or change it (valid values: all, hourly, daily)."
+			if body != want {
+				t.Errorf("got %q; want %q", body, want)
+			}
+		})
+		t.Run("no period lists every name/"+mode, func(t *testing.T) {
+			body := mustSuccess(t, tool, baselineModeArgs(mode, connID,
+				map[string]any{"metric_name": "no_such_metric"}))
+			if !strings.Contains(body, "pg_stat_database.hourly_only") ||
+				!strings.Contains(body, "pg_stat_database.all_only") {
+				t.Errorf("want both metrics suggested, got %q", body)
+			}
+		})
+	}
+}
+
 // TestGetMetricBaselinesOrderByIntegration walks every page of every
 // sort order, following the offset each count line names, and checks
 // that the rows come back in the requested order and that the pages
 // together return each row exactly once. Means and standard deviations
-// are seeded with many ties, so this also proves each order is total.
+// are seeded with many ties; TestGetMetricBaselinesTieBreakIntegration
+// checks the order the tie-breakers then impose.
 func TestGetMetricBaselinesOrderByIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
@@ -220,6 +271,63 @@ func TestGetMetricBaselinesOrderByIntegration(t *testing.T) {
 					if !inOrder[order](t, all[i-1], all[i], mode) {
 						t.Fatalf("rows %d and %d out of %s order:\n%s\n%s", i-1, i, order, all[i-1], all[i])
 					}
+				}
+			})
+		}
+	}
+}
+
+// TestGetMetricBaselinesTieBreakIntegration seeds rows tied on every
+// sort key before connection_id, across two connections sharing a name,
+// and checks that each order returns them by connection_id and then id.
+// Rows are inserted out of that order, so storage order cannot pass.
+func TestGetMetricBaselinesTieBreakIntegration(t *testing.T) {
+	pool, _, cleanup := newToolsTestPool(t)
+	defer cleanup()
+
+	connX := seedBaselineConnection(t, pool, "tie-twin", true, "")
+	connY := seedBaselineConnection(t, pool, "tie-twin", true, "")
+	// Baseline ids of the later connection sort first, so an order
+	// missing connection_id puts its rows ahead.
+	inserts := []struct{ conn, id int }{
+		{connY, 900001}, {connX, 900006}, {connX, 900004},
+		{connY, 900003}, {connX, 900005}, {connY, 900002},
+	}
+	for _, in := range inserts {
+		if _, err := pool.Exec(context.Background(), `
+            INSERT INTO metric_baselines
+                (id, connection_id, metric_name, period_type,
+                 mean, stddev, min, max, sample_count)
+            VALUES ($1::int, $2, 'pg_stat_database.tied', 'all', 1, 1, 0, 2, $1::int)`,
+			in.id, in.conn); err != nil {
+			t.Fatalf("failed to seed tied baseline: %v", err)
+		}
+	}
+	want := map[string][]string{
+		"single": {"900004", "900005", "900006"},
+		"multi": {
+			fmt.Sprintf("%d/900004", connX), fmt.Sprintf("%d/900005", connX), fmt.Sprintf("%d/900006", connX),
+			fmt.Sprintf("%d/900001", connY), fmt.Sprintf("%d/900002", connY), fmt.Sprintf("%d/900003", connY),
+		},
+	}
+
+	tool := asSuperuser(GetMetricBaselinesTool(pool, testRBACChecker(t), nil, nil))
+
+	for _, order := range baselineOrderNames {
+		for _, mode := range []string{"single", "multi"} {
+			t.Run(order+"/"+mode, func(t *testing.T) {
+				_, rows := baselineOutput(t, mustSuccess(t, tool, baselineModeArgs(mode, connX,
+					map[string]any{"order_by": order})))
+				var got []string
+				for _, r := range rows {
+					key := baselineColumn(t, r, mode, "sample_count")
+					if mode == "multi" {
+						key = baselineColumn(t, r, mode, "connection_id") + "/" + key
+					}
+					got = append(got, key)
+				}
+				if strings.Join(got, " ") != strings.Join(want[mode], " ") {
+					t.Errorf("order = %v; want %v", got, want[mode])
 				}
 			})
 		}

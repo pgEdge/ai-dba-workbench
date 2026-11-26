@@ -420,10 +420,10 @@ func TestAvailableMetricNamesQueryErrorIntegration(t *testing.T) {
 		}
 	}()
 
-	if got := availableMetricNamesSingle(ctx, pool, 1); got != nil {
+	if got := availableMetricNamesSingle(ctx, pool, 1, nil); got != nil {
 		t.Errorf("expected nil on query error (single), got: %v", got)
 	}
-	if got := availableMetricNamesMulti(ctx, pool, true, nil); got != nil {
+	if got := availableMetricNamesMulti(ctx, pool, true, nil, nil); got != nil {
 		t.Errorf("expected nil on query error (multi), got: %v", got)
 	}
 }

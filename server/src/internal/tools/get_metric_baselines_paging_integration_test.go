@@ -132,8 +132,10 @@ func TestGetMetricBaselinesDefaultBoundedIntegration(t *testing.T) {
 			if len(rows) != baselinesDefaultLimit {
 				t.Errorf("got %d rows; want %d", len(rows), baselinesDefaultLimit)
 			}
-			if strings.Contains(body, "baselines)\n") {
-				t.Errorf("count must not be repeated at the tail: %s", body[len(body)-80:])
+			for i, line := range strings.Split(body, "\n") {
+				if i != 1 && strings.HasPrefix(line, "Showing rows ") {
+					t.Errorf("count repeated at line %d: %q", i+1, line)
+				}
 			}
 		})
 	}

@@ -318,8 +318,12 @@ func TestGetMetricBaselinesPagingSchema(t *testing.T) {
 	if limit["minimum"] != 1 || limit["maximum"] != baselinesMaxLimit {
 		t.Errorf("limit bounds = %v..%v; want 1..%d", limit["minimum"], limit["maximum"], baselinesMaxLimit)
 	}
-	if _, ok := props["offset"].(map[string]any); !ok {
+	offset, ok := props["offset"].(map[string]any)
+	if !ok {
 		t.Fatal("expected offset property in input schema")
+	}
+	if offset["minimum"] != 0 || offset["maximum"] != math.MaxInt32 {
+		t.Errorf("offset bounds = %v..%v; want 0..%d", offset["minimum"], offset["maximum"], math.MaxInt32)
 	}
 
 	// The prose states the limits as literals; keep it in step with the
@@ -430,7 +434,9 @@ func TestParseBaselinesView(t *testing.T) {
 		wantErr    string
 	}{
 		{"defaults", map[string]any{}, "", "metric", "", ""},
-		{"empty and nil are absent", map[string]any{"period_type": "", "order_by": nil}, "", "metric", "", ""},
+		{"nil is absent", map[string]any{"period_type": nil, "order_by": nil}, "", "metric", "", ""},
+		{"empty period", map[string]any{"period_type": ""}, "", "", "", periodErr},
+		{"empty order", map[string]any{"order_by": ""}, "", "", "", orderErr},
 		{"hourly by mean desc", map[string]any{"period_type": "hourly", "order_by": "mean_desc"}, "hourly", "mean_desc", "mb.mean DESC, ", ""},
 		{"all by mean asc", map[string]any{"period_type": "all", "order_by": "mean_asc"}, "all", "mean_asc", "mb.mean ASC, ", ""},
 		{"daily by stddev", map[string]any{"period_type": "daily", "order_by": "stddev_desc"}, "daily", "stddev_desc", "mb.stddev DESC, ", ""},

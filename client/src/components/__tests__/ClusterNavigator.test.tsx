@@ -420,10 +420,15 @@ describe('ClusterNavigator', () => {
         );
 
         expect(screen.getByText('No servers configured')).toBeInTheDocument();
-        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        expect(screen.queryByText('Could not load servers')).not.toBeInTheDocument();
     });
 
     describe('load error state (issue #890)', () => {
+        // dnd-kit renders its own role="status" live region, so find the
+        // error panel by its heading
+        const getErrorPanel = () =>
+            screen.getByText('Could not load servers').closest('[role="status"]');
+
         it('shows the error and retries when the first load failed', () => {
             mockClusterState.error = 'Request failed: 503';
             renderWithTheme(
@@ -434,15 +439,52 @@ describe('ClusterNavigator', () => {
                 />
             );
 
-            const alert = screen.getByRole('alert');
-            expect(alert).toHaveTextContent('Could not load servers');
-            expect(alert).toHaveTextContent('Request failed: 503');
+            const status = getErrorPanel();
+            expect(status).not.toBeNull();
+            expect(status).toHaveTextContent('Request failed: 503');
+            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
             expect(
                 screen.queryByText('No servers configured'),
             ).not.toBeInTheDocument();
 
             fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
             expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        it('shows the summary as unavailable rather than 0 of 0 online', () => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            expect(screen.getByText('Server list unavailable')).toBeInTheDocument();
+            expect(
+                screen.queryByText('0 online of 0 servers'),
+            ).not.toBeInTheDocument();
+        });
+
+        it.each([
+            ['light', lightTheme, lightTheme.palette.grey[500]],
+            ['dark', darkTheme, darkTheme.palette.grey[600]],
+        ])('gives Retry the neutral outlined form in %s mode', (_mode, theme, border) => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />,
+                theme,
+            );
+
+            expect(screen.getByRole('button', { name: 'Retry' })).toHaveStyle({
+                color: theme.palette.text.primary,
+                borderColor: border,
+            });
         });
 
         it('omits the Retry button when no onRefresh is given', () => {
@@ -454,13 +496,13 @@ describe('ClusterNavigator', () => {
                 />
             );
 
-            expect(screen.getByRole('alert')).toHaveTextContent('boom');
+            expect(getErrorPanel()).toHaveTextContent('boom');
             expect(
                 screen.queryByRole('button', { name: 'Retry' }),
             ).not.toBeInTheDocument();
         });
 
-        it('shows the loading skeleton rather than the error whilst loading', () => {
+        it('keeps the error mounted and Retry inert whilst a retry is loading', () => {
             mockClusterState.error = 'boom';
             renderWithTheme(
                 <ClusterNavigator
@@ -471,10 +513,14 @@ describe('ClusterNavigator', () => {
                 />
             );
 
-            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-            expect(
-                screen.queryByText('No servers configured'),
-            ).not.toBeInTheDocument();
+            expect(getErrorPanel()).not.toBeNull();
+            const retry = screen.getByRole('button', { name: 'Retrying…' });
+            expect(retry).toHaveAttribute('aria-disabled', 'true');
+            expect(retry).not.toBeDisabled();
+            fireEvent.click(retry);
+            // The header refresh button is disabled whilst loading, so the
+            // only click that could reach onRefresh is Retry's
+            expect(onRefresh).not.toHaveBeenCalled();
         });
 
         it('keeps rendering the tree when a refresh fails with data present', () => {
@@ -488,7 +534,7 @@ describe('ClusterNavigator', () => {
             );
 
             expect(screen.getByText('Production')).toBeInTheDocument();
-            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+            expect(screen.queryByText('Could not load servers')).not.toBeInTheDocument();
         });
 
         it('still shows "No servers found" for a search with no matches', () => {
@@ -507,7 +553,7 @@ describe('ClusterNavigator', () => {
             );
 
             expect(screen.getByText('No servers found')).toBeInTheDocument();
-            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+            expect(screen.queryByText('Could not load servers')).not.toBeInTheDocument();
         });
     });
 

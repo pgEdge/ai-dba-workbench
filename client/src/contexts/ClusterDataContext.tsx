@@ -84,6 +84,22 @@ interface ClusterDataProviderProps {
     children: React.ReactNode;
 }
 
+/**
+ * Turn a failed fetch into a message for the cluster navigator. A non-JSON
+ * error response (a proxy's HTML error page, say) arrives as the raw body,
+ * which may carry markup or a server version, so show a fixed sentence
+ * naming the status instead.
+ */
+const describeLoadError = (err: unknown): string => {
+    if (err instanceof ApiError) {
+        if (err.errorBody !== '' && err.message === err.errorBody) {
+            return `The server returned an unexpected response (HTTP ${err.statusCode}).`;
+        }
+        return err.message;
+    }
+    return err instanceof Error && err.message ? err.message : 'Failed to load servers';
+};
+
 const ClusterDataContext = createContext<ClusterDataContextValue | null>(null);
 
 export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): React.ReactElement => {
@@ -100,23 +116,23 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
     // True until the first successful fetch; while set, every fetch
     // (including retries after a failed first load) shows the loading state
     const isInitialLoadRef = useRef<boolean>(true);
-    // Stable ref for fetchClusterData to avoid resetting the interval
-    const fetchRef = useRef<() => Promise<void>>(() => Promise.resolve());
+    // Stable ref for the background poll to avoid resetting the interval
+    const pollRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
     /**
      * Fetch cluster hierarchy from the API.
      * Uses fingerprinting to detect actual changes and avoid unnecessary re-renders.
-     * Shows the loading state until data has loaded successfully once,
-     * so a retry after a failed first load shows the skeleton rather than
-     * the empty state; refreshes after a successful load do not.
+     * A requested fetch shows the loading state until data has loaded
+     * successfully once; a background poll never does, so the auto-refresh
+     * does not swap an error panel for the skeleton every 30 seconds.
      * The error is cleared only on success, so it persists across failed
      * retries.
      */
-    const fetchClusterData = useCallback(async (): Promise<void> => {
+    const loadClusterData = useCallback(async (background: boolean): Promise<void> => {
         if (!user) {return;}
 
-        // Only show the loading state until the first successful load
-        if (isInitialLoadRef.current) {
+        const showLoading = isInitialLoadRef.current && !background;
+        if (showLoading) {
             setLoading(true);
         }
 
@@ -152,16 +168,23 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
             isInitialLoadRef.current = false;
         } catch (err) {
             logger.error('Error fetching cluster data:', err);
-            setError((err as Error).message);
+            setError(describeLoadError(err));
         } finally {
-            setLoading(false);
+            if (showLoading) {
+                setLoading(false);
+            }
         }
     }, [user]);
 
-    // Keep the ref updated with the latest fetchClusterData
+    const fetchClusterData = useCallback(
+        (): Promise<void> => loadClusterData(false),
+        [loadClusterData],
+    );
+
+    // Keep the ref updated with the latest loadClusterData
     useEffect(() => {
-        fetchRef.current = fetchClusterData;
-    }, [fetchClusterData]);
+        pollRef.current = () => loadClusterData(true);
+    }, [loadClusterData]);
 
     // Fetch cluster data when user changes
     useEffect(() => {
@@ -173,13 +196,13 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
         }
     }, [user, fetchClusterData]);
 
-    // Auto-refresh effect - uses fetchRef to avoid resetting the
-    // interval when fetchClusterData's reference changes
+    // Auto-refresh effect - uses pollRef to avoid resetting the
+    // interval when loadClusterData's reference changes
     useEffect(() => {
         if (!autoRefreshEnabled || !user) {return;}
 
         const intervalId = setInterval(() => {
-            fetchRef.current();
+            pollRef.current();
         }, autoRefreshInterval);
 
         return () => { clearInterval(intervalId); };

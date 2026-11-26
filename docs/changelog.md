@@ -82,8 +82,8 @@ project adheres to
 - Show an error with a Retry button in the web client's cluster
   navigator when the server list fails to load. The navigator
   previously showed "No servers configured", as though no connections
-  were registered, and a retry now shows the loading placeholder until
-  the list loads. (#890)
+  were registered; the error now stays in place, without being
+  re-announced, whilst a retry or the automatic refresh runs. (#890)
 
 - Stop one failing dashboard request from showing the "Disconnected"
   dialog in the web client and logging the user out. Three consecutive

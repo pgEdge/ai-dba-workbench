@@ -396,7 +396,63 @@ describe('ClusterDataContext', () => {
         });
     });
 
+    describe('error messages', () => {
+        it.each([
+            [
+                'a JSON error body',
+                new ApiError('database unavailable', 500, '{"error":"database unavailable"}'),
+                'database unavailable',
+            ],
+            [
+                'a non-JSON error page',
+                new ApiError(
+                    '<html><head><title>502 Bad Gateway</title></head></html>',
+                    502,
+                    '<html><head><title>502 Bad Gateway</title></head></html>',
+                ),
+                'The server returned an unexpected response (HTTP 502).',
+            ],
+            ['a network failure', new TypeError('Failed to fetch'), 'Failed to fetch'],
+            ['a non-Error rejection', 'nope', 'Failed to load servers'],
+        ])('describes %s', async (_case, rejection, expected) => {
+            mockApiGet.mockReset();
+            mockApiGet.mockRejectedValue(rejection);
+
+            const { result } = renderHook(() => useClusterData(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.error).toBe(expected);
+            });
+        });
+    });
+
     describe('auto-refresh', () => {
+        it('does not show loading on a background poll after a failed load', async () => {
+            vi.useFakeTimers();
+            mockApiGet.mockReset();
+            mockApiGet.mockRejectedValue(new Error('boom'));
+
+            const { result } = renderHook(() => useClusterData(), { wrapper });
+
+            await act(async () => {
+                await vi.runOnlyPendingTimersAsync();
+            });
+            expect(result.current.error).toBe('boom');
+            expect(result.current.loading).toBe(false);
+
+            // The poll hangs, so loading would still be set if it raised it
+            mockApiGet.mockImplementation(() => new Promise<ClusterGroup[]>(() => {}));
+            const before = mockApiGet.mock.calls.length;
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(30000);
+            });
+
+            expect(mockApiGet.mock.calls.length).toBeGreaterThan(before);
+            expect(result.current.loading).toBe(false);
+            expect(result.current.error).toBe('boom');
+        });
+
         it('refetches on the 30-second interval when enabled', async () => {
             vi.useFakeTimers();
             const { result } = renderHook(() => useClusterData(), { wrapper });
@@ -447,6 +503,25 @@ describe('ClusterDataContext', () => {
 
             await waitFor(() => {
                 expect(result.current.clusterData).toEqual([]);
+            });
+        });
+
+        it('clears a load error when user becomes null', async () => {
+            mockApiGet.mockReset();
+            mockApiGet.mockRejectedValue(new Error('boom'));
+            const { result, rerender } = renderHook(() => useClusterData(), {
+                wrapper,
+            });
+
+            await waitFor(() => {
+                expect(result.current.error).toBe('boom');
+            });
+
+            mockUser = null;
+            rerender();
+
+            await waitFor(() => {
+                expect(result.current.error).toBeNull();
             });
         });
     });

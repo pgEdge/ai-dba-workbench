@@ -193,14 +193,15 @@ func TestEscapeLikePattern(t *testing.T) {
 // scanMetricNames helper tests
 // ---------------------------------------------------------------------------
 
-// fakeRows implements the minimal Next/Scan interface used by
-// scanMetricNames, allowing the Scan-error branch to be exercised without a
+// fakeRows implements the minimal Next/Scan/Err interface used by
+// scanMetricNames, allowing the error branches to be exercised without a
 // real database.
 type fakeRows struct {
 	values  []string
 	idx     int
 	failAt  int // index at which Scan returns an error; -1 to never fail
 	scanErr error
+	iterErr error // returned by Err once iteration ends
 }
 
 func (f *fakeRows) Next() bool {
@@ -220,33 +221,44 @@ func (f *fakeRows) Scan(dest ...any) error {
 	return nil
 }
 
+func (f *fakeRows) Err() error {
+	return f.iterErr
+}
+
 func TestScanMetricNames(t *testing.T) {
 	t.Run("collects all rows", func(t *testing.T) {
 		rows := &fakeRows{values: []string{"a", "b", "c"}, failAt: -1}
-		got := scanMetricNames(rows)
-		if strings.Join(got, ",") != "a,b,c" {
-			t.Errorf("expected a,b,c got %v", got)
+		got, err := scanMetricNames(rows)
+		if err != nil || strings.Join(got, ",") != "a,b,c" {
+			t.Errorf("expected a,b,c and no error, got %v, %v", got, err)
 		}
 	})
 
-	t.Run("stops on scan error", func(t *testing.T) {
+	t.Run("reports scan error", func(t *testing.T) {
 		rows := &fakeRows{
 			values:  []string{"a", "b", "c"},
 			failAt:  1,
 			scanErr: fmt.Errorf("boom"),
 		}
-		got := scanMetricNames(rows)
-		// Should have collected only the first value before the error.
-		if strings.Join(got, ",") != "a" {
-			t.Errorf("expected only [a] before error, got %v", got)
+		got, err := scanMetricNames(rows)
+		if err == nil || got != nil {
+			t.Errorf("expected nil names and an error, got %v, %v", got, err)
+		}
+	})
+
+	t.Run("reports iteration error", func(t *testing.T) {
+		rows := &fakeRows{values: []string{"a"}, failAt: -1, iterErr: fmt.Errorf("conn lost")}
+		got, err := scanMetricNames(rows)
+		if err == nil || got != nil {
+			t.Errorf("expected nil names and an error, got %v, %v", got, err)
 		}
 	})
 
 	t.Run("empty result", func(t *testing.T) {
 		rows := &fakeRows{values: nil, failAt: -1}
-		got := scanMetricNames(rows)
-		if got != nil {
-			t.Errorf("expected nil for empty result, got %v", got)
+		got, err := scanMetricNames(rows)
+		if err != nil || got != nil {
+			t.Errorf("expected nil names and no error, got %v, %v", got, err)
 		}
 	})
 }

@@ -23,9 +23,11 @@ package tools
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -402,11 +404,22 @@ func TestGetMetricBaselinesSingleRBACDeniedIntegration(t *testing.T) {
 }
 
 // TestAvailableMetricNamesQueryErrorIntegration verifies the error paths of
-// the available-names helpers: when the metric_baselines table is missing
-// the query fails and the helper returns nil rather than surfacing an error.
+// the available-names helpers: a missing table or a canceled context makes
+// the lookup report an error rather than an empty name list.
 func TestAvailableMetricNamesQueryErrorIntegration(t *testing.T) {
 	pool, _, cleanup := newToolsTestPool(t)
 	defer cleanup()
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	t.Run("canceled context", func(t *testing.T) {
+		if got, err := availableMetricNamesSingle(canceled, pool, 1, nil); err == nil || got != nil {
+			t.Errorf("single: want nil names and an error, got %v, %v", got, err)
+		}
+		if got, err := availableMetricNamesMulti(canceled, pool, true, nil, nil); err == nil || got != nil {
+			t.Errorf("multi: want nil names and an error, got %v, %v", got, err)
+		}
+	})
 
 	ctx := context.Background()
 	// Remove the table so the helper queries fail.
@@ -420,11 +433,69 @@ func TestAvailableMetricNamesQueryErrorIntegration(t *testing.T) {
 		}
 	}()
 
-	if got := availableMetricNamesSingle(ctx, pool, 1, nil); got != nil {
-		t.Errorf("expected nil on query error (single), got: %v", got)
+	t.Run("missing table", func(t *testing.T) {
+		if got, err := availableMetricNamesSingle(ctx, pool, 1, nil); err == nil || got != nil {
+			t.Errorf("single: want nil names and an error, got %v, %v", got, err)
+		}
+		if got, err := availableMetricNamesMulti(ctx, pool, true, nil, nil); err == nil || got != nil {
+			t.Errorf("multi: want nil names and an error, got %v, %v", got, err)
+		}
+	})
+}
+
+// failDistinctTracer cancels the context of the available-names lookup,
+// the only SELECT DISTINCT the tool runs, so that lookup alone fails.
+type failDistinctTracer struct{}
+
+func (failDistinctTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if strings.Contains(data.SQL, "SELECT DISTINCT") {
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		return canceled
 	}
-	if got := availableMetricNamesMulti(ctx, pool, true, nil, nil); got != nil {
-		t.Errorf("expected nil on query error (multi), got: %v", got)
+	return ctx
+}
+
+func (failDistinctTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+// TestGetMetricBaselinesFailedLookupIntegration verifies that a failed
+// available-names lookup falls back to the generic message rather than
+// claiming the requested period_type has no baselines.
+func TestGetMetricBaselinesFailedLookupIntegration(t *testing.T) {
+	pool, _, cleanup := newToolsTestPool(t)
+	defer cleanup()
+
+	connID := seedBaselineConnection(t, pool, "failed-lookup", true, "")
+	seedBaseline(t, pool, connID, "pg_stat_database.cache_hit_ratio")
+
+	cfg, err := pgxpool.ParseConfig(os.Getenv("TEST_AI_WORKBENCH_SERVER"))
+	if err != nil {
+		t.Fatalf("failed to parse pool config: %v", err)
+	}
+	cfg.ConnConfig.Tracer = failDistinctTracer{}
+	failPool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	defer failPool.Close()
+
+	tool := asSuperuser(GetMetricBaselinesTool(failPool, testRBACChecker(t), nil, nil))
+
+	want := map[string]string{
+		"single": "No metric baselines found for connection",
+		"multi":  "No metric baselines found across accessible connections",
+	}
+	for _, mode := range []string{"single", "multi"} {
+		t.Run(mode, func(t *testing.T) {
+			body := mustSuccess(t, tool, baselineModeArgs(mode, connID,
+				map[string]any{"metric_name": "no_such_metric", "period_type": "daily"}))
+			if !strings.HasPrefix(body, want[mode]) {
+				t.Errorf("want generic message %q, got %q", want[mode], body)
+			}
+			if strings.Contains(body, "period_type daily exist") {
+				t.Errorf("failed lookup must not claim the period is empty, got %q", body)
+			}
+		})
 	}
 }
 

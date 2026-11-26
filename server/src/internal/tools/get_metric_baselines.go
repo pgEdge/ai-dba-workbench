@@ -443,7 +443,7 @@ func baselinesSingleConnection(
 		// stored fully-qualified name. List the available metric names for
 		// this connection so it can retry with a correct value.
 		if metricName != nil {
-			available := availableMetricNamesSingle(ctx, pool, connectionID, view.periodType)
+			available, lookupErr := availableMetricNamesSingle(ctx, pool, connectionID, view.periodType)
 			if len(available) > 0 {
 				return mcp.NewToolSuccess(fmt.Sprintf(
 					"No metric baselines matched %s for connection %d. "+
@@ -452,7 +452,7 @@ func baselinesSingleConnection(
 						"Retry with one of these (partial, case-insensitive matching is supported).",
 					baselinesNoMatchFilter(*metricName, view), connectionID, strings.Join(available, ", ")))
 			}
-			if view.periodType != nil {
+			if lookupErr == nil && view.periodType != nil {
 				return mcp.NewToolSuccess(baselinesPeriodEmpty(*view.periodType, fmt.Sprintf("for connection %d", connectionID)))
 			}
 		}
@@ -570,7 +570,7 @@ func baselinesAllConnections(
 		// list the available metric names across the accessible
 		// connections so the LLM can retry with a correct value.
 		if metricName != nil {
-			available := availableMetricNamesMulti(ctx, pool, allConnections, accessibleIDs, view.periodType)
+			available, lookupErr := availableMetricNamesMulti(ctx, pool, allConnections, accessibleIDs, view.periodType)
 			if len(available) > 0 {
 				return mcp.NewToolSuccess(fmt.Sprintf(
 					"No metric baselines matched %s across accessible connections. "+
@@ -579,7 +579,7 @@ func baselinesAllConnections(
 						"Retry with one of these (partial, case-insensitive matching is supported).",
 					baselinesNoMatchFilter(*metricName, view), strings.Join(available, ", ")))
 			}
-			if view.periodType != nil {
+			if lookupErr == nil && view.periodType != nil {
 				return mcp.NewToolSuccess(baselinesPeriodEmpty(*view.periodType, "across accessible connections"))
 			}
 		}
@@ -604,11 +604,9 @@ const availableMetricNamesLimit = 50
 
 // availableMetricNamesSingle returns the distinct metric names that have
 // baselines for the given connection, of periodType when it is not nil,
-// bounded by availableMetricNamesLimit.
-// It is used only to build a helpful "no match" message; any query error is
-// treated as "no names available" so the caller falls back to the generic
-// message rather than surfacing an error.
-func availableMetricNamesSingle(ctx context.Context, pool *pgxpool.Pool, connectionID int, periodType *string) []string {
+// bounded by availableMetricNamesLimit. It feeds only the "no match"
+// message, so callers fall back to the generic message on error.
+func availableMetricNamesSingle(ctx context.Context, pool *pgxpool.Pool, connectionID int, periodType *string) ([]string, error) {
 	rows, err := pool.Query(ctx, `
         SELECT DISTINCT metric_name
         FROM metric_baselines
@@ -618,7 +616,7 @@ func availableMetricNamesSingle(ctx context.Context, pool *pgxpool.Pool, connect
         LIMIT $3
     `, connectionID, periodType, availableMetricNamesLimit)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	return scanMetricNames(rows)
@@ -627,8 +625,8 @@ func availableMetricNamesSingle(ctx context.Context, pool *pgxpool.Pool, connect
 // availableMetricNamesMulti returns the distinct metric names that have
 // baselines across the accessible connections, of periodType when it is
 // not nil, bounded by availableMetricNamesLimit. It reuses buildConnectionFilter so the lookup
-// respects the same RBAC scoping as the main query. Query errors yield nil.
-func availableMetricNamesMulti(ctx context.Context, pool *pgxpool.Pool, allConnections bool, accessibleIDs []int, periodType *string) []string {
+// respects the same RBAC scoping as the main query.
+func availableMetricNamesMulti(ctx context.Context, pool *pgxpool.Pool, allConnections bool, accessibleIDs []int, periodType *string) ([]string, error) {
 	connFilter, connArgs := buildConnectionFilter("mb.connection_id", allConnections, accessibleIDs)
 	paramIdx := len(connArgs) + 1
 	query := fmt.Sprintf(`
@@ -646,27 +644,31 @@ func availableMetricNamesMulti(ctx context.Context, pool *pgxpool.Pool, allConne
 
 	rows, err := pool.Query(ctx, query, queryArgs...)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	return scanMetricNames(rows)
 }
 
 // scanMetricNames collects metric_name values from a single-column result
-// set. Scan errors abort the collection and return what was gathered so far.
+// set, returning the first scan or iteration error.
 func scanMetricNames(rows interface {
 	Next() bool
 	Scan(...any) error
-}) []string {
+	Err() error
+}) ([]string, error) {
 	var names []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			break
+			return nil, err
 		}
 		names = append(names, name)
 	}
-	return names
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return names, nil
 }
 
 // formatOptionalInt formats an optional int pointer for TSV output

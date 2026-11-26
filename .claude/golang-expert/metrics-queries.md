@@ -287,9 +287,10 @@ alerter pools are not covered by this change.
   literals. pkg/anomaly's `pg_stat_replication.lag_bytes` historical
   query used it; that SQL is the alerter branch's to change.
 - **Types read back differently.** `inet` is text, so write
-  `split_part(client_addr::text, '/', 1)`, never `host()` or `::inet`
-  (the cast needs DuckDB's `inet` extension, which a ColdFront bundle
-  with autoinstall disabled cannot load; issue #889); text is `character varying`, oid is
+  `split_part(client_addr::text, '/', 1)`, never `host()` or a cast to
+  inet, `::inet` or `CAST(... AS inet)` (the cast needs DuckDB's
+  `inet` extension, which a ColdFront bundle with autoinstall disabled
+  cannot load; issue #889); text is `character varying`, oid is
   bigint, jsonb is json. The collector's ColdFront spec
   (`mappedTypes` in `collector/src/coldfront/types.go`) widens oid and
   xid to bigint, inet, `"char"` and name to text, and numeric to
@@ -362,25 +363,28 @@ alerter pools are not covered by this change.
 
 The checker is `internal/testutil/coldfrontcheck` (`ShapeProblems` for
 one statement or literal, `UnitProblems` for a unit's literals together,
-`InetShape` and `ClientAddrInet`), a test-only package like `scratchdb`
-that the server binary must never import. `UnitProblems` requires every bare placeholder
-literal (`$%d`, `$%d::int`, ...) in a unit that formats an `IN (%s)` to
-be `$%d::text`, so one typed list cannot excuse an untyped one beside it.
+`InetShape` and `ClientAddrInet`), a test-only package like
+`scratchdb` that the server binary must never import. `UnitProblems`
+requires every bare placeholder literal (`$%d`, `$%d::int`, ...) in a
+unit that formats an `IN (%s)` to be `$%d::text`, so one typed list
+cannot excuse an untyped one beside it.
 `TestMetricsSQLAvoidsColdFrontShapes` (`coldfront_sql_guard_test.go`)
 scans every server unit that reads `metrics.*` for an array parameter,
 an untyped or integer IN list, parameter arithmetic other than an
 interval times an integer-cast parameter (`intervalTimesIntParam`), an
 uncast `avg` or `EXTRACT`, an untyped run-time IN list, any `host(`
-call or `::inet` cast (`coldfrontcheck.InetShape`; units that do not
-read `metrics.*` are scanned for the `client_addr` forms alone,
-`ClientAddrInet`, since `host (` also appears in prose), a schema-qualified table other than `metrics.`
-(no unit is exempt), an untyped JSON builder
+call or cast to inet, `::inet` or `CAST(... AS inet)`
+(`coldfrontcheck.InetShape`; units that do not read `metrics.*` are
+scanned for the `client_addr` forms alone, `ClientAddrInet`, since
+`host (` also appears in prose), a schema-qualified table other than
+`metrics.` (no unit is exempt), an untyped JSON builder
 value, `pg_lsn`, an `'infinity'`/`'-infinity'` literal, a `'{...}'`
 literal not cast to json or jsonb, and a `$n [::type] IS [NOT] NULL`
 test. These rules mirror `coldfrontsql.Violations`, the shared checker
 the alerter branch adds in `pkg/coldfrontsql`; once that lands, consider
 running server SQL through it too. On `inet` the two agree: both flag
-every `host()` call and every `::inet` cast (issue #889). They still differ on parameters: the
+every `host()` call and every cast to inet, `::inet` or
+`CAST(... AS inet)` (issue #889). They still differ on parameters: the
 alerter's checker requires a cast on every parameter, whereas the server
 keeps untyped comparison parameters, which ran live.
 It cannot see column types, so an integer `sum` or `/` is left to

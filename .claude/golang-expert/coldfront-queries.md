@@ -96,9 +96,10 @@ failures in rule 3, so reproduce with pgx, never psql.
    a predicate). sum/min/max of bigint are fine.
 4. **No PostgreSQL-only types or functions.** DuckDB has no `pg_lsn`
    or `make_interval()`. LSNs and inet columns are stored as text.
-   Use no `host()` and no `::inet` cast at all: `host()` over the text
-   (varchar) column fails, and `host(client_addr::inet)` runs only
-   where DuckDB can load its `inet` extension. A locked-down ColdFront
+   Use no `host()` and no cast to inet at all (`::inet` or
+   `CAST(... AS inet)`): `host()` over the text (varchar) column
+   fails, and `host(client_addr::inet)` runs only where DuckDB can
+   load its `inet` extension. A locked-down ColdFront
    bundle (`duckdb.autoinstall_known_extensions = false`, extension not
    shipped) cannot, so every query with the cast fails with "Extension
    Autoloading Error ... 'inet'" (issue #889; the #755 finding that it
@@ -163,7 +164,8 @@ The textual rules live in one place, `coldfrontsql.Violations` in
 `$n::type` (spaces allowed around `::`) nor as `CAST($n AS type)`,
 `ANY(`, an `ALL(` or `SOME(` after a comparison operator or `LIKE`, an
 `ARRAY[` literal, `unnest(`, an array cast, `pg_lsn`, `make_interval(`,
-any `host(` call, any `::inet` cast, a NULL test (`IS [NOT] NULL`,
+any `host(` call, any cast to inet (`::inet` or `CAST(... AS inet)`;
+the latter fails on ColdFront as `::inet` does), a NULL test (`IS [NOT] NULL`,
 `ISNULL`, `NOTNULL`) on a `$n`, bare, cast either way or
 parenthesised, a `COALESCE($n`, `infinity` (any case), an `IN (...)`
 list (not a subquery) holding two or more `$n` not cast to `text`, and
@@ -173,7 +175,7 @@ an `avg(...)` not cast to float in place. Only `ANY(`, the array cast,
 parenthesis matcher behind `avg(` and the `IN` list skips quoted
 literals and identifiers, but the forbidden-word checks still see
 inside them. The server's equivalent, `coldfrontcheck.InetShape`,
-flags the same `host(` and `::inet` shapes.
+flags the same `host(` and inet-cast shapes.
 `TestViolations` in `pkg/coldfrontsql/coldfrontsql_test.go` pins them
 against the shapes that failed live and the replacements that worked.
 A module that adds a `metrics.*` reader runs its SQL through

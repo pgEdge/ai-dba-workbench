@@ -50,6 +50,12 @@ func TestViolations(t *testing.T) {
 		"spaced host over a cast":      `SELECT Host ( s.server_addr :: INET ) FROM metrics.t s`,
 		"unbalanced host":              `SELECT host(client_addr::inet FROM metrics.t`,
 		"inet cast":                    `SELECT client_addr::inet FROM metrics.t`,
+		"spaced host alone":            `SELECT host (x) FROM metrics.t`,
+		"spaced inet cast alone":       `SELECT x :: inet FROM metrics.t`,
+		"upper-case inet cast alone":   `SELECT x::INET FROM metrics.t`,
+		"CAST AS inet":                 `SELECT CAST(client_addr AS inet) FROM metrics.t`,
+		"upper-case CAST AS inet":      `SELECT CAST(x AS INET) FROM metrics.t`,
+		"spaced CAST AS inet":          `SELECT cast ( s.client_addr  as  inet ) FROM metrics.t s`,
 		"COALESCE-open upper bound":    `SELECT 1 FROM metrics.t WHERE collected_at <= COALESCE($2::timestamptz, collected_at)`,
 		"spaced COALESCE parameter":    `SELECT 1 FROM metrics.t WHERE collected_at <= coalesce ( $2::timestamptz, NOW())`,
 		"infinite upper bound":         `SELECT COALESCE(LEAD(collected_at) OVER w, 'infinity'::timestamptz) FROM metrics.t`,
@@ -78,6 +84,7 @@ func TestViolations(t *testing.T) {
 		"uncast EXTRACT":            `SELECT MAX(EXTRACT(EPOCH FROM (collected_at - xact_start)))::float FROM metrics.t`,
 		"split_part over text":      `SELECT COALESCE(split_part(client_addr::text, '/', 1), 'local') FROM metrics.t`,
 		"words ending in host":      `SELECT ghost(x), localhost FROM metrics.t`,
+		"alias starting with inet":  `SELECT client_addr::text AS inet_addr FROM metrics.t`,
 		"spaced cast parameter":     `SELECT 1 FROM metrics.t WHERE connection_id = $1 ::int AND name = $2 :: text`,
 		"CAST parameter":            `SELECT 1 FROM metrics.t WHERE connection_id = CAST($1 AS int) AND name = cast( $2 as text )`,
 		"UNION ALL subquery":        `SELECT 1 FROM metrics.t UNION ALL (SELECT 2 FROM metrics.u)`,
@@ -110,12 +117,12 @@ func TestViolationsReportsEach(t *testing.T) {
 }
 
 // TestViolationsReportsEachInetShape checks that every host() call and
-// every inet cast is reported, so host(col::inet) reports both its call
-// and its cast.
+// every inet cast, written ::inet or CAST(... AS inet), is reported, so
+// host(col::inet) reports both its call and its cast.
 func TestViolationsReportsEachInetShape(t *testing.T) {
-	sql := `SELECT host(a::inet), b::inet, host(c) FROM metrics.t`
-	if got := Violations(sql); len(got) != 4 {
-		t.Errorf("Violations reported %d problems, want 4: %v", len(got), got)
+	sql := `SELECT host(a::inet), b::inet, host(c), CAST(d AS inet) FROM metrics.t`
+	if got := Violations(sql); len(got) != 5 {
+		t.Errorf("Violations reported %d problems, want 5: %v", len(got), got)
 	}
 }
 

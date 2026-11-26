@@ -77,10 +77,10 @@ var forbidden = []struct {
 }
 
 // hostCall matches the start of a host() call, and inetCast a cast to
-// inet.
+// inet, written x::inet or CAST(x AS inet).
 var (
 	hostCall = regexp.MustCompile(`(?i)\bhost\s*\(`)
-	inetCast = regexp.MustCompile(`(?i)::\s*inet\b`)
+	inetCast = regexp.MustCompile(`(?i)::\s*inet\b|\bAS\s+inet\b`)
 )
 
 // floatCast matches a cast to double precision directly after a closing
@@ -184,13 +184,14 @@ func paramCast(sql string, loc []int) bool {
 	return castOpen.MatchString(sql[:loc[0]]) && castAs.MatchString(sql[loc[1]:])
 }
 
-// inetViolations reports each host() call and each cast to inet. inet
-// columns are text on ColdFront, so host() over one fails, and a cast to
-// inet makes DuckDB load its inet extension, which a ColdFront bundle with
-// extension autoinstall disabled cannot do (issue #889). The portable way
-// to render an address is split_part(col::text, '/', 1): on PostgreSQL it
-// drops the prefix length inet's text form carries, as host() does, and
-// on ColdFront the text column already holds the bare address.
+// inetViolations reports each host() call and each cast to inet, whether
+// written ::inet or CAST(... AS inet). inet columns are text on
+// ColdFront, so host() over one fails, and a cast to inet makes DuckDB
+// load its inet extension, which a ColdFront bundle with extension
+// autoinstall disabled cannot do (issue #889). The portable way to render
+// an address is split_part(col::text, '/', 1): on PostgreSQL it drops the
+// prefix length inet's text form carries, as host() does, and on
+// ColdFront the text column already holds the bare address.
 func inetViolations(sql string) []string {
 	var problems []string
 	for range hostCall.FindAllStringIndex(sql, -1) {
@@ -198,9 +199,9 @@ func inetViolations(sql string) []string {
 			"inet columns are not on ColdFront; write "+inetHint)
 	}
 	for range inetCast.FindAllStringIndex(sql, -1) {
-		problems = append(problems, "::inet: the cast needs DuckDB's inet "+
-			"extension, which a ColdFront bundle may be unable to load; write "+
-			inetHint)
+		problems = append(problems, "cast to inet: ::inet and CAST(... AS "+
+			"inet) need DuckDB's inet extension, which a ColdFront bundle "+
+			"may be unable to load; write "+inetHint)
 	}
 	return problems
 }

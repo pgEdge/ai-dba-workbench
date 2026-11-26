@@ -26,18 +26,20 @@ import (
 	"strings"
 )
 
-// InetShape matches any host() call and any cast to inet. client_addr is
-// text on ColdFront, so host() over it fails, and a cast to inet makes
-// DuckDB load its inet extension, which a ColdFront bundle with extension
-// autoinstall disabled cannot do (issue #889).
-var InetShape = regexp.MustCompile(`(?i)\bhost\s*\(|::\s*inet\b`)
+// InetShape matches any host() call and any cast to inet, written ::inet
+// or CAST(... AS inet). client_addr is text on ColdFront, so host() over
+// it fails, and a cast to inet makes DuckDB load its inet extension,
+// which a ColdFront bundle with extension autoinstall disabled cannot do
+// (issue #889).
+var InetShape = regexp.MustCompile(`(?i)\bhost\s*\(|::\s*inet\b|\bAS\s+inet\b`)
 
 // ClientAddrInet matches host() over client_addr and a cast of client_addr
-// to inet: the InetShape matches that are SQL wherever they stand, since
-// client_addr is a column of the metrics schema alone. It is for scanning
-// text not known to read that schema, where InetShape would also match
-// prose such as "SMTP host (email)".
-var ClientAddrInet = regexp.MustCompile(`(?i)\bhost\s*\(\s*client_addr\b|\bclient_addr\s*::\s*inet\b`)
+// to inet, written client_addr::inet or CAST(client_addr AS inet): the
+// InetShape matches that are SQL wherever they stand, since client_addr
+// is a column of the metrics schema alone. It is for scanning text not
+// known to read that schema, where InetShape would also match prose such
+// as "SMTP host (email)".
+var ClientAddrInet = regexp.MustCompile(`(?i)\bhost\s*\(\s*client_addr\b|\bclient_addr\s*(::\s*|\s+AS\s+)inet\b`)
 
 // InetShapeHint is the advice for an InetShape match.
 const InetShapeHint = "host() needs an inet and a cast to inet needs DuckDB's inet extension, " +

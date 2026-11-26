@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/logging"
@@ -339,4 +340,34 @@ func (s *AuthStore) sweepExpiredSessions(now time.Time) {
 		s.sessions.CompareAndDelete(key, session)
 		return true
 	})
+}
+
+// ExpireSessionForTesting moves the expiry of the session rawToken
+// names to a minute ago, keeping the rest of it, including any federated
+// state, so that a test can reach a session's expiry without waiting for
+// it; the next ValidateSessionToken then treats the session exactly as
+// it would one that expired on its own. It reports false when there is
+// no such session, or when the session changed between being read and
+// being replaced, as a concurrent refresh would change it. It is exported
+// for the reason AuditKeyForTesting is, since its callers include the
+// internal/api test binary, and the same testing.Testing guard keeps it
+// unreachable from the server.
+func ExpireSessionForTesting(s *AuthStore, rawToken string) bool {
+	if !testing.Testing() {
+		panic("auth.ExpireSessionForTesting was called outside a test " +
+			"binary")
+	}
+
+	key := GetTokenHashByRawToken(rawToken)
+	value, ok := s.sessions.Load(key)
+	if !ok {
+		return false
+	}
+	session, ok := value.(*SessionInfo)
+	if !ok {
+		return false
+	}
+	expired := *session
+	expired.ExpiresAt = time.Now().Add(-time.Minute)
+	return s.sessions.CompareAndSwap(key, value, &expired)
 }

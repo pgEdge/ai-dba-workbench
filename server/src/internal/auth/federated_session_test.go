@@ -103,8 +103,45 @@ func mustExpiredFederatedSession(t *testing.T, store *AuthStore, refreshToken st
 	if err != nil {
 		t.Fatalf("CreateFederatedSession: %v", err)
 	}
-	setSessionExpiry(t, store, token, time.Now().Add(-time.Minute))
+	if !ExpireSessionForTesting(store, token) {
+		t.Fatal("ExpireSessionForTesting found no session to expire")
+	}
 	return token
+}
+
+func TestExpireSessionForTesting(t *testing.T) {
+	store := newFederatedSessionStore(t)
+
+	t.Run("expires a stored session and keeps its federated state", func(t *testing.T) {
+		token, _, err := store.CreateFederatedSession("alice", "rt-1", time.Now().Add(time.Hour))
+		if err != nil {
+			t.Fatalf("CreateFederatedSession: %v", err)
+		}
+		before := sessionFor(t, store, token)
+		if !ExpireSessionForTesting(store, token) {
+			t.Fatal("ExpireSessionForTesting = false for a stored session")
+		}
+		after := sessionFor(t, store, token)
+		if after == nil || !after.ExpiresAt.Before(time.Now()) {
+			t.Fatal("the session was not expired")
+		}
+		if after.Username != "alice" || after.federated != before.federated {
+			t.Fatal("expiring the session lost its user or federated state")
+		}
+	})
+
+	t.Run("reports a missing session", func(t *testing.T) {
+		if ExpireSessionForTesting(store, "no-such-session") {
+			t.Fatal("ExpireSessionForTesting = true for a missing session")
+		}
+	})
+
+	t.Run("reports a value of the wrong type", func(t *testing.T) {
+		store.sessions.Store(GetTokenHashByRawToken("odd"), "not a session")
+		if ExpireSessionForTesting(store, "odd") {
+			t.Fatal("ExpireSessionForTesting = true for a non-session value")
+		}
+	})
 }
 
 func TestCreateFederatedSession(t *testing.T) {

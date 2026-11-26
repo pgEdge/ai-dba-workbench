@@ -396,6 +396,49 @@ describe('ClusterDataContext', () => {
         });
     });
 
+    describe('refreshing', () => {
+        it('is set for a requested fetch, even after an empty load, and not for a poll', async () => {
+            vi.useFakeTimers();
+            mockApiGet.mockResolvedValue([]);
+
+            const { result } = renderHook(() => useClusterData(), { wrapper });
+
+            await act(async () => {
+                await vi.runOnlyPendingTimersAsync();
+            });
+            expect(result.current.refreshing).toBe(false);
+
+            // A background poll that hangs does not set it
+            mockApiGet.mockImplementation(() => new Promise<ClusterGroup[]>(() => {}));
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(30000);
+            });
+            expect(result.current.refreshing).toBe(false);
+
+            // A requested fetch does, though loading stays false after the
+            // successful (empty) first load, until it settles
+            let rejectFetch: (err: Error) => void = () => {};
+            mockApiGet.mockImplementationOnce(
+                () => new Promise<ClusterGroup[]>((_resolve, reject) => {
+                    rejectFetch = reject;
+                }),
+            );
+            let pending: Promise<void> = Promise.resolve();
+            act(() => {
+                pending = result.current.fetchClusterData();
+            });
+            expect(result.current.refreshing).toBe(true);
+            expect(result.current.loading).toBe(false);
+
+            await act(async () => {
+                rejectFetch(new Error('boom'));
+                await pending;
+            });
+            expect(result.current.refreshing).toBe(false);
+            expect(result.current.error).toBe('boom');
+        });
+    });
+
     describe('error messages', () => {
         it.each([
             [

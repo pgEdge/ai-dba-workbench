@@ -53,6 +53,7 @@ const ClusterCombinedProvider = ({ children }: ClusterProviderProps): React.Reac
         // From ClusterDataContext
         clusterData: dataContext.clusterData,
         loading: dataContext.loading,
+        refreshing: dataContext.refreshing,
         error: dataContext.error,
         lastRefresh: dataContext.lastRefresh,
         autoRefreshEnabled: dataContext.autoRefreshEnabled,

@@ -71,7 +71,7 @@ vi.mock('../../contexts/useAuth', () => ({
 // Mock the ClusterContext. Tests may set mockClusterState.error to
 // simulate a failed fetch; beforeEach resets it to null.
 const { mockClusterState } = vi.hoisted(() => ({
-    mockClusterState: { error: null as string | null },
+    mockClusterState: { error: null as string | null, refreshing: false },
 }));
 vi.mock('../../contexts/useCluster', () => ({
     useCluster: () => ({
@@ -88,6 +88,7 @@ vi.mock('../../contexts/useCluster', () => ({
         setAutoRefreshEnabled: vi.fn(),
         lastRefresh: null,
         error: mockClusterState.error,
+        refreshing: mockClusterState.refreshing,
         getServer: vi.fn(),
         createServer: vi.fn(),
         updateServer: vi.fn(),
@@ -206,6 +207,7 @@ describe('ClusterNavigator', () => {
         onRefresh = vi.fn();
         mockBlackouts.list = [];
         mockClusterState.error = null;
+        mockClusterState.refreshing = false;
         mockUpdateGroupName.mockReset().mockResolvedValue(undefined);
         mockUpdateGroup.mockReset().mockResolvedValue(undefined);
         mockUpdateClusterName.mockReset().mockResolvedValue(undefined);
@@ -502,8 +504,9 @@ describe('ClusterNavigator', () => {
             ).not.toBeInTheDocument();
         });
 
-        it('keeps the error mounted and Retry inert whilst a retry is loading', () => {
+        it('keeps the error mounted and Retry inert whilst a retry is in flight', () => {
             mockClusterState.error = 'boom';
+            mockClusterState.refreshing = true;
             renderWithTheme(
                 <ClusterNavigator
                     data={[]}
@@ -521,6 +524,19 @@ describe('ClusterNavigator', () => {
             // The header refresh button is disabled whilst loading, so the
             // only click that could reach onRefresh is Retry's
             expect(onRefresh).not.toHaveBeenCalled();
+        });
+
+        it('shows a loaded tree rather than the skeleton whilst still loading', () => {
+            renderWithTheme(
+                <ClusterNavigator
+                    data={mockClusterData}
+                    loading
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            expect(screen.getByText('Production')).toBeInTheDocument();
         });
 
         it('keeps rendering the tree when a refresh fails with data present', () => {

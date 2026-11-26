@@ -480,6 +480,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         setAutoRefreshEnabled,
         lastRefresh,
         error: loadError,
+        refreshing,
     } = useCluster();
 
     // Handler for adding a server
@@ -1016,16 +1017,16 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                                 size="small"
                                 variant="outlined"
                                 startIcon={<RefreshIcon />}
-                                onClick={loading ? undefined : onRefresh}
-                                aria-disabled={loading}
+                                onClick={refreshing ? undefined : onRefresh}
+                                aria-disabled={refreshing}
                                 sx={getRetryButtonSx(theme)}
                             >
-                                {loading ? 'Retrying…' : 'Retry'}
+                                {refreshing ? 'Retrying…' : 'Retry'}
                             </Button>
                         )}
                     </Box>
-                ) : loading ? (
-                    // Loading skeletons
+                ) : loading && data.length === 0 ? (
+                    // Loading skeletons, only until there is a tree to show
                     <Box sx={loadingContainerSx}>
                         {[1, 2, 3].map((i) => (
                             <Box key={i} sx={loadingGroupSx}>

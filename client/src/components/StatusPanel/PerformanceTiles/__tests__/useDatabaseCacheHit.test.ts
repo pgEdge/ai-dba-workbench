@@ -51,6 +51,7 @@ const authValue = (user: User | null): AuthContextValue => ({
 const clusterDataValue = (lastRefresh: Date | null): ClusterDataContextValue => ({
     clusterData: [],
     loading: false,
+    refreshing: false,
     error: null,
     lastRefresh,
     autoRefreshEnabled: false,

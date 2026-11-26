@@ -73,6 +73,8 @@ export interface ClusterGroup {
 export interface ClusterDataContextValue {
     clusterData: ClusterGroup[];
     loading: boolean;
+    /** True whilst a requested (not background) fetch is in flight */
+    refreshing: boolean;
     error: string | null;
     lastRefresh: Date | null;
     autoRefreshEnabled: boolean;
@@ -106,6 +108,7 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
     const { user } = useAuth();
     const [clusterData, setClusterData] = useState<ClusterGroup[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
+    const [refreshing, setRefreshing] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [autoRefreshEnabled, setAutoRefreshEnabled] = useState<boolean>(true);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
@@ -116,6 +119,8 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
     // True until the first successful fetch; while set, every fetch
     // (including retries after a failed first load) shows the loading state
     const isInitialLoadRef = useRef<boolean>(true);
+    // Number of requested fetches in flight, behind `refreshing`
+    const requestedCountRef = useRef<number>(0);
     // Stable ref for the background poll to avoid resetting the interval
     const pollRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
@@ -134,6 +139,10 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
         const showLoading = isInitialLoadRef.current && !background;
         if (showLoading) {
             setLoading(true);
+        }
+        if (!background) {
+            requestedCountRef.current += 1;
+            setRefreshing(true);
         }
 
         try {
@@ -173,6 +182,12 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
             if (showLoading) {
                 setLoading(false);
             }
+            if (!background) {
+                requestedCountRef.current -= 1;
+                if (requestedCountRef.current === 0) {
+                    setRefreshing(false);
+                }
+            }
         }
     }, [user]);
 
@@ -211,12 +226,13 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
     const value: ClusterDataContextValue = useMemo(() => ({
         clusterData,
         loading,
+        refreshing,
         error,
         lastRefresh,
         autoRefreshEnabled,
         setAutoRefreshEnabled,
         fetchClusterData,
-    }), [clusterData, loading, error, lastRefresh, autoRefreshEnabled, setAutoRefreshEnabled, fetchClusterData]);
+    }), [clusterData, loading, refreshing, error, lastRefresh, autoRefreshEnabled, setAutoRefreshEnabled, fetchClusterData]);
 
     return (
         <ClusterDataContext.Provider value={value}>

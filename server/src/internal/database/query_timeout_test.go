@@ -184,17 +184,35 @@ func TestNewDatastoreRejectsInvalidQueryTimeout(t *testing.T) {
 // unset or set explicitly to a shorter value (the "30s" that older
 // example configurations carried).
 func TestDatastoreAppliesConfiguredQueryTimeout(t *testing.T) {
-	for _, statementTimeout := range []string{"", "30s"} {
-		t.Run("statement_timeout="+statementTimeout, func(t *testing.T) {
+	// Only an explicit value below the floor is raised, and only that
+	// is worth a startup warning; an unset value takes the default
+	// silently.
+	for _, tt := range []struct {
+		statementTimeout string
+		wantWarning      bool
+	}{
+		{statementTimeout: "", wantWarning: false},
+		{statementTimeout: "30s", wantWarning: true},
+	} {
+		t.Run("statement_timeout="+tt.statementTimeout, func(t *testing.T) {
 			cfg := testDatastoreConfig(t)
 			cfg.QueryTimeout = "45s"
-			cfg.StatementTimeout = statementTimeout
+			cfg.StatementTimeout = tt.statementTimeout
 
+			logs := captureStdLog(t)
 			ds, err := NewDatastore(cfg, "test-secret")
 			if err != nil {
 				t.Skipf("Could not connect to test database: %v", err)
 			}
 			defer ds.Close()
+
+			const warning = "[WARN] database.statement_timeout 30s is shorter than the 45s query timeout; using 45s"
+			if tt.wantWarning && !strings.Contains(logs.String(), warning) {
+				t.Errorf("log lacks %q; log:\n%s", warning, logs.String())
+			}
+			if !tt.wantWarning && strings.Contains(logs.String(), "[WARN] database.statement_timeout") {
+				t.Errorf("unexpected statement_timeout warning; log:\n%s", logs.String())
+			}
 
 			if got := ds.QueryTimeout(ShortQueryTimeout); got != 45*time.Second {
 				t.Errorf("QueryTimeout(%v) = %v, want 45s", ShortQueryTimeout, got)

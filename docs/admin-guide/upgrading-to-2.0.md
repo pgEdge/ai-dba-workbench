@@ -422,7 +422,9 @@ the property explicitly:
 - The server's datastore connection pool, `database.pool_max_conns`,
   grows from 4 to 20 connections.
 - The new `database.statement_timeout` property limits each server
-  query on the datastore to 30 seconds by default.
+  query on the datastore to 30 seconds by default; when
+  `database.query_timeout` is set, or the datastore stores metrics in
+  pgEdge ColdFront, the default rises to that longer query timeout.
 - The alerter's `baselines.lookback_days` property rises from 7 to 15
   days; if you set the property explicitly, raise the value to at least
   15.

@@ -397,7 +397,9 @@ server-side timeout is what actually frees the connection.
 The default of `30s` matches the longest deadline the server grants an
 ordinary datastore query, so the timeout rejects nothing that would otherwise
 have completed. When `query_timeout` is set, or the datastore stores metrics
-in pgEdge ColdFront, the default rises to match the longer request deadline,
+in pgEdge ColdFront, the server compares the statement timeout with the least
+request deadline: `query_timeout` when set, otherwise two minutes on
+ColdFront. An unset value defaults to the larger of `30s` and that deadline,
 and an explicit non-zero value shorter than that deadline is raised to it, with
 a warning in the server log at startup; a longer value, or `0`, is used as
 given. Deleting a connection is the exception: the deletion also removes the
@@ -432,8 +434,9 @@ information, see
 The value accepts a positive Go duration string of up to `4m`, such as `90s`
 or `3m`, which leaves time for the server to write the response within the
 HTTP server's five-minute write timeout. When `statement_timeout` is not set,
-or is set to a shorter non-zero value, the server raises the statement timeout
-to match.
+the statement timeout becomes the larger of `30s` and `query_timeout`; an
+explicit non-zero `statement_timeout` shorter than `query_timeout` is raised
+to `query_timeout`.
 
 In the following example, the `query_timeout` option gives every datastore
 request at least 90 seconds:

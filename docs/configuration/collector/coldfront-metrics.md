@@ -380,10 +380,10 @@ statements, so that a query cannot fail with the
 back. The server also allows every API request at least two minutes
 for its datastore queries, rather than the 10 or 30 seconds a request
 gets on a standard datastore, and raises the `statement_timeout` to
-match, including a shorter value set in the configuration file; the
-first query over a ColdFront metrics
-view on a new connection attaches the Iceberg catalog, which can take
-tens of seconds. Set the server's `database.query_timeout` property to
+match, including a shorter non-zero value set in the configuration
+file; a value of `0` still disables the timeout. The first query over
+a ColdFront metrics view on a new connection attaches the Iceberg
+catalog, which can take tens of seconds. Set the server's `database.query_timeout` property to
 choose a different allowance. A configuration reload through `SIGHUP`
 does not repeat the detection.
 

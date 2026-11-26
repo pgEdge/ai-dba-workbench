@@ -30,8 +30,11 @@ project adheres to
   superuser, and an overridden one only by the person who overrode it
   or a superuser. Each round trip to the monitored database has a
   client-side limit of the statement timeout plus 30 seconds, a stop
-  request before a statement is sent means it never runs, and a failed
-  concurrent index build is flagged as a possible invalid index. (#774)
+  request before a statement is sent means it never runs, a failed
+  concurrent index build is flagged as a possible invalid index, and an
+  action whose start could not be confirmed because the datastore
+  stopped answering is returned to not started once the datastore
+  recovers, so it can be run again. (#774, #888)
 - Add a top-level `make test-changed` target that runs `test-all` only
   in the sub-projects a branch changes, including those that depend on
   a changed shared package, collector schema, or example

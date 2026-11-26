@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -78,6 +79,24 @@ const (
 	finishBackoffMax  = 5 * time.Second
 )
 
+// A claim whose outcome Start could not establish (errClaimUnsettled)
+// is settled in the background: releasing it is tried up to
+// settleAttempts times, with a delay that doubles from
+// settleBackoffBase up to settleBackoffMax, which bounds it to about
+// three minutes, and it stops at Shutdown.
+const (
+	settleAttempts    = 8
+	settleBackoffBase = time.Second
+	settleBackoffMax  = 30 * time.Second
+)
+
+// claimStore is the part of Store used to claim an action, and to
+// release a claim that no run was started under.
+type claimStore interface {
+	claim(ctx context.Context, id int64, token string) (bool, error)
+	releaseClaim(ctx context.Context, id int64, token string) (bool, error)
+}
+
 // outcomeStore is the part of Store used to record an outcome.
 type outcomeStore interface {
 	Get(ctx context.Context, id int64) (*Action, error)
@@ -118,6 +137,16 @@ type Executor struct {
 
 	// outcomes records outcomes; it is the store outside tests.
 	outcomes outcomeStore
+	// claims claims actions and settles unsettled claims; it is the
+	// store outside tests.
+	claims claimStore
+	// settleBackoff is the first delay between attempts to settle a
+	// claim.
+	settleBackoff time.Duration
+	// lifetime ends when Shutdown is called. Work that outlives a
+	// request but is not a run, such as settling a claim, stops with it.
+	lifetime    context.Context
+	endLifetime context.CancelFunc
 	// finishBackoff is the first delay between attempts to record an
 	// outcome.
 	finishBackoff time.Duration
@@ -144,6 +173,7 @@ func NewExecutor(store *Store, opener Opener, lockTimeout, statementTimeout time
 	if rowLimit < 1 {
 		rowLimit = defaultRowLimit
 	}
+	lifetime, endLifetime := context.WithCancel(context.Background())
 	return &Executor{
 		store:            store,
 		opener:           opener,
@@ -151,6 +181,10 @@ func NewExecutor(store *Store, opener Opener, lockTimeout, statementTimeout time
 		statementTimeout: statementTimeout,
 		rowLimit:         rowLimit,
 		outcomes:         store,
+		claims:           store,
+		settleBackoff:    settleBackoffBase,
+		lifetime:         lifetime,
+		endLifetime:      endLifetime,
 		finishBackoff:    finishBackoffBase,
 		stopping:         make(chan struct{}),
 		responseGrace:    responseGrace,
@@ -167,6 +201,7 @@ func (e *Executor) Shutdown(ctx context.Context) error {
 	if !e.closed {
 		e.shutdownDone = ctx.Done()
 		close(e.stopping)
+		e.endLifetime()
 	}
 	e.closed = true
 	for _, run := range e.running {
@@ -191,7 +226,10 @@ func (e *Executor) Shutdown(ctx context.Context) error {
 // Start claims the action and runs it in a goroutine detached from ctx's
 // cancellation, recording the outcome on the action. It returns
 // ErrAlreadyStarted when the claim fails and ErrShuttingDown after
-// Shutdown.
+// Shutdown. When the claim fails and whether it committed cannot be
+// read back, Start returns the error and settles the claim in the
+// background (settleClaim), so a claim that did commit is returned to
+// not_started rather than left executing with no run behind it.
 func (e *Executor) Start(ctx context.Context, actionID int64) error {
 	// The WaitGroup is incremented under the same lock Shutdown takes to
 	// set closed, so Shutdown's Wait never races with an Add.
@@ -203,9 +241,19 @@ func (e *Executor) Start(ctx context.Context, actionID int64) error {
 	e.wg.Add(1)
 	e.mu.Unlock()
 
+	token := uuid.NewString()
 	cctx, cancelClaim := context.WithTimeout(context.WithoutCancel(ctx), claimTimeout)
-	ok, err := e.store.ClaimForExecution(cctx, actionID)
+	ok, err := e.claims.claim(cctx, actionID, token)
 	cancelClaim()
+	if errors.Is(err, errClaimUnsettled) {
+		// The WaitGroup slot passes to the settling goroutine, so
+		// Shutdown waits for it too.
+		go func() {
+			defer e.wg.Done()
+			e.settleClaim(actionID, token)
+		}()
+		return err
+	}
 	if err != nil || !ok {
 		e.wg.Done()
 		if err != nil {
@@ -236,6 +284,59 @@ func (e *Executor) Start(ctx context.Context, actionID int64) error {
 		e.execute(runCtx, run, actionID)
 	}()
 	return nil
+}
+
+// settleClaim settles a claim on the action, under token, whose outcome
+// Start could not establish. If the claim committed, the action is
+// returned to not_started; nothing was started under the claim, so
+// nothing has run against the target. The action is not run instead:
+// its caller has already been told it could not be started, and a run
+// that began minutes later would be a surprise. Its approval stands, so
+// it can be started again. A row that is not executing under token was
+// never claimed by this call, or has moved on, and is left alone.
+//
+// Each attempt is one guarded UPDATE, so no read is needed and a claim
+// taken meanwhile under another token can never be touched. A failed
+// attempt is retried up to settleAttempts times; the retries stop at
+// Shutdown, leaving a committed claim for the startup sweep
+// (MarkInterruptedUnknown).
+func (e *Executor) settleClaim(id int64, token string) {
+	delay := e.settleBackoff
+	for attempt := 1; ; attempt++ {
+		actx, cancel := context.WithTimeout(e.lifetime, claimReconcileTimeout)
+		released, err := e.claims.releaseClaim(actx, id, token)
+		cancel()
+		if err == nil {
+			if released {
+				log.Printf("[WARN] Action %d: a claim whose outcome was lost was returned to not_started", id)
+			}
+			return
+		}
+		if attempt == settleAttempts {
+			log.Printf("[ERROR] Gave up settling the claim on action %d; if it committed, the next start marks it unknown: %v", id, err)
+			return
+		}
+		log.Printf("[WARN] Settling the claim on action %d failed (attempt %d of %d), retrying: %v",
+			id, attempt, settleAttempts, err)
+		if !sleepContext(e.lifetime, delay) {
+			log.Printf("[ERROR] Stopped settling the claim on action %d at shutdown; if it committed, the next start marks it unknown", id)
+			return
+		}
+		delay = min(2*delay, settleBackoffMax)
+	}
+}
+
+// sleepContext waits for d and reports true, or reports false at once
+// if ctx ends first.
+func sleepContext(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // Cancel stops a running action and reports whether one was running. The

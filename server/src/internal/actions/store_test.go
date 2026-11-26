@@ -428,8 +428,11 @@ func TestStoreErrorsOnClosedPool(t *testing.T) {
 	if err := s.Reapprove(ctx, a.ID, "approved", "b", "c", "session"); err == nil || errors.Is(err, ErrInvalidState) {
 		t.Error("reapprove")
 	}
-	if _, err := s.ClaimForExecution(ctx, a.ID); err == nil {
-		t.Error("claim")
+	if _, err := s.ClaimForExecution(ctx, a.ID); !errors.Is(err, errClaimUnsettled) {
+		t.Errorf("claim = %v, want errClaimUnsettled when the read-back fails too", err)
+	}
+	if _, err := s.releaseClaim(ctx, a.ID, "6f1c2a52-6a9a-4c39-9a53-7d0f2d1f0a01"); err == nil {
+		t.Error("release claim")
 	}
 	if err := s.FinishExecution(ctx, a.ID, "failed", false, nil); err == nil {
 		t.Error("finish")
@@ -641,6 +644,7 @@ func TestClaimReconcilesFailedClaim(t *testing.T) {
 		{"own claim took effect", held, mine, true},
 		{"another claim holds it", held, theirs, false},
 		{"claim did not take effect", unclaimed, mine, false},
+		{"no such action", 999999, mine, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -648,10 +652,85 @@ func TestClaimReconcilesFailedClaim(t *testing.T) {
 			if ok != tt.wantOK || (err == nil) != tt.wantOK {
 				t.Errorf("claim = %v, %v; want ok=%v and an error only when not ok", ok, err, tt.wantOK)
 			}
+			// The read-back succeeded, so the outcome is settled.
+			if errors.Is(err, errClaimUnsettled) {
+				t.Errorf("claim = %v; a read-back that succeeded must not be unsettled", err)
+			}
 		})
 	}
 	got, err := s.Get(ctx, unclaimed)
 	if err != nil || got.ExecStatus != "not_started" {
 		t.Errorf("unclaimed action = %+v (%v), want not_started", got, err)
+	}
+}
+
+// TestReleaseClaim proves releaseClaim returns to not_started only an
+// action executing under the given token, clearing its start time and
+// token, and leaves alone one held under another token, one never
+// claimed, one already released and one that has finished.
+func TestReleaseClaim(t *testing.T) {
+	s, pool, connID := newTestStore(t, "_act_release")
+	ctx := context.Background()
+	mine := "6f1c2a52-6a9a-4c39-9a53-7d0f2d1f0a01"
+	theirs := "6f1c2a52-6a9a-4c39-9a53-7d0f2d1f0a02"
+	newApproved := func() int64 {
+		t.Helper()
+		a, err := s.Create(ctx, sampleAction(connID, "alice"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetReview(ctx, a.ID, "passed", Verdict{Decision: "pass"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Approve(ctx, a.ID, "approved", "bob", "session"); err != nil {
+			t.Fatal(err)
+		}
+		return a.ID
+	}
+	claimed := func(token string) int64 {
+		t.Helper()
+		id := newApproved()
+		if ok, err := s.claim(ctx, id, token); err != nil || !ok {
+			t.Fatalf("claim: ok=%v err=%v", ok, err)
+		}
+		return id
+	}
+
+	held := claimed(mine)
+	finished := claimed(mine)
+	if err := s.FinishExecution(ctx, finished, "succeeded", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name       string
+		id         int64
+		token      string
+		want       bool
+		wantStatus string
+	}{
+		{"held under another token", held, theirs, false, "executing"},
+		{"held under this token", held, mine, true, "not_started"},
+		{"already released", held, mine, false, "not_started"},
+		{"never claimed", newApproved(), mine, false, "not_started"},
+		{"finished", finished, mine, false, "succeeded"},
+	}
+	for _, tt := range tests {
+		ok, err := s.releaseClaim(ctx, tt.id, tt.token)
+		if err != nil || ok != tt.want {
+			t.Errorf("%s: releaseClaim = %v, %v; want %v", tt.name, ok, err, tt.want)
+		}
+		got, err := s.Get(ctx, tt.id)
+		if err != nil || got.ExecStatus != tt.wantStatus || got.Approval != "approved" {
+			t.Errorf("%s: action = %+v (%v), want %s and approved", tt.name, got, err, tt.wantStatus)
+		}
+	}
+	var token *string
+	got, err := s.Get(ctx, held)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT claim_token::text FROM proposed_actions WHERE id = $1`,
+		held).Scan(&token); err != nil || token != nil || got.ExecutedAt != nil {
+		t.Errorf("released action: claim_token = %v (%v), executed_at = %v; want neither", token, err, got.ExecutedAt)
 	}
 }

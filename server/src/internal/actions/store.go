@@ -312,12 +312,17 @@ func (s *Store) ClaimForExecution(ctx context.Context, id int64) (bool, error) {
 // deadline may be what ended the claim.
 const claimReconcileTimeout = 10 * time.Second
 
+// errClaimUnsettled marks a claim error after which the row could not be
+// read back either, so whether the claim committed is not known.
+// Executor.Start then settles it in the background (settleClaim).
+var errClaimUnsettled = errors.New("the claim could not be read back")
+
 // claim is ClaimForExecution with the claim's token given. When the
 // UPDATE fails it returns true only if the row is executing under
 // token, which no other claim can have written; otherwise it returns
-// the UPDATE's error, and never touches a claim it does not hold. A
-// read that fails too leaves the action as it was, for the startup
-// sweep (MarkInterruptedUnknown) to settle if the claim did commit.
+// the UPDATE's error, and never touches a claim it does not hold. When
+// the read fails too, the error also wraps errClaimUnsettled, and the
+// action is left as it was: the claim may have committed.
 func (s *Store) claim(ctx context.Context, id int64, token string) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
         UPDATE proposed_actions
@@ -333,12 +338,36 @@ func (s *Store) claim(ctx context.Context, id int64, token string) (bool, error)
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimReconcileTimeout)
 	defer cancel()
 	var held bool
-	if rerr := s.pool.QueryRow(rctx, `
+	rerr := s.pool.QueryRow(rctx, `
         SELECT exec_status = 'executing' AND claim_token = $2
-          FROM proposed_actions WHERE id = $1`, id, token).Scan(&held); rerr == nil && held {
+          FROM proposed_actions WHERE id = $1`, id, token).Scan(&held)
+	if rerr == nil && held {
 		return true, nil
 	}
+	if rerr != nil && !errors.Is(rerr, pgx.ErrNoRows) {
+		return false, fmt.Errorf("claim action: %w; %w: %v", err, errClaimUnsettled, rerr)
+	}
 	return false, fmt.Errorf("claim action: %w", err)
+}
+
+// releaseClaim returns an action that is executing under token to
+// not_started, clearing the start time and the token as though it had
+// never been claimed, and reports whether it did. It is only for a
+// claim that no run was started under (one that reported
+// errClaimUnsettled), so nothing has reached the target. The approval
+// stands, so the action can be started again. A row that is in any
+// other state, or held under another token, is left alone.
+func (s *Store) releaseClaim(ctx context.Context, id int64, token string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+        UPDATE proposed_actions
+           SET exec_status = 'not_started', executed_at = NULL,
+               claim_token = NULL, updated_at = now()
+         WHERE id = $1 AND exec_status = 'executing' AND claim_token = $2`,
+		id, token)
+	if err != nil {
+		return false, fmt.Errorf("release claim: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // FinishExecution records the outcome of an executing action; status is

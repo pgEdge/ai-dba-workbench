@@ -97,6 +97,14 @@ row.
   counts the claim only if it is `executing` under that token, so a
   commit whose reply was lost still gets a run and another server's
   claim is never taken over. Test it through `claim` with a fixed token.
+  When the read-back fails too, `claim` wraps `errClaimUnsettled`;
+  `Start` returns that error, starts no run, and hands its WaitGroup
+  slot to `settleClaim`, which retries `Store.releaseClaim` (one UPDATE
+  guarded on `executing` and the token, back to `not_started` with
+  `executed_at` and `claim_token` cleared, approval kept) up to
+  `settleAttempts` with backoff, on `Executor.lifetime`, which
+  `Shutdown` cancels. It never runs the action late (#888). Test it by
+  swapping `Executor.claims` for a wrapper over `*Store`.
   Outcome writes retry until `Shutdown`'s context ends
   (`shutdownDone`), not merely until `stopping` closes.
 - A statement that calls `nextval`/`setval` (matched as a call by

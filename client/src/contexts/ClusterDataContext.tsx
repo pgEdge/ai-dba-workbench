@@ -122,10 +122,15 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
     const isInitialLoadRef = useRef<boolean>(true);
     // Number of requested fetches in flight, behind `refreshing`
     const requestedCountRef = useRef<number>(0);
-    // Sequence numbers of the last fetch started and the last one whose
-    // result was applied, so a slow fetch cannot overwrite a newer result
+    // Sequence number of the last fetch started, and of the last fetch whose
+    // successful result was applied. A success is applied unless a newer
+    // success already has been; a failure only if no fetch started at or
+    // after it has succeeded. A failure therefore never hides the data of an
+    // older fetch that succeeds later (a Retry overtaken by a failed poll)
     const requestSeqRef = useRef<number>(0);
-    const appliedSeqRef = useRef<number>(0);
+    const appliedSuccessSeqRef = useRef<number>(0);
+    // Fetches numbered below this started for a previous user and are ignored
+    const minSeqRef = useRef<number>(1);
     // Stable ref for the background poll to avoid resetting the interval
     const pollRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
@@ -136,21 +141,15 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
      * successfully once; a background poll never does, so the auto-refresh
      * does not swap an error panel for the skeleton every 30 seconds.
      * The error is cleared only on success, so it persists across failed
-     * retries. A fetch that finishes after a newer one has already been
-     * applied is ignored.
+     * retries. A fetch that finishes after a newer fetch has succeeded is
+     * ignored, as is any fetch started for a previous user.
      */
     const loadClusterData = useCallback(async (background: boolean): Promise<void> => {
         if (!user) {return;}
 
         requestSeqRef.current += 1;
         const seq = requestSeqRef.current;
-        // True, and records this fetch as applied, unless a newer fetch's
-        // result has already been applied
-        const claimResult = (): boolean => {
-            if (seq < appliedSeqRef.current) {return false;}
-            appliedSeqRef.current = seq;
-            return true;
-        };
+        const isCurrentUser = (): boolean => seq >= minSeqRef.current;
 
         const showLoading = isInitialLoadRef.current && !background;
         if (showLoading) {
@@ -178,7 +177,8 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
                 }
             }
 
-            if (!claimResult()) {return;}
+            if (!isCurrentUser() || seq < appliedSuccessSeqRef.current) {return;}
+            appliedSuccessSeqRef.current = seq;
 
             // Generate fingerprint for the new data
             const newFingerprint = generateDataFingerprint(newData ?? []);
@@ -199,7 +199,7 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
             setLoading(false);
         } catch (err) {
             logger.error('Error fetching cluster data:', err);
-            if (claimResult()) {
+            if (isCurrentUser() && seq > appliedSuccessSeqRef.current) {
                 setError(describeLoadError(err));
             }
         } finally {
@@ -225,11 +225,14 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
         pollRef.current = () => loadClusterData(true);
     }, [loadClusterData]);
 
-    // Fetch cluster data when user changes
+    // Fetch cluster data when user changes, ignoring any fetch still in
+    // flight for the previous user
     useEffect(() => {
+        minSeqRef.current = requestSeqRef.current + 1;
         if (user) {
             fetchClusterData();
         } else {
+            dataFingerprintRef.current = '';
             setClusterData([]);
             setError(null);
         }

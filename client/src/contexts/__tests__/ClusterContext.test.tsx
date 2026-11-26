@@ -222,6 +222,38 @@ describe('ClusterContext', () => {
             expect(result.current).toHaveProperty('deleteGroup');
             expect(result.current).toHaveProperty('moveClusterToGroup');
         });
+
+        it('reflects the data context refreshing state', async () => {
+            const { result } = renderHook(() => useCluster(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.clusterData.length).toBeGreaterThan(0);
+            });
+            await waitFor(() => {
+                expect(result.current.refreshing).toBe(false);
+            });
+
+            let resolveFetch: (value: unknown) => void = () => {};
+            mockFetch.mockImplementationOnce(
+                () => new Promise((resolve) => {
+                    resolveFetch = resolve;
+                }),
+            );
+            let pending: Promise<void> = Promise.resolve();
+            act(() => {
+                pending = result.current.fetchClusterData();
+            });
+            expect(result.current.refreshing).toBe(true);
+
+            await act(async () => {
+                resolveFetch({
+                    ok: true,
+                    json: () => Promise.resolve(mockClusterData),
+                });
+                await pending;
+            });
+            expect(result.current.refreshing).toBe(false);
+        });
     });
 
     describe('useClusterData', () => {

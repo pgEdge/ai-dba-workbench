@@ -490,7 +490,7 @@ describe('ClusterDataContext', () => {
             expect(result.current.refreshing).toBe(false);
         });
 
-        it('ignores data that finishes after a newer fetch failed', async () => {
+        it('applies data that finishes after a newer fetch failed', async () => {
             const { result } = renderHook(() => useClusterData(), { wrapper });
             await waitFor(() => {
                 expect(result.current.clusterData).toEqual(defaultData);
@@ -517,8 +517,99 @@ describe('ClusterDataContext', () => {
                 resolveOlder([]);
                 await older;
             });
-            expect(result.current.error).toBe('newer failure');
+            expect(result.current.error).toBeNull();
+            expect(result.current.clusterData).toEqual([]);
+            expect(result.current.refreshing).toBe(false);
+        });
+
+        it('keeps a successful Retry when a poll started during it fails first', async () => {
+            vi.useFakeTimers();
+            mockApiGet.mockReset();
+            const calls: Array<{
+                resolve: (value: ClusterGroup[]) => void;
+                reject: (err: Error) => void;
+            }> = [];
+            mockApiGet.mockImplementation(
+                () => new Promise<ClusterGroup[]>((resolve, reject) => {
+                    calls.push({ resolve, reject });
+                }),
+            );
+
+            const { result } = renderHook(() => useClusterData(), { wrapper });
+            expect(calls).toHaveLength(1);
+
+            // The first load fails
+            await act(async () => {
+                calls[0].reject(new Error('boom'));
+            });
+            expect(result.current.error).toBe('boom');
+
+            // Retry, then the auto-refresh poll starts whilst it is pending
+            let retry: Promise<void> = Promise.resolve();
+            act(() => {
+                retry = result.current.fetchClusterData();
+            });
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(30000);
+            });
+            expect(calls).toHaveLength(3);
+
+            // The poll fails first, then the Retry succeeds
+            await act(async () => {
+                calls[2].reject(new Error('poll failed'));
+            });
+            expect(result.current.error).toBe('poll failed');
+
+            await act(async () => {
+                calls[1].resolve(defaultData);
+                await retry;
+            });
             expect(result.current.clusterData).toEqual(defaultData);
+            expect(result.current.error).toBeNull();
+            expect(result.current.loading).toBe(false);
+            expect(result.current.refreshing).toBe(false);
+        });
+
+        it('ignores a fetch that finishes after the user changed', async () => {
+            const { result, rerender } = renderHook(() => useClusterData(), {
+                wrapper,
+            });
+            await waitFor(() => {
+                expect(result.current.clusterData).toEqual(defaultData);
+            });
+
+            let resolveOld: (value: ClusterGroup[]) => void = () => {};
+            let rejectOld: (err: Error) => void = () => {};
+            mockApiGet.mockImplementationOnce(
+                () => new Promise<ClusterGroup[]>((resolve) => {
+                    resolveOld = resolve;
+                }),
+            );
+            mockApiGet.mockImplementationOnce(
+                () => new Promise<ClusterGroup[]>((_resolve, reject) => {
+                    rejectOld = reject;
+                }),
+            );
+            let oldFetches: Promise<void[]> = Promise.resolve([]);
+            act(() => {
+                oldFetches = Promise.all([
+                    result.current.fetchClusterData(),
+                    result.current.fetchClusterData(),
+                ]);
+            });
+
+            // A different user logs in; their fetch never settles
+            mockApiGet.mockImplementation(() => new Promise<ClusterGroup[]>(() => {}));
+            mockUser = { username: 'otheruser' };
+            rerender();
+
+            await act(async () => {
+                resolveOld([]);
+                rejectOld(new Error('stale'));
+                await oldFetches;
+            });
+            expect(result.current.clusterData).toEqual(defaultData);
+            expect(result.current.error).toBeNull();
         });
     });
 
@@ -648,6 +739,26 @@ describe('ClusterDataContext', () => {
 
             await waitFor(() => {
                 expect(result.current.error).toBeNull();
+            });
+        });
+        it('shows unchanged data again when the user logs back in', async () => {
+            const { result, rerender } = renderHook(() => useClusterData(), {
+                wrapper,
+            });
+            await waitFor(() => {
+                expect(result.current.clusterData).toEqual(defaultData);
+            });
+
+            mockUser = null;
+            rerender();
+            await waitFor(() => {
+                expect(result.current.clusterData).toEqual([]);
+            });
+
+            mockUser = { username: 'testuser' };
+            rerender();
+            await waitFor(() => {
+                expect(result.current.clusterData).toEqual(defaultData);
             });
         });
     });

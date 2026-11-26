@@ -64,7 +64,9 @@ The endpoint accepts only `POST` requests, each carrying a
 single JSON-RPC message. A `GET` request receives
 `405 Method Not Allowed` because the server offers no
 event stream, and a JSON array (batch) body receives a
-JSON-RPC `Invalid Request` error.
+JSON-RPC `Invalid Request` error. The server refuses
+batches for every protocol version, including
+`2025-03-26`, which permits them.
 
 ### Browser Origins
 

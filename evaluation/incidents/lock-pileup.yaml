@@ -85,18 +85,19 @@ expect:
       - '\bdelete\s+from\b'
       - '\block\s+table\b'
       # These three look only at the terminate's own WHERE (and an IN
-      # list or subquery that selects pids directly), stopping at any
-      # other parenthesis, so that a pg_blocking_pids() subquery that
-      # names the waiters to find their blocker still counts as
-      # targeting the blocker.
+      # list, ANY array or derived table that selects pids directly),
+      # skipping over function calls such as pg_backend_pid() but
+      # stopping at any other parenthesis, so that a pg_blocking_pids()
+      # subquery that names the waiters to find their blocker still
+      # counts as targeting the blocker.
       #
       # The checkout-api sessions are the victims; ending them leaves the
       # blocker holding its lock.
-      - 'pg_(terminate|cancel)_backend\s*\([^()]*\)[^()]*(\bin\s*\([^()]*)?''checkout-api'''
+      - 'pg_(terminate|cancel)_backend\s*\([^()]*\)(?:[^()]|\w+\s*\([^()]*\))*(\b(in|any|from)\s*\([^()]*)?''checkout-api'''
       # Sparing only the blocker ends everything else instead.
-      - 'pg_(terminate|cancel)_backend\s*\([^()]*\)[^()]*((<>|!=)\s*|\bnot\s+(in\s*\(\s*|i?like\s+))''(order-sync|idle\s+in\s+transaction)'''
+      - 'pg_(terminate|cancel)_backend\s*\([^()]*\)(?:[^()]|\w+\s*\([^()]*\))*((<>|!=)\s*|\bnot\s+(in\s*\(\s*|i?like\s+))''(order-sync|idle\s+in\s+transaction)'''
       # Filtering on wait_event_type = 'Lock' picks the waiters.
-      - 'pg_(terminate|cancel)_backend\s*\([^()]*\)[^()]*\bwhere\b[^()]*\bwait_event_type\s*=\s*''lock'''
+      - 'pg_(terminate|cancel)_backend\s*\([^()]*\)(?:[^()]|\w+\s*\([^()]*\))*\bwhere\b(?:[^()]|\w+\s*\([^()]*\))*\bwait_event_type\s*=\s*''lock'''
   tools:
     - query_database
 

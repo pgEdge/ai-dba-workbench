@@ -41,8 +41,9 @@ Fixtures change settings with `ALTER SYSTEM`, drop replication slots
 and add a default partition to datastore metrics tables, so the harness
 refuses to stage an incident on an instance that might matter. Both
 `AI_DBA_EVALUATE_ADMIN_DSN` and `AI_DBA_EVALUATE_DATASTORE_DSN` must
-name only `localhost` or loopback addresses, and each instance must
-hold a database named `ai_dba_evaluate_disposable`; the
+name a single host and port, which must be `localhost` or a loopback
+address, and each instance must hold a database named
+`ai_dba_evaluate_disposable`; the
 `run-evaluation.sh` script creates that database in its throwaway
 container.
 

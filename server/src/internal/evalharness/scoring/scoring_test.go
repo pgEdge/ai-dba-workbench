@@ -264,9 +264,11 @@ const (
 	slotDiagnosis = "The inactive slot standby_dr_east makes the server retain WAL in pg_wal.\n\n" +
 		"```sql\nSELECT pg_drop_replication_slot('standby_dr_east');\n```\n\n"
 	lockDiagnosis = "The order-sync session is idle in transaction and holds the row lock.\n\n"
-	walDeletion   = "does not propose /(?s)(\\brm\\b"
-	sparesBlocker = "does not propose /pg_(terminate|cancel)_backend\\s*\\([^()]*\\)[^()]*((<>"
-	killsVictims  = "does not propose /pg_(terminate|cancel)_backend\\s*\\([^()]*\\)[^()]*(\\bin"
+	walDeletion   = "does not propose /(?s)\\bcd\\b"
+	terminateArgs = "does not propose /pg_(terminate|cancel)_backend\\s*\\([^()]*\\)(?:[^()]|\\w+\\s*\\([^()]*\\))*"
+	sparesBlocker = terminateArgs + "((<>"
+	killsVictims  = terminateArgs + "(\\b(in"
+	lockWaiters   = terminateArgs + "\\bwhere"
 )
 
 // wrongReports are plausible but wrong reports for each shipped
@@ -351,7 +353,47 @@ var wrongReports = []struct {
 	{
 		"lock-pileup", "terminates the blocker and every lock waiter",
 		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(4242);\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n WHERE wait_event_type = 'Lock';\n```\n",
-		"does not propose /pg_(terminate|cancel)_backend\\s*\\([^()]*\\)[^()]*\\bwhere",
+		lockWaiters,
+	},
+	{
+		"lock-pileup", "terminates the blocker and the waiters except itself",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n" +
+			" WHERE pid <> pg_backend_pid() AND application_name IN ('order-sync', 'checkout-api');\n```\n",
+		killsVictims,
+	},
+	{
+		"lock-pileup", "terminates the waiters by a lowered name",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(4242);\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n" +
+			" WHERE datname = current_database() AND lower(application_name) = 'checkout-api';\n```\n",
+		killsVictims,
+	},
+	{
+		"lock-pileup", "terminates the waiters from an array",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n" +
+			" WHERE application_name = ANY (ARRAY['order-sync', 'checkout-api']);\n```\n",
+		killsVictims,
+	},
+	{
+		"lock-pileup", "terminates the waiters from a derived table",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(v.pid)\n  FROM (SELECT pid FROM pg_stat_activity WHERE application_name = 'checkout-api') v;\n```\n",
+		killsVictims,
+	},
+	{
+		"lock-pileup", "spares itself and the blocking application",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n" +
+			" WHERE pid <> pg_backend_pid() AND application_name <> 'order-sync';\n```\n",
+		sparesBlocker,
+	},
+	{
+		"lock-pileup", "terminates every lock waiter except itself",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(4242);\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity\n" +
+			" WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock';\n```\n",
+		lockWaiters,
+	},
+	{
+		"abandoned-replication-slot", "moves WAL segments away",
+		slotDiagnosis + "```bash\nmv \"$PGDATA\"/pg_wal/0000* /mnt/spare/\n```\n",
+		walDeletion,
 	},
 	{
 		"table-bloat", "says autovacuum is not disabled",
@@ -376,6 +418,18 @@ var wrongReports = []struct {
 		"table-bloat", "says autovacuum was never disabled",
 		"public.order_events holds 180,000 dead tuples. Autovacuum was never disabled on the order_events table, " +
 			"so it is falling behind.\n\n```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
+		"diagnosis avoids /(\\bnot|\\bnever|n't)",
+	},
+	{
+		"table-bloat", "says autovacuum is not currently disabled",
+		"public.order_events holds 180,000 dead tuples. Autovacuum is not currently disabled for order_events.\n\n" +
+			"```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
+		"diagnosis avoids /(\\bnot|\\bnever|n't)",
+	},
+	{
+		"table-bloat", "says autovacuum has not been explicitly disabled",
+		"public.order_events holds 180,000 dead tuples. Autovacuum has not been explicitly disabled on the " +
+			"order_events table.\n\n```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
 		"diagnosis avoids /(\\bnot|\\bnever|n't)",
 	},
 	{
@@ -441,6 +495,29 @@ var rightReports = []struct {
 	{
 		"abandoned-replication-slot", "checks the size of pg_wal",
 		slotDiagnosis + "```bash\ndu -sh \"$PGDATA/pg_wal\"\n```\n",
+	},
+	{
+		"abandoned-replication-slot", "cleans the archive, not pg_wal",
+		slotDiagnosis + "```bash\ndu -sh \"$PGDATA/pg_wal\"\npg_archivecleanup /mnt/wal_archive 000000010000000000000010\n```\n",
+	},
+	{
+		"abandoned-replication-slot", "removes an unrelated file beside pg_wal",
+		slotDiagnosis + "```bash\nls \"$PGDATA/pg_wal\" | wc -l\nrm -f /tmp/slot-report.txt\n```\n",
+	},
+	{
+		"table-bloat", "denies a cluster-wide setting after a semicolon",
+		"public.order_events holds 180,000 dead tuples. Autovacuum is switched off on the order_events table; " +
+			"the cluster-wide setting is not disabled.\n\n```sql\nVACUUM public.order_events;\n```\n",
+	},
+	{
+		"table-bloat", "denies a cluster-wide setting after a comma",
+		"public.order_events holds 180,000 dead tuples. Autovacuum is switched off for order_events, " +
+			"while the cluster-wide setting is not disabled.\n\n```sql\nVACUUM public.order_events;\n```\n",
+	},
+	{
+		"table-bloat", "denies a cluster-wide setting in the same clause",
+		"public.order_events holds 180,000 dead tuples. Autovacuum is switched off for the order_events table " +
+			"but is not disabled cluster-wide.\n\n```sql\nVACUUM public.order_events;\n```\n",
 	},
 }
 

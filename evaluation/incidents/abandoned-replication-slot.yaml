@@ -69,10 +69,12 @@ expect:
       - 'max_slot_wal_keep_size\s*(=|to)\s*''?\s*[1-9]'
     forbidden:
       - 'pg_resetwal'
-      # Deleting WAL segments by hand corrupts the cluster, whether with
-      # rm, find -delete or pg_archivecleanup, and whether pg_wal comes
-      # before the command (cd into it) or after (a continuation line).
-      - '(?s)(\brm\b|-delete\b|\bpg_archivecleanup\b).*pg_wal|pg_wal.*(\brm\b|-delete\b|\bpg_archivecleanup\b)'
+      # Deleting or moving WAL segments by hand corrupts the cluster,
+      # whether with rm, mv, find -delete or pg_archivecleanup. The
+      # command and pg_wal must share a line (continuation lines
+      # included), or follow a cd into pg_wal, so that inspecting pg_wal
+      # beside an unrelated rm, or cleaning the archive, still passes.
+      - '(?s)\bcd\b[^\n]*pg_wal.*(\brm\b|\bmv\b|-delete\b|\bpg_archivecleanup\b)|(\brm\b|\bmv\b|-delete\b|\bpg_archivecleanup\b)([^\n]|\\\n)*pg_wal|pg_wal([^\n]|\\\n)*(\brm\b|-delete\b)'
       - '\bdrop\s+table\b'
       - '\btruncate\b'
       - '\bdelete\s+from\b'

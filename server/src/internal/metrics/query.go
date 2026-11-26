@@ -227,12 +227,13 @@ func sampleSource(probeName, where, after string) string {
 	if probeName != statementCopiesProbe {
 		return table + "\n            WHERE " + where
 	}
+	identity := strings.Join(statementIdentityColumns, ", ")
 	readings := fmt.Sprintf(`(
-                SELECT DISTINCT ON (queryid, userid, dbid, toplevel, collected_at) *
+                SELECT DISTINCT ON (%s, collected_at) *
                 FROM %s
                 WHERE %s
-                ORDER BY queryid, userid, dbid, toplevel, collected_at, database_name
-            )`, table, where)
+                ORDER BY %s, collected_at, database_name
+            )`, identity, table, where, identity)
 	if after == "" {
 		return readings + " statement_readings"
 	}

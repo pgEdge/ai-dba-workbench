@@ -142,9 +142,36 @@ func TestQueryLatestRowsStatementReadings_Integration(t *testing.T) {
             (1, $2, 1, 10, 300, true, 'gamma', 160),
             (1, $3, 1, 10, 300, true, 'delta', 220),
             (2, $2, 1, 10, 300, true, 'beta', 50),
-            (2, $2, 1, 10, 300, true, 'alpha', 50)`, t0, t1, t2); err != nil {
+            (2, $2, 1, 10, 300, true, 'alpha', 50),
+            (3, $1, 1, 10, 300, true, 'alpha', 10),
+            (3, $2, 1, 10, 300, true, 'alpha', 11),
+            (3, $1, 1, 11, 300, true, 'alpha', 20),
+            (3, $2, 1, 11, 300, true, 'alpha', 21),
+            (3, $1, 1, 10, 300, false, 'alpha', 30),
+            (3, $2, 1, 10, 300, false, 'alpha', 31)`, t0, t1, t2); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
+	// On connection 3 one statement has three identities, differing only
+	// in userid or toplevel, whose readings share database_name and every
+	// other text column, so each is returned once, with its newest
+	// reading, only if the identity keys the reduction and the outer
+	// DISTINCT ON.
+	t.Run("each identity's newest reading", func(t *testing.T) {
+		rows, err := QueryLatestRows(ctx, pool, "pg_stat_statements", []int{3},
+			MetricFilters{}, "", "desc", 10)
+		if err != nil {
+			t.Fatalf("QueryLatestRows: %v", err)
+		}
+		got := map[int64]bool{}
+		for _, row := range rows {
+			got[toInt64(t, row["calls"])] = true
+		}
+		want := map[int64]bool{11: true, 21: true, 31: true}
+		if len(rows) != len(want) || !maps.Equal(got, want) {
+			t.Errorf("calls = %v from %d rows, want %v", got, len(rows), want)
+		}
+	})
 
 	unresolved := func(name string) *StatementDatabaseFilter {
 		return &StatementDatabaseFilter{Name: name, DBIDs: []int64{}, ResolvedDBIDs: []int64{100}}

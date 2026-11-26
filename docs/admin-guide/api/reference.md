@@ -510,9 +510,12 @@ returns the matching rows.
 
 For `pg_stat_statements`, the latest-rows mode returns the
 newest reading of each statement once, whichever database the
-collector read it through. A `database_name` filter keeps a
-statement only when its newest reading was collected through
-that database, rather than returning an older reading that was.
+collector read it through. When an earlier collector stored
+that reading once for each database with the extension, the
+copy from the database whose name sorts first is kept. A
+`database_name` filter tests the copy kept, so it returns a
+statement only when that copy was collected through the named
+database, rather than returning an older reading that was.
 
 In the following example, the server answers a six-hour
 preset with a five-minute bucket width:

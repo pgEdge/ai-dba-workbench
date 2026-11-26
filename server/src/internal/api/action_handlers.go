@@ -534,18 +534,21 @@ func (h *ActionHandler) viewFor(ctx context.Context, a *actions.Action) *actions
 	return &c
 }
 
-// withheldResultError replaces the error of a statement whose text held
-// a credential, for anyone but the proposer and the approver.
-const withheldResultError = "error withheld: the statement holds a credential"
+// withheldResultError replaces every result error of an action any of
+// whose statements held a credential, for anyone but the proposer and
+// the approver.
+const withheldResultError = "error withheld: the action holds a credential"
 
 // maskActionText replaces every text field of a that may hold a secret
 // with a masked copy, or withholds it, leaving the slices a shared with
 // the stored action untouched. Statement text goes through
 // metrics.RedactStatementText, and the review's reasons and the run's
-// errors through redact.Text. The error of a statement whose text held
-// a credential is replaced with withheldResultError instead, since
-// PostgreSQL quotes the offending literal in errors such as a failed
-// cast, in a form redact.Text cannot tell from any other quoted value.
+// errors through redact.Text. When any statement of the action held a
+// credential, every result error is replaced with withheldResultError
+// instead, since PostgreSQL quotes the offending literal in errors such
+// as a failed cast, in a form redact.Text cannot tell from any other
+// quoted value, and a later statement can read back a value an earlier
+// one wrote.
 // The rationale and the rows a statement returned are withheld (nil)
 // instead: the rationale is prose, which can state a password in words
 // redact.Text cannot detect ("the new password is ..."), and a result
@@ -556,6 +559,7 @@ const withheldResultError = "error withheld: the statement holds a credential"
 // are withheld too, since their masking cannot be known until something
 // does.
 func maskActionText(a *actions.Action) {
+	credential := holdsCredential(a)
 	a.Statements = mapStrings(a.Statements, metrics.RedactStatementText)
 	a.Rationale = nil
 	if a.Review != nil {
@@ -567,15 +571,14 @@ func maskActionText(a *actions.Action) {
 		results := make([]actions.StatementResult, len(a.Results))
 		for i := range a.Results {
 			res := a.Results[i]
-			masked := metrics.RedactStatementText(res.Statement)
 			switch {
 			case res.Error == "":
-			case masked != res.Statement:
+			case credential:
 				res.Error = withheldResultError
 			default:
 				res.Error = redact.Text(res.Error)
 			}
-			res.Statement = masked
+			res.Statement = metrics.RedactStatementText(res.Statement)
 			res.Rows = nil
 			res.Truncated = false
 			results[i] = res
@@ -583,6 +586,22 @@ func maskActionText(a *actions.Action) {
 		a.Results = results
 	}
 	a.Preview, a.Undo, a.Verification, a.Outcome = nil, nil, nil, nil
+}
+
+// holdsCredential reports whether metrics.RedactStatementText masks any
+// statement of a, in its statements or its results.
+func holdsCredential(a *actions.Action) bool {
+	for _, s := range a.Statements {
+		if metrics.RedactStatementText(s) != s {
+			return true
+		}
+	}
+	for i := range a.Results {
+		if s := a.Results[i].Statement; metrics.RedactStatementText(s) != s {
+			return true
+		}
+	}
+	return false
 }
 
 // mapStrings returns a new slice holding f of each element of in, or nil

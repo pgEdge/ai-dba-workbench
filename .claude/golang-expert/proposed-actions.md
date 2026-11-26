@@ -41,9 +41,12 @@ row.
   or the approver. Everyone else, superusers included, gets
   `maskActionText`: statements through `metrics.RedactStatementText`,
   review reasons and result errors through `redact.Text`, except that
-  a result's error becomes `withheldResultError` whenever
-  `RedactStatementText` changed its statement (a failed cast quotes
-  the literal, e.g. `invalid input syntax for type uuid: "..."`), and
+  every non-empty result error becomes `withheldResultError` once
+  `RedactStatementText` changes any statement of the action
+  (`holdsCredential`, over `Statements` and `Results[].Statement`): a
+  failed cast quotes the literal, e.g. `invalid input syntax for type
+  uuid: "..."`, and a later statement can read back what an earlier one
+  wrote, so never narrow it to the result's own statement; and
   the rationale, result rows, `truncated` and preview/undo/verification/
   outcome documents nil or false (prose and bare cell values cannot be
   masked reliably, so never switch them back to `redact.Text`). Rows and

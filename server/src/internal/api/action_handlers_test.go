@@ -582,14 +582,15 @@ func TestActionStatementMasking(t *testing.T) {
 					Truncated: true,
 				}, {
 					// A failed cast quotes the literal in a form
-					// redact.Text cannot detect, so the error of a
-					// statement that held a credential is withheld.
+					// redact.Text cannot detect, so the errors of an
+					// action that held a credential are withheld.
 					Statement: tokenStmt,
 					Error:     `invalid input syntax for type uuid: "` + secret + `"`,
 				}, {
-					// A statement with no credential keeps its error,
-					// masked by redact.Text.
-					Statement: "SELECT 1", Error: "near PASSWORD '" + secret + "'",
+					// A later statement holding no credential can read
+					// the value back, so its error is withheld too.
+					Statement: "SELECT api_token::uuid FROM svc",
+					Error:     `invalid input syntax for type uuid: "` + secret + `"`,
 				}, {
 					Statement: tokenStmt, Applied: true,
 				}},
@@ -620,7 +621,7 @@ func TestActionStatementMasking(t *testing.T) {
 				t.Errorf("rationale, rows and truncated withheld = %v, want %v: %s", withheld, !tt.shown, body)
 			}
 			errs := []string{got.Results[0].Error, got.Results[1].Error, got.Results[2].Error, got.Results[3].Error}
-			want := []string{withheldResultError, withheldResultError, "near PASSWORD '********'", ""}
+			want := []string{withheldResultError, withheldResultError, withheldResultError, ""}
 			if tt.shown {
 				want = []string{a.Results[0].Error, a.Results[1].Error, a.Results[2].Error, ""}
 			}
@@ -643,6 +644,40 @@ func TestMaskActionTextEmpty(t *testing.T) {
 	maskActionText(&a)
 	if a.Statements != nil || a.Results != nil || a.Rationale != nil || a.Review != nil {
 		t.Errorf("masked = %+v", a)
+	}
+}
+
+// TestMaskActionTextErrors proves every result error of an action is
+// withheld once any of its statements, stored or run, holds a
+// credential, and is otherwise masked by redact.Text.
+func TestMaskActionTextErrors(t *testing.T) {
+	t.Parallel()
+	const (
+		secretStmt = "ALTER ROLE app PASSWORD 'example-secret'"
+		plainError = "near PASSWORD 'example-secret'"
+	)
+	tests := []struct {
+		name       string
+		statements []string
+		resultStmt string
+		want       string
+	}{
+		{"no credential", []string{"SELECT 1"}, "SELECT 1", "near PASSWORD '********'"},
+		{"credential in a stored statement", []string{"SELECT 1", secretStmt}, "SELECT 1", withheldResultError},
+		{"credential in a result statement", []string{"SELECT 1"}, secretStmt, withheldResultError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a := actions.Action{
+				Statements: tt.statements,
+				Results:    []actions.StatementResult{{Statement: tt.resultStmt, Error: plainError}},
+			}
+			maskActionText(&a)
+			if got := a.Results[0].Error; got != tt.want {
+				t.Errorf("error = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

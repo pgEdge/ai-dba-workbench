@@ -15,7 +15,7 @@
     "/actions/{id}": {
       "get": {
         "summary": "Get an action",
-        "description": "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser. For anyone but the proposer or the approver, a superuser included, the statements, review reasons and result statements and errors are masked as other statement text is, the error of a statement that held a credential is replaced with a fixed message, the rationale and the preview, undo, verification and outcome documents are null, and the rows and truncated fields of each result are omitted.",
+        "description": "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser. For anyone but the proposer or the approver, a superuser included, the statements, review reasons and result statements and errors are masked as other statement text is, every result error of an action any of whose statements held a credential is replaced with a fixed message, the rationale and the preview, undo, verification and outcome documents are null, and the rows and truncated fields of each result are omitted.",
         "operationId": "getAction",
         "tags": [
           "Actions"
@@ -12012,7 +12012,7 @@
           },
           "error": {
             "type": "string",
-            "description": "Error text, empty on success; for anyone but the proposer or the approver, masked as other text is, or replaced with a fixed message when the statement held a credential, since an error such as a failed cast quotes the value"
+            "description": "Error text, empty on success; for anyone but the proposer or the approver, masked as other text is, or replaced with a fixed message when any statement of the action held a credential, since an error such as a failed cast quotes the value"
           },
           "note": {
             "type": "string",

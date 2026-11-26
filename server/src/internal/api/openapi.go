@@ -2068,7 +2068,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"command_tag":   {Type: "string", Description: "Command tag the server returned"},
 				"rows_affected": {Type: "integer", Format: "int64", Description: "Rows affected"},
 				"duration_ms":   {Type: "integer", Format: "int64", Description: "Run time in milliseconds"},
-				"error":         {Type: "string", Description: "Error text, empty on success; for anyone but the proposer or the approver, masked as other text is, or replaced with a fixed message when the statement held a credential, since an error such as a failed cast quotes the value"},
+				"error":         {Type: "string", Description: "Error text, empty on success; for anyone but the proposer or the approver, masked as other text is, or replaced with a fixed message when any statement of the action held a credential, since an error such as a failed cast quotes the value"},
 				"applied":       {Type: "boolean", Description: "Whether the statement's effect was kept"},
 				"columns":       {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Result column names, when the statement returned rows"},
 				"rows":          {Type: "array", Items: &OpenAPISchema{Type: "array", Items: &OpenAPISchema{Type: "string"}}, Description: "Result rows as text; omitted for anyone but the proposer or the approver"},
@@ -2471,7 +2471,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/actions/{id}": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get an action",
-				Description: "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser. For anyone but the proposer or the approver, a superuser included, the statements, review reasons and result statements and errors are masked as other statement text is, the error of a statement that held a credential is replaced with a fixed message, the rationale and the preview, undo, verification and outcome documents are null, and the rows and truncated fields of each result are omitted.",
+				Description: "Returns an action. An action on a connection the caller cannot see is reported as not found. The evidence and conversation_id fields are null for anyone but the proposer or a superuser. For anyone but the proposer or the approver, a superuser included, the statements, review reasons and result statements and errors are masked as other statement text is, every result error of an action any of whose statements held a credential is replaced with a fixed message, the rationale and the preview, undo, verification and outcome documents are null, and the rows and truncated fields of each result are omitted.",
 				OperationID: "getAction",
 				Tags:        []string{"Actions"},
 				Security:    bearerAuth,

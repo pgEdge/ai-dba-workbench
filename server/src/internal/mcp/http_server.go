@@ -243,12 +243,19 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Parse JSON-RPC request
-	var req JSONRPCRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	// Parse the JSON-RPC message. Result and Error are only present when
+	// the client is answering a server-initiated request.
+	var msg struct {
+		JSONRPCRequest
+		Result json.RawMessage `json:"result"`
+		Error  json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(body, &msg); err != nil {
 		sendHTTPError(w, nil, -32700, "Parse error", err.Error())
 		return
 	}
+	req := msg.JSONRPCRequest
+	isClientResponse := req.Method == "" && (msg.Result != nil || msg.Error != nil)
 
 	// Trace incoming request
 	if tracing.IsEnabled() {
@@ -271,6 +278,20 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Store request ID in context for use by tool/resource handlers
 	ctx = context.WithValue(ctx, requestIDContextKey, requestID)
+
+	// Streamable HTTP requires 202 Accepted with no body for an accepted
+	// notification or client response; a notification is still handled
+	// for its side effects, as on stdio.
+	if isClientResponse || req.ID == nil {
+		if !isClientResponse {
+			s.handleRequestHTTP(ctx, req)
+		}
+		if tracing.IsEnabled() {
+			tracing.LogHTTPResponse(sessionID, tokenHash, requestID, r.Method, "/mcp/v1 "+req.Method, http.StatusAccepted, nil, time.Since(startTime))
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 
 	// Handle the request and capture the response (pass context with IP address)
 	response := s.handleRequestHTTP(ctx, req)

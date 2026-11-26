@@ -57,6 +57,11 @@ project adheres to
 
 ### Fixed
 
+- Answer MCP notifications and client responses over HTTP with
+  `202 Accepted` and no body, as the Streamable HTTP transport
+  requires. The server previously answered them with `200` and a JSON
+  body, which strict clients such as Codex reject, loading no tools.
+
 - Show the event timeline on a pgEdge ColdFront metrics datastore.
   Every timeline request, and the estate and scoped snapshots that
   include it, previously failed with `operator does not exist: json =

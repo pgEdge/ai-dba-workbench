@@ -240,10 +240,10 @@ project adheres to
   included acknowledged alerts, system alerts and alerts on other
   servers, and never refreshed; the chart now refreshes with the rest
   of the dashboard. The chart sends one counts request for each batch
-  of up to 100 servers, so its severity counts come from one snapshot,
-  and a refresh no longer restarts a request that is still loading the
-  same servers, which kept the chart loading or showing stale counts on
-  a large estate. (#864, #901)
+  of up to 100 servers, so each batch's severity counts come from one
+  snapshot, and a refresh no longer restarts a request that is still
+  loading the same servers, which kept the chart loading or showing
+  stale counts on a large estate. (#864, #901)
 
 - Store the `pg_stat_statements` statement list once per collection.
   The collector read the server-wide view in every database that has

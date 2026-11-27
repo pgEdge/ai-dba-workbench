@@ -58,6 +58,7 @@ const (
 	deniedActionConnectionRead          = "connection.read"
 	deniedActionConnectionQuery         = "connection.query"
 	deniedActionConnectionQueryValidate = "connection.query.validate"
+	deniedActionConnectionQueryWrite    = "connection.query.write"
 	deniedActionMetricsRead             = "metrics.read"
 )
 

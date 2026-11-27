@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pgedge/ai-workbench/server/internal/actions"
 	"github.com/pgedge/ai-workbench/server/internal/api"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -720,6 +721,86 @@ func TestMaskedConnectionErrorOnEveryRouteIntegration(t *testing.T) {
 		}
 		if got := strings.Count(out, metrics.RedactedValue); got < len(connectionErrorMembers) {
 			t.Errorf("%s should show the masked value for every connection, found %d:\n%s", route, got, out)
+		}
+	}
+}
+
+// TestMaskedActionStatementsIntegration checks that GET
+// /api/v1/actions/{id} masks the statement text of a proposed action,
+// and what its run reported, for everyone but the proposer and the
+// approver, a superuser included, as every other route that returns
+// statement text does. It runs on the real store and RBAC checker over
+// the collector's schema.
+func TestMaskedActionStatementsIntegration(t *testing.T) {
+	pool := scratchdb.NewCollectorSchema(t, catalogSchemaSuffix, 2)
+	ctx := context.Background()
+	ds := database.NewTestDatastore(pool)
+	authStore, storeCleanup := newRBACRegressionTestStore(t)
+	t.Cleanup(storeCleanup)
+	checker := auth.NewRBACCheckerForDatastore(authStore, ds)
+
+	var connID int
+	if err := pool.QueryRow(ctx, `INSERT INTO connections
+        (name, host, port, database_name, username, owner_username, is_shared, is_monitored)
+        VALUES ('action-masking', '192.0.2.1', 5432, 'db', 'app', 'alice', TRUE, TRUE)
+        RETURNING id`).Scan(&connID); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	const stmt = "ALTER ROLE app PASSWORD 'example-secret'"
+	store := actions.NewStore(pool)
+	a, err := store.Create(ctx, actions.NewAction{
+		ConnectionID: connID, Statements: []string{stmt}, Source: "chat_block",
+		ProposedBy: "alice", ProposedVia: "session", Attempt: 1,
+		Rationale: "set the password to 'example-secret'",
+	})
+	if err != nil {
+		t.Fatalf("seed action: %v", err)
+	}
+	results, err := json.Marshal([]actions.StatementResult{{
+		Statement: stmt, Error: "near PASSWORD 'example-secret'",
+		Columns: []string{"c"}, Rows: [][]string{{"PASSWORD 'example-secret'"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE proposed_actions
+        SET review_status = 'passed', review = '{"decision":"pass","danger":"low","reasons":[],"reviewer":"t"}',
+            approval = 'approved', approved_by = 'carol', approved_via = 'session',
+            exec_status = 'failed', transactional = TRUE, results = $2
+        WHERE id = $1`, a.ID, results); err != nil {
+		t.Fatalf("seed outcome: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	api.NewActionHandler(store, nil, nil, ds, checker, nil, 0).
+		RegisterRoutes(mux, func(h http.HandlerFunc) http.HandlerFunc { return h })
+	user := func(name string) context.Context {
+		return context.WithValue(context.Background(), auth.UsernameContextKey, name)
+	}
+	tests := []struct {
+		name  string
+		ctx   context.Context
+		shown bool
+	}{
+		{"superuser", superuserContext(), false},
+		{"reader", user("bob"), false},
+		{"proposer", user("alice"), true},
+		{"approver", user("carol"), true},
+	}
+	for _, tt := range tests {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/actions/"+strconv.FormatInt(a.ID, 10), nil).
+			WithContext(tt.ctx)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: GET returned %d: %s", tt.name, rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if got := strings.Contains(body, "example-secret"); got != tt.shown {
+			t.Errorf("%s: secret shown = %v, want %v:\n%s", tt.name, got, tt.shown, body)
+		}
+		if !strings.Contains(body, "ALTER ROLE app PASSWORD") {
+			t.Errorf("%s: the statement is missing:\n%s", tt.name, body)
 		}
 	}
 }

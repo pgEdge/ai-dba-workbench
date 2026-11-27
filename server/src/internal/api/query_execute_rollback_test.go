@@ -233,9 +233,6 @@ func TestExecuteQuery_ReadOnlyPathCommitsAndReleases(t *testing.T) {
 	if len(resp.Results[0].Rows) != 1 || resp.Results[0].Rows[0][0] != "1" {
 		t.Errorf("first statement rows = %v, want [[1]]", resp.Results[0].Rows)
 	}
-	if resp.RequiresConfirmation {
-		t.Error("a read-only request must not require confirmation")
-	}
 }
 
 // TestExecuteQuery_ReadOnlyFailureRollsBack covers the aborted read-only
@@ -277,85 +274,76 @@ func TestExecuteQuery_ReadOnlyFailureRollsBack(t *testing.T) {
 	}
 }
 
-// TestExecuteQuery_WriteRequiresConfirmation covers the confirmation
-// prompt returned for unconfirmed write statements, before any database
-// connection is opened.
-func TestExecuteQuery_WriteRequiresConfirmation(t *testing.T) {
+// TestExecuteQuery_WriteRefusedWithRequiresAction covers the refusal of a
+// batch that contains a write statement. The refusal is a 409 that points
+// at proposed actions, it is sent whether or not the caller sets the
+// retired "confirmed" field, and nothing runs.
+func TestExecuteQuery_WriteRefusedWithRequiresAction(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()
 
 	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
 
-	rec := postQuery(t, h, connID,
-		`{"query":"CREATE TABLE query_exec_write_target (id int)"}`)
+	for _, body := range []string{
+		`{"query":"CREATE TABLE query_exec_write_target (id int)"}`,
+		`{"query":"CREATE TABLE query_exec_write_target (id int)","confirmed":true}`,
+		`{"query":"SELECT 1; DROP TABLE no_such_table_for_issue_381","confirmed":true}`,
+	} {
+		rec := postQuery(t, h, connID, body)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want %d (body %q)",
+				rec.Code, http.StatusConflict, rec.Body.String())
+		}
+		var resp writeRefusedResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode refusal: %v", err)
+		}
+		if !resp.RequiresAction {
+			t.Error("expected requires_action for a write")
+		}
+		if len(resp.WriteStatements) != 1 {
+			t.Errorf("write statements = %v, want 1", resp.WriteStatements)
+		}
+		if resp.Error == "" {
+			t.Error("expected an error message")
+		}
 	}
-	resp := decodeMultiQuery(t, rec)
-	if !resp.RequiresConfirmation {
-		t.Fatal("expected requires_confirmation for an unconfirmed write")
+
+	var exists bool
+	err := pool.QueryRow(context.Background(),
+		`SELECT to_regclass('query_exec_write_target') IS NOT NULL`).Scan(&exists)
+	if err != nil {
+		t.Fatalf("failed to check for the table: %v", err)
 	}
-	if len(resp.WriteStatements) != 1 {
-		t.Errorf("write statements = %v, want 1", resp.WriteStatements)
-	}
-	if !strings.Contains(resp.ConfirmationMessage, "1 write statement") {
-		t.Errorf("confirmation message = %q", resp.ConfirmationMessage)
+	if exists {
+		t.Error("a refused write must not have run")
 	}
 }
 
-// TestExecuteQuery_ConfirmedWritePath covers the write branch, which runs
-// each statement outside a transaction and reports a success row for the
-// ones that are not read-only.
-func TestExecuteQuery_ConfirmedWritePath(t *testing.T) {
+// TestExecuteQuery_WriteRefusalIsAudited proves the refusal goes through
+// the denial recorder with the query-write action and the connection as
+// target.
+func TestExecuteQuery_WriteRefusalIsAudited(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()
 
 	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
 
-	rec := postQuery(t, h, connID, `{"query":"CREATE TABLE `+
-		`query_exec_write_target (id int); SELECT count(*) FROM `+
-		`query_exec_write_target;","confirmed":true}`)
+	var gotAction, gotTarget, gotReason string
+	h.SetDenialRecorder(func(r *http.Request, reason string) {
+		d, _ := deniedTargetFrom(r)
+		gotAction, gotTarget, gotReason = d.action, d.target, reason
+	})
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d (body %q)",
-			rec.Code, http.StatusOK, rec.Body.String())
+	rec := postQuery(t, h, connID, `{"query":"DELETE FROM t"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
 	}
-	resp := decodeMultiQuery(t, rec)
-	if len(resp.Results) != 2 {
-		t.Fatalf("results = %d, want 2", len(resp.Results))
-	}
-	if resp.Results[0].RowCount != 1 ||
-		resp.Results[0].Rows[0][0] != "Statement executed successfully" {
-		t.Errorf("write result = %+v, want the success row", resp.Results[0])
-	}
-	if resp.Results[1].Error != "" {
-		t.Errorf("read-back error = %q, want none", resp.Results[1].Error)
-	}
-}
-
-// TestExecuteQuery_ConfirmedWriteFailureReported covers the write branch's
-// error path, where a statement fails and execution stops.
-func TestExecuteQuery_ConfirmedWriteFailureReported(t *testing.T) {
-	h, pool, target, cleanup := newQueryExecTestHandler(t)
-	defer cleanup()
-
-	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
-
-	rec := postQuery(t, h, connID,
-		`{"query":"DROP TABLE no_such_table_for_issue_381; SELECT 1;",`+
-			`"confirmed":true}`)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
-	}
-	resp := decodeMultiQuery(t, rec)
-	if len(resp.Results) != 1 {
-		t.Fatalf("results = %d, want 1 (execution stops at the first error)",
-			len(resp.Results))
-	}
-	if resp.Results[0].Error == "" {
-		t.Error("expected an error for dropping a missing table")
+	if gotAction != deniedActionConnectionQueryWrite ||
+		gotTarget != connectionDenialTarget(connID) ||
+		gotReason != queryWriteRefused {
+		t.Errorf("audit = (%q, %q, %q)", gotAction, gotTarget, gotReason)
 	}
 }
 
@@ -441,36 +429,9 @@ func TestExecuteQuery_ExplainAcquireFailureReportsError(t *testing.T) {
 	}
 }
 
-// TestExecuteQuery_ConfirmedWriteStopsOnReadFailure covers the write
-// path's read-only statement error branch, where a SELECT following a
-// successful write fails and execution stops.
-func TestExecuteQuery_ConfirmedWriteStopsOnReadFailure(t *testing.T) {
-	h, pool, target, cleanup := newQueryExecTestHandler(t)
-	defer cleanup()
-
-	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
-
-	rec := postQuery(t, h, connID, `{"query":"CREATE TABLE `+
-		`query_exec_write_target (id int); SELECT * FROM `+
-		`no_such_table_for_issue_381; SELECT 1;","confirmed":true}`)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d (body %q)",
-			rec.Code, http.StatusOK, rec.Body.String())
-	}
-	resp := decodeMultiQuery(t, rec)
-	if len(resp.Results) != 2 {
-		t.Fatalf("results = %d, want 2 (execution stops after the failure)",
-			len(resp.Results))
-	}
-	if resp.Results[1].Error == "" {
-		t.Error("expected an error for the missing relation")
-	}
-}
-
 // TestExecuteQuery_DeniesUnauthorisedCallers covers the two RBAC gates:
 // the read gate that rejects a caller with no access to the connection,
-// and the write gate that rejects a read-only caller who confirms a write
+// and the write refusal that answers a read-only caller who sends a write
 // statement. Both must refuse before any database connection is opened.
 func TestExecuteQuery_DeniesUnauthorisedCallers(t *testing.T) {
 	_, pool, target, cleanup := newQueryExecTestHandler(t)
@@ -528,13 +489,11 @@ func TestExecuteQuery_DeniesUnauthorisedCallers(t *testing.T) {
 
 		h.executeQuery(rec, req, connID)
 
-		if rec.Code != http.StatusForbidden {
+		// Writes are refused for every caller, so a read-only caller
+		// gets the same 409 as one with write access.
+		if rec.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want %d (body %q)",
-				rec.Code, http.StatusForbidden, rec.Body.String())
-		}
-		want := "Permission denied: you do not have write access to this connection"
-		if got := decodeError(t, rec).Error; got != want {
-			t.Errorf("error = %q, want %q", got, want)
+				rec.Code, http.StatusConflict, rec.Body.String())
 		}
 	})
 }
@@ -709,35 +668,5 @@ func TestRunSimpleStatement_EmptyResult(t *testing.T) {
 	}
 	if len(result.Columns) != 1 || result.Columns[0] != "g" {
 		t.Errorf("columns = %v, want [g]", result.Columns)
-	}
-}
-
-// TestSimpleRowValues covers the rendering of one simple-protocol row,
-// where a NULL column arrives as a nil byte slice and is reported as the
-// text NULL, as it is on the pgx path.
-func TestSimpleRowValues(t *testing.T) {
-	tests := []struct {
-		name string
-		row  [][]byte
-		want []string
-	}{
-		{"no columns", [][]byte{}, []string{}},
-		{"values", [][]byte{[]byte("a"), []byte("1")}, []string{"a", "1"}},
-		{"null column", [][]byte{nil, []byte("x")}, []string{"NULL", "x"}},
-		{"empty string", [][]byte{[]byte("")}, []string{""}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := simpleRowValues(tt.row)
-			if len(got) != len(tt.want) {
-				t.Fatalf("values = %v, want %v", got, tt.want)
-			}
-			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("values[%d] = %q, want %q", i, got[i], tt.want[i])
-				}
-			}
-		})
 	}
 }

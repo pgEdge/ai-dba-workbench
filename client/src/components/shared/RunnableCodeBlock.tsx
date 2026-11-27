@@ -11,70 +11,38 @@
  */
 
 import type React from 'react';
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
-import Button from '@mui/material/Button';
-import IconButton from '@mui/material/IconButton';
-import CircularProgress from '@mui/material/CircularProgress';
-import Tooltip from '@mui/material/Tooltip';
-import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
-import CloseIcon from '@mui/icons-material/Close';
-import ErrorIcon from '@mui/icons-material/Error';
-import WarningIcon from '@mui/icons-material/Warning';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { apiFetch } from '../../utils/apiClient';
+import ActionBlock from './ActionBlock';
+import type { ClientActionSource } from '../../types/actions';
 import { useSqlValidation } from '../../hooks/useSqlValidation';
+import type { SqlValidationState } from '../../hooks/useSqlValidation';
 import { extractExecutableSQL, hasSqlParameters } from './sqlDetection';
 import CopyCodeButton from './CopyCodeButton';
 import {
-    sxMonoFont,
-    sxConfirmationActions,
     getCodeBlockWrapperSx,
     getCodeBlockCustomStyle,
-    getTableSx,
     getCodeBlockButtonGroupSx,
-    getCopyButtonSx,
     getQueryResultWrapperSx,
-    getQueryResultHeaderSx,
-    getQueryErrorSx,
-    getConfirmationPanelSx,
-    getConfirmationTitleSx,
-    getConfirmationTextSx,
-    getConfirmationStatementSx,
 } from './markdownStyles';
+import { useRunnableQuery } from './useRunnableQuery';
+import type { QueryState, UseRunnableQueryResult } from './useRunnableQuery';
+import {
+    RunButton,
+    InfoNotice,
+    ValidationFailedNotice,
+    WriteConfirmation,
+    QueryResults,
+    ErrorLine,
+} from './RunnableCodeBlockParts';
 
-// ---------------------------------------------------------------------------
-// Query result types
-// ---------------------------------------------------------------------------
-
-export interface StatementResult {
-    columns?: string[];
-    rows?: string[][];
-    row_count?: number;
-    truncated?: boolean;
-    query: string;
-    error?: string;
-}
-
-export interface QueryResponse {
-    results?: StatementResult[];
-    total_statements?: number;
-    requires_confirmation?: boolean;
-    write_statements?: string[];
-    confirmation_message?: string;
-}
-
-export interface QueryState {
-    loading: boolean;
-    response: QueryResponse | null;
-    error: string | null;
-    pendingConfirmation: boolean;
-    writeStatements: string[];
-}
+export type {
+    StatementResult,
+    QueryResponse,
+    QueryState,
+} from './useRunnableQuery';
 
 // ---------------------------------------------------------------------------
 // Component
@@ -106,32 +74,229 @@ export interface RunnableCodeBlockProps {
     theme: Theme;
     isSql: boolean;
     props: Record<string, unknown>;
+    /** Where a write confirmed from this block is recorded as coming from. */
+    actionSource?: ClientActionSource;
+    /** What the user was looking at, kept with any action created. */
+    actionContext?: string;
+    alertId?: number;
+    conversationId?: string;
 }
 
-const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
-    codeContent,
-    language,
-    isDark: _isDark,
-    connectionId,
-    databaseName,
-    serverName,
-    syntaxTheme,
-    customBackground,
-    theme,
-    isSql,
-    props,
-}) => {
-    const [queryState, setQueryState] = useState<QueryState>({
-        loading: false,
-        response: null,
-        error: null,
-        pendingConfirmation: false,
-        writeStatements: [],
-    });
+export interface RunnableCodeBlockProps {
+    codeContent: string;
+    language: string;
+    isDark: boolean;
+    connectionId: number;
+    databaseName?: string;
+    serverName?: string;
+    syntaxTheme: Record<string, unknown>;
+    customBackground: string;
+    theme: Theme;
+    isSql: boolean;
+    props: Record<string, unknown>;
+    /** Where a write confirmed from this block is recorded as coming from. */
+    actionSource?: ClientActionSource;
+    /** What the user was looking at, kept with any action created. */
+    actionContext?: string;
+    alertId?: number;
+    conversationId?: string;
+}
 
-    // Store the cleaned SQL so the confirmation "Execute" button can
-    // re-send the same payload with confirmed=true.
-    const [cleanedSQL, setCleanedSQL] = useState<string>('');
+/** The server and database the block runs on, as a display name. */
+const targetNameOf = (serverName?: string, databaseName?: string): string => {
+    if (!serverName) {
+        return '';
+    }
+    return databaseName ? `${serverName}/${databaseName}` : serverName;
+};
+
+/** The Run button's tooltip for the current validation state. */
+const runTooltipOf = (
+    targetLabel: string,
+    validation: SqlValidationState,
+    blockedByValidation: boolean,
+): string => {
+    if (validation.status === 'pending') {
+        return 'Validating query...';
+    }
+    if (blockedByValidation) {
+        return 'This query failed validation';
+    }
+    if (validation.status === 'unsupported') {
+        return `${targetLabel} (not validated)`;
+    }
+    return targetLabel;
+};
+
+/** Whether anything renders beneath the code block. */
+const hasOutputBelow = (queryState: QueryState, showNotice: boolean): boolean =>
+    queryState.response !== null
+    || Boolean(queryState.error)
+    || queryState.pendingConfirmation
+    || showNotice;
+
+interface BlockNoticesProps {
+    theme: Theme;
+    isTemplate: boolean;
+    validation: SqlValidationState;
+    runAnyway: boolean;
+    onRunAnyway: () => void;
+}
+
+/** Template and validation notices shown directly beneath the code. */
+const BlockNotices: React.FC<BlockNoticesProps> = ({
+    theme,
+    isTemplate,
+    validation,
+    runAnyway,
+    onRunAnyway,
+}) => {
+    if (isTemplate) {
+        // Parameter template: not runnable without values
+        return (
+            <InfoNotice theme={theme} testId="sql-template-notice">
+                {SQL_TEMPLATE_MESSAGE}
+            </InfoNotice>
+        );
+    }
+    if (validation.status === 'invalid') {
+        return (
+            <ValidationFailedNotice
+                theme={theme}
+                error={validation.error}
+                runAnyway={runAnyway}
+                onRunAnyway={onRunAnyway}
+            />
+        );
+    }
+    if (validation.status === 'unsupported') {
+        // Statement kind that EXPLAIN cannot plan in advance
+        return (
+            <InfoNotice theme={theme} testId="sql-unvalidated-notice">
+                {SQL_UNVALIDATED_MESSAGE}
+            </InfoNotice>
+        );
+    }
+    return null;
+};
+
+interface QueryOutputProps {
+    blockProps: RunnableCodeBlockProps;
+    query: UseRunnableQueryResult;
+    targetName: string;
+}
+
+/** The confirmation prompt, action, results or error for a run. */
+const QueryOutput: React.FC<QueryOutputProps> = ({
+    blockProps,
+    query,
+    targetName,
+}) => {
+    const { theme } = blockProps;
+    const { queryState, confirmedWrite, confirm, dismiss } = query;
+    return (
+        <>
+            {/* A confirmed write is proposed, reviewed and run as an action */}
+            {queryState.pendingConfirmation && confirmedWrite !== null && (
+                <ActionBlock
+                    sql={confirmedWrite.sql}
+                    connectionId={confirmedWrite.target.connectionId}
+                    databaseName={confirmedWrite.target.databaseName}
+                    serverName={blockProps.serverName}
+                    source={blockProps.actionSource ?? 'chat_block'}
+                    context={blockProps.actionContext}
+                    alertId={blockProps.alertId}
+                    conversationId={blockProps.conversationId}
+                    onDismiss={dismiss}
+                />
+            )}
+            {queryState.pendingConfirmation && confirmedWrite === null && (
+                <WriteConfirmation
+                    theme={theme}
+                    targetName={targetName}
+                    writeStatements={queryState.writeStatements}
+                    onCancel={dismiss}
+                    onConfirm={confirm}
+                />
+            )}
+            {queryState.response?.results && (
+                <QueryResults
+                    theme={theme}
+                    response={{
+                        ...queryState.response,
+                        results: queryState.response.results,
+                    }}
+                    onDismiss={dismiss}
+                />
+            )}
+            {/* Top-level fetch error (network failure, non-200 status) */}
+            {queryState.error && (
+                <Box sx={getQueryResultWrapperSx(theme)}>
+                    <ErrorLine
+                        theme={theme}
+                        message={queryState.error}
+                        onDismiss={dismiss}
+                    />
+                </Box>
+            )}
+        </>
+    );
+};
+
+interface BlockRunControlProps {
+    theme: Theme;
+    targetName: string;
+    validation: SqlValidationState;
+    blockedByValidation: boolean;
+    query: UseRunnableQueryResult;
+}
+
+/** The Run button, reflecting validation and any run or action. */
+const BlockRunControl: React.FC<BlockRunControlProps> = ({
+    theme,
+    targetName,
+    validation,
+    blockedByValidation,
+    query,
+}) => {
+    const targetLabel = targetName ? `Run on ${targetName}` : 'Run query';
+    const validating = validation.status === 'pending';
+    return (
+        <RunButton
+            theme={theme}
+            targetLabel={targetLabel}
+            tooltipTitle={runTooltipOf(
+                targetLabel, validation, blockedByValidation,
+            )}
+            // While an action is showing, Run stays off: running again
+            // would drop the action's status and Cancel whilst the
+            // server works, and could propose the same write twice.
+            disabled={
+                query.queryState.loading
+                || validating
+                || blockedByValidation
+                || query.confirmedWrite !== null
+            }
+            loading={query.queryState.loading}
+            validating={validating}
+            onRun={() => { void query.run(); }}
+        />
+    );
+};
+
+const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = (blockProps) => {
+    const {
+        codeContent,
+        language,
+        connectionId,
+        databaseName,
+        serverName,
+        syntaxTheme,
+        customBackground,
+        theme,
+        isSql,
+        props,
+    } = blockProps;
 
     // The SQL that would actually be sent to the server, which is also
     // what gets validated.
@@ -159,127 +324,10 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
         setRunAnyway(false);
     }, [executableSQL, connectionId, databaseName]);
 
-    const validating = validation.status === 'pending';
+    const query = useRunnableQuery(executableSQL, connectionId, databaseName);
+
     const blockedByValidation = validation.status === 'invalid' && !runAnyway;
-
-    const handleRun = useCallback(async (confirmed = false) => {
-        // On the initial run, extract executable SQL from the code block.
-        // When re-running after confirmation, reuse the previously cleaned SQL.
-        const sql = confirmed ? cleanedSQL : executableSQL;
-        if (!confirmed) {
-            setCleanedSQL(sql);
-        }
-
-        if (!sql.trim()) {
-            setQueryState({
-                loading: false,
-                response: null,
-                error: 'No executable SQL found in this code block',
-                pendingConfirmation: false,
-                writeStatements: [],
-            });
-            return;
-        }
-
-        setQueryState({
-            loading: true,
-            response: null,
-            error: null,
-            pendingConfirmation: false,
-            writeStatements: [],
-        });
-
-        try {
-            const body: Record<string, unknown> = { query: sql };
-            if (databaseName) {
-                body.database_name = databaseName;
-            }
-            if (confirmed) {
-                body.confirmed = true;
-            }
-
-            const response = await apiFetch(
-                `/api/v1/connections/${connectionId}/query`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                },
-            );
-
-            if (!response.ok) {
-                let errorMessage = `Query failed with status ${response.status}`;
-                try {
-                    const errorData = await response.json();
-                    if (errorData.error) {
-                        errorMessage = errorData.error;
-                    }
-                } catch {
-                    // If JSON parsing fails, try plain text
-                    const errorText = await response.text();
-                    if (errorText) {
-                        errorMessage = errorText;
-                    }
-                }
-                throw new Error(errorMessage);
-            }
-
-            const data: QueryResponse = await response.json();
-
-            if (data.requires_confirmation) {
-                setQueryState({
-                    loading: false,
-                    response: null,
-                    error: null,
-                    pendingConfirmation: true,
-                    writeStatements: data.write_statements || [],
-                });
-                return;
-            }
-
-            setQueryState({
-                loading: false,
-                response: data,
-                error: null,
-                pendingConfirmation: false,
-                writeStatements: [],
-            });
-        } catch (err) {
-            setQueryState({
-                loading: false,
-                response: null,
-                error: (err as Error).message,
-                pendingConfirmation: false,
-                writeStatements: [],
-            });
-        }
-    }, [executableSQL, connectionId, databaseName, cleanedSQL]);
-
-    const handleDismiss = useCallback(() => {
-        setQueryState({
-            loading: false,
-            response: null,
-            error: null,
-            pendingConfirmation: false,
-            writeStatements: [],
-        });
-    }, []);
-
-    const targetName = serverName
-        ? databaseName
-            ? `${serverName}/${databaseName}`
-            : serverName
-        : '';
-    const targetLabel = targetName ? `Run on ${targetName}` : 'Run query';
-
-    let tooltipTitle = targetLabel;
-    if (validating) {
-        tooltipTitle = 'Validating query...';
-    } else if (blockedByValidation) {
-        tooltipTitle = 'This query failed validation';
-    } else if (validation.status === 'unsupported') {
-        tooltipTitle = `${targetLabel} (not validated)`;
-    }
+    const targetName = targetNameOf(serverName, databaseName);
 
     // Notices render directly beneath the code block, so the block keeps
     // its square bottom corners when one is showing.
@@ -292,9 +340,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
             <Box sx={{
                 ...getCodeBlockWrapperSx(theme),
                 position: 'relative',
-                // Remove bottom border radius when results, errors, a
-                // confirmation prompt or a validation notice are showing
-                ...((queryState.response !== null || Boolean(queryState.error) || queryState.pendingConfirmation || showNotice) ? {
+                ...(hasOutputBelow(query.queryState, showNotice) ? {
                     borderBottomLeftRadius: 0,
                     borderBottomRightRadius: 0,
                     mb: 0,
@@ -315,331 +361,28 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                 <Box sx={getCodeBlockButtonGroupSx()}>
                     <CopyCodeButton code={codeContent} theme={theme} />
                     {isSql && !isTemplate && (
-                        <Tooltip title={tooltipTitle} placement="left">
-                            {/* The label stays stable across validation
-                                states so assistive technology announces
-                                the action, not its transient status. */}
-                            <span aria-label={targetLabel}>
-                                <IconButton
-                                    size="small"
-                                    onClick={() => handleRun()}
-                                    disabled={
-                                        queryState.loading
-                                        || validating
-                                        || blockedByValidation
-                                    }
-                                    sx={getCopyButtonSx(theme)}
-                                >
-                                    {(queryState.loading || validating) ? (
-                                        <CircularProgress
-                                            size={14}
-                                            sx={{ color: alpha(theme.palette.secondary.main, 0.7) }}
-                                            aria-label={
-                                                validating
-                                                    ? 'Validating query'
-                                                    : 'Running query'
-                                            }
-                                        />
-                                    ) : (
-                                        <PlayArrowIcon sx={{ fontSize: 18 }} />
-                                    )}
-                                </IconButton>
-                            </span>
-                        </Tooltip>
+                        <BlockRunControl
+                            theme={theme}
+                            targetName={targetName}
+                            validation={validation}
+                            blockedByValidation={blockedByValidation}
+                            query={query}
+                        />
                     )}
                 </Box>
             </Box>
-
-            {/* Parameter template: not runnable without values */}
-            {isTemplate && (
-                <Box sx={getQueryResultWrapperSx(theme)}>
-                    <Box sx={getQueryErrorSx(theme)}>
-                        <InfoOutlinedIcon sx={{
-                            fontSize: 16,
-                            color: theme.palette.info.main,
-                            mt: 0.25,
-                            flexShrink: 0,
-                        }} />
-                        <Typography
-                            data-testid="sql-template-notice"
-                            sx={{
-                                fontSize: '0.875rem',
-                                color: 'text.secondary',
-                                flex: 1,
-                            }}
-                        >
-                            {SQL_TEMPLATE_MESSAGE}
-                        </Typography>
-                    </Box>
-                </Box>
-            )}
-
-            {/* Validation failure: Run is disabled, with an escape hatch */}
-            {!isTemplate && validation.status === 'invalid' && (
-                <Box sx={getQueryResultWrapperSx(theme)}>
-                    <Box sx={getQueryErrorSx(theme)}>
-                        <WarningIcon sx={{
-                            fontSize: 16,
-                            color: theme.palette.warning.main,
-                            mt: 0.25,
-                            flexShrink: 0,
-                        }} />
-                        <Box sx={{ flex: 1 }}>
-                            <Typography
-                                data-testid="sql-validation-error"
-                                sx={{
-                                    fontSize: '0.875rem',
-                                    color: theme.palette.mode === 'dark'
-                                        ? theme.palette.error.light
-                                        : theme.palette.error.dark,
-                                    ...sxMonoFont,
-                                    wordBreak: 'break-word',
-                                }}
-                            >
-                                This query did not validate: {validation.error}
-                            </Typography>
-                            {!runAnyway && (
-                                <Button
-                                    size="small"
-                                    onClick={() => { setRunAnyway(true); }}
-                                    sx={{ textTransform: 'none', mt: 0.5 }}
-                                >
-                                    Run anyway
-                                </Button>
-                            )}
-                        </Box>
-                    </Box>
-                </Box>
-            )}
-
-            {/* Statement kind that EXPLAIN cannot plan in advance */}
-            {!isTemplate && validation.status === 'unsupported' && (
-                <Box sx={getQueryResultWrapperSx(theme)}>
-                    <Box sx={getQueryErrorSx(theme)}>
-                        <InfoOutlinedIcon sx={{
-                            fontSize: 16,
-                            color: theme.palette.info.main,
-                            mt: 0.25,
-                            flexShrink: 0,
-                        }} />
-                        <Typography
-                            data-testid="sql-unvalidated-notice"
-                            sx={{
-                                fontSize: '0.875rem',
-                                color: 'text.secondary',
-                                flex: 1,
-                            }}
-                        >
-                            {SQL_UNVALIDATED_MESSAGE}
-                        </Typography>
-                    </Box>
-                </Box>
-            )}
-
-            {/* Write-statement confirmation prompt */}
-            {queryState.pendingConfirmation && (
-                <Box sx={getQueryResultWrapperSx(theme)}>
-                    <Box sx={getConfirmationPanelSx(theme)}>
-                        <Box sx={getConfirmationTitleSx(theme)}>
-                            <WarningIcon sx={{
-                                fontSize: 18,
-                                color: theme.palette.warning.main,
-                                mt: 0.125,
-                                flexShrink: 0,
-                            }} />
-                            <Typography sx={getConfirmationTextSx(theme)}>
-                                {targetName
-                                    ? `This code block contains statements that modify the database on ${targetName}:`
-                                    : 'This code block contains statements that modify the database:'}
-                            </Typography>
-                        </Box>
-                        {queryState.writeStatements.map((stmt, idx) => (
-                            <Typography key={idx} sx={getConfirmationStatementSx(theme)}>
-                                {'\u2022'} {stmt}
-                            </Typography>
-                        ))}
-                        <Box sx={sxConfirmationActions}>
-                            <Button
-                                size="small"
-                                onClick={handleDismiss}
-                                sx={{ textTransform: 'none' }}
-                            >
-                                Cancel
-                            </Button>
-                            <Button
-                                size="small"
-                                variant="contained"
-                                color="warning"
-                                onClick={() => handleRun(true)}
-                                sx={{ textTransform: 'none' }}
-                            >
-                                Execute
-                            </Button>
-                        </Box>
-                    </Box>
-                </Box>
-            )}
-
-            {/* Query results - multiple statement results */}
-            {queryState.response?.results && (
-                <Box sx={getQueryResultWrapperSx(theme)}>
-                    <Box sx={getQueryResultHeaderSx(theme)}>
-                        <Typography sx={{
-                            fontSize: '0.875rem',
-                            color: 'text.secondary',
-                            ...sxMonoFont,
-                        }}>
-                            {queryState.response.total_statements} statement{queryState.response.total_statements !== 1 ? 's' : ''}
-                        </Typography>
-                        <IconButton
-                            size="small"
-                            onClick={handleDismiss}
-                            sx={{ p: 0.25, color: 'text.secondary' }}
-                        >
-                            <CloseIcon sx={{ fontSize: 14 }} />
-                        </IconButton>
-                    </Box>
-                    {queryState.response.results.map((result, idx) => (
-                        <Box key={idx}>
-                            {/* Query label */}
-                            <Typography sx={{
-                                fontSize: '0.875rem',
-                                color: 'text.disabled',
-                                ...sxMonoFont,
-                                px: 1.5,
-                                py: 0.5,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                                borderTop: idx > 0 ? '1px solid' : 'none',
-                                borderColor: theme.palette.mode === 'dark'
-                                    ? theme.palette.grey[700]
-                                    : theme.palette.grey[200],
-                            }}>
-                                {result.query}
-                            </Typography>
-
-                            {/* Statement error */}
-                            {result.error && (
-                                <Box sx={getQueryErrorSx(theme)}>
-                                    <ErrorIcon sx={{
-                                        fontSize: 16,
-                                        color: theme.palette.error.main,
-                                        mt: 0.25,
-                                        flexShrink: 0,
-                                    }} />
-                                    <Typography sx={{
-                                        fontSize: '0.875rem',
-                                        color: theme.palette.mode === 'dark'
-                                            ? theme.palette.error.light
-                                            : theme.palette.error.dark,
-                                        flex: 1,
-                                        ...sxMonoFont,
-                                        wordBreak: 'break-word',
-                                    }}>
-                                        {result.error}
-                                    </Typography>
-                                </Box>
-                            )}
-
-                            {/* Statement results */}
-                            {result.columns && result.rows && (
-                                <>
-                                    <Box sx={{ overflowX: 'auto' }}>
-                                        <Box component="table" sx={getTableSx(theme)}>
-                                            <thead>
-                                                <tr>
-                                                    {result.columns.map((col, i) => (
-                                                        <th key={i}>
-                                                            <Typography sx={{
-                                                                fontSize: '0.875rem',
-                                                                fontWeight: 600,
-                                                                ...sxMonoFont,
-                                                                whiteSpace: 'nowrap',
-                                                            }}>
-                                                                {col}
-                                                            </Typography>
-                                                        </th>
-                                                    ))}
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {result.rows.map((row, ri) => (
-                                                    <tr key={ri}>
-                                                        {row.map((cell, ci) => (
-                                                            <td key={ci}>
-                                                                <Typography sx={{
-                                                                    fontSize: '0.875rem',
-                                                                    ...sxMonoFont,
-                                                                    whiteSpace: 'nowrap',
-                                                                }}>
-                                                                    {cell}
-                                                                </Typography>
-                                                            </td>
-                                                        ))}
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </Box>
-                                    </Box>
-                                    {result.truncated && (
-                                        <Typography sx={{
-                                            fontSize: '0.875rem',
-                                            color: 'text.disabled',
-                                            px: 1.5,
-                                            py: 0.5,
-                                        }}>
-                                            Results limited to {result.row_count} rows
-                                        </Typography>
-                                    )}
-                                    {!result.truncated && result.row_count !== undefined && (
-                                        <Typography sx={{
-                                            fontSize: '0.875rem',
-                                            color: 'text.disabled',
-                                            px: 1.5,
-                                            py: 0.5,
-                                        }}>
-                                            {result.row_count} row{result.row_count !== 1 ? 's' : ''}
-                                        </Typography>
-                                    )}
-                                </>
-                            )}
-                        </Box>
-                    ))}
-                </Box>
-            )}
-
-            {/* Top-level fetch error (network failure, non-200 status) */}
-            {queryState.error && (
-                <Box sx={getQueryResultWrapperSx(theme)}>
-                    <Box sx={getQueryErrorSx(theme)}>
-                        <ErrorIcon sx={{
-                            fontSize: 16,
-                            color: theme.palette.error.main,
-                            mt: 0.25,
-                            flexShrink: 0,
-                        }} />
-                        <Typography sx={{
-                            fontSize: '0.875rem',
-                            color: theme.palette.mode === 'dark'
-                                ? theme.palette.error.light
-                                : theme.palette.error.dark,
-                            flex: 1,
-                            ...sxMonoFont,
-                            wordBreak: 'break-word',
-                        }}>
-                            {queryState.error}
-                        </Typography>
-                        <IconButton
-                            size="small"
-                            onClick={handleDismiss}
-                            sx={{ p: 0.25, color: 'text.secondary', flexShrink: 0 }}
-                        >
-                            <CloseIcon sx={{ fontSize: 14 }} />
-                        </IconButton>
-                    </Box>
-                </Box>
-            )}
+            <BlockNotices
+                theme={theme}
+                isTemplate={isTemplate}
+                validation={validation}
+                runAnyway={runAnyway}
+                onRunAnyway={() => { setRunAnyway(true); }}
+            />
+            <QueryOutput
+                blockProps={blockProps}
+                query={query}
+                targetName={targetName}
+            />
         </>
     );
 };

@@ -46,6 +46,14 @@ vi.mock('react-syntax-highlighter', () => ({
     ),
 }));
 
+const mockActionBlock = vi.fn();
+vi.mock('../ActionBlock', () => ({
+    default: (props: Record<string, unknown>) => {
+        mockActionBlock(props);
+        return <div data-testid="action-block-stub">{String(props.sql)}</div>;
+    },
+}));
+
 const mockApiFetch = vi.fn();
 vi.mock('../../../utils/apiClient', () => ({
     apiFetch: (...args: unknown[]) => mockApiFetch(...args),
@@ -102,6 +110,19 @@ const makeOkResponse = (body: unknown) => ({
     text: vi.fn().mockResolvedValue(''),
 });
 
+const makeRefusal = (writeStatements: string[]) => makeErrorResponse({
+    status: 409,
+    json: {
+        error: 'writes must be proposed as an action',
+        requires_action: true,
+        write_statements: writeStatements,
+    },
+});
+
+/*
+ * Like a real Response, the body can be read only once: a second read
+ * rejects, so a reader that tries JSON and then text sees the failure.
+ */
 const makeErrorResponse = ({
     status = 500,
     json,
@@ -110,16 +131,23 @@ const makeErrorResponse = ({
     status?: number;
     json?: unknown;
     text?: string;
-} = {}) => ({
-    ok: false,
-    status,
-    json: vi.fn(
-        json === undefined
-            ? () => Promise.reject(new Error('not-json'))
-            : () => Promise.resolve(json),
-    ),
-    text: vi.fn().mockResolvedValue(text ?? ''),
-});
+} = {}) => {
+    const body = json === undefined ? (text ?? '') : JSON.stringify(json);
+    let used = false;
+    const read = () => {
+        if (used) {
+            return Promise.reject(new TypeError('Body has already been consumed'));
+        }
+        used = true;
+        return Promise.resolve(body);
+    };
+    return {
+        ok: false,
+        status,
+        json: vi.fn(() => read().then(t => JSON.parse(t) as unknown)),
+        text: vi.fn(read),
+    };
+};
 
 beforeEach(() => {
     mockApiFetch.mockReset();
@@ -308,18 +336,9 @@ describe('RunnableCodeBlock query execution', () => {
         expect(screen.getByText('boom')).toBeInTheDocument();
     });
 
-    it('shows a confirmation prompt and re-runs with confirmed=true', async () => {
+    it('shows a confirmation prompt and proposes an action on confirm', async () => {
         mockApiFetch.mockResolvedValueOnce(
-            makeOkResponse({
-                requires_confirmation: true,
-                write_statements: ['DELETE FROM t;'],
-            }),
-        );
-        mockApiFetch.mockResolvedValueOnce(
-            makeOkResponse({
-                total_statements: 1,
-                results: [{ query: 'DELETE FROM t;', row_count: 0 }],
-            }),
+            makeRefusal(['DELETE FROM t;']),
         );
         renderWithTheme(
             <RunnableCodeBlock
@@ -345,27 +364,99 @@ describe('RunnableCodeBlock query execution', () => {
             .filter((el) => el.tagName === 'P');
         expect(stmtParagraphs.length).toBeGreaterThan(0);
 
-        // Execute the confirmation; the second call must include confirmed=true.
+        // Confirming hands the SQL to an ActionBlock; the query endpoint
+        // is not called a second time and no confirmation flag is sent.
         await user.click(screen.getByRole('button', { name: /execute/i }));
-        await waitFor(() =>
-            expect(screen.getByText('1 statement')).toBeInTheDocument(),
+        expect(screen.getByTestId('action-block-stub')).toHaveTextContent(
+            'DELETE FROM t;',
+        );
+        expect(mockApiFetch).toHaveBeenCalledTimes(1);
+        expect(
+            JSON.parse((mockApiFetch.mock.calls[0][1] as { body: string }).body),
+        ).not.toHaveProperty('confirmed');
+        expect(mockActionBlock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sql: 'DELETE FROM t;',
+                connectionId: 1,
+                source: 'chat_block',
+            }),
+        );
+        expect(
+            screen.queryByText(/contains statements that modify/i),
+        ).not.toBeInTheDocument();
+    });
+
+    it('passes the source, context, alert and conversation to the action', async () => {
+        mockApiFetch.mockResolvedValueOnce(makeRefusal(['DELETE FROM t;']));
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="DELETE FROM t;"
+                databaseName="app"
+                actionSource="alert_analysis"
+                actionContext="Alert 5 on alpha"
+                alertId={5}
+                conversationId="conv-1"
+            />,
         );
 
-        const secondBody = JSON.parse(
-            (mockApiFetch.mock.calls[1][1] as { body: string }).body,
+        const user = userEvent.setup();
+        await user.click(getRunButton());
+        await user.click(
+            await screen.findByRole('button', { name: /execute/i }),
         );
-        expect(secondBody).toMatchObject({
-            confirmed: true,
-            query: 'DELETE FROM t;',
-        });
+
+        expect(mockActionBlock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                databaseName: 'app',
+                source: 'alert_analysis',
+                context: 'Alert 5 on alpha',
+                alertId: 5,
+                conversationId: 'conv-1',
+            }),
+        );
+    });
+
+    it('reports a 409 that is not a write refusal as an error', async () => {
+        mockApiFetch.mockResolvedValueOnce(
+            makeErrorResponse({ status: 409, json: { error: 'conflict' } }),
+        );
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="SELECT 1;"
+            />,
+        );
+
+        const user = userEvent.setup();
+        await user.click(getRunButton());
+
+        expect(await screen.findByText('conflict')).toBeInTheDocument();
+    });
+
+    it('reports an unreadable 409 with the status', async () => {
+        mockApiFetch.mockResolvedValueOnce(makeErrorResponse({ status: 409 }));
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="SELECT 1;"
+            />,
+        );
+
+        const user = userEvent.setup();
+        await user.click(getRunButton());
+
+        expect(
+            await screen.findByText('Query failed with status 409'),
+        ).toBeInTheDocument();
     });
 
     it('dismisses the confirmation prompt when Cancel is clicked', async () => {
         mockApiFetch.mockResolvedValueOnce(
-            makeOkResponse({
-                requires_confirmation: true,
-                write_statements: ['DROP TABLE t;'],
-            }),
+            makeRefusal(['DROP TABLE t;']),
         );
         renderWithTheme(
             <RunnableCodeBlock
@@ -397,10 +488,7 @@ describe('RunnableCodeBlock query execution', () => {
         ['server', undefined, 'alpha'],
     ])('names the %s in the confirmation prompt', async (_label, databaseName, target) => {
         mockApiFetch.mockResolvedValueOnce(
-            makeOkResponse({
-                requires_confirmation: true,
-                write_statements: ['DROP TABLE t;'],
-            }),
+            makeRefusal(['DROP TABLE t;']),
         );
         renderWithTheme(
             <RunnableCodeBlock
@@ -791,5 +879,72 @@ describe('RunnableCodeBlock validation gating', () => {
         expect(getRunButton()).toBeEnabled();
         expect(screen.queryByTestId('sql-unvalidated-notice')).toBeNull();
         expect(screen.queryByTestId('sql-validation-error')).toBeNull();
+    });
+});
+
+describe('RunnableCodeBlock while an action is showing', () => {
+    it('disables Run until the action is dismissed', async () => {
+        mockApiFetch.mockResolvedValueOnce(makeRefusal(['DELETE FROM t;']));
+        renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="DELETE FROM t;"
+            />,
+        );
+
+        const user = userEvent.setup();
+        await user.click(getRunButton());
+        await user.click(
+            await screen.findByRole('button', { name: /execute/i }),
+        );
+
+        expect(screen.getByTestId('action-block-stub')).toBeInTheDocument();
+        expect(getRunButton()).toBeDisabled();
+
+        // Only the action's own dismiss clears it and re-enables Run.
+        const { onDismiss } = mockActionBlock.mock.calls.at(-1)?.[0] as {
+            onDismiss: () => void;
+        };
+        act(() => { onDismiss(); });
+
+        expect(
+            screen.queryByTestId('action-block-stub'),
+        ).not.toBeInTheDocument();
+        expect(getRunButton()).toBeEnabled();
+        expect(mockApiFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('proposes the SQL that was run, even if the block changed since', async () => {
+        mockApiFetch.mockResolvedValueOnce(makeRefusal(['DELETE FROM t;']));
+        const { rerender } = renderWithTheme(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="DELETE FROM t;"
+            />,
+        );
+
+        const user = userEvent.setup();
+        await user.click(getRunButton());
+        await screen.findByRole('button', { name: /execute/i });
+
+        rerender(
+            <RunnableCodeBlock
+                {...baseProps}
+                isSql={true}
+                codeContent="DROP TABLE accounts;"
+            />,
+        );
+        await user.click(screen.getByRole('button', { name: /execute/i }));
+
+        expect(mockActionBlock).toHaveBeenLastCalledWith(
+            expect.objectContaining({ sql: 'DELETE FROM t;' }),
+        );
+        expect(screen.getByTestId('action-block-stub')).toHaveTextContent(
+            'DELETE FROM t;',
+        );
+        // Confirming hands over the snapshot; it does not query again.
+        expect(mockApiFetch).toHaveBeenCalledTimes(1);
     });
 });

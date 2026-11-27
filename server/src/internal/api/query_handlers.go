@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/pgexec"
 	"github.com/pgedge/ai-workbench/server/internal/sqllex"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
@@ -32,7 +33,6 @@ import (
 type queryRequest struct {
 	Query        string `json:"query"`
 	DatabaseName string `json:"database_name,omitempty"`
-	Confirmed    bool   `json:"confirmed,omitempty"`
 }
 
 // statementResult holds the result of executing a single SQL statement.
@@ -50,12 +50,25 @@ type statementResult struct {
 // multiQueryResponse is the JSON response for query execution containing
 // results from one or more SQL statements
 type multiQueryResponse struct {
-	Results              []statementResult `json:"results,omitempty"`
-	TotalStatements      int               `json:"total_statements,omitempty"`
-	RequiresConfirmation bool              `json:"requires_confirmation,omitempty"`
-	WriteStatements      []string          `json:"write_statements,omitempty"`
-	ConfirmationMessage  string            `json:"confirmation_message,omitempty"`
+	Results         []statementResult `json:"results,omitempty"`
+	TotalStatements int               `json:"total_statements,omitempty"`
 }
+
+// writeRefusedResponse is the 409 body for a batch that contains a write
+// statement. The endpoint runs read-only statements only; writes go
+// through a proposed action, which is reviewed and then run by the
+// action executor.
+type writeRefusedResponse struct {
+	Error           string   `json:"error"`
+	RequiresAction  bool     `json:"requires_action"`
+	WriteStatements []string `json:"write_statements"`
+}
+
+// queryWriteRefused is the message returned, and the reason recorded in
+// the audit log, when a batch with a write statement is sent to the
+// query endpoint.
+const queryWriteRefused = "This request contains write statements. " +
+	"Propose them as an action instead of running them here"
 
 // defaultRowLimit is the default maximum number of rows returned
 const defaultRowLimit = 500
@@ -136,39 +149,27 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Determine whether any statement is a write operation
+	// This endpoint runs read-only statements only. A batch with any
+	// write statement is refused whatever the caller's access, and the
+	// caller is pointed at proposed actions, which are reviewed before
+	// they run.
 	var writeStatements []string
-	allReadOnly := true
 	for _, stmt := range statements {
 		if !isReadOnlyStatement(stmt) {
-			allReadOnly = false
 			writeStatements = append(writeStatements, stmt)
 		}
 	}
-
-	// If write statements are present but not confirmed, return a
-	// confirmation prompt so the frontend can ask the user to proceed.
-	if !allReadOnly && !req.Confirmed {
-		resp := multiQueryResponse{
-			RequiresConfirmation: true,
-			WriteStatements:      writeStatements,
-			ConfirmationMessage: fmt.Sprintf(
-				"This request contains %d write statement(s) that will "+
-					"modify the database. Please confirm to proceed.",
-				len(writeStatements)),
+	if len(writeStatements) > 0 {
+		if h.denialRecorder != nil {
+			h.denialRecorder(withDeniedTarget(r, deniedActionConnectionQueryWrite,
+				connectionDenialTarget(connectionID)), queryWriteRefused)
 		}
-		RespondJSON(w, http.StatusOK, resp)
+		RespondJSON(w, http.StatusConflict, writeRefusedResponse{
+			Error:           queryWriteRefused,
+			RequiresAction:  true,
+			WriteStatements: writeStatements,
+		})
 		return
-	}
-
-	// For write statements, enforce RBAC write access
-	if !allReadOnly {
-		if !h.rbacChecker.HasWriteAccess(r.Context(), connectionID) {
-			h.denialRecorder.refuseTarget(w, r, deniedActionConnectionQueryWrite,
-				connectionDenialTarget(connectionID), connectionWriteDenied,
-				connectionWriteDenied)
-			return
-		}
 	}
 
 	// Create a context with timeout for the entire operation
@@ -211,10 +212,9 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	// pgx.Conn.Query always parses $N as bind parameters even in
 	// simple protocol mode, but pgconn.Exec sends SQL text as-is.
 	//
-	// The confirmation prompt and the write-access gate above have
-	// already run for these statements, and runSimpleStatements applies
+	// The write refusal above has already run for these statements, and runSimpleStatements applies
 	// the same read-only transaction the pgx path uses, so this branch
-	// is no shortcut past either check (issue #530). The classification
+	// is no shortcut past that check (issue #530). The classification
 	// above is what decides whether a statement is treated as a write;
 	// the read-only transaction narrows what a misclassified statement
 	// can do, but it does not catch every case (see
@@ -231,10 +231,7 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 
 		pgConn := poolConn.Conn().PgConn()
 		results := runSimpleStatements(ctx, pgConn, statements, limit,
-			connectionID, allReadOnly)
-		if !allReadOnly {
-			results = endOpenTransaction(ctx, pgConn, results, connectionID)
-		}
+			connectionID)
 
 		RespondJSON(w, http.StatusOK, multiQueryResponse{
 			Results:         results,
@@ -245,103 +242,60 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 
 	results := make([]statementResult, 0, len(statements))
 
-	if allReadOnly {
-		// Read-only path: execute inside a read-only transaction
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			log.Printf("[ERROR] Failed to begin transaction for query: %v", err)
+	// Read-only path: execute inside a read-only transaction
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to begin transaction for query: %v", err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to execute query")
+		return
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = rollback.Tx(ctx, tx) //nolint:errcheck // see pkg/rollback
+		}
+	}()
+
+	// Enforce read-only transaction
+	_, err = tx.Exec(ctx, "SET TRANSACTION READ ONLY")
+	if err != nil {
+		log.Printf("[ERROR] Failed to set transaction read-only: %v", err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to execute query")
+		return
+	}
+
+	for _, stmt := range statements {
+		result := runStatement(ctx, tx, stmt, limit, connectionID)
+		result = requireUTF8(tx.Conn().PgConn(), result, connectionID)
+		results = append(results, result)
+
+		// Stop on first error
+		if result.Error != "" {
+			break
+		}
+	}
+
+	// If any statement errored, the transaction is aborted in
+	// PostgreSQL so we must rollback.  Otherwise commit cleanly.
+	hasError := false
+	for _, r := range results {
+		if r.Error != "" {
+			hasError = true
+			break
+		}
+	}
+
+	if !hasError {
+		if err := tx.Commit(ctx); err != nil {
+			log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)
 			RespondError(w, http.StatusInternalServerError,
 				"Failed to execute query")
 			return
 		}
-
-		committed := false
-		defer func() {
-			if !committed {
-				_ = rollback.Tx(ctx, tx) //nolint:errcheck // see pkg/rollback
-			}
-		}()
-
-		// Enforce read-only transaction
-		_, err = tx.Exec(ctx, "SET TRANSACTION READ ONLY")
-		if err != nil {
-			log.Printf("[ERROR] Failed to set transaction read-only: %v", err)
-			RespondError(w, http.StatusInternalServerError,
-				"Failed to execute query")
-			return
-		}
-
-		for _, stmt := range statements {
-			result := runStatement(ctx, tx, stmt, limit, connectionID)
-			result = requireUTF8(tx.Conn().PgConn(), result, connectionID)
-			results = append(results, result)
-
-			// Stop on first error
-			if result.Error != "" {
-				break
-			}
-		}
-
-		// If any statement errored, the transaction is aborted in
-		// PostgreSQL so we must rollback.  Otherwise commit cleanly.
-		hasError := false
-		for _, r := range results {
-			if r.Error != "" {
-				hasError = true
-				break
-			}
-		}
-
-		if !hasError {
-			if err := tx.Commit(ctx); err != nil {
-				log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)
-				RespondError(w, http.StatusInternalServerError,
-					"Failed to execute query")
-				return
-			}
-			committed = true
-		}
-	} else {
-		// Write path: execute each statement individually outside a
-		// transaction so that statements like ALTER SYSTEM work. Every
-		// statement runs on the one acquired connection so that
-		// requireUTF8 can read the client_encoding it left behind.
-		poolConn, err := pool.Acquire(ctx)
-		if err != nil {
-			log.Printf("[ERROR] Failed to acquire connection for query: %v", err)
-			RespondError(w, http.StatusInternalServerError,
-				"Failed to connect to database")
-			return
-		}
-		defer poolConn.Release()
-		pgConn := poolConn.Conn().PgConn()
-
-		for _, stmt := range statements {
-			var result statementResult
-			if isReadOnlyStatement(stmt) {
-				result = runStatement(ctx, poolConn, stmt, limit, connectionID)
-			} else if _, err := poolConn.Exec(ctx, stmt); err != nil {
-				log.Printf("[ERROR] Write statement failed (connection=%d): %v",
-					connectionID, err)
-				result = statementResult{
-					Query: stmt,
-					Error: safeQueryError("Execution error", err),
-				}
-			} else {
-				result = statementResult{
-					Query:    stmt,
-					Columns:  []string{"result"},
-					Rows:     [][]string{{"Statement executed successfully"}},
-					RowCount: 1,
-				}
-			}
-			result = requireUTF8(pgConn, result, connectionID)
-			results = append(results, result)
-			if result.Error != "" {
-				break
-			}
-		}
-		results = endOpenTransaction(ctx, pgConn, results, connectionID)
+		committed = true
 	}
 
 	resp := multiQueryResponse{
@@ -359,391 +313,28 @@ func stripLeadingComments(sql string) string {
 	return sqllex.StripLeadingComments(sql)
 }
 
-// maxExplainDepth bounds the recursion isReadOnlyStatement performs
-// through nested EXPLAIN statements. PostgreSQL rejects EXPLAIN EXPLAIN
-// ..., so anything approaching this depth is malformed or hostile and
-// the classifier fails closed by calling it a write.
-const maxExplainDepth = 8
-
-// isReadOnlyStatement returns true if the SQL statement (after stripping
-// leading comments) begins with a read-only keyword: SELECT, WITH, SHOW,
-// EXPLAIN, or TABLE. Writable CTEs (WITH ... INSERT/UPDATE/DELETE/MERGE)
-// are classified as non-read-only, as are a query with a writing clause
-// (see hasWritingSelectClause), a query that calls a side-effecting
-// function such as pg_terminate_backend or set_config (see
-// sqllex.CallsSideEffectingFunction, issue #646) and an EXPLAIN that may
-// execute a writing inner statement (issue #530).
-//
-// PostgreSQL lexes a plain '...' literal as a standard string when
-// standard_conforming_strings is on and as an escape string, in which a
-// backslash escapes the next character, when it is off. The setting can
-// be off for the database or the role, and an earlier statement in the
-// same request can turn it off, as set_config does from inside a
-// SELECT, so the reading in force when sql runs cannot be known here.
-// A literal can end in a different place under each reading, and the
-// one the classifier does not use can then hide the code that follows:
-//
-//	WITH x AS (SELECT '\'' AS c), d AS (DELETE FROM t RETURNING *)
-//	SELECT * FROM d --'
-//
-// is one literal running to the final quote under a standard reading,
-// which hides the DELETE, whereas under an escape reading the literal
-// ends after the escaped quote and the DELETE is code. sql is therefore
-// classified under both readings, and split into statements under each
-// so that a semicolon only one reading treats as code is respected too;
-// it is read-only only when every statement is read-only under both.
+// isReadOnlyStatement reports whether sql is read-only (see
+// sqllex.IsReadOnly).
 func isReadOnlyStatement(sql string) bool {
-	for _, reading := range sqllex.StringReadings {
-		pieces := splitStatementsAs(sql, reading)
-		if len(pieces) == 0 {
-			pieces = []string{sql}
-		}
-		for _, piece := range pieces {
-			if !isReadOnlyStatementAtDepth(piece, 0, reading) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// isReadOnlyStatementAtDepth is isReadOnlyStatement for a single
-// statement, under one reading of a plain '...' literal, with the
-// EXPLAIN nesting depth reached so far.
-func isReadOnlyStatementAtDepth(sql string, depth int, reading sqllex.StringReading) bool {
-	body := strings.TrimSpace(stripLeadingComments(sql))
-
-	// The EXPLAIN test runs against the original text rather than an
-	// uppercased copy, because strings.ToUpper is not length-preserving
-	// for every input (U+0131 gets shorter), so an offset measured on
-	// the copy cannot safely slice the original.
-	if hasKeywordPrefix(body, "EXPLAIN") {
-		return isReadOnlyExplain(body, depth, reading)
-	}
-
-	// Mask the quoted literals, quoted identifiers and comments before
-	// uppercasing, so the keyword scans below read code only and a
-	// statement such as SELECT * FROM audit WHERE msg LIKE '%signed
-	// into%' is not classified as a write. The masking is for
-	// classification alone; the text that is executed is untouched.
-	upper := strings.ToUpper(sqllex.MaskNonCode(body, reading))
-
-	if strings.HasPrefix(upper, "WITH") {
-		// Writable CTEs can perform data modification, e.g.
-		// WITH deleted AS (DELETE FROM t RETURNING *) SELECT * FROM deleted.
-		// Check for DML keywords as standalone words in the body.
-		dmlKeywords := []string{"INSERT", "UPDATE", "DELETE", "MERGE"}
-		for _, kw := range dmlKeywords {
-			if containsSQLKeyword(upper, kw) {
-				return false
-			}
-		}
-		return !hasWritingSelectClause(upper) &&
-			!sqllex.CallsSideEffectingFunction(body, reading)
-	}
-
-	if strings.HasPrefix(upper, "SELECT") || strings.HasPrefix(upper, "TABLE ") {
-		return !hasWritingSelectClause(upper) &&
-			!sqllex.CallsSideEffectingFunction(body, reading)
-	}
-
-	return strings.HasPrefix(upper, "SHOW")
-}
-
-// hasWritingSelectClause reports whether an otherwise reading query
-// carries a clause that writes: SELECT ... INTO, which creates a table,
-// or a row-locking clause (FOR UPDATE, FOR NO KEY UPDATE, FOR SHARE,
-// FOR KEY SHARE), which stamps the lock onto every row it returns.
-// PostgreSQL refuses both inside a read-only transaction, so classifying
-// them as writes makes this gate agree with the database rather than
-// leaving the transaction to reject them later. upperSQL must already
-// have had its non-code regions masked (see sqllex.MaskNonCode) and been
-// uppercased. Like the writable-CTE scan, this reads a keyword wherever
-// it appears in the remaining code, so it can only over-report, which is
-// the safe direction.
-func hasWritingSelectClause(upperSQL string) bool {
-	return containsSQLKeyword(upperSQL, "INTO") ||
-		containsLockingClause(upperSQL)
-}
-
-// containsLockingClause reports whether upperSQL contains a row-locking
-// clause: the word FOR followed by UPDATE or SHARE, with the optional NO
-// and KEY qualifiers in between.
-func containsLockingClause(upperSQL string) bool {
-	words := sqlWords(upperSQL)
-	for i, word := range words {
-		if word != "FOR" {
-			continue
-		}
-		for j := i + 1; j < len(words); j++ {
-			switch words[j] {
-			case "NO", "KEY":
-				continue
-			case "UPDATE", "SHARE":
-				return true
-			}
-			break
-		}
-	}
-	return false
-}
-
-// sqlWords splits s into its runs of identifier characters, discarding
-// everything else.
-func sqlWords(s string) []string {
-	var words []string
-	i := 0
-	for i < len(s) {
-		if !sqllex.IsIdentChar(s[i]) {
-			i++
-			continue
-		}
-		start := i
-		for i < len(s) && sqllex.IsIdentChar(s[i]) {
-			i++
-		}
-		words = append(words, s[start:i])
-	}
-	return words
-}
-
-// explainNonExecutingOptions are the EXPLAIN option names that only
-// change how the plan is reported. Every other name, ANALYZE included,
-// means the inner statement may really run.
-var explainNonExecutingOptions = map[string]bool{
-	"VERBOSE":      true,
-	"COSTS":        true,
-	"SETTINGS":     true,
-	"GENERIC_PLAN": true,
-	"BUFFERS":      true,
-	"WAL":          true,
-	"TIMING":       true,
-	"SUMMARY":      true,
-	"MEMORY":       true,
-	"SERIALIZE":    true,
-	"FORMAT":       true,
-}
-
-// isReadOnlyExplain classifies an EXPLAIN statement by what it explains.
-// body must already start with the EXPLAIN keyword and have had its
-// leading comments stripped. Without ANALYZE, EXPLAIN only plans the
-// inner statement and executes nothing, so it is read-only; with ANALYZE
-// the inner statement really runs and decides the answer.
-//
-// In the parenthesised option list, ANALYZE is detected by an
-// allow-list that fails closed rather than by searching for the word,
-// because an option name there is a ColId: PostgreSQL accepts it as a
-// quoted identifier and decodes its Unicode escapes before comparing,
-// so EXPLAIN (U&"\0061nalyze") DELETE ... turns ANALYZE on without the
-// text ever appearing. Only a bare, unquoted, recognized option name
-// counts as non-executing; anything quoted, escaped or unrecognized is
-// taken as an execution, and the inner statement then decides the
-// classification. The legacy form needs no such care, because its
-// option words are keywords that cannot be quoted or escaped.
-func isReadOnlyExplain(body string, depth int, reading sqllex.StringReading) bool {
-	executes, rest, ok := parseExplainHead(body, reading)
-	if !ok {
-		// Malformed option list: fail closed rather than guess at it.
-		return false
-	}
-	if !executes {
-		return true
-	}
-	if rest == "" || depth >= maxExplainDepth {
-		return false
-	}
-	return isReadOnlyStatementAtDepth(rest, depth+1, reading)
-}
-
-// parseExplainHead reads the options of an EXPLAIN statement, under one
-// reading of a plain '...' literal, and reports whether they make the
-// inner statement run, along with the inner statement's text. body must
-// already start with the EXPLAIN keyword. ok is false when the option
-// list's parentheses do not balance. See isReadOnlyExplain for why the
-// two option forms are read as they are.
-func parseExplainHead(body string, reading sqllex.StringReading) (executes bool, rest string, ok bool) {
-	rest = strings.TrimSpace(stripLeadingComments(body[len("EXPLAIN"):]))
-
-	if strings.HasPrefix(rest, "(") {
-		// Parenthesised form: EXPLAIN ( option [, ...] ) statement.
-		options, remainder, balanced := splitExplainOptions(rest, reading)
-		if !balanced {
-			// Unbalanced parentheses: the statement is malformed.
-			return false, "", false
-		}
-		executes = explainOptionsExecute(options, reading)
-		rest = strings.TrimSpace(stripLeadingComments(remainder))
-	} else {
-		// Legacy form: EXPLAIN [ANALYZE] [VERBOSE] statement, in either
-		// order. This grammar is closed: ANALYZE, its British
-		// spelling and VERBOSE are keywords rather than a ColId, so a
-		// quoted or escaped spelling of one is a syntax error rather
-		// than an option, and the first word that is none of them
-		// really is the start of the inner statement. A plain EXPLAIN
-		// only plans it.
-	keywords:
-		for {
-			word, remainder := nextSQLWord(rest)
-			switch strings.ToUpper(word) {
-			case "ANALYZE", "ANALYSE": //nolint:misspell // British spelling accepted by PostgreSQL
-				executes = true
-			case "VERBOSE":
-			default:
-				break keywords
-			}
-			rest = strings.TrimSpace(stripLeadingComments(remainder))
-		}
-	}
-
-	return executes, rest, true
+	return sqllex.IsReadOnly(sql)
 }
 
 // explainExecutes reports whether an EXPLAIN statement would run the
-// statement it explains, under either reading of a plain '...' literal.
-// body must already start with the EXPLAIN keyword and have had its
-// leading comments stripped. A malformed option list counts as an
-// execution, so a caller that refuses executing EXPLAINs fails closed.
+// statement it explains (see sqllex.ExplainExecutes).
 func explainExecutes(body string) bool {
-	for _, reading := range sqllex.StringReadings {
-		executes, _, ok := parseExplainHead(body, reading)
-		if executes || !ok {
-			return true
-		}
-	}
-	return false
+	return sqllex.ExplainExecutes(body)
 }
 
-// explainOptionsExecute reports whether a parenthesised EXPLAIN option
-// list may cause the inner statement to run. It inspects option names
-// only, never their values, and treats a name it cannot read as a bare
-// recognized identifier as an execution.
-func explainOptionsExecute(options string, reading sqllex.StringReading) bool {
-	entries := splitExplainOptionEntries(options, reading)
-	if len(entries) == 0 {
-		// EXPLAIN () is not valid SQL, so fail closed.
-		return true
-	}
-	for _, entry := range entries {
-		name, _ := nextSQLWord(strings.TrimSpace(stripLeadingComments(entry)))
-		if !explainNonExecutingOptions[strings.ToUpper(name)] {
-			return true
-		}
-	}
-	return false
-}
-
-// splitExplainOptionEntries splits an EXPLAIN option list on the commas
-// that separate its entries. Quoted strings, quoted identifiers,
-// comments and nested parentheses are skipped so that a comma inside one
-// does not start an entry. The result is nil for an empty list.
-func splitExplainOptionEntries(options string, reading sqllex.StringReading) []string {
-	var entries []string
-	depth := 0
-	start := 0
-	i := 0
-
-	for i < len(options) {
-		if j := sqllex.SkipNonCode(options, i, reading); j != i {
-			i = j
-			continue
-		}
-
-		ch := options[i]
-		switch {
-		case ch == '(':
-			depth++
-		case ch == ')':
-			depth--
-		case ch == ',' && depth == 0:
-			entries = append(entries, options[start:i])
-			start = i + 1
-		}
-		i++
-	}
-	entries = append(entries, options[start:])
-
-	if len(entries) == 1 &&
-		strings.TrimSpace(stripLeadingComments(entries[0])) == "" {
-		return nil
-	}
-	return entries
-}
-
-// splitExplainOptions splits an EXPLAIN option list from the statement
-// that follows it. s must start with the opening parenthesis. It
-// returns the option text, the remainder after the matching closing
-// parenthesis, and whether a matching parenthesis was found. Quoted
-// strings, quoted identifiers and comments are skipped so that a
-// parenthesis inside one does not end the list early.
-func splitExplainOptions(s string, reading sqllex.StringReading) (options, remainder string, ok bool) {
-	depth := 0
-	i := 0
-	for i < len(s) {
-		if j := sqllex.SkipNonCode(s, i, reading); j != i {
-			i = j
-			continue
-		}
-
-		switch s[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return s[1:i], s[i+1:], true
-			}
-		}
-		i++
-	}
-	return "", "", false
-}
-
-// nextSQLWord splits the leading identifier-character run off s,
-// returning that word and the rest of the string. The word is empty
-// when s does not start with an identifier character.
-func nextSQLWord(s string) (word, rest string) {
-	i := 0
-	for i < len(s) && sqllex.IsIdentChar(s[i]) {
-		i++
-	}
-	return s[:i], s[i:]
-}
-
-// hasKeywordPrefix reports whether sql starts with keyword, ignoring
-// case, followed by a non-identifier character, so that EXPLAINABLE does
-// not match EXPLAIN. The comparison is made on the caller's own string
-// rather than an uppercased copy, so that the keyword's length is a
-// valid offset into it.
+// hasKeywordPrefix reports whether sql starts with keyword (see
+// sqllex.HasKeywordPrefix).
 func hasKeywordPrefix(sql, keyword string) bool {
-	if len(sql) < len(keyword) ||
-		!strings.EqualFold(sql[:len(keyword)], keyword) {
-		return false
-	}
-	return len(sql) == len(keyword) || !sqllex.IsIdentChar(sql[len(keyword)])
+	return sqllex.HasKeywordPrefix(sql, keyword)
 }
 
-// containsSQLKeyword checks whether a SQL keyword appears as a standalone
-// word in the given uppercase SQL string. This prevents false positives
-// from identifiers that contain a keyword as a substring (e.g.,
-// "updated_at" should not match "UPDATE").
+// containsSQLKeyword reports whether keyword appears as a standalone
+// word in upperSQL (see sqllex.ContainsKeyword).
 func containsSQLKeyword(upperSQL, keyword string) bool {
-	idx := 0
-	for {
-		pos := strings.Index(upperSQL[idx:], keyword)
-		if pos < 0 {
-			return false
-		}
-		pos += idx
-		end := pos + len(keyword)
-
-		startOK := pos == 0 || !sqllex.IsIdentChar(upperSQL[pos-1])
-		endOK := end >= len(upperSQL) || !sqllex.IsIdentChar(upperSQL[end])
-
-		if startOK && endOK {
-			return true
-		}
-		idx = end
-	}
+	return sqllex.ContainsKeyword(upperSQL, keyword)
 }
 
 // needsSimpleProtocol returns true when any statement is an EXPLAIN
@@ -1009,11 +600,11 @@ const clientEncodingChangedError = "Query error: client_encoding must " +
 // character, but to the classifier 0x5C is a backslash escaping the
 // quote, which hides the code after it. No second reading can cover
 // every such encoding, so the setting is held at UTF8 instead. The write
-// path applies the same check: its confirmation prompt lists only the
-// statements classified as writes, so a write hidden in a statement
-// lexed under the new encoding would otherwise run without being listed.
+// write refusal depends on the same classification: the endpoint answers
+// 409 for any statement classified as a write, so a write hidden in a
+// statement lexed under the new encoding would otherwise slip past it.
 func requireUTF8(pgConn *pgconn.PgConn, result statementResult, connectionID int) statementResult {
-	if result.Error != "" || pgConn.ParameterStatus("client_encoding") == "UTF8" {
+	if result.Error != "" || pgexec.EncodingIsUTF8(pgConn) {
 		return result
 	}
 	log.Printf("[WARN] Query stopped: client_encoding changed to %q (connection=%d)",
@@ -1024,47 +615,12 @@ func requireUTF8(pgConn *pgconn.PgConn, result statementResult, connectionID int
 	}
 }
 
-// openTransactionError is the error reported for a confirmed batch that
-// left a transaction open.
-const openTransactionError = "Transaction error: the statements left " +
-	"a transaction open, so it was rolled back and nothing done inside it " +
-	"was kept; end the transaction with COMMIT or ROLLBACK in the same request"
-
-// endOpenTransaction rolls back a transaction that a confirmed batch
-// opened and did not close, and adds a result saying so. The write path
-// runs every statement on one connection, so a BEGIN in the batch
-// carries over to the statements after it, and the connection goes back
-// to a pool that destroys a connection released mid-transaction, which
-// discards that work. Without this result the batch would report each
-// statement as having succeeded although none of its work in the
-// transaction was kept.
-func endOpenTransaction(
-	ctx context.Context,
-	pgConn *pgconn.PgConn,
-	results []statementResult,
-	connectionID int,
-) []statementResult {
-	if pgConn.TxStatus() == 'I' {
-		return results
-	}
-	log.Printf("[WARN] Query left a transaction open; rolling it back (connection=%d)",
-		connectionID)
-	rollbackSimple(ctx, func(execCtx context.Context, sql string) error {
-		return pgConn.Exec(execCtx, sql).Close()
-	}, connectionID)
-	return append(results, statementResult{
-		Query: "ROLLBACK",
-		Error: openTransactionError,
-	})
-}
-
 // runSimpleStatements executes statements over the simple query
-// protocol. When readOnly is true they run inside a read-only
-// transaction, matching the discipline the pgx path applies (issue
-// #530). A statement error rolls the transaction back and a clean run
-// commits. A failure of the transaction control itself is reported as a
-// result of its own and no statement runs, so a batch classified as
-// read-only never runs outside the transaction it asked for.
+// protocol inside a read-only transaction, matching the discipline the
+// pgx path applies (issue #530). A statement error rolls the transaction
+// back and a clean run commits. A failure of the transaction control
+// itself is reported as a result of its own and no statement runs, so a
+// batch never runs outside the transaction it asked for.
 //
 // SET TRANSACTION READ ONLY prevents writes to database objects within
 // the transaction, so a misclassified INSERT, UPDATE, DELETE, TRUNCATE,
@@ -1082,7 +638,6 @@ func runSimpleStatements(
 	statements []string,
 	limit int,
 	connectionID int,
-	readOnly bool,
 ) []statementResult {
 	exec := func(execCtx context.Context, sql string) error {
 		return pgConn.Exec(execCtx, sql).Close()
@@ -1091,8 +646,7 @@ func runSimpleStatements(
 		result := runSimpleStatement(runCtx, pgConn, stmt, limit, connectionID)
 		return requireUTF8(pgConn, result, connectionID)
 	}
-	return runSimpleStatementsWith(ctx, exec, run, statements, connectionID,
-		readOnly)
+	return runSimpleStatementsWith(ctx, exec, run, statements, connectionID)
 }
 
 // runSimpleStatementsWith is runSimpleStatements over an injected
@@ -1105,21 +659,18 @@ func runSimpleStatementsWith(
 	run func(ctx context.Context, stmt string) statementResult,
 	statements []string,
 	connectionID int,
-	readOnly bool,
 ) []statementResult {
-	if readOnly {
-		if err := exec(ctx, "BEGIN"); err != nil {
-			// No rollback here: a BEGIN that failed part-way leaves the
-			// connection in a transaction that nothing else will use,
-			// because the pool is built per request and pgxpool destroys
-			// a connection released with a non-idle transaction status.
-			return []statementResult{controlFailure("BEGIN", err, connectionID)}
-		}
-		if err := exec(ctx, "SET TRANSACTION READ ONLY"); err != nil {
-			rollbackSimple(ctx, exec, connectionID)
-			return []statementResult{
-				controlFailure("SET TRANSACTION READ ONLY", err, connectionID),
-			}
+	if err := exec(ctx, "BEGIN"); err != nil {
+		// No rollback here: a BEGIN that failed part-way leaves the
+		// connection in a transaction that nothing else will use,
+		// because the pool is built per request and pgxpool destroys
+		// a connection released with a non-idle transaction status.
+		return []statementResult{controlFailure("BEGIN", err, connectionID)}
+	}
+	if err := exec(ctx, "SET TRANSACTION READ ONLY"); err != nil {
+		rollbackSimple(ctx, exec, connectionID)
+		return []statementResult{
+			controlFailure("SET TRANSACTION READ ONLY", err, connectionID),
 		}
 	}
 
@@ -1134,14 +685,12 @@ func runSimpleStatementsWith(
 		}
 	}
 
-	if readOnly {
-		if failed {
-			rollbackSimple(ctx, exec, connectionID)
-		} else if err := exec(ctx, "COMMIT"); err != nil {
-			rollbackSimple(ctx, exec, connectionID)
-			results = append(results,
-				controlFailure("COMMIT", err, connectionID))
-		}
+	if failed {
+		rollbackSimple(ctx, exec, connectionID)
+	} else if err := exec(ctx, "COMMIT"); err != nil {
+		rollbackSimple(ctx, exec, connectionID)
+		results = append(results,
+			controlFailure("COMMIT", err, connectionID))
 	}
 
 	return results
@@ -1266,30 +815,9 @@ func (rs *simpleResultSet) readResult(rr *pgconn.ResultReader) {
 		}
 	}
 
-	for rr.NextRow() {
-		if len(rs.rows) >= rs.limit {
-			// Keep reading so the reader closes cleanly, but stop
-			// buffering: an unbounded EXPLAIN or SELECT would
-			// otherwise hold the whole result set in memory.
-			rs.truncated = true
-			continue
-		}
-		rs.rows = append(rs.rows, simpleRowValues(rr.Values()))
-	}
-}
-
-// simpleRowValues renders one simple-protocol row as strings, with a
-// NULL column reported as the text NULL, matching the pgx path.
-func simpleRowValues(row [][]byte) []string {
-	values := make([]string, len(row))
-	for i, col := range row {
-		if col == nil {
-			values[i] = "NULL"
-		} else {
-			values[i] = string(col)
-		}
-	}
-	return values
+	var truncated bool
+	rs.rows, truncated = pgexec.AppendRows(rs.rows, rr, rs.limit)
+	rs.truncated = rs.truncated || truncated
 }
 
 // formatValueForJSON converts a database value to a string for JSON

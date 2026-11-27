@@ -57,6 +57,11 @@ do not copy either into another package.
   `pg_proc`, skipping names in `coreFunctionMinVersion` that are newer
   than the server under test; add an entry there for any core name
   added after PostgreSQL 14.
+- `transaction.go`: `ChangesSequence`, which picks the sequence note
+  for a proposed action, matches `nextval`/`setval` only as a call
+  (name token then `(`, outside `namesThatAreNotCalls`), unlike the
+  write check above, so a column `t.nextval` gets no note; a statement
+  that fails to tokenise counts as changing a sequence.
 
 ## Prefixing EXPLAIN
 
@@ -73,8 +78,8 @@ already knows the session's string reading; it fails closed.
 ## Callers
 
 - `api.isReadOnlyStatement` (`query_handlers.go`): a side-effecting
-  call makes the statement a write, so it needs write access and the
-  confirmation prompt.
+  call makes the statement a write, so `/query` refuses the request
+  with a 409 `requires_action` (writes go through proposed actions).
 - `tools.isSelectQuery` (`sql_helpers.go`): returns false for such a
   statement, so `query_database`, which is read-only for every
   caller (#663), refuses it before resolving a connection, and

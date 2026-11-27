@@ -4316,6 +4316,133 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 33: proposed_actions records every write that Ellie or a
+	// person proposes, its review verdict, its approval and its execution
+	// outcome (issue #774).
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     33,
+		Description: "Add proposed_actions for reviewed, approved write execution",
+		Up: func(tx pgx.Tx) error {
+			_, err := tx.Exec(context.Background(), `
+				CREATE TABLE IF NOT EXISTS proposed_actions (
+					id BIGSERIAL PRIMARY KEY,
+					connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+					database_name TEXT,
+					statements JSONB NOT NULL,
+					source TEXT NOT NULL CHECK (source IN ('chat_tool', 'chat_block', 'alert_analysis', 'query_analysis', 'server_analysis', 'chart_analysis')),
+					proposed_by TEXT NOT NULL,
+					proposed_via TEXT NOT NULL CHECK (proposed_via IN ('session', 'token')),
+					conversation_id TEXT,
+					alert_id BIGINT REFERENCES alerts(id) ON DELETE SET NULL,
+					parent_action_id BIGINT REFERENCES proposed_actions(id),
+					attempt INTEGER NOT NULL DEFAULT 1,
+					rationale TEXT,
+					evidence JSONB,
+					review_status TEXT NOT NULL CHECK (review_status IN ('pending', 'passed', 'vetoed')),
+					review JSONB,
+					approval TEXT NOT NULL DEFAULT 'none' CHECK (approval IN ('none', 'approved', 'overridden')),
+					approved_by TEXT,
+					approved_via TEXT CHECK (approved_via IN ('session', 'token')),
+					approved_at TIMESTAMPTZ,
+					exec_status TEXT NOT NULL DEFAULT 'not_started' CHECK (exec_status IN ('not_started', 'executing', 'succeeded', 'failed', 'cancelled', 'unknown')),
+					transactional BOOLEAN,
+					results JSONB,
+					preview JSONB,
+					undo JSONB,
+					verification JSONB,
+					outcome JSONB,
+					created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					executed_at TIMESTAMPTZ,
+					claim_token UUID
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_proposed_actions_connection_created
+					ON proposed_actions (connection_id, created_at DESC);
+
+				CREATE INDEX IF NOT EXISTS idx_proposed_actions_conversation
+					ON proposed_actions (conversation_id);
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_proposed_actions_parent
+					ON proposed_actions (parent_action_id)
+					WHERE parent_action_id IS NOT NULL;
+
+				COMMENT ON INDEX idx_proposed_actions_parent IS
+					'Keeps a retry chain linear: an action can be revised only once';
+
+				CREATE INDEX IF NOT EXISTS idx_proposed_actions_executing
+					ON proposed_actions (id) WHERE exec_status = 'executing';
+
+				COMMENT ON TABLE proposed_actions IS
+					'Writes proposed by Ellie or a person for a monitored database, with the review verdict, the approval and the execution outcome';
+				COMMENT ON COLUMN proposed_actions.id IS
+					'Unique identifier for the action';
+				COMMENT ON COLUMN proposed_actions.connection_id IS
+					'Monitored connection the action runs against; deleting the connection deletes its actions';
+				COMMENT ON COLUMN proposed_actions.database_name IS
+					'Database to run against; NULL means the connection''s default database';
+				COMMENT ON COLUMN proposed_actions.statements IS
+					'JSON array of the split statement strings; the executor runs exactly these';
+				COMMENT ON COLUMN proposed_actions.source IS
+					'Where the action came from: chat_tool, chat_block, alert_analysis, query_analysis, server_analysis or chart_analysis';
+				COMMENT ON COLUMN proposed_actions.proposed_by IS
+					'Username on whose behalf the action was proposed';
+				COMMENT ON COLUMN proposed_actions.proposed_via IS
+					'Whether the proposer authenticated with a session or an API token';
+				COMMENT ON COLUMN proposed_actions.conversation_id IS
+					'Chat conversation the action belongs to; deliberately not a foreign key because conversations can be deleted and a new chat has no id until first saved';
+				COMMENT ON COLUMN proposed_actions.alert_id IS
+					'Alert whose analysis led to the action; cleared when the alert is deleted';
+				COMMENT ON COLUMN proposed_actions.parent_action_id IS
+					'Previous attempt in a veto chain';
+				COMMENT ON COLUMN proposed_actions.attempt IS
+					'Attempt number within the veto chain, starting at 1';
+				COMMENT ON COLUMN proposed_actions.rationale IS
+					'The proposer''s stated reason for the action';
+				COMMENT ON COLUMN proposed_actions.evidence IS
+					'Tool calls and results, or analysis context, that led to the action, with the model and provider names';
+				COMMENT ON COLUMN proposed_actions.review_status IS
+					'Review state: pending, passed or vetoed';
+				COMMENT ON COLUMN proposed_actions.review IS
+					'The reviewer''s verdict, including danger level and reasons';
+				COMMENT ON COLUMN proposed_actions.approval IS
+					'Approval state: none, approved or overridden (run despite a veto)';
+				COMMENT ON COLUMN proposed_actions.approved_by IS
+					'Username that approved or overrode the action';
+				COMMENT ON COLUMN proposed_actions.approved_via IS
+					'Whether the approver authenticated with a session or an API token';
+				COMMENT ON COLUMN proposed_actions.approved_at IS
+					'When the action was approved or overridden';
+				COMMENT ON COLUMN proposed_actions.exec_status IS
+					'Execution state, constrained to the listed values; unknown means the server stopped while the action was executing';
+				COMMENT ON COLUMN proposed_actions.transactional IS
+					'Whether the statements ran in a single transaction; NULL until executed';
+				COMMENT ON COLUMN proposed_actions.results IS
+					'Per statement: command tag, rows affected, duration, error and result rows';
+				COMMENT ON COLUMN proposed_actions.preview IS
+					'Reserved for a preview of the action''s effect';
+				COMMENT ON COLUMN proposed_actions.undo IS
+					'Reserved for undo information';
+				COMMENT ON COLUMN proposed_actions.verification IS
+					'Reserved for post-execution verification results';
+				COMMENT ON COLUMN proposed_actions.outcome IS
+					'Reserved for the recorded outcome assessment';
+				COMMENT ON COLUMN proposed_actions.created_at IS
+					'When the action was proposed';
+				COMMENT ON COLUMN proposed_actions.updated_at IS
+					'When the action row was last changed';
+				COMMENT ON COLUMN proposed_actions.executed_at IS
+					'When execution started';
+				COMMENT ON COLUMN proposed_actions.claim_token IS
+					'Random token written by the claim for execution, so that a server whose claim reply was lost can tell its own claim from another';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create proposed_actions: %w", err)
+			}
+			return nil
+		},
+	})
 }
 
 // statementTextUpdates holds, for each column that stores statement text,

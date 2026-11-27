@@ -28,14 +28,29 @@ import { renderWithTheme } from '../../../test/renderWithTheme';
 // contains text and a table, so we mock them defensively to keep the
 // test surface tight and the test deterministic.
 vi.mock('../RunnableCodeBlock', () => ({
-    default: () => <div data-testid="runnable-code-block" />,
+    default: (props: Record<string, unknown>) => (
+        <div
+            data-testid="runnable-code-block"
+            data-origin={JSON.stringify({
+                source: props.actionSource,
+                context: props.actionContext,
+                alertId: props.alertId,
+                conversationId: props.conversationId,
+            })}
+        />
+    ),
     // The named QueryState/QueryResponse type re-exports are not used at
     // runtime and only matter for TypeScript; vi.mock returns undefined
     // for them which is fine.
 }));
 
 vi.mock('../ConnectionSelectorCodeBlock', () => ({
-    default: () => <div data-testid="connection-selector" />,
+    default: (props: Record<string, unknown>) => (
+        <div
+            data-testid="connection-selector"
+            data-source={String(props.actionSource)}
+        />
+    ),
 }));
 
 vi.mock('../AnalysisSkeleton', () => ({
@@ -239,6 +254,58 @@ describe('MarkdownContent code block routing', () => {
             />,
         );
         expect(screen.getByTestId('runnable-code-block')).toBeInTheDocument();
+    });
+
+    it('passes the action origin to runnable and selector blocks', () => {
+        const origin = {
+            actionSource: 'alert_analysis' as const,
+            actionContext: 'Alert analysis: High CPU',
+            alertId: 9,
+            conversationId: 'conv-1',
+        };
+        const expected = {
+            source: 'alert_analysis',
+            context: 'Alert analysis: High CPU',
+            alertId: 9,
+            conversationId: 'conv-1',
+        };
+        const { unmount } = renderWithTheme(
+            <MarkdownContent
+                content={'```sql\nSELECT 1\n```'}
+                isDark={false}
+                connectionId={42}
+                actionOrigin={origin}
+            />,
+        );
+        expect(
+            JSON.parse(screen.getByTestId('runnable-code-block').dataset.origin ?? ''),
+        ).toEqual(expected);
+        unmount();
+
+        const comment = renderWithTheme(
+            <MarkdownContent
+                content={'```sql\n-- connection_id: 7\nSELECT 2\n```'}
+                isDark={false}
+                connectionMap={new Map([[7, 'seven']])}
+                actionOrigin={origin}
+            />,
+        );
+        expect(
+            JSON.parse(screen.getByTestId('runnable-code-block').dataset.origin ?? ''),
+        ).toEqual(expected);
+        comment.unmount();
+
+        renderWithTheme(
+            <MarkdownContent
+                content={'```sql\nSELECT 3\n```'}
+                isDark={false}
+                connectionMap={new Map([[1, 'a'], [2, 'b']])}
+                actionOrigin={origin}
+            />,
+        );
+        expect(screen.getByTestId('connection-selector').dataset.source).toBe(
+            'alert_analysis',
+        );
     });
 
     it('routes SQL blocks to RunnableCodeBlock when connection_id comment is present', () => {

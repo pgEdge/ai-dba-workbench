@@ -740,62 +740,7 @@ func TestStripLeadingComments(t *testing.T) {
 	}
 }
 
-func TestIsReadOnlyStatement(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		readOnly bool
-	}{
-		{"SELECT", "SELECT 1", true},
-		{"select lowercase", "select * from users", true},
-		{"SELECT with leading comment", "-- get data\nSELECT 1", true},
-		{"WITH CTE", "WITH cte AS (SELECT 1) SELECT * FROM cte", true},
-		{"with lowercase", "with x as (select 1) select * from x", true},
-		{"SHOW", "SHOW shared_buffers", true},
-		{"show lowercase", "show work_mem", true},
-		{"EXPLAIN", "EXPLAIN SELECT 1", true},
-		{"explain lowercase", "explain select 1", true},
-		{"TABLE shorthand", "TABLE users", true},
-		{"table lowercase", "table users", true},
-		{"ALTER", "ALTER SYSTEM SET work_mem = '16MB'", false},
-		{"CREATE", "CREATE TABLE foo (id int)", false},
-		{"DROP", "DROP TABLE foo", false},
-		{"INSERT", "INSERT INTO foo VALUES (1)", false},
-		{"UPDATE", "UPDATE foo SET bar = 1", false},
-		{"DELETE", "DELETE FROM foo", false},
-		{"TRUNCATE", "TRUNCATE foo", false},
-		{"GRANT", "GRANT SELECT ON foo TO bar", false},
-		{"REVOKE", "REVOKE SELECT ON foo FROM bar", false},
-		{"VACUUM", "VACUUM ANALYZE foo", false},
-		{"REINDEX", "REINDEX TABLE foo", false},
-		{"CLUSTER", "CLUSTER foo", false},
-		{"REFRESH", "REFRESH MATERIALIZED VIEW mv", false},
-		{"COMMENT", "COMMENT ON TABLE foo IS 'bar'", false},
-		{"SET", "SET work_mem = '256MB'", false},
-		{"ALTER with comment", "-- tune memory\nALTER SYSTEM SET work_mem = '16MB'", false},
-		{"empty after stripping", "-- just a comment", false},
-		{"writable CTE DELETE", "WITH deleted AS (DELETE FROM foo RETURNING *) SELECT * FROM deleted", false},
-		{"writable CTE INSERT", "WITH ins AS (INSERT INTO foo VALUES (1) RETURNING *) SELECT * FROM ins", false},
-		{"writable CTE UPDATE", "WITH upd AS (UPDATE foo SET bar = 1 RETURNING *) SELECT * FROM upd", false},
-		{"CTE with updated_at column", "WITH cte AS (SELECT updated_at FROM foo) SELECT * FROM cte", true},
-		{"CTE with delete_flag column", "WITH cte AS (SELECT delete_flag FROM foo) SELECT * FROM cte", true},
-		{"CTE pure SELECT", "WITH cte AS (SELECT 1) SELECT * FROM cte", true},
-		{"SELECT with block comment", "/* get data */ SELECT 1", true},
-		{"ALTER with block comment", "/* tune */ ALTER SYSTEM SET work_mem = '16MB'", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isReadOnlyStatement(tt.input)
-			if result != tt.readOnly {
-				t.Errorf("isReadOnlyStatement(%q) = %v, want %v",
-					tt.input, result, tt.readOnly)
-			}
-		})
-	}
-}
-
-func TestWriteStatements_RequireConfirmation(t *testing.T) {
+func TestWriteStatements_RefusedWithRequiresAction(t *testing.T) {
 	handler := newTestConnectionHandlerWithRBAC(t)
 
 	// Send an ALTER SYSTEM without confirmed flag; the handler should
@@ -808,27 +753,27 @@ func TestWriteStatements_RequireConfirmation(t *testing.T) {
 
 	handler.executeQuery(rec, req, 1)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", rec.Code)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("Expected status 409, got %d", rec.Code)
 	}
 
-	var resp multiQueryResponse
+	var resp writeRefusedResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if !resp.RequiresConfirmation {
-		t.Error("Expected requires_confirmation to be true")
+	if !resp.RequiresAction {
+		t.Error("Expected requires_action to be true")
 	}
 	if len(resp.WriteStatements) != 1 {
 		t.Errorf("Expected 1 write statement, got %d", len(resp.WriteStatements))
 	}
-	if resp.ConfirmationMessage == "" {
-		t.Error("Expected a non-empty confirmation message")
+	if resp.Error == "" {
+		t.Error("Expected a non-empty error message")
 	}
 }
 
-func TestMixedStatements_RequireConfirmation(t *testing.T) {
+func TestMixedStatements_RefusedWithRequiresAction(t *testing.T) {
 	handler := newTestConnectionHandlerWithRBAC(t)
 
 	body := `{"query": "SELECT 1; ALTER SYSTEM SET work_mem = '16MB'; SELECT 2"}`
@@ -839,17 +784,17 @@ func TestMixedStatements_RequireConfirmation(t *testing.T) {
 
 	handler.executeQuery(rec, req, 1)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", rec.Code)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("Expected status 409, got %d", rec.Code)
 	}
 
-	var resp multiQueryResponse
+	var resp writeRefusedResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if !resp.RequiresConfirmation {
-		t.Error("Expected requires_confirmation to be true for mixed statements")
+	if !resp.RequiresAction {
+		t.Error("Expected requires_action to be true for mixed statements")
 	}
 	if len(resp.WriteStatements) != 1 {
 		t.Errorf("Expected 1 write statement, got %d", len(resp.WriteStatements))
@@ -859,7 +804,7 @@ func TestMixedStatements_RequireConfirmation(t *testing.T) {
 	}
 }
 
-func TestReadOnlyStatements_NoConfirmation(t *testing.T) {
+func TestReadOnlyStatements_NotRefused(t *testing.T) {
 	handler := newTestConnectionHandlerWithRBAC(t)
 
 	// Pure read-only query should NOT trigger confirmation; it should
@@ -885,10 +830,10 @@ func TestReadOnlyStatements_NoConfirmation(t *testing.T) {
 		if !panicked && rec.Code == http.StatusOK {
 			// If no panic and we got a 200, check that there is no
 			// requires_confirmation in the response.
-			var resp multiQueryResponse
+			var resp writeRefusedResponse
 			if err := json.NewDecoder(rec.Body).Decode(&resp); err == nil {
-				if resp.RequiresConfirmation {
-					t.Error("Read-only query should not require confirmation")
+				if resp.RequiresAction {
+					t.Error("Read-only query should not require an action")
 				}
 			}
 		}
@@ -897,41 +842,32 @@ func TestReadOnlyStatements_NoConfirmation(t *testing.T) {
 	handler.executeQuery(rec, req, 1)
 }
 
-func TestConfirmationResponse_JSONSerialization(t *testing.T) {
-	resp := multiQueryResponse{
-		RequiresConfirmation: true,
-		WriteStatements:      []string{"ALTER SYSTEM SET work_mem = '16MB'"},
-		ConfirmationMessage:  "This request contains 1 write statement(s) that will modify the database. Please confirm to proceed.",
+func TestWriteRefusedResponse_JSONSerialization(t *testing.T) {
+	resp := writeRefusedResponse{
+		Error:           queryWriteRefused,
+		RequiresAction:  true,
+		WriteStatements: []string{"ALTER SYSTEM SET work_mem = '16MB'"},
 	}
 
 	data, err := json.Marshal(resp)
 	if err != nil {
-		t.Fatalf("Failed to marshal confirmation response: %v", err)
+		t.Fatalf("Failed to marshal write refusal: %v", err)
 	}
 
-	var decoded multiQueryResponse
+	var decoded map[string]any
 	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("Failed to unmarshal confirmation response: %v", err)
+		t.Fatalf("Failed to unmarshal write refusal: %v", err)
 	}
-
-	if !decoded.RequiresConfirmation {
-		t.Error("Expected requires_confirmation to be true")
+	for _, key := range []string{"error", "requires_action", "write_statements"} {
+		if _, ok := decoded[key]; !ok {
+			t.Errorf("Expected %q in the write refusal body", key)
+		}
 	}
-	if len(decoded.WriteStatements) != 1 {
-		t.Fatalf("Expected 1 write statement, got %d", len(decoded.WriteStatements))
+	if decoded["requires_action"] != true {
+		t.Error("Expected requires_action to be true")
 	}
-	if decoded.WriteStatements[0] != "ALTER SYSTEM SET work_mem = '16MB'" {
-		t.Errorf("Unexpected write statement: %q", decoded.WriteStatements[0])
-	}
-	if decoded.ConfirmationMessage == "" {
-		t.Error("Expected non-empty confirmation message")
-	}
-	// Results and TotalStatements should be zero-value / omitted
-	if len(decoded.Results) != 0 {
-		t.Errorf("Expected no results in confirmation response, got %d", len(decoded.Results))
-	}
-	if decoded.TotalStatements != 0 {
-		t.Errorf("Expected total_statements 0 in confirmation response, got %d", decoded.TotalStatements)
+	if _, ok := decoded["requires_confirmation"]; ok {
+		t.Error("requires_confirmation must no longer be returned")
 	}
 }
 

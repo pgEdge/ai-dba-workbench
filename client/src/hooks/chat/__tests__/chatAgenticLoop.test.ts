@@ -285,6 +285,136 @@ describe('chatAgenticLoop', () => {
                 expect(activity[0].status).toBe('completed');
             });
 
+            describe('propose_action', () => {
+                const proposeTool: ToolDefinition = {
+                    name: 'propose_action',
+                    description: 'Propose a write',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {},
+                        required: [],
+                    },
+                };
+                const proposal = {
+                    action_id: 11,
+                    review_status: 'passed',
+                    danger: 'low',
+                    statements: ['UPDATE t SET a = 1'],
+                };
+                const run = async (
+                    resultText: string,
+                    isError = false,
+                    conversationId?: string | null,
+                    input: Record<string, unknown> = { connection_id: 3 },
+                    onActionProposed?: (actionId: number) => void,
+                ) => {
+                    const mockFetch = createMockFetch(
+                        [
+                            createToolUseResponse([
+                                {
+                                    id: 'tool-1',
+                                    name: 'propose_action',
+                                    input,
+                                },
+                            ]),
+                            createTextResponse('Done'),
+                        ],
+                        new Map([
+                            [
+                                'propose_action',
+                                createToolCallResponse(resultText, isError),
+                            ],
+                        ]),
+                    );
+                    const result = await runAgenticLoop(
+                        createLoopParams({
+                            fetchFn: mockFetch,
+                            availableTools: [proposeTool],
+                            conversationId,
+                            onActionProposed,
+                        }),
+                    );
+                    return { result, mockFetch };
+                };
+                const callBody = (mockFetch: Mock<FetchFunction>) => {
+                    const call = mockFetch.mock.calls.find(
+                        c => c[0] === '/api/v1/mcp/tools/call',
+                    );
+                    return JSON.parse(call?.[1]?.body as string);
+                };
+
+                it.each([
+                    [7, 7],
+                    ['7', undefined],
+                    [0, undefined],
+                    [1.5, undefined],
+                ])('records revises_action_id %s as %s', async (given, want) => {
+                    const { result } = await run(
+                        JSON.stringify(proposal),
+                        false,
+                        undefined,
+                        { connection_id: 3, revises_action_id: given },
+                    );
+                    expect(result.finalMessage.activity?.[0].revisesActionId)
+                        .toBe(want);
+                });
+
+                it('stores the parsed proposal on the activity', async () => {
+                    const { result } = await run(JSON.stringify(proposal));
+                    expect(result.finalMessage.activity?.[0].proposal).toEqual(
+                        proposal,
+                    );
+                });
+
+                it('leaves the proposal off when the result is not a proposal', async () => {
+                    const { result } = await run('not json');
+                    expect(
+                        result.finalMessage.activity?.[0].proposal,
+                    ).toBeUndefined();
+                });
+
+                it('ignores a proposal in an error result', async () => {
+                    const { result } = await run(JSON.stringify(proposal), true);
+                    expect(
+                        result.finalMessage.activity?.[0].proposal,
+                    ).toBeUndefined();
+                });
+
+                it.each([
+                    ['a proposal', JSON.stringify(proposal), false, [11]],
+                    ['an error result', JSON.stringify(proposal), true, []],
+                    ['a non-proposal result', 'not json', false, []],
+                ])('reports the action id for %s', async (
+                    _label, text, isError, want,
+                ) => {
+                    const reported: number[] = [];
+                    await run(
+                        text,
+                        isError,
+                        undefined,
+                        { connection_id: 3 },
+                        id => { reported.push(id); },
+                    );
+                    expect(reported).toEqual(want);
+                });
+
+                it('sends the conversation id when it is known', async () => {
+                    const { mockFetch } = await run(
+                        JSON.stringify(proposal),
+                        false,
+                        'conv-9',
+                    );
+                    expect(callBody(mockFetch).conversation_id).toBe('conv-9');
+                });
+
+                it('omits the conversation id when it is not known', async () => {
+                    const { mockFetch } = await run(JSON.stringify(proposal));
+                    expect(callBody(mockFetch)).not.toHaveProperty(
+                        'conversation_id',
+                    );
+                });
+            });
+
             it('records the connection and database each tool call targeted', async () => {
                 const toolResponses = new Map([
                     ['query_database', createToolCallResponse('ok')],
@@ -537,6 +667,49 @@ describe('chatAgenticLoop', () => {
                 const result = await runAgenticLoop(params);
 
                 expect(result.finalMessage.content).toBe('Done');
+            });
+
+            it.each([
+                ['an HTTP error body', { ok: false, status: 500, text: 'boom' },
+                    'Tool execution error: boom', true],
+                ['an empty HTTP error body', { ok: false, status: 502, text: '' },
+                    'Tool execution error: Tool call failed with status 502', true],
+                ['an empty text result', { ok: true, json: { content: [{ text: '' }] } },
+                    'No data returned', false],
+                ['an empty error result', { ok: true, json: { content: [], isError: true } },
+                    'Tool execution failed', true],
+            ] as const)('feeds the model %s', async (_name, reply, want, isError) => {
+                let llmCalls = 0;
+                const mockFetch = vi.fn<FetchFunction>().mockImplementation(async (url: string) => {
+                    if (url === '/api/v1/llm/chat') {
+                        llmCalls++;
+                        const response = llmCalls === 1
+                            ? createToolUseResponse([
+                                { id: 'tool-1', name: 'list_connections', input: {} },
+                            ])
+                            : createTextResponse('Done');
+                        return stubResponse({
+                            ok: true,
+                            json: () => Promise.resolve(response),
+                            text: () => Promise.resolve(''),
+                        });
+                    }
+                    return {
+                        ok: reply.ok,
+                        status: 'status' in reply ? reply.status : 200,
+                        json: () => Promise.resolve('json' in reply ? reply.json : {}),
+                        text: () => Promise.resolve('text' in reply ? reply.text : ''),
+                    } as unknown as Response;
+                });
+
+                const result = await runAgenticLoop(createLoopParams({ fetchFn: mockFetch }));
+
+                const blocks = result.updatedApiMessages.flatMap(
+                    m => (Array.isArray(m.content) ? m.content : []),
+                ) as unknown as { type: string; text?: string; is_error?: boolean }[];
+                const toolResult = blocks.find(b => b.type === 'tool_result');
+                expect(toolResult?.text).toBe(want);
+                expect(Boolean(toolResult?.is_error)).toBe(isError);
             });
 
             it('handles tool response isError with no content text', async () => {

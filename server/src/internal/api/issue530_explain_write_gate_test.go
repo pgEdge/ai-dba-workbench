@@ -32,113 +32,6 @@ import (
 // gate.
 const issue530Payload = `{"query": "EXPLAIN ANALYZE DELETE FROM t WHERE name = '$1'"}`
 
-// TestIssue530_IsReadOnlyStatementExplain covers classification of
-// EXPLAIN by what it explains rather than by its leading keyword.
-func TestIssue530_IsReadOnlyStatementExplain(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		readOnly bool
-	}{
-		{"explain select", "EXPLAIN SELECT * FROM t", true},
-		{"explain delete plans only", "EXPLAIN DELETE FROM t", true},
-		{"explain verbose delete plans only", "EXPLAIN VERBOSE DELETE FROM t", true},
-		{"legacy explain verbose select", "EXPLAIN VERBOSE SELECT 1", true},
-		{"explain analyze select", "EXPLAIN ANALYZE SELECT 1", true},
-		{"explain analyze delete", "EXPLAIN ANALYZE DELETE FROM t", false},
-		{"explain analyse update", "EXPLAIN ANALYSE UPDATE t SET a = 1", false}, //nolint:misspell // British spelling accepted by PostgreSQL
-		{"explain analyze verbose insert", "EXPLAIN ANALYZE VERBOSE INSERT INTO t VALUES (1)", false},
-		{"explain verbose analyze insert", "EXPLAIN VERBOSE ANALYZE INSERT INTO t VALUES (1)", false},
-		{"explain paren analyze buffers insert",
-			"EXPLAIN (ANALYZE, BUFFERS) INSERT INTO t VALUES (1)", false},
-		{"explain paren format json select", "EXPLAIN (FORMAT JSON) SELECT 1", true},
-		{"explain paren format json delete plans only",
-			"EXPLAIN (FORMAT JSON) DELETE FROM t", true},
-		{"explain paren analyze false is still a write",
-			"EXPLAIN (ANALYZE false) DELETE FROM t", false},
-		{"explain paren analyze writable cte",
-			"EXPLAIN (ANALYZE) WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x", false},
-		{"explain paren analyze read-only cte",
-			"EXPLAIN (ANALYZE) WITH x AS (SELECT 1) SELECT * FROM x", true},
-		{"explain analyze mixed case", "ExPlAiN aNaLyZe DeLeTe FROM t", false},
-		{"explain analyze lowercase", "explain analyze delete from t", false},
-		{"form feed before a comment hiding analyze",
-			"EXPLAIN\f/* x */ ANALYZE DELETE FROM t", false},
-		{"form feed before a line comment hiding analyze",
-			"EXPLAIN\f-- c\nANALYZE DELETE FROM t", false},
-		{"form feed before a comment hiding the option list",
-			"EXPLAIN\f/**/(ANALYZE) DELETE FROM t", false},
-		{"vertical tab before a comment hiding analyze",
-			"EXPLAIN\v/* x */ ANALYZE DELETE FROM t", false},
-		{"carriage return ends a line comment before analyze",
-			"EXPLAIN -- c\rANALYZE DELETE FROM t", false},
-		{"explain with leading comment",
-			"-- plan it\nEXPLAIN ANALYZE DELETE FROM t", false},
-		{"explain with block comment before options",
-			"EXPLAIN /* opts */ (ANALYZE) DELETE FROM t", false},
-		{"analyze hidden behind a comment containing a paren",
-			"EXPLAIN (/* ) */ ANALYZE) DELETE FROM t", false},
-		{"analyze in an option value is a value, not a name",
-			"EXPLAIN (FORMAT 'analyze') DELETE FROM t", true},
-		{"unbalanced options fail closed", "EXPLAIN (ANALYZE DELETE FROM t", false},
-		{"nested parentheses in the options",
-			"EXPLAIN (ANALYZE (on)) DELETE FROM t", false},
-		{"analyze inside an option comment is not an option name",
-			"EXPLAIN (FORMAT JSON -- ANALYZE\n) DELETE FROM t", true},
-		{"explain with no statement", "EXPLAIN", true},
-		{"explain analyze with no statement", "EXPLAIN ANALYZE", false},
-		{"explainable identifier is not explain", "EXPLAINABLE SELECT 1", false},
-		{"nested explain analyze of a select",
-			"EXPLAIN ANALYZE EXPLAIN ANALYZE SELECT 1", true},
-		{"nested explain analyze of a delete",
-			"EXPLAIN ANALYZE EXPLAIN ANALYZE DELETE FROM t", false},
-		{"pathological nesting fails closed",
-			strings.Repeat("EXPLAIN ANALYZE ", 64) + "SELECT 1", false},
-		{"no-analyze nesting stays read-only",
-			strings.Repeat("EXPLAIN ", 64) + "DELETE FROM t", true},
-		{"unicode-escaped analyze option name",
-			`EXPLAIN (U&"\0061nalyze") DELETE FROM t WHERE id = 99`, false},
-		{"lowercase unicode-escaped analyze option name",
-			`EXPLAIN (u&"\0061nalyze") DELETE FROM t WHERE id = 99`, false},
-		{"unicode escape at the end of the option name",
-			`EXPLAIN (U&"analyz\0065") DELETE FROM t WHERE id = 99`, false},
-		{"unicode-escaped analyze option name with a value",
-			`EXPLAIN (U&"\0061nalyze" true) DELETE FROM t WHERE id = 99`, false},
-		{"unicode-escaped option name after a recognized one",
-			`EXPLAIN (VERBOSE, U&"\0061nalyze") DELETE FROM t`, false},
-		{"unicode-escaped name of a recognized option still fails closed",
-			`EXPLAIN (U&"verbose") DELETE FROM t`, false},
-		{"quoted analyze option name",
-			`EXPLAIN ("analyze") DELETE FROM t`, false},
-		{"quoted analyze option name with a value",
-			`EXPLAIN ("analyze" true) DELETE FROM t`, false},
-		{"quoted recognized option name still fails closed",
-			`EXPLAIN ("verbose") DELETE FROM t`, false},
-		{"unrecognized option name fails closed",
-			"EXPLAIN (FUTURE_OPTION) DELETE FROM t", false},
-		{"empty option list fails closed", "EXPLAIN () DELETE FROM t", false},
-		{"trailing empty option entry fails closed",
-			"EXPLAIN (VERBOSE,) DELETE FROM t", false},
-		{"every recognized option name is non-executing",
-			"EXPLAIN (VERBOSE, COSTS off, SETTINGS on, GENERIC_PLAN on, " +
-				"BUFFERS off, WAL off, TIMING off, SUMMARY off, MEMORY off, " +
-				"SERIALIZE none, FORMAT JSON) DELETE FROM t", true},
-		{"recognized options lowercase",
-			"explain (verbose, format json) delete from t", true},
-		{"parenthesis inside a dollar-quoted option value",
-			"EXPLAIN (FORMAT $$)$$, ANALYZE) DELETE FROM t", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isReadOnlyStatement(tt.input); got != tt.readOnly {
-				t.Errorf("isReadOnlyStatement(%q) = %v, want %v",
-					tt.input, got, tt.readOnly)
-			}
-		})
-	}
-}
-
 // TestIssue530_ContainsDollarParam covers the quoting-aware placeholder
 // scan: only a $N that is real SQL counts.
 func TestIssue530_ContainsDollarParam(t *testing.T) {
@@ -229,11 +122,11 @@ func TestIssue530_NeedsSimpleProtocol(t *testing.T) {
 	}
 }
 
-// TestIssue530_ExplainAnalyzeDeleteRequiresConfirmation proves the
+// TestIssue530_ExplainAnalyzeDeleteRefusedAsWrite proves the
 // issue's payload is now classified as a write, so an unconfirmed caller
-// gets the confirmation prompt instead of a silent DELETE. The handler
+// gets a 409 refusal instead of a silent DELETE. The handler
 // answers before it reaches the nil datastore.
-func TestIssue530_ExplainAnalyzeDeleteRequiresConfirmation(t *testing.T) {
+func TestIssue530_ExplainAnalyzeDeleteRefusedAsWrite(t *testing.T) {
 	handler := newTestConnectionHandlerWithRBAC(t)
 
 	req := httptest.NewRequest(http.MethodPost,
@@ -243,17 +136,17 @@ func TestIssue530_ExplainAnalyzeDeleteRequiresConfirmation(t *testing.T) {
 
 	handler.executeQuery(rec, req, 1)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d (body %q)",
-			rec.Code, http.StatusOK, rec.Body.String())
+			rec.Code, http.StatusConflict, rec.Body.String())
 	}
 
-	var resp multiQueryResponse
+	var resp writeRefusedResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode response: %v (body %q)", err, rec.Body.String())
 	}
-	if !resp.RequiresConfirmation {
-		t.Fatal("expected requires_confirmation for EXPLAIN ANALYZE DELETE")
+	if !resp.RequiresAction {
+		t.Fatal("expected requires_action for EXPLAIN ANALYZE DELETE")
 	}
 	if len(resp.WriteStatements) != 1 {
 		t.Fatalf("write statements = %v, want 1", resp.WriteStatements)
@@ -264,11 +157,11 @@ func TestIssue530_ExplainAnalyzeDeleteRequiresConfirmation(t *testing.T) {
 	}
 }
 
-// TestIssue530_ExplainAnalyzeDeleteRequiresWriteAccess proves that a
+// TestIssue530_ExplainAnalyzeDeleteRefusedForReadOnlyCaller proves that a
 // caller with read-only access to the connection is refused even when it
 // confirms, so the payload can no longer reach execution through the
 // simple-protocol branch.
-func TestIssue530_ExplainAnalyzeDeleteRequiresWriteAccess(t *testing.T) {
+func TestIssue530_ExplainAnalyzeDeleteRefusedForReadOnlyCaller(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAlertOverrides(t)
 	defer cleanup()
 
@@ -292,17 +185,16 @@ func TestIssue530_ExplainAnalyzeDeleteRequiresWriteAccess(t *testing.T) {
 
 	handler.executeQuery(rec, req, connID)
 
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d (body %q)",
-			rec.Code, http.StatusForbidden, rec.Body.String())
+			rec.Code, http.StatusConflict, rec.Body.String())
 	}
-	want := "Permission denied: you do not have write access to this connection"
-	var resp ErrorResponse
+	var resp writeRefusedResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to decode error: %v (body %q)", err, rec.Body.String())
+		t.Fatalf("failed to decode refusal: %v (body %q)", err, rec.Body.String())
 	}
-	if resp.Error != want {
-		t.Errorf("error = %q, want %q", resp.Error, want)
+	if !resp.RequiresAction {
+		t.Errorf("requires_action = false, want true (body %q)", rec.Body.String())
 	}
 }
 
@@ -321,11 +213,15 @@ DROP FUNCTION IF EXISTS issue530_probe_write();
 DROP TABLE IF EXISTS issue530_probe;
 `
 
-// TestIssue530_SimpleProtocolRunsInsideReadOnlyTransaction is the
-// backstop that holds when classification does not: a statement that classification calls read-only but
-// that actually writes must be refused by PostgreSQL, because the
-// simple-protocol branch now runs inside a read-only transaction.
-func TestIssue530_SimpleProtocolRunsInsideReadOnlyTransaction(t *testing.T) {
+// TestIssue530_QueriesRunInsideReadOnlyTransaction is the backstop that
+// holds when classification does not: a statement that classification
+// calls read-only but that actually writes must be refused by
+// PostgreSQL, on both the extended-protocol branch and the
+// simple-protocol branch, because each runs inside a read-only
+// transaction. With every write now routed through proposed actions
+// (issue #774), this transaction is all that stands between /query and
+// a write classification misses.
+func TestIssue530_QueriesRunInsideReadOnlyTransaction(t *testing.T) {
 	h, pool, target, cleanup := newQueryExecTestHandler(t)
 	defer cleanup()
 
@@ -338,40 +234,58 @@ func TestIssue530_SimpleProtocolRunsInsideReadOnlyTransaction(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), issue530ProbeTeardown)
 	}()
 
-	// The write comes first so that it runs before the EXPLAIN, which
-	// PostgreSQL rejects for its unbound placeholder; the EXPLAIN is
-	// only there to route the request onto the simple-protocol branch.
-	rec := postQuery(t, h, connID,
-		`{"query":"SELECT issue530_probe_write(); EXPLAIN SELECT 1 WHERE 1 = $1;"}`)
+	tests := []struct {
+		name string
+		body string
+	}{
+		// The extended protocol, the path every ordinary query takes.
+		{"extended protocol", `{"query":"SELECT issue530_probe_write();"}`},
+		// The write comes first so that it runs before the EXPLAIN,
+		// which PostgreSQL rejects for its unbound placeholder; the
+		// EXPLAIN is only there to route the request onto the
+		// simple-protocol branch.
+		{"simple protocol", `{"query":"SELECT issue530_probe_write(); EXPLAIN SELECT 1 WHERE 1 = $1;"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := postQuery(t, h, connID, tt.body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %q)",
+					rec.Code, http.StatusOK, rec.Body.String())
+			}
+			resp := decodeMultiQuery(t, rec)
+			if len(resp.Results) != 1 {
+				t.Fatalf("results = %d, want 1 (execution stops at the refusal)",
+					len(resp.Results))
+			}
+			if !strings.Contains(strings.ToLower(resp.Results[0].Error), "read-only transaction") {
+				t.Errorf("error = %q, want a read-only transaction refusal",
+					resp.Results[0].Error)
+			}
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d (body %q)",
-			rec.Code, http.StatusOK, rec.Body.String())
-	}
-	resp := decodeMultiQuery(t, rec)
-	if len(resp.Results) != 1 {
-		t.Fatalf("results = %d, want 1 (execution stops at the refusal)",
-			len(resp.Results))
-	}
-	if !strings.Contains(strings.ToLower(resp.Results[0].Error), "read-only transaction") {
-		t.Errorf("error = %q, want a read-only transaction refusal",
-			resp.Results[0].Error)
-	}
+			var rows int
+			if err := pool.QueryRow(context.Background(),
+				"SELECT count(*) FROM issue530_probe").Scan(&rows); err != nil {
+				t.Fatalf("failed to count the probe rows: %v", err)
+			}
+			if rows != 0 {
+				t.Errorf("probe rows = %d, want 0: the write was not refused", rows)
+			}
 
-	var rows int
-	if err := pool.QueryRow(context.Background(),
-		"SELECT count(*) FROM issue530_probe").Scan(&rows); err != nil {
-		t.Fatalf("failed to count the probe rows: %v", err)
-	}
-	if rows != 0 {
-		t.Errorf("probe rows = %d, want 0: the write was not refused", rows)
-	}
-
-	// The rollback must leave the pooled connection usable.
-	rec = postQuery(t, h, connID, `{"query":"SELECT 1"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("follow-up status = %d, want %d (body %q)",
-			rec.Code, http.StatusOK, rec.Body.String())
+			// The rollback must leave the pooled connection usable.
+			rec = postQuery(t, h, connID, `{"query":"SELECT 1"}`)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("follow-up status = %d, want %d (body %q)",
+					rec.Code, http.StatusOK, rec.Body.String())
+			}
+			// A statement error also comes back as 200, so read the result.
+			follow := decodeMultiQuery(t, rec).Results
+			if len(follow) != 1 || follow[0].Error != "" ||
+				len(follow[0].Rows) != 1 || len(follow[0].Rows[0]) != 1 ||
+				follow[0].Rows[0][0] != "1" {
+				t.Errorf("follow-up results = %+v, want one row holding 1", follow)
+			}
+		})
 	}
 }
 
@@ -429,7 +343,6 @@ func TestIssue530_RunSimpleStatementsTransactionDiscipline(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		readOnly  bool
 		failAt    string
 		run       func(context.Context, string) statementResult
 		wantSQL   []string
@@ -437,35 +350,31 @@ func TestIssue530_RunSimpleStatementsTransactionDiscipline(t *testing.T) {
 		wantLast  string
 	}{
 		{
-			name: "read-only run commits", readOnly: true, run: okResult,
+			name: "read-only run commits", run: okResult,
 			wantSQL:   []string{"BEGIN", "SET TRANSACTION READ ONLY", "COMMIT"},
 			wantCount: 2,
 		},
 		{
-			name: "statement failure rolls back", readOnly: true, run: failResult,
+			name: "statement failure rolls back", run: failResult,
 			wantSQL:   []string{"BEGIN", "SET TRANSACTION READ ONLY", "ROLLBACK"},
 			wantCount: 1, wantLast: "SELECT 1",
 		},
 		{
-			name: "begin failure stops before any statement", readOnly: true,
+			name:   "begin failure stops before any statement",
 			failAt: "BEGIN", run: okResult,
 			wantSQL: []string{"BEGIN"}, wantCount: 1, wantLast: "BEGIN",
 		},
 		{
-			name: "read-only failure rolls back", readOnly: true,
+			name:   "read-only failure rolls back",
 			failAt: "SET TRANSACTION READ ONLY", run: okResult,
 			wantSQL:   []string{"BEGIN", "SET TRANSACTION READ ONLY", "ROLLBACK"},
 			wantCount: 1, wantLast: "SET TRANSACTION READ ONLY",
 		},
 		{
-			name: "commit failure rolls back and is reported", readOnly: true,
+			name:   "commit failure rolls back and is reported",
 			failAt: "COMMIT", run: okResult,
 			wantSQL:   []string{"BEGIN", "SET TRANSACTION READ ONLY", "COMMIT", "ROLLBACK"},
 			wantCount: 3, wantLast: "COMMIT",
-		},
-		{
-			name: "confirmed write runs without a transaction", readOnly: false,
-			run: okResult, wantSQL: nil, wantCount: 2,
 		},
 	}
 
@@ -474,7 +383,7 @@ func TestIssue530_RunSimpleStatementsTransactionDiscipline(t *testing.T) {
 			var seen []string
 			results := runSimpleStatementsWith(context.Background(),
 				failOn(tt.failAt, &seen), tt.run,
-				[]string{"SELECT 1", "SELECT 2"}, 1, tt.readOnly)
+				[]string{"SELECT 1", "SELECT 2"}, 1)
 
 			if len(results) != tt.wantCount {
 				t.Fatalf("results = %d, want %d", len(results), tt.wantCount)
@@ -551,178 +460,6 @@ func TestIssue530_SplitStatementsQuoting(t *testing.T) {
 					t.Errorf("splitStatements(%q)[%d] = %q, want %q",
 						tt.input, i, got[i], tt.want[i])
 				}
-			}
-		})
-	}
-}
-
-// TestIssue530_WritingSelectClauses covers the statements that read at
-// first glance but write: a writable CTE using MERGE, SELECT ... INTO,
-// which creates a table, and the row-locking clauses, which stamp the
-// lock onto every row they return.
-func TestIssue530_WritingSelectClauses(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		readOnly bool
-	}{
-		{"writable CTE MERGE",
-			"WITH c AS (SELECT 1) MERGE INTO t USING s ON t.id = s.id " +
-				"WHEN MATCHED THEN DO NOTHING", false},
-		{"select into", "SELECT * INTO x FROM t", false},
-		{"select into lowercase", "select a into x from t", false},
-		{"select for update", "SELECT * FROM t FOR UPDATE", false},
-		{"select for no key update", "SELECT * FROM t FOR NO KEY UPDATE", false},
-		{"select for share", "SELECT * FROM t FOR SHARE", false},
-		{"select for key share", "SELECT * FROM t FOR KEY SHARE", false},
-		{"select for update lowercase", "select * from t for update", false},
-		{"table shorthand for update", "TABLE t FOR UPDATE", false},
-		{"explain analyze select for update",
-			"EXPLAIN ANALYZE SELECT * FROM t FOR UPDATE", false},
-		{"cte with a locking clause",
-			"WITH c AS (SELECT 1 FOR UPDATE) SELECT * FROM c", false},
-		{"plain select is unaffected", "SELECT * FROM t", true},
-		{"substring for is not a locking clause",
-			"SELECT substring(a FROM 1 FOR 2) FROM t", true},
-		{"a column called format is not a locking clause",
-			"SELECT format FROM t", true},
-		{"a column called information is not INTO",
-			"SELECT information FROM t", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isReadOnlyStatement(tt.input); got != tt.readOnly {
-				t.Errorf("isReadOnlyStatement(%q) = %v, want %v",
-					tt.input, got, tt.readOnly)
-			}
-		})
-	}
-}
-
-// TestIssue530_KeywordScansIgnoreNonCode pins that the write-clause and
-// writable-CTE scans read code only, so a keyword sitting in a string
-// literal, a quoted identifier or a comment no longer classifies an
-// ordinary read as a write.
-func TestIssue530_KeywordScansIgnoreNonCode(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		readOnly bool
-	}{
-		{"into inside a string literal",
-			"SELECT * FROM audit WHERE msg LIKE '%signed into%'", true},
-		{"into inside a trailing line comment",
-			"SELECT * FROM t -- copy into x", true},
-		{"into inside a block comment",
-			"SELECT * FROM t /* select into x */ WHERE a = 1", true},
-		{"locking clause inside a string literal",
-			"SELECT * FROM t WHERE note = 'FOR UPDATE'", true},
-		{"into as a quoted identifier",
-			`SELECT "into" FROM t`, true},
-		{"locking clause as a quoted identifier",
-			`SELECT "for", "update" FROM t`, true},
-		{"delete inside a literal in a CTE",
-			"WITH c AS (SELECT 'delete' AS a) SELECT * FROM c", true},
-		{"insert inside a comment in a CTE",
-			"WITH c AS (SELECT 1) /* insert */ SELECT * FROM c", true},
-		{"escape literal containing into",
-			`SELECT * FROM t WHERE a = E'signed into\n'`, true},
-		{"unicode literal containing for update",
-			`SELECT * FROM t WHERE a = U&'for update'`, true},
-		{"genuine into beside a masking literal",
-			"SELECT 'into' AS a INTO x FROM t", false},
-		{"genuine locking clause beside a comment",
-			"SELECT * FROM t -- nothing here\nFOR UPDATE", false},
-		{"genuine writable CTE beside a literal",
-			"WITH c AS (DELETE FROM t WHERE a = 'delete' RETURNING *) " +
-				"SELECT * FROM c", false},
-		{"delete inside a dollar-quoted literal in a CTE",
-			"WITH c AS (SELECT $$delete$$ AS a) SELECT * FROM c", true},
-		{"single quote inside a dollar quote hides nothing",
-			"WITH a AS (SELECT $q$'$q$ AS c), d AS (DELETE FROM t RETURNING *) " +
-				"SELECT * FROM d", false},
-		{"double quote inside a dollar quote hides nothing",
-			`WITH a AS (SELECT $$"$$ AS c), d AS (DELETE FROM t RETURNING *) ` +
-				"SELECT * FROM d", false},
-		{"line comment marker inside a dollar quote hides nothing",
-			"WITH a AS (SELECT $$--$$ AS c), d AS (DELETE FROM t RETURNING *) " +
-				"SELECT * FROM d", false},
-		{"block comment marker inside a dollar quote hides nothing",
-			"WITH a AS (SELECT $$/*$$ AS c), d AS (DELETE FROM t RETURNING *) " +
-				"SELECT * FROM d", false},
-		{"into after a dollar quote holding a quote",
-			"SELECT $$'$$ AS a INTO x FROM t", false},
-		{"dollar continuing an identifier opens no dollar quote",
-			"WITH a AS (SELECT 1 AS c$q$), d AS (DELETE FROM t RETURNING *) " +
-				"SELECT * FROM d -- $q$", false},
-		{"quote inside a non-ASCII dollar tag hides nothing",
-			"WITH a AS (SELECT $é$'$é$ AS c), d AS (DELETE FROM t RETURNING *) " +
-				"SELECT * FROM d", false},
-		{"explain analyze of a non-ASCII dollar tag hiding a delete",
-			"EXPLAIN ANALYZE WITH a AS (SELECT $é$'$é$ AS c), " +
-				"d AS (DELETE FROM t RETURNING *) SELECT * FROM d", false},
-		{"into after a non-ASCII dollar tag holding a quote",
-			"SELECT $é$'$é$ AS c INTO newtab FROM t", false},
-		{"comment marker inside a mixed non-ASCII dollar tag hides nothing",
-			"WITH a AS (SELECT $qé$--$qé$ AS c), d AS (DELETE FROM t RETURNING *) " +
-				"SELECT * FROM d", false},
-		{"dollar continuing a non-ASCII identifier opens no dollar quote",
-			"WITH a AS (SELECT 1 AS é$q$), d AS (DELETE FROM t RETURNING *) " +
-				"SELECT * FROM d -- $q$", false},
-		{"E after a non-ASCII identifier byte is not an escape prefix",
-			`WITH a AS (SELECT éE'\' AS c), d AS (DELETE FROM t RETURNING *) ` +
-				"SELECT * FROM d", false},
-		{"E after a dollar continuing an identifier is not an escape prefix",
-			`WITH x AS (SELECT a$E'\' AS c), d AS (DELETE FROM t RETURNING *) ` +
-				"SELECT * FROM d", false},
-		{"explain analyze of an identifier dollar before an E literal",
-			`EXPLAIN ANALYZE WITH x AS (SELECT a$E'\' AS c), ` +
-				"d AS (DELETE FROM t RETURNING *) SELECT * FROM d", false},
-		{"into after an identifier dollar before an E literal",
-			`SELECT a$E'\' AS c INTO newtab FROM t`, false},
-		{"carriage return ends a line comment",
-			"WITH a AS (SELECT 1) -- x\r, d AS (DELETE FROM t RETURNING *) " +
-				"SELECT * FROM d", false},
-		{"form feed before a leading comment",
-			"\f/* x */ WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", false},
-		{"backslash quote under standard_conforming_strings off",
-			`WITH x AS (SELECT '\'' AS c), d AS (DELETE FROM t RETURNING *) ` +
-				"SELECT * FROM d --'", false},
-		{"standard_conforming_strings turned off earlier in the request",
-			`SELECT set_config('standard_conforming_strings', 'off', false); ` +
-				`WITH x AS (SELECT '\'' AS c), d AS (DELETE FROM t RETURNING *) ` +
-				"SELECT * FROM d --'", false},
-		{"backslash quote in a national literal",
-			`WITH x AS (SELECT N'\'' AS c), d AS (DELETE FROM t RETURNING *) ` +
-				"SELECT * FROM d --'", false},
-		{"explain analyze of a backslash quote",
-			`EXPLAIN ANALYZE WITH x AS (SELECT '\'' AS c), ` +
-				"d AS (DELETE FROM t RETURNING *) SELECT * FROM d --'", false},
-		{"into after a backslash quote",
-			`SELECT '\'' AS c INTO newtab FROM t --'`, false},
-		{"semicolon only an escape reading treats as code",
-			`SELECT '\''; DELETE FROM t; --'`, false},
-		{"escape string continued onto the next line",
-			"WITH x AS (SELECT E'a'\n'\\'' AS c), d AS (DELETE FROM t RETURNING *) " +
-				"SELECT * FROM d --'", false},
-		{"escape string continued after a line comment",
-			"WITH x AS (SELECT E'a' -- c\n  '\\'' AS c), " +
-				"d AS (DELETE FROM t RETURNING *) SELECT * FROM d --'", false},
-		{"escape string continued after a carriage return",
-			"WITH x AS (SELECT E'a'\r'\\'' AS c), d AS (DELETE FROM t RETURNING *) " +
-				"SELECT * FROM d --'", false},
-		{"backslash in a plain literal under both readings",
-			`SELECT 'C:\temp' AS path FROM t`, true},
-		{"literal continued onto the next line",
-			"SELECT 'signed'\n' into' AS msg FROM t", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isReadOnlyStatement(tt.input); got != tt.readOnly {
-				t.Errorf("isReadOnlyStatement(%q) = %v, want %v",
-					tt.input, got, tt.readOnly)
 			}
 		})
 	}
@@ -822,12 +559,12 @@ func TestIssue530_ContainsDollarParamEitherReading(t *testing.T) {
 	}
 }
 
-// TestIssue530_StandardConformingStringsOffRequiresConfirmation proves
+// TestIssue530_StandardConformingStringsOffRefusedAsWrite proves
 // that the round-four payload, which turns standard_conforming_strings
 // off and then hides a DELETE CTE behind '\”, now yields the
-// confirmation prompt. The handler answers before it reaches the nil
+// 409 refusal. The handler answers before it reaches the nil
 // datastore.
-func TestIssue530_StandardConformingStringsOffRequiresConfirmation(t *testing.T) {
+func TestIssue530_StandardConformingStringsOffRefusedAsWrite(t *testing.T) {
 	handler := newTestConnectionHandlerWithRBAC(t)
 
 	query := `SELECT set_config('standard_conforming_strings', 'off', false); ` +
@@ -845,16 +582,16 @@ func TestIssue530_StandardConformingStringsOffRequiresConfirmation(t *testing.T)
 
 	handler.executeQuery(rec, req, 1)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d (body %q)",
-			rec.Code, http.StatusOK, rec.Body.String())
+			rec.Code, http.StatusConflict, rec.Body.String())
 	}
-	var resp multiQueryResponse
+	var resp writeRefusedResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode response: %v (body %q)", err, rec.Body.String())
 	}
-	if !resp.RequiresConfirmation {
-		t.Fatal("expected requires_confirmation for the hidden DELETE CTE")
+	if !resp.RequiresAction {
+		t.Fatal("expected requires_action for the hidden DELETE CTE")
 	}
 	// The set_config call is a write in its own right (issue #646), so
 	// both statements are listed; the point here is that the hidden
@@ -1035,61 +772,6 @@ func createSetClientEncodingWrapper(t *testing.T, pool *pgxpool.Pool) func() {
 	}
 }
 
-// TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch proves that
-// the confirmed write path also ends the batch once a statement moves
-// the connection off UTF8, so a statement after it is never lexed under
-// the new encoding. The confirmation prompt lists only the statements
-// classified as writes, so without this a write hidden that way would
-// run without being listed.
-func TestIssue530_ClientEncodingChangeStopsConfirmedWriteBatch(t *testing.T) {
-	h, pool, target, cleanup := newQueryExecTestHandler(t)
-	defer cleanup()
-
-	defer createSetClientEncodingWrapper(t, pool)()
-
-	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
-
-	tests := []struct {
-		name  string
-		query string
-		want  int
-	}{
-		{"write statement changes the encoding",
-			"SET client_encoding = 'SJIS'; SELECT 1", 1},
-		{"read statement changes the encoding",
-			"CREATE TEMP TABLE issue530_enc (a int); " +
-				"SELECT issue530_set_client_encoding(false); SELECT 1", 2},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body, err := json.Marshal(queryRequest{Query: tt.query,
-				Confirmed: true})
-			if err != nil {
-				t.Fatalf("failed to encode the request: %v", err)
-			}
-			rec := postQuery(t, h, connID, string(body))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d (body %q)",
-					rec.Code, http.StatusOK, rec.Body.String())
-			}
-			resp := decodeMultiQuery(t, rec)
-			if len(resp.Results) != tt.want {
-				t.Fatalf("results = %+v, want %d (the batch stops at the change)",
-					resp.Results, tt.want)
-			}
-			for _, r := range resp.Results[:tt.want-1] {
-				if r.Error != "" {
-					t.Errorf("unexpected error before the change: %q", r.Error)
-				}
-			}
-			if got := resp.Results[tt.want-1].Error; got != clientEncodingChangedError {
-				t.Errorf("error = %q, want %q", got, clientEncodingChangedError)
-			}
-		})
-	}
-}
-
 // TestIssue530_ClientEncodingPinnedAtStartup proves that the query
 // connection starts on UTF8 even when the database's own default says
 // otherwise, because the startup parameter takes precedence over it.
@@ -1126,104 +808,5 @@ func TestIssue530_ClientEncodingPinnedAtStartup(t *testing.T) {
 	}
 	if got := resp.Results[0].Rows; len(got) != 1 || got[0][0] != "UTF8" {
 		t.Errorf("client_encoding = %q, want UTF8", got)
-	}
-}
-
-// TestIssue530_ConfirmedBatchLeavingTransactionOpen proves that a
-// confirmed batch which opens a transaction and does not close it is
-// rolled back and reported as such, rather than listing each statement
-// as a success whilst the pool discards the work, and that a batch
-// which does close its transaction keeps what it did. Both the pgx
-// write path and the simple-protocol branch are covered; the
-// GENERIC_PLAN EXPLAIN routes a batch onto the latter. It needs
-// PostgreSQL 16 or later to succeed, so the one case that depends on it
-// succeeding is skipped on an older server, where it errors and the
-// transaction is rolled back like the open cases.
-func TestIssue530_ConfirmedBatchLeavingTransactionOpen(t *testing.T) {
-	h, pool, target, cleanup := newQueryExecTestHandler(t)
-	defer cleanup()
-
-	connID := seedQueryExecConnection(t, pool, target, target.host, target.port)
-
-	ctx := context.Background()
-	var serverVersion int
-	if err := pool.QueryRow(ctx,
-		"SELECT current_setting('server_version_num')::int").Scan(&serverVersion); err != nil {
-		t.Fatalf("failed to read the server version: %v", err)
-	}
-	const explain = "EXPLAIN (GENERIC_PLAN) SELECT 1 WHERE 1 = $1"
-	tests := []struct {
-		name      string
-		query     string
-		results   int
-		openError bool
-		rowsLeft  int
-		needsPG16 bool
-	}{
-		{"open transaction on the write path",
-			"BEGIN; DELETE FROM issue530_txn", 3, true, 2, false},
-		{"closed transaction on the write path",
-			"BEGIN; DELETE FROM issue530_txn; COMMIT", 3, false, 0, false},
-		{"open transaction on the simple-protocol branch",
-			"BEGIN; DELETE FROM issue530_txn; " + explain, 4, true, 2, false},
-		{"closed transaction on the simple-protocol branch",
-			"BEGIN; DELETE FROM issue530_txn; " + explain + "; COMMIT",
-			4, false, 0, true},
-		{"failed statement inside an open transaction",
-			"BEGIN; DELETE FROM issue530_txn; SELECT 1/0", 4, true, 2, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.needsPG16 && serverVersion < 160000 {
-				t.Skipf("GENERIC_PLAN needs PostgreSQL 16 or later (server %d)",
-					serverVersion)
-			}
-			if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS issue530_txn;
-				CREATE TABLE issue530_txn (a int);
-				INSERT INTO issue530_txn VALUES (1), (2)`); err != nil {
-				t.Fatalf("failed to create the probe table: %v", err)
-			}
-			defer func() {
-				_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS issue530_txn")
-			}()
-
-			body, err := json.Marshal(queryRequest{Query: tt.query,
-				Confirmed: true})
-			if err != nil {
-				t.Fatalf("failed to encode the request: %v", err)
-			}
-			rec := postQuery(t, h, connID, string(body))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d (body %q)",
-					rec.Code, http.StatusOK, rec.Body.String())
-			}
-			resp := decodeMultiQuery(t, rec)
-			if len(resp.Results) != tt.results {
-				t.Fatalf("results = %+v, want %d", resp.Results, tt.results)
-			}
-			last := resp.Results[len(resp.Results)-1]
-			if tt.openError {
-				if last.Query != "ROLLBACK" || last.Error != openTransactionError {
-					t.Errorf("last result = %+v, want the open-transaction error",
-						last)
-				}
-			} else {
-				for _, r := range resp.Results {
-					if r.Error != "" {
-						t.Errorf("unexpected error for %q: %q", r.Query, r.Error)
-					}
-				}
-			}
-
-			var rows int
-			if err := pool.QueryRow(ctx,
-				"SELECT count(*) FROM issue530_txn").Scan(&rows); err != nil {
-				t.Fatalf("failed to count the probe rows: %v", err)
-			}
-			if rows != tt.rowsLeft {
-				t.Errorf("rows left = %d, want %d", rows, tt.rowsLeft)
-			}
-		})
 	}
 }

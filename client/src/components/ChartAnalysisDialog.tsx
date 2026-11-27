@@ -185,6 +185,10 @@ ${analysis}
                 connectionId: analysisContext.connectionId,
                 databaseName: analysisContext.databaseName,
                 serverName: analysisContext.connectionName,
+                actionOrigin: {
+                    actionSource: 'chart_analysis',
+                    actionContext: `Chart analysis: ${analysisContext.metricDescription || 'Chart'}`,
+                },
             }}
         />
     );

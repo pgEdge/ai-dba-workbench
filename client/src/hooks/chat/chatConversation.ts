@@ -124,3 +124,52 @@ export async function fetchConversation(
 
     return response.json();
 }
+
+/**
+ * The most action IDs one link request may name. This MUST match
+ * `actionMaxLinkIDs` in `server/src/internal/api/action_handlers.go`,
+ * which answers a longer list with a 400.
+ */
+export const MAX_ACTION_IDS_PER_LINK = 100;
+
+/**
+ * Link the actions proposed during a conversation's first turn to it.
+ * Those tool calls ran before the conversation had been saved, so they
+ * carried no conversation ID.
+ *
+ * @param conversationId - The newly saved conversation.
+ * @param actionIds - The IDs of the actions to link.
+ * @param fetchFn - The fetch function to use for the API request.
+ * @returns True if the actions were linked, false otherwise.
+ */
+export async function linkConversationActions(
+    conversationId: string,
+    actionIds: number[],
+    fetchFn: FetchFunction,
+): Promise<boolean> {
+    if (actionIds.length === 0) {
+        return true;
+    }
+    try {
+        const response = await fetchFn(
+            `/api/v1/conversations/${conversationId}/actions/link`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action_ids: actionIds }),
+            },
+        );
+
+        if (!response.ok) {
+            logger.warn(
+                'Failed to link actions to conversation:',
+                response.status,
+            );
+            return false;
+        }
+        return true;
+    } catch (err) {
+        logger.error('Failed to link actions to conversation:', err);
+        return false;
+    }
+}

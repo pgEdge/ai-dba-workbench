@@ -40,6 +40,7 @@ import {
     getDownloadButtonSx,
 } from './MarkdownExports';
 import SlideTransition from './SlideTransition';
+import type { ActionOrigin } from '../../types/actions';
 
 // ---------------------------------------------------------------------------
 // Props interface
@@ -51,6 +52,8 @@ export interface MarkdownContentPropsForBase {
     databaseName?: string;
     serverName?: string;
     connectionMap?: Map<number, string>;
+    /** Where a write run from a code block is recorded as coming from. */
+    actionOrigin?: ActionOrigin;
 }
 
 export interface BaseAnalysisDialogProps {
@@ -307,6 +310,7 @@ const BaseAnalysisDialog: React.FC<BaseAnalysisDialogProps> = ({
                                     databaseName={markdownContentProps.databaseName}
                                     serverName={markdownContentProps.serverName}
                                     connectionMap={markdownContentProps.connectionMap}
+                                    actionOrigin={markdownContentProps.actionOrigin}
                                 />
                             </Box>
                         )}

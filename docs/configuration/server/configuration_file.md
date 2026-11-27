@@ -59,6 +59,8 @@ configuration file:
     - [Using the Memory Tool Properties](#using-the-memory-tool-properties)
 - [Built-in Features Properties](#built-in-features-properties)
     - [Using the Datastore Query Tool Properties](#using-the-datastore-query-tool-properties)
+- [Proposed Actions Properties](#proposed-actions-properties)
+    - [Using the propose_action Tool Property](#using-the-propose_action-tool-property)
 - [Paths and Directories](#paths-and-directories)
     - [Using the data_dir Property](#using-the-data_dir-property)
     - [Using the trace_file Property](#using-the-trace_file-property)
@@ -933,6 +935,7 @@ builtins:
     store_memory: true
     recall_memories: true
     delete_memory: true
+    propose_action: true
   resources:
     system_info: true
     connection_info: true
@@ -979,6 +982,63 @@ builtins:
     store_memory: false
     delete_memory: false
     recall_memories: true
+```
+
+## Proposed Actions Properties
+
+The `actions` section controls how a reviewed proposed action runs against a
+monitored connection.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `lock_timeout` | string | `5s` | PostgreSQL `lock_timeout` for the execution session |
+| `statement_timeout` | string | `5m` | PostgreSQL `statement_timeout` for the execution session |
+| `max_attempts` | int | `3` | Maximum attempts per retry chain of an action |
+| `context_snapshot_limit` | int | `16384` | Maximum size in bytes of the context snapshot stored with an action |
+
+The two timeouts accept any Go duration string, such as `10s` or `2m30s`, and
+must be at least `1ms`. The server refuses to start, and a configuration
+reload fails, when a timeout cannot be parsed or is shorter than `1ms`, or when
+`max_attempts` or `context_snapshot_limit` is negative. Omitting an option, or
+setting an integer option to `0`, keeps the default; setting
+`context_snapshot_limit` to `0` therefore cannot disable the snapshot.
+
+Each round trip to the monitored database has a client-side limit of
+`statement_timeout` plus 30 seconds; when it expires, the server closes the
+connection and records the outcome as unknown, or fails the statement when it
+runs inside a transaction.
+
+The server reads the `actions` settings at start-up; a `SIGHUP` reload
+validates them but does not apply changes, so restart the server after editing
+this section.
+
+The action executor assumes that one server instance uses each datastore. At
+start-up the server marks every action still running as `unknown`, because the
+previous process cannot have finished it. Running two servers against one
+datastore can therefore mislabel an action that the other server is still
+running.
+
+In the following example, the `actions` section shortens the lock timeout and
+allows five attempts per chain:
+
+```yaml
+actions:
+  lock_timeout: 2s
+  statement_timeout: 5m
+  max_attempts: 5
+  context_snapshot_limit: 16384
+```
+
+### Using the propose_action Tool Property
+
+The `propose_action` tool lets the assistant propose a write for a connection.
+The tool defaults to `true`. Set it to `false` in the `builtins.tools` section
+to remove the tool.
+
+```yaml
+builtins:
+  tools:
+    propose_action: false
 ```
 
 ## Paths and Directories

@@ -189,11 +189,32 @@ enabled. Running a query from the chat applies the same checks as the AI alert
 analysis: your access to the connection, the read-only check, and the
 confirmation prompt for statements that modify data, which names the server and
 database the statements will run on, as described in
-[AI Alert Analysis](ai-analysis.md). A query that calls a function with side
-effects, such as `pg_terminate_backend` or `pg_reload_conf`, counts as a write
-and also needs confirmation. A view or a user-defined function that calls one
-of these functions is not detected, so review queries against unfamiliar views
-and functions before running them.
+[AI Alert Analysis](ai-analysis.md). Confirming a write does not run it
+directly: the Workbench stores the statements as a proposed action, passes
+them through a review step, and runs them only if the review passes, as
+[Reviewed Write Actions](ai-analysis.md#reviewed-write-actions) describes. The
+supervisor review is not yet implemented, so a placeholder reviewer passes
+every proposal; check each statement yourself before you run it. A
+query that calls a function with side effects, such as `pg_terminate_backend`
+or `pg_reload_conf`, counts as a write and follows the same route. A view or a
+user-defined function that calls one of these functions is not detected, so
+review queries against unfamiliar views and functions before running them.
+
+### Actions that Ellie Proposes
+
+When you ask Ellie to change a monitored database and you have write access to
+the connection, she can propose the change with the `propose_action` tool. The
+chat shows the call as a tool call whilst the review step runs, and then
+displays a block for the latest proposal that passed review, or for the least
+dangerous attempt when every revision was vetoed. In this release
+the placeholder reviewer passes every proposal as low danger without
+inspecting the SQL, so the block reads Not yet reviewed; a passed review is
+not a safety assessment. The block holds the stored statements rather than
+Ellie's text, so what runs is exactly what the block shows; read every
+statement before you click Execute to approve and run the change. Nothing
+runs until you do. The lifecycle, the veto and override steps, and the
+statuses are described in
+[Reviewed Write Actions](ai-analysis.md#reviewed-write-actions).
 
 ## Chat Memory
 

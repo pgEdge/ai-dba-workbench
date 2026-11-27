@@ -15,6 +15,7 @@ import {
     djb2Hash,
     slugify,
     ANALYSIS_CACHE_TTL_MS,
+    hasText,
 } from '../textHelpers';
 
 describe('stripPreamble', () => {
@@ -332,5 +333,16 @@ describe('ANALYSIS_CACHE_TTL_MS', () => {
     it('equals 30 minutes in milliseconds', () => {
         expect(ANALYSIS_CACHE_TTL_MS).toBe(30 * 60 * 1000);
         expect(ANALYSIS_CACHE_TTL_MS).toBe(1800000);
+    });
+});
+
+describe('hasText', () => {
+    it.each([
+        ['text', true],
+        ['', false],
+        [undefined, false],
+        [null, false],
+    ] as const)('reports %j as %s', (text, want) => {
+        expect(hasText(text)).toBe(want);
     });
 });

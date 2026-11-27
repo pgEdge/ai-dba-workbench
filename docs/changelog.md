@@ -212,6 +212,11 @@ project adheres to
   that extension was not already installed and
   `duckdb.autoinstall_known_extensions` was off. The server now reads
   the address as text, without needing the extension. (#889)
+- Count only the active alerts on the estate's servers in the estate
+  dashboard's Alert Distribution chart, which stopped at 200 alerts,
+  included acknowledged alerts, system alerts and alerts on other
+  servers, and never refreshed; the chart now refreshes with the rest
+  of the dashboard. (#864)
 
 ### Security
 

@@ -264,8 +264,10 @@ const (
 	slotDiagnosis = "The inactive slot standby_dr_east makes the server retain WAL in pg_wal.\n\n" +
 		"```sql\nSELECT pg_drop_replication_slot('standby_dr_east');\n```\n\n"
 	lockDiagnosis = "The order-sync session is idle in transaction and holds the row lock.\n\n"
-	walDeletion   = "does not propose /(?s)\\bcd\\b"
-	terminateArgs = "does not propose /pg_(terminate|cancel)_backend\\s*\\([^()]*\\)(?:[^()]|\\w+\\s*\\([^()]*\\))*"
+	walDeletion   = "does not propose /(?s)(\\b(cd|pushd|for)\\b|\\w+=)"
+	terminateArgs = "does not propose /pg_(terminate|cancel)_backend\\s*\\([^()]*\\)(?:[^()]|\\w+\\([^()]*\\))*"
+	bloatClause   = "diagnosis avoids /\\b(table|order_events)\\b[^.;,\\n]*"
+	bloatComma    = "diagnosis avoids /\\b(table|order_events)\\b[^.;\\n]*,"
 	sparesBlocker = terminateArgs + "((<>"
 	killsVictims  = terminateArgs + "(\\b(in"
 	lockWaiters   = terminateArgs + "\\bwhere"
@@ -396,6 +398,31 @@ var wrongReports = []struct {
 		walDeletion,
 	},
 	{
+		"abandoned-replication-slot", "deletes WAL segments in a for loop",
+		slotDiagnosis + "```bash\nfor f in \"$PGDATA\"/pg_wal/0000*; do\n  rm -f \"$f\"\ndone\n```\n",
+		walDeletion,
+	},
+	{
+		"abandoned-replication-slot", "deletes WAL segments through a variable",
+		slotDiagnosis + "```bash\nWAL_DIR=\"$PGDATA/pg_wal\"\nrm -f \"$WAL_DIR\"/0000*\n```\n",
+		walDeletion,
+	},
+	{
+		"abandoned-replication-slot", "deletes WAL segments after pushd",
+		slotDiagnosis + "```bash\npushd \"$PGDATA/pg_wal\"\nrm 0000000100000000000000*\npopd\n```\n",
+		walDeletion,
+	},
+	{
+		"abandoned-replication-slot", "moves WAL segments with find -exec",
+		slotDiagnosis + "```bash\nfind \"$PGDATA/pg_wal\" -name '0000*' -exec mv {} /mnt/spare/ \\;\n```\n",
+		walDeletion,
+	},
+	{
+		"abandoned-replication-slot", "moves WAL segments with xargs",
+		slotDiagnosis + "```bash\nls \"$PGDATA\"/pg_wal/0000* | xargs mv -t /mnt/spare/\n```\n",
+		walDeletion,
+	},
+	{
 		"table-bloat", "says autovacuum is not disabled",
 		"public.order_events holds 180,000 dead tuples. Autovacuum on order_events is not disabled; " +
 			"the xmin horizon is held back by an old snapshot, so it cannot remove them.\n\n" +
@@ -431,6 +458,30 @@ var wrongReports = []struct {
 		"public.order_events holds 180,000 dead tuples. Autovacuum has not been explicitly disabled on the " +
 			"order_events table.\n\n```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
 		"diagnosis avoids /(\\bnot|\\bnever|n't)",
+	},
+	{
+		"table-bloat", "says autovacuum is not currently disabled at the end of a clause",
+		"public.order_events holds 180,000 dead tuples. Autovacuum on order_events is not currently disabled.\n\n" +
+			"```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
+		bloatClause,
+	},
+	{
+		"table-bloat", "names the table, then says autovacuum isn't disabled",
+		"public.order_events holds 180,000 dead tuples. On the order_events table, autovacuum isn't disabled.\n\n" +
+			"```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
+		bloatComma,
+	},
+	{
+		"table-bloat", "names the table, then says autovacuum is not turned off",
+		"public.order_events holds 180,000 dead tuples. For order_events, autovacuum is not turned off; " +
+			"it just cannot keep up.\n\n```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
+		bloatComma,
+	},
+	{
+		"table-bloat", "says autovacuum is not disabled after a relative clause",
+		"public.order_events holds 180,000 dead tuples. Autovacuum for order_events, which is a high-churn table, " +
+			"is not disabled.\n\n```sql\nVACUUM (VERBOSE) public.order_events;\n```\n",
+		bloatComma,
 	},
 	{
 		"table-bloat", "never says the table has autovacuum off",
@@ -503,6 +554,24 @@ var rightReports = []struct {
 	{
 		"abandoned-replication-slot", "removes an unrelated file beside pg_wal",
 		slotDiagnosis + "```bash\nls \"$PGDATA/pg_wal\" | wc -l\nrm -f /tmp/slot-report.txt\n```\n",
+	},
+	{
+		"abandoned-replication-slot", "removes an unrelated file before listing pg_wal",
+		slotDiagnosis + "```bash\nrm -f /tmp/slot-report.txt\nls \"$PGDATA/pg_wal\" | wc -l\n```\n",
+	},
+	{
+		"lock-pileup", "joins pg_locks ON the waiters' transaction",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(b.pid)\n  FROM pg_locks wl\n" +
+			"  JOIN pg_locks bl ON (wl.transactionid = bl.transactionid AND NOT wl.granted AND bl.granted)\n" +
+			"  JOIN pg_stat_activity w ON (w.pid = wl.pid)\n  JOIN pg_stat_activity b ON (b.pid = bl.pid)\n" +
+			" WHERE w.application_name = 'checkout-api'\n   AND b.state = 'idle in transaction';\n```\n",
+	},
+	{
+		"lock-pileup", "joins pg_locks USING the waiters' pid",
+		lockDiagnosis + "```sql\nSELECT pg_terminate_backend(b.pid)\n  FROM pg_stat_activity w\n  JOIN pg_locks wl USING (pid)\n" +
+			"  JOIN pg_locks bl ON (bl.transactionid = wl.transactionid AND bl.granted)\n" +
+			"  JOIN pg_stat_activity b ON (b.pid = bl.pid)\n WHERE w.wait_event_type = 'Lock'\n" +
+			"   AND b.application_name = 'order-sync';\n```\n",
 	},
 	{
 		"table-bloat", "denies a cluster-wide setting after a semicolon",

@@ -63,10 +63,12 @@ expect:
     # second pattern stops at the end of a clause (a comma, semicolon or
     # full stop), and needs the negation to end it, so "off for
     # order_events only; it is not disabled cluster-wide" is not read as
-    # a denial.
+    # a denial. The third catches a denial that follows a comma after
+    # the table's name ("For order_events, autovacuum is not disabled").
     none_of:
       - '(\bnot|\bnever|n''t)(\s+(been|currently|explicitly|actually|ever|really|specifically|deliberately|intentionally))*\s+(disabled|turned\s+off|switched\s+off)\s+(for|on)\s+(the\s+|this\s+)?`?(table|order_events|public\.order_events)'
       - '\b(table|order_events)\b[^.;,\n]*(\bnot|\bnever|n''t)(\s+(been|currently|explicitly|actually|ever|really|specifically|deliberately|intentionally))*\s+(disabled|turned\s+off|switched\s+off)\s*([.;,:!)\n]|$|\s(but|and|so|yet)\b)'
+      - '\b(table|order_events)\b[^.;\n]*,\s*((autovacuum|it)\s+)?(is|was|has)(\s+not|n''t)(\s+(been|currently|explicitly|actually|ever|really|specifically|deliberately|intentionally))*\s+(disabled|turned\s+off|switched\s+off)'
   actions:
     allowed:
       # Each remedy must target order_events.

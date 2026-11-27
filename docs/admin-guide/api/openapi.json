@@ -1051,11 +1051,21 @@
     },
     "/alerts/counts": {
       "get": {
-        "summary": "Get alert counts by server",
-        "description": "Returns counts of active alerts grouped by server, with system alerts counted separately",
+        "summary": "Get alert counts by server and severity",
+        "description": "Returns counts of active alerts grouped by server and by severity from one snapshot, with system alerts counted separately. With connection_ids, the counts cover only those of the listed connections the caller may see, and system alerts are left out",
         "operationId": "getAlertCounts",
         "tags": [
           "Alerts"
+        ],
+        "parameters": [
+          {
+            "name": "connection_ids",
+            "in": "query",
+            "description": "Count only these connection IDs (comma-separated), intersected with the connections the caller may see; invalid entries are ignored, and system alerts are excluded",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
@@ -11307,6 +11317,9 @@
               "format": "int64"
             }
           },
+          "by_severity": {
+            "$ref": "#/components/schemas/AlertSeverityCounts"
+          },
           "system": {
             "type": "integer",
             "format": "int64",
@@ -11317,7 +11330,13 @@
             "format": "int64",
             "description": "Active alerts the caller may see, system alerts included"
           }
-        }
+        },
+        "required": [
+          "total",
+          "by_server",
+          "by_severity",
+          "system"
+        ]
       },
       "AlertListResult": {
         "type": "object",
@@ -11576,6 +11595,32 @@
             "description": "Default threshold value"
           }
         }
+      },
+      "AlertSeverityCounts": {
+        "type": "object",
+        "description": "Active alert counts by severity, from the same snapshot as the other counts; every alert counted in total is counted here, system alerts included, so the three fields sum to total",
+        "properties": {
+          "critical": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active critical alerts"
+          },
+          "info": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active info alerts"
+          },
+          "warning": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active warning alerts"
+          }
+        },
+        "required": [
+          "critical",
+          "warning",
+          "info"
+        ]
       },
       "AnomalyComparison": {
         "type": "object",

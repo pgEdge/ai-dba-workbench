@@ -19,7 +19,9 @@ import (
 
 // alertCountsTestSchema mirrors the minimum columns GetAlertCounts
 // touches. The filterless and filtered branches both read from the
-// alerts table and group by connection_id.
+// alerts table and group by connection_id and severity. severity has no
+// CHECK constraint here, unlike the real table, so a test can insert a
+// value the real table would refuse.
 const alertCountsTestSchema = `
 DROP TABLE IF EXISTS alerts CASCADE;
 DROP TABLE IF EXISTS connections CASCADE;
@@ -102,11 +104,16 @@ func insertAlertCountsConn(t *testing.T, pool *pgxpool.Pool, name string) int {
 
 func insertAlertCountsAlert(t *testing.T, pool *pgxpool.Pool, connID int, status string) {
 	t.Helper()
+	insertAlertCountsSeverityAlert(t, pool, connID, status, "warning")
+}
+
+func insertAlertCountsSeverityAlert(t *testing.T, pool *pgxpool.Pool, connID int, status, severity string) {
+	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO alerts (
 			alert_type, connection_id, severity, title, description, status
-		) VALUES ('threshold', $1, 'warning', 'test', 'desc', $2)
-	`, connID, status)
+		) VALUES ('threshold', $1, $3, 'test', 'desc', $2)
+	`, connID, status, severity)
 	if err != nil {
 		t.Fatalf("Failed to insert alert: %v", err)
 	}
@@ -167,5 +174,77 @@ func TestGetAlertCounts_WithFilter(t *testing.T) {
 	}
 	if _, ok := result.ByServer[connB]; ok {
 		t.Errorf("ByServer unexpectedly contains filtered connection %d", connB)
+	}
+}
+
+// TestGetAlertCounts_BySeverity proves the per-severity counts come from
+// the same rows as the total and the per-server counts: active alerts
+// only, on live connections, within the allow-list, with every severity
+// present in the result even when it has no alerts.
+func TestGetAlertCounts_BySeverity(t *testing.T) {
+	ds, pool, cleanup := newAlertCountsTestDatastore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	connA := insertAlertCountsConn(t, pool, "a")
+	connB := insertAlertCountsConn(t, pool, "b")
+	connGone := insertAlertCountsConn(t, pool, "gone")
+	for _, a := range []struct {
+		conn     int
+		status   string
+		severity string
+	}{
+		{connA, "active", "critical"},
+		{connA, "active", "critical"},
+		{connA, "active", "warning"},
+		{connA, "acknowledged", "critical"}, // not active
+		{connA, "cleared", "info"},          // not active
+		{connB, "active", "info"},
+		{connB, "active", "warning"},
+		{connB, "active", "bogus"}, // outside the real CHECK constraint
+		{connGone, "active", "critical"},
+	} {
+		insertAlertCountsSeverityAlert(t, pool, a.conn, a.status, a.severity)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE connections SET deleted_at = now() WHERE id = $1`, connGone); err != nil {
+		t.Fatalf("mark connection deleted: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		ids        []int
+		want       AlertSeverityCounts
+		wantTotal  int64
+		wantServer map[int]int64
+	}{
+		{"every connection", nil,
+			AlertSeverityCounts{Critical: 2, Warning: 2, Info: 1}, 5,
+			map[int]int64{connA: 3, connB: 2}},
+		{"one connection, missing severity is zero", []int{connA},
+			AlertSeverityCounts{Critical: 2, Warning: 1}, 3,
+			map[int]int64{connA: 3}},
+		{"deleted connection named explicitly", []int{connGone},
+			AlertSeverityCounts{}, 0, map[int]int64{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ds.GetAlertCounts(ctx, tt.ids, false)
+			if err != nil {
+				t.Fatalf("GetAlertCounts: %v", err)
+			}
+			if got.BySeverity != tt.want || got.Total != tt.wantTotal {
+				t.Errorf("by_severity = %+v, total %d; want %+v, total %d",
+					got.BySeverity, got.Total, tt.want, tt.wantTotal)
+			}
+			if len(got.ByServer) != len(tt.wantServer) {
+				t.Errorf("by_server = %v, want %v", got.ByServer, tt.wantServer)
+			}
+			for id, n := range tt.wantServer {
+				if got.ByServer[id] != n {
+					t.Errorf("by_server[%d] = %d, want %d", id, got.ByServer[id], n)
+				}
+			}
+		})
 	}
 }

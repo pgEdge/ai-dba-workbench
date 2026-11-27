@@ -127,7 +127,7 @@ The API provides endpoints in the following categories.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/v1/alerts` | List alerts with filters. |
-| GET | `/api/v1/alerts/counts` | Get alert counts by server. |
+| GET | `/api/v1/alerts/counts` | Get alert counts by server and severity. |
 | POST | `/api/v1/alerts/acknowledge` | Acknowledge an alert. |
 | DELETE | `/api/v1/alerts/acknowledge` | Remove an alert acknowledgement. |
 | PUT | `/api/v1/alerts/analysis` | Save an AI analysis for an alert. |

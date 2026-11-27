@@ -312,6 +312,44 @@ func TestAlertHandler_HandleAlertCounts_ConnectionFilter(t *testing.T) {
 	}
 	priv, oth := strconv.Itoa(f.privConn), strconv.Itoa(other)
 
+	// API tokens scoped to one connection, each naming one ID inside
+	// and one outside the scope. dana's account may see both
+	// connections, so only her token's scope keeps the second out; a
+	// superuser owner's account sees everything, so the same holds.
+	scopedToken := func(owner string, connID int) int64 {
+		t.Helper()
+		_, tok, err := f.store.AsActor(auth.SystemActor()).CreateToken(owner, "issue 901", nil, true)
+		if err != nil {
+			t.Fatalf("CreateToken %s: %v", owner, err)
+		}
+		if err := f.store.AsActor(auth.SystemActor()).SetTokenConnectionScope(tok.ID,
+			[]auth.ScopedConnection{{ConnectionID: connID, AccessLevel: auth.AccessLevelRead}}, true); err != nil {
+			t.Fatalf("SetTokenConnectionScope %s: %v", owner, err)
+		}
+		return tok.ID
+	}
+	danaID := newGroupGrantedUser(t, f.store, "dana", f.privConn, auth.AccessLevelRead)
+	danaGroups, err := f.store.GetUserGroups(danaID)
+	if err != nil || len(danaGroups) == 0 {
+		t.Fatalf("GetUserGroups: %v %v", danaGroups, err)
+	}
+	if err := f.store.GrantConnectionPrivilege(danaGroups[0], other, auth.AccessLevelRead); err != nil {
+		t.Fatalf("GrantConnectionPrivilege: %v", err)
+	}
+	danaTokenID := scopedToken("dana", f.privConn)
+	danaToken := func(r *http.Request) *http.Request {
+		return withUsername(withToken(r, danaID, danaTokenID), "dana")
+	}
+	rootID := newTestUser(t, f.store, "root_owner")
+	if err := f.store.SetUserSuperuser("root_owner", true); err != nil {
+		t.Fatalf("SetUserSuperuser: %v", err)
+	}
+	rootTokenID := scopedToken("root_owner", other)
+	rootToken := func(r *http.Request) *http.Request {
+		r = withUsername(withSuperuserToken(r, rootTokenID), "root_owner")
+		return r.WithContext(context.WithValue(r.Context(), auth.UserIDContextKey, rootID))
+	}
+
 	type want struct {
 		total, system int64
 		sev           database.AlertSeverityCounts
@@ -336,6 +374,10 @@ func TestAlertHandler_HandleAlertCounts_ConnectionFilter(t *testing.T) {
 		{"superuser filter excludes system alerts", withSuperuser, "?connection_ids=" + priv + "," + oth,
 			want{3, 0, database.AlertSeverityCounts{Critical: 1, Warning: 1, Info: 1},
 				map[int]int64{f.privConn: 1, other: 2}}},
+		{"scoped token of a non-superuser counts only its scope", danaToken, "?connection_ids=" + priv + "," + oth,
+			want{1, 0, database.AlertSeverityCounts{Warning: 1}, map[int]int64{f.privConn: 1}}},
+		{"scoped token of a superuser counts only its scope", rootToken, "?connection_ids=" + priv + "," + oth,
+			want{2, 0, database.AlertSeverityCounts{Critical: 1, Info: 1}, map[int]int64{other: 2}}},
 		{"invalid entries are skipped", withSuperuser, "?connection_ids=x," + oth + ",%20",
 			want{2, 0, database.AlertSeverityCounts{Critical: 1, Info: 1}, map[int]int64{other: 2}}},
 		{"no valid entry counts as unfiltered", withSuperuser, "?connection_ids=x,y",

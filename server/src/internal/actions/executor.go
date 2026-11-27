@@ -88,10 +88,8 @@ const (
 // A claim whose outcome Start could not establish (errClaimUnsettled)
 // is settled in the background (settleClaim), with a delay between
 // attempts that doubles from settleBackoffBase up to settleBackoffMax.
-// A failed attempt is retried up to settleAttempts times, and an
-// attempt that finds nothing to release is retried until
-// claimSettledAfter has passed, so settling takes at most about five
-// minutes. After Shutdown, retries continue only within its context.
+// A failed attempt is retried up to settleAttempts times, so settling
+// takes at most about three minutes. After Shutdown, retries continue only within its context.
 const (
 	settleAttempts    = 8
 	settleBackoffBase = time.Second
@@ -163,10 +161,6 @@ type Executor struct {
 	// settleBackoff is the first delay between attempts to settle a
 	// claim.
 	settleBackoff time.Duration
-	// claimSettledAfter is how long after a claim began settleClaim
-	// keeps retrying a release that finds nothing; it is the store's
-	// claimSettledAfter outside tests.
-	claimSettledAfter time.Duration
 	// finishBackoff is the first delay between attempts to record an
 	// outcome.
 	finishBackoff time.Duration
@@ -200,21 +194,20 @@ func NewExecutor(store *Store, opener Opener, lockTimeout, statementTimeout time
 		rowLimit = defaultRowLimit
 	}
 	return &Executor{
-		store:             store,
-		opener:            opener,
-		lockTimeout:       lockTimeout,
-		statementTimeout:  statementTimeout,
-		rowLimit:          rowLimit,
-		outcomes:          store,
-		claims:            store,
-		settleBackoff:     settleBackoffBase,
-		claimSettledAfter: claimSettledAfter,
-		pending:           make(map[int64]struct{}),
-		settleSlots:       newSettleSlots(maxConcurrentSettles),
-		finishBackoff:     finishBackoffBase,
-		stopping:          make(chan struct{}),
-		responseGrace:     responseGrace,
-		running:           make(map[int64]*runningAction),
+		store:            store,
+		opener:           opener,
+		lockTimeout:      lockTimeout,
+		statementTimeout: statementTimeout,
+		rowLimit:         rowLimit,
+		outcomes:         store,
+		claims:           store,
+		settleBackoff:    settleBackoffBase,
+		pending:          make(map[int64]struct{}),
+		settleSlots:      newSettleSlots(maxConcurrentSettles),
+		finishBackoff:    finishBackoffBase,
+		stopping:         make(chan struct{}),
+		responseGrace:    responseGrace,
+		running:          make(map[int64]*runningAction),
 	}
 }
 
@@ -291,7 +284,6 @@ func (e *Executor) Start(ctx context.Context, actionID int64) error {
 	}()
 
 	token := uuid.NewString()
-	began := time.Now()
 	cctx, cancelClaim := context.WithTimeout(context.WithoutCancel(ctx), claimTimeout)
 	ok, err := e.claims.claim(cctx, actionID, token)
 	cancelClaim()
@@ -303,7 +295,7 @@ func (e *Executor) Start(ctx context.Context, actionID int64) error {
 		go func() {
 			defer e.wg.Done()
 			defer e.unpend(actionID)
-			e.settleClaim(actionID, token, began)
+			e.settleClaim(actionID, token)
 		}()
 		return err
 	}
@@ -349,7 +341,7 @@ func (e *Executor) unpend(id int64) {
 }
 
 // settleClaim settles a claim on the action, under token, whose outcome
-// Start could not establish; began is when the claim was begun. If the
+// Start could not establish. If the
 // claim committed, the action is returned to not_started; nothing was
 // started under the claim, so nothing has run against the target. The
 // action is not run instead: its caller has already been told it could
@@ -363,16 +355,14 @@ func (e *Executor) unpend(id int64) {
 // claim's UPDATE took the row, so whilst its transaction is open the
 // release's SELECT ... FOR UPDATE waits on the row lock, and the UPDATE
 // after it sees how the claim ended: an attempt that finds nothing to
-// release ran after the claim aborted. A wait longer than
+// release ran after the claim aborted, and is final. A wait longer than
 // claimLockTimeout fails the attempt, which is retried like any other
-// failure. An attempt that finds nothing is nevertheless treated as
-// final only once claimSettledAfter has passed since began, as an extra
-// margin, and retried before that. A failed attempt is retried up to
+// failure. A failed attempt is retried up to
 // settleAttempts times. At most maxConcurrentSettles attempts run at
 // once across the executor. After Shutdown, retries continue only
 // within its context, as outcome writes do; a committed claim left then
 // is marked unknown by the startup sweep (MarkInterruptedUnknown).
-func (e *Executor) settleClaim(id int64, token string, began time.Time) {
+func (e *Executor) settleClaim(id int64, token string) {
 	delay := e.settleBackoff
 	for failures := 0; ; {
 		if !awaitOrShutdown(e, e.settleSlots) {
@@ -383,22 +373,19 @@ func (e *Executor) settleClaim(id int64, token string, began time.Time) {
 		released, err := e.claims.releaseClaim(actx, id, token)
 		cancel()
 		e.settleSlots <- struct{}{}
-		switch {
-		case err == nil && released:
-			log.Printf("[WARN] Action %d: a claim whose outcome was lost was returned to not_started", id)
-			return
-		case err == nil && time.Since(began) >= e.claimSettledAfter:
-			log.Printf("[INFO] Action %d: stopped settling a claim whose outcome was lost, since nothing is executing under it", id)
-			return
-		case err != nil:
-			failures++
-			if failures == settleAttempts {
-				log.Printf("[ERROR] Action %d needs manual review: gave up settling a claim whose outcome was lost; if the claim committed, the next server start marks the action unknown although nothing ran: %v", id, err)
-				return
+		if err == nil {
+			if released {
+				log.Printf("[WARN] Action %d: a claim whose outcome was lost was returned to not_started", id)
 			}
-			log.Printf("[WARN] Settling the claim on action %d failed (attempt %d of %d), retrying: %v",
-				id, failures, settleAttempts, err)
+			return
 		}
+		failures++
+		if failures == settleAttempts {
+			log.Printf("[ERROR] Action %d needs manual review: gave up settling a claim whose outcome was lost; if the claim committed, the next server start marks the action unknown although nothing ran: %v", id, err)
+			return
+		}
+		log.Printf("[WARN] Settling the claim on action %d failed (attempt %d of %d), retrying: %v",
+			id, failures, settleAttempts, err)
 		if !e.pause(delay) {
 			log.Printf("[ERROR] Stopped settling the claim on action %d at shutdown; if it committed, the next start marks it unknown", id)
 			return

@@ -112,14 +112,11 @@ row.
   so a zero-row release ran after the claim aborted. Never drop the
   `FOR UPDATE`: a bare guarded UPDATE (or one CTE) checks its WHERE
   against the old `not_started` version whilst the claim is open and
-  skips the row without waiting. No timeout bounds the claim's COMMIT
+  skips the row without waiting. A zero-row release is final at once,
+  with no time margin; no timeout bounds the claim's COMMIT
   (PostgreSQL disables `statement_timeout` before committing, and a
-  synchronous-replication wait or deferred trigger can hold it), so
-  `claimSettledAfter` (`claimTimeout` + `claimIdleTimeout` +
-  `claimStatementTimeout` + 10s, measured from before the pool acquire)
-  is only an extra margin before a zero-row release counts as final,
-  and stopping on it is logged; a lock wait past `claimLockTimeout`
-  fails the attempt and is retried;
+  synchronous-replication wait or deferred trigger can hold it), so a
+  lock wait past `claimLockTimeout` fails the attempt and is retried;
   failures stop after `settleAttempts`, logging that the action needs
   manual review; at most `maxConcurrentSettles` (2) release attempts run
   at once, since each can hold a datastore connection (pool default 20)

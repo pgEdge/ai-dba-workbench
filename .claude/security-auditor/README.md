@@ -860,11 +860,11 @@ moved.
   uncommitted claim's old version and skips the row), which left a
   late-committing claim `executing` with no run. The release's lock
   wait is bounded on the server by a local `lock_timeout`, so a lost
-  cancel request cannot leave it queued. `claimSettledAfter` (about 55s
-  from before the pool acquire) is only an extra margin, since nothing
-  bounds the claim's COMMIT: PostgreSQL disables `statement_timeout`
-  before committing, and a synchronous-replication wait or a deferred
-  trigger can hold it. Settling is per action
+  cancel request cannot leave it queued, and an attempt that waits
+  past it fails and is retried. No time bound could replace the lock,
+  since nothing bounds the claim's COMMIT: PostgreSQL disables
+  `statement_timeout` before committing, and a synchronous-replication
+  wait or a deferred trigger can hold it. Settling is per action
   (Start refuses an action being claimed or settled with
   `ErrAlreadyStarted`), capped at `maxPendingClaims` (then
   `ErrTooManyPending`, answered 503 with `Retry-After`), limited to

@@ -127,51 +127,31 @@ func refuseOpener(t *testing.T) Opener {
 // (#888). Start reports the failure and starts no run, and the claim is
 // settled in the background: one that committed under Start's token is
 // returned to not_started, still approved and claimable again, even
-// when the first attempts fail or when its COMMIT lands only after an
-// attempt found nothing; a row not held under that token is left as it
+// when the first attempts fail; a row not held under that token is left as it
 // is; and failed attempts stop after settleAttempts, leaving the row
 // for the startup sweep.
 func TestStartSettlesUnsettledClaim(t *testing.T) {
 	t.Parallel()
 	store, pool, connID := newTestStore(t, "_x_settle")
 	theirs := "6f1c2a52-6a9a-4c39-9a53-7d0f2d1f0a02"
-	// commitsLate lands Start's claim just before the second attempt, as
-	// a COMMIT that reaches the server after the first attempt does.
-	commitsLate := func(u *unsettledClaims, id int64) func(context.Context, int) {
-		return func(ctx context.Context, call int) {
-			if call != 2 {
-				return
-			}
-			if ok, err := u.Store.claim(ctx, id, u.startToken()); err != nil || !ok {
-				t.Errorf("late claim = %v, %v", ok, err)
-			}
-		}
-	}
 	tests := []struct {
-		name         string
-		claims       *unsettledClaims
-		late         bool          // land the claim with commitsLate
-		settledAfter time.Duration // the executor's claimSettledAfter
-		wantCalls    int
-		wantStatus   string
-		wantToken    string // "" for none, "ours" for Start's, else that token
+		name       string
+		claims     *unsettledClaims
+		wantCalls  int
+		wantStatus string
+		wantToken  string // "" for none, "ours" for Start's, else that token
 	}{
-		{"committed, settled on a later attempt", &unsettledClaims{land: true, failRelease: 2}, false, 0, 3, "not_started", ""},
-		{"committed after the first attempt", &unsettledClaims{}, true, time.Hour, 2, "not_started", ""},
-		{"never committed", &unsettledClaims{}, false, 0, 1, "not_started", ""},
-		{"held under another token", &unsettledClaims{land: true, landAs: theirs}, false, 0, 1, "executing", theirs},
-		{"attempts exhausted", &unsettledClaims{land: true, failRelease: 100}, false, 0, settleAttempts, "executing", "ours"},
+		{"committed, settled on a later attempt", &unsettledClaims{land: true, failRelease: 2}, 3, "not_started", ""},
+		{"never committed", &unsettledClaims{}, 1, "not_started", ""},
+		{"held under another token", &unsettledClaims{land: true, landAs: theirs}, 1, "executing", theirs},
+		{"attempts exhausted", &unsettledClaims{land: true, failRelease: 100}, settleAttempts, "executing", "ours"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			id := approvedAction(t, store, connID)
 			e := NewExecutor(store, refuseOpener(t), time.Second, time.Minute, 1)
 			e.settleBackoff = time.Millisecond
-			e.claimSettledAfter = tc.settledAfter
 			tc.claims.Store = store
-			if tc.late {
-				tc.claims.onRelease = commitsLate(tc.claims, id)
-			}
 			e.claims = tc.claims
 
 			err := e.Start(context.Background(), id)
@@ -226,7 +206,6 @@ func TestStartRefusesWhilstClaimPending(t *testing.T) {
 	id := approvedAction(t, store, connID)
 	e := NewExecutor(store, refuseOpener(t), time.Second, time.Minute, 1)
 	e.settleBackoff = time.Millisecond
-	e.claimSettledAfter = 0
 	reached, release := make(chan struct{}), make(chan struct{})
 	claims := &unsettledClaims{Store: store, land: true,
 		onRelease: func(_ context.Context, call int) {
@@ -313,7 +292,7 @@ func TestSettleClaimShutdown(t *testing.T) {
 				}
 			}
 			e.claims = claims
-			e.settleClaim(id, token, time.Now())
+			e.settleClaim(id, token)
 			if got := claims.releaseCalls(); got != tc.wantCalls {
 				t.Errorf("release attempts = %d, want %d", got, tc.wantCalls)
 			}
@@ -404,7 +383,7 @@ func TestSettleClaimLimitsConcurrentReleases(t *testing.T) {
 	const settlers = 2 * maxConcurrentSettles
 	var wg sync.WaitGroup
 	for i := range int64(settlers) {
-		wg.Go(func() { e.settleClaim(i, "token", time.Now()) })
+		wg.Go(func() { e.settleClaim(i, "token") })
 	}
 	for range maxConcurrentSettles {
 		<-claims.entered
@@ -442,7 +421,7 @@ func TestSettleClaimStopsWaitingForSlotAtShutdown(t *testing.T) {
 	spent, cancel := context.WithCancel(context.Background())
 	cancel()
 	_ = e.Shutdown(spent)
-	e.settleClaim(1, "token", time.Now())
+	e.settleClaim(1, "token")
 	if claims.calls != 0 {
 		t.Errorf("release attempts = %d, want 0", claims.calls)
 	}

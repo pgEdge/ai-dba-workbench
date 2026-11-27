@@ -311,11 +311,10 @@ const (
 	claimIdleTimeout      = 5 * time.Second
 )
 
-// claimSettledAfter is an extra margin, not the guarantee, for treating
-// a release that matches nothing as final (settleClaim); it is not a
-// bound on when a claim can commit. The guarantee is the row lock: a
-// claim is unsettled only after its UPDATE took the row (RowsAffected
-// 1), so its transaction holds the row lock until it commits or aborts.
+// A release that matches nothing is final (settleClaim) because of the
+// row lock: a claim is unsettled only after its UPDATE took the row
+// (RowsAffected 1), so its transaction holds the row lock until it
+// commits or aborts.
 // releaseClaim takes that lock with SELECT ... FOR UPDATE, waiting for
 // the claim's transaction to end, and only then runs its guarded UPDATE,
 // whose fresh READ COMMITTED snapshot sees the claim's final state. A
@@ -325,11 +324,8 @@ const (
 // therefore ran after the claim aborted. No timeout bounds the claim's
 // COMMIT itself: PostgreSQL disables statement_timeout before
 // committing, so a synchronous-replication wait or a deferred trigger
-// can hold the COMMIT, and the row lock, for as long as it takes. The
-// margin is claimTimeout + claimIdleTimeout + claimStatementTimeout +
-// 10 seconds from before the pool acquire, which covers the client
-// sending COMMIT late in its window.
-const claimSettledAfter = claimTimeout + claimIdleTimeout + claimStatementTimeout + 10*time.Second
+// can hold the COMMIT, and the row lock, for as long as it takes; the
+// release's wait for it is bounded by claimLockTimeout and retried.
 
 // errClaimUnsettled marks a claim whose UPDATE took the row but whose
 // COMMIT failed, and that the read-back did not find held, so it may
@@ -418,7 +414,7 @@ func pgMillis(d time.Duration) string {
 // the row with SELECT ... FOR UPDATE, which waits whilst the claim's
 // transaction is open, and then runs the guarded UPDATE, so a false
 // result means that transaction ended without the claim committing
-// (see claimSettledAfter). The wait is bounded on the server by
+// (see errClaimUnsettled). The wait is bounded on the server by
 // claimLockTimeout, so it ends even when the client's cancel request
 // is lost, and the caller retries. The approval stands, so the action
 // can be started again. A row that is in any other state, or held under

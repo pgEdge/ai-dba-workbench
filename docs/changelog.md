@@ -19,6 +19,14 @@ project adheres to
   `DRY_RUN=1` to preview the selection.
   (#846)
 
+- Return active alert counts by severity from `GET /api/v1/alerts/counts`
+  in a `by_severity` object, which always holds `critical`, `warning`
+  and `info`; the server counts them in the same query as `total` and
+  `by_server`, so all three figures come from one snapshot. The
+  endpoint also accepts an optional `connection_ids` filter, which
+  narrows the counts to the listed connections the caller can see and
+  leaves out system alerts. (#901)
+
 ### Changed
 
 - Reorganise the documentation by task. Configuration reference pages
@@ -231,7 +239,11 @@ project adheres to
   dashboard's Alert Distribution chart, which stopped at 200 alerts,
   included acknowledged alerts, system alerts and alerts on other
   servers, and never refreshed; the chart now refreshes with the rest
-  of the dashboard. (#864)
+  of the dashboard. The chart sends one counts request for each batch
+  of up to 100 servers, so its severity counts come from one snapshot,
+  and a refresh no longer restarts a request that is still loading the
+  same servers, which kept the chart loading or showing stale counts on
+  a large estate. (#864, #901)
 
 - Store the `pg_stat_statements` statement list once per collection.
   The collector read the server-wide view in every database that has

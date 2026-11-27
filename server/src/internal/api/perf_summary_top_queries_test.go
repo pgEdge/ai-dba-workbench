@@ -356,29 +356,46 @@ func TestTopQueries_StatementTimeoutIsTransactionLocal(t *testing.T) {
 		t.Fatalf("Failed to set session statement_timeout: %v", err)
 	}
 
-	var inTx string
-	h.topQueriesTimeoutFn = func(ctx context.Context, tx pgx.Tx) error {
-		if err := setTopQueriesStatementTimeout(ctx, tx); err != nil {
-			return err
-		}
-		return tx.QueryRow(ctx, `SHOW statement_timeout`).Scan(&inTx)
+	// The second case is a datastore with a query timeout floor, as on
+	// ColdFront (issue #891): the statement timeout follows the raised
+	// deadline rather than stopping the aggregation at 30 seconds.
+	tests := []struct {
+		name      string
+		datastore *database.Datastore
+		want      string
+	}{
+		{"plain PostgreSQL", database.NewTestDatastore(pool), "30s"},
+		{"query timeout floor", database.NewTestDatastoreWithQueryTimeoutFloor(
+			pool, database.ColdFrontQueryTimeout), "2min"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h.datastore = tt.datastore
+			var inTx string
+			h.topQueriesTimeoutFn = func(ctx context.Context, tx pgx.Tx, timeout time.Duration) error {
+				if err := setTopQueriesStatementTimeout(ctx, tx, timeout); err != nil {
+					return err
+				}
+				return tx.QueryRow(ctx, `SHOW statement_timeout`).Scan(&inTx)
+			}
 
-	rec := callTopQueries(t, h, "connection_id=4242&query_text=select")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
-	}
-	if inTx != "30s" {
-		t.Errorf("statement_timeout in transaction = %q, want \"30s\"", inTx)
-	}
+			rec := callTopQueries(t, h, "connection_id=4242&query_text=select")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+			}
+			if inTx != tt.want {
+				t.Errorf("statement_timeout in transaction = %q, want %q", inTx, tt.want)
+			}
 
-	var after string
-	if err := pool.QueryRow(ctx, `SHOW statement_timeout`).Scan(&after); err != nil {
-		t.Fatalf("Failed to read session statement_timeout: %v", err)
-	}
-	if after != sessionTimeout {
-		t.Errorf("session statement_timeout = %q after the handler, want %q",
-			after, sessionTimeout)
+			var after string
+			if err := pool.QueryRow(ctx, `SHOW statement_timeout`).Scan(&after); err != nil {
+				t.Fatalf("Failed to read session statement_timeout: %v", err)
+			}
+			if after != sessionTimeout {
+				t.Errorf("session statement_timeout = %q after the handler, want %q",
+					after, sessionTimeout)
+			}
+		})
 	}
 }
 
@@ -390,7 +407,7 @@ func TestTopQueries_StatementTimeoutFailureReportsError(t *testing.T) {
 	h, _, cleanup := newTopQueriesTestHandler(t)
 	defer cleanup()
 
-	h.topQueriesTimeoutFn = func(context.Context, pgx.Tx) error {
+	h.topQueriesTimeoutFn = func(context.Context, pgx.Tx, time.Duration) error {
 		return errors.New("injected failure")
 	}
 

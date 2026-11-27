@@ -225,14 +225,16 @@ func scanConnectionListItem(conn *ConnectionListItem, scanner interface{ Scan(..
 
 // DefaultDatastoreStatementTimeout is the server-side statement timeout
 // applied to every connection in the datastore pool when the
-// configuration does not name one. It matches the longest context
-// deadline any handler grants a datastore query (30 seconds in the
-// performance summary handlers), so no query that completes today
-// starts failing; what it adds is a bound that survives a lost cancel
-// request, which a client-side context cancellation does not. Without
-// it a runaway query keeps holding one of the pool's connections
-// (config.DefaultPoolMaxConns unless configured) long after the HTTP
-// request is gone.
+// configuration does not name one, on a datastore with no query timeout
+// floor. It matches LongQueryTimeout, the longest context deadline an
+// ordinary handler grants a datastore query, so no query that completes
+// in time starts failing; what it adds is a bound that survives a lost
+// cancel request, which a client-side context cancellation does not.
+// Without it a runaway query keeps holding one of the pool's
+// connections (config.DefaultPoolMaxConns unless configured) long after
+// the HTTP request is gone. Where QueryTimeout raises request deadlines
+// (a configured query_timeout, or a ColdFront datastore), the default
+// statement timeout rises with them; see defaultStatementTimeout.
 const DefaultDatastoreStatementTimeout = 30 * time.Second
 
 // ConnectionDeleteTimeout is the budget for marking a connection
@@ -249,31 +251,77 @@ const DefaultDatastoreStatementTimeout = 30 * time.Second
 // pool-wide one, and deleteConnection uses it as the request deadline.
 const ConnectionDeleteTimeout = 4 * time.Minute
 
+// defaultStatementTimeout is the statement timeout used when
+// statement_timeout is unset: DefaultDatastoreStatementTimeout, raised
+// to the query timeout floor so that PostgreSQL does not cancel a
+// statement the request would still have waited for.
+func defaultStatementTimeout(queryTimeoutFloor time.Duration) time.Duration {
+	return max(DefaultDatastoreStatementTimeout, queryTimeoutFloor)
+}
+
+// statementTimeoutParam formats timeout as the statement_timeout
+// startup parameter: a bare count of milliseconds (see
+// resolveStatementTimeout).
+func statementTimeoutParam(timeout time.Duration) string {
+	return strconv.FormatInt(timeout.Milliseconds(), 10)
+}
+
 // resolveStatementTimeout turns the configured statement_timeout into
 // the value to send as a startup runtime parameter. An empty string
-// selects DefaultDatastoreStatementTimeout. The result is always a
-// plain integer count of milliseconds, which is the unit Postgres
-// assumes for a bare statement_timeout number, so neither the Go
+// selects DefaultDatastoreStatementTimeout; NewDatastore replaces that
+// with defaultStatementTimeout once it knows the datastore kind. The
+// result is always a plain integer count of milliseconds, which is the
+// unit Postgres assumes for a bare statement_timeout number, so neither the Go
 // duration syntax nor a locale-dependent unit suffix ever reaches the
 // server. A zero duration disables the timeout (Postgres treats 0 as
 // "no limit"); a negative duration is rejected because Postgres would
 // reject it at connection time, and failing here names the offending
 // configuration key instead.
 func resolveStatementTimeout(value string) (string, error) {
+	timeout, err := parseStatementTimeout(value)
+	if err != nil {
+		return "", err
+	}
+	return statementTimeoutParam(timeout), nil
+}
+
+// parseStatementTimeout parses and validates the configured
+// statement_timeout as resolveStatementTimeout describes, returning the
+// duration rather than the startup parameter.
+func parseStatementTimeout(value string) (time.Duration, error) {
 	timeout := DefaultDatastoreStatementTimeout
 	if value != "" {
 		parsed, err := time.ParseDuration(value)
 		if err != nil {
-			return "", fmt.Errorf("invalid statement_timeout: %w", err)
+			return 0, fmt.Errorf("invalid statement_timeout: %w", err)
 		}
 		timeout = parsed
 	}
 
 	if timeout < 0 {
-		return "", fmt.Errorf("invalid statement_timeout: %s is negative", value)
+		return 0, fmt.Errorf("invalid statement_timeout: %s is negative", value)
 	}
 
-	return strconv.FormatInt(timeout.Milliseconds(), 10), nil
+	return timeout, nil
+}
+
+// settleStatementTimeout returns the statement timeout for a datastore
+// whose request deadlines are raised to queryTimeoutFloor. An unset
+// statement_timeout (explicit false) takes defaultStatementTimeout. An
+// explicit non-zero value below the floor is raised to the floor, and
+// raised reports it, because PostgreSQL would otherwise cancel
+// statements that the request is still waiting for: installs upgraded
+// from an example configuration that set "30s" would keep failing on
+// ColdFront (issue #891). Zero, which disables the timeout, and values
+// at or above the floor are kept as given.
+func settleStatementTimeout(configured time.Duration, explicit bool, queryTimeoutFloor time.Duration) (timeout time.Duration, raised bool) {
+	if !explicit {
+		return defaultStatementTimeout(queryTimeoutFloor), false
+	}
+	if configured > 0 && configured < queryTimeoutFloor {
+		return queryTimeoutFloor, true
+	}
+	return configured, false
 }
 
 // coldFrontDatastoreQuery reports whether the datastore stores metrics in
@@ -346,14 +394,16 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 	// so the map needs no nil check.
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "pgEdge AI DBA Workbench - Server"
 
-	// Bound every statement server-side. See
-	// DefaultDatastoreStatementTimeout for why the handlers' own
-	// context deadlines are not enough on their own.
-	statementTimeout, err := resolveStatementTimeout(cfg.StatementTimeout)
+	// Validate the timeouts before connecting, so a bad value names its
+	// configuration key rather than surfacing as a connection error.
+	configuredQueryTimeout, err := resolveQueryTimeout(cfg.QueryTimeout)
 	if err != nil {
 		return nil, err
 	}
-	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = statementTimeout
+	configuredStatementTimeout, err := parseStatementTimeout(cfg.StatementTimeout)
+	if err != nil {
+		return nil, err
+	}
 
 	// Apply pool settings with bounds checking to prevent overflow. An
 	// unset pool_max_conns selects config.DefaultPoolMaxConns rather
@@ -377,11 +427,28 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Bound every statement server-side. See
+	// DefaultDatastoreStatementTimeout for why the handlers' own
+	// context deadlines are not enough on their own. The detection
+	// probe runs with the configured value, or the plain default, so a
+	// shorter role or database default cannot cancel it.
+	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = statementTimeoutParam(configuredStatementTimeout)
+
 	coldFront, err := detectColdFrontDatastore(ctx, poolConfig.ConnConfig)
 	if err != nil {
 		return nil, err
 	}
 	poolConfig.ConnConfig.DefaultQueryExecMode = datastoreExecMode(coldFront)
+
+	// The statement timeout depends on the datastore kind, so it is
+	// settled only now that detection has run.
+	floor := effectiveQueryTimeoutFloor(configuredQueryTimeout, coldFront)
+	statementTimeout, raised := settleStatementTimeout(configuredStatementTimeout, cfg.StatementTimeout != "", floor)
+	if raised {
+		log.Printf("[WARN] database.statement_timeout %s is shorter than the %s query timeout; using %s",
+			cfg.StatementTimeout, floor, statementTimeout)
+	}
+	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = statementTimeoutParam(statementTimeout)
 
 	// Create pool
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
@@ -396,8 +463,9 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 	}
 
 	return &Datastore{
-		pool:         pool,
-		serverSecret: serverSecret,
+		pool:              pool,
+		serverSecret:      serverSecret,
+		queryTimeoutFloor: floor,
 	}, nil
 }
 

@@ -212,6 +212,26 @@ in 8 under the default statement cache, and 0 in 8 under describe-exec
 and under Exec mode. The collector and
 alerter pools are not covered by this change.
 
+Server request deadlines on the datastore go through
+`Datastore.WithQueryTimeout(ctx, base)` / `QueryTimeout(base)`
+(`database/query_timeout.go`, issue #891), never a bare
+`context.WithTimeout` with a literal. `base` is the plain-PostgreSQL
+budget (`ShortQueryTimeout` 10s, `LongQueryTimeout` 30s, or the
+handler's own figure); the result is raised to `queryTimeoutFloor`,
+which `NewDatastore` sets to `database.query_timeout` when configured,
+else `ColdFrontQueryTimeout` (2m) on ColdFront, else zero. A cold
+ColdFront connection's first metrics-view query (the Iceberg attach)
+measured about 29s, so 10s/30s fail there. An unset
+`statement_timeout` defaults to `max(30s, floor)`
+(`defaultStatementTimeout`); an explicit non-zero value below the floor
+is raised to it with a `[WARN]` log (`settleStatementTimeout`), since
+older example configs set `30s`. `TestDatastoreDeadlinesUseQueryTimeout`
+(`api/datastore_deadline_scan_test.go`) fails on any `context.WithTimeout`
+in `api` or `database` with a numeric literal or Short/LongQueryTimeout,
+so monitored-server deadlines need a named constant. Top-queries passes
+the raised value to its transaction-local timeout. Deadlines for work on
+a monitored server (`queryTimeout`, `listDatabasesTimeout`) stay fixed.
+
 - **Result types must agree.** A cast helps only when it changes the
   PostgreSQL type; casting to the type PostgreSQL already infers is a
   no-op and the bytes stay wrong. `avg()` and `EXTRACT(EPOCH ...)` are
@@ -2307,10 +2327,11 @@ the shared `checkAggregationTimeSpan` in
 `server/src/internal/api/time_span.go`, immediately after
 `ResolveTimeWindow` returns and before any SQL is built. The backstop
 behind them is the datastore pool's `statement_timeout`
-(`database.DefaultDatastoreStatementTimeout`, 30 seconds unless the
-`database.statement_timeout` setting says otherwise); top-queries
-additionally pins its own transaction to `topQueriesTimeout` (30
-seconds, shared with its context deadline) through
+(`database.DefaultDatastoreStatementTimeout`, 30 seconds on plain
+PostgreSQL, raised to the query timeout floor on ColdFront or when
+`database.query_timeout` is set); top-queries additionally pins its own
+transaction to `QueryTimeout(topQueriesTimeout)` (30 seconds unless a
+floor raises it, shared with its context deadline) through
 `setTopQueriesStatementTimeout`, a `set_config(..., true)` issued right
 after `BeginTx`, because a `query_text` filter runs
 `metrics.RedactedText` over every statement in the window and the pool
@@ -2343,7 +2364,7 @@ apply the cap on the `connection_ids` branch, so the `400` lands before
 the RBAC loop, the `GetConnection` name lookups and the read-only
 transaction do any work. That placement is the point: the fan-out on
 `/metrics/performance-summary` is five sub-queries, a name lookup and an
-RBAC check per ID, all under one 30 second deadline against a pool that
+RBAC check per ID, all under one `QueryTimeout(LongQueryTimeout)` deadline against a pool that
 defaults to twenty connections (`config.DefaultPoolMaxConns`). The single `connection_id` path is
 unaffected, and `handleConnectionGroups` already requires exactly one ID.
 Keep the cap in the parse helper rather than in each handler, and

@@ -247,7 +247,7 @@ func (h *ConnectionHandler) handleConnections(w http.ResponseWriter, r *http.Req
 
 // listConnections handles GET /api/v1/connections
 func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	connections, err := h.datastore.GetAllConnections(ctx)
@@ -389,7 +389,7 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// Create connection
@@ -520,7 +520,7 @@ func (h *ConnectionHandler) getConnection(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	conn, err := h.datastore.GetConnection(ctx, id)
@@ -558,7 +558,7 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 
 	hasManageConns := h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	conn, ok := h.loadConnectionForChange(ctx, w, r, id, "update")
@@ -680,7 +680,7 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 
 	hasManageConns := h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	conn, ok := h.loadConnectionForChange(ctx, w, r, id, "delete")
@@ -720,6 +720,11 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// listDatabasesTimeout bounds listing a connection's databases. The
+// listing runs on the monitored server, not the datastore, so it is not
+// raised by Datastore.QueryTimeout.
+const listDatabasesTimeout = 30 * time.Second
 
 // Refusal messages for a caller who can see a connection but may not
 // change it.
@@ -785,7 +790,7 @@ func (h *ConnectionHandler) listDatabases(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), listDatabasesTimeout)
 	defer cancel()
 
 	databases, err := h.datastore.ListDatabases(ctx, connectionID)
@@ -849,7 +854,7 @@ func (h *ConnectionHandler) getCurrentConnection(w http.ResponseWriter, r *http.
 	}
 
 	// Get connection details
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	conn, err := h.datastore.GetConnection(ctx, session.ConnectionID)
@@ -902,7 +907,7 @@ func (h *ConnectionHandler) setCurrentConnection(w http.ResponseWriter, r *http.
 	}
 
 	// Verify the connection exists
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	conn, err := h.datastore.GetConnection(ctx, req.ConnectionID)
@@ -947,7 +952,7 @@ func (h *ConnectionHandler) getConnectionContext(w http.ResponseWriter, r *http.
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
 	connCtx, err := h.datastore.GetConnectionContext(ctx, connectionID)
@@ -1007,7 +1012,7 @@ func (h *ConnectionHandler) handleGetConnectionCluster(w http.ResponseWriter, r 
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	info, err := h.datastore.GetConnectionClusterInfo(ctx, connectionID)
@@ -1104,7 +1109,7 @@ func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter,
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// A caller must not move a connection into a cluster whose members

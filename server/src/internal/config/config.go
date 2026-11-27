@@ -475,6 +475,14 @@ type DatabaseConfig struct {
 	// frees the slot. Accepts any Go duration string; "0" disables the
 	// timeout, which is not recommended.
 	StatementTimeout string `yaml:"statement_timeout"`
+
+	// QueryTimeout is the least time the server allows any API request
+	// for its datastore queries. Each request keeps its own deadline
+	// (10 or 30 seconds on plain PostgreSQL) when that is longer. Unset,
+	// the server uses no floor on plain PostgreSQL and two minutes on a
+	// pgEdge ColdFront datastore, whose metrics views are far slower
+	// (issue #891). Accepts a positive Go duration up to 4m.
+	QueryTimeout string `yaml:"query_timeout"`
 }
 
 // ConnectionSecurityConfig holds settings for user-created database connections (SSRF protection)
@@ -1656,7 +1664,6 @@ func applyCLIFlags(cfg *Config, flags CLIFlags) {
 			SSLMode:             "prefer",
 			PoolMinConns:        0,
 			PoolMaxConnIdleTime: "30m",
-			StatementTimeout:    "30s",
 		}
 	}
 

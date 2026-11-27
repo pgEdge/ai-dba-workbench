@@ -95,7 +95,7 @@ type PerfSummaryHandler struct {
 	// for handleTopQueries. When nil the handler uses
 	// setTopQueriesStatementTimeout, as in production; tests substitute
 	// one to observe the setting or to cover its failure path.
-	topQueriesTimeoutFn func(ctx context.Context, tx pgx.Tx) error
+	topQueriesTimeoutFn func(ctx context.Context, tx pgx.Tx, timeout time.Duration) error
 
 	// denialAuditor audits this handler's connection-access refusals.
 	denialAuditor
@@ -410,7 +410,7 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 	now := window.End.UTC()
 	startTime := window.Start.UTC()
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.LongQueryTimeout)
 	defer cancel()
 
 	pool := h.datastore.GetPool()
@@ -1048,7 +1048,7 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 	}
 	bucketInterval := fmt.Sprintf("%d seconds", bucketSeconds)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.LongQueryTimeout)
 	defer cancel()
 
 	pool := h.datastore.GetPool()
@@ -2100,12 +2100,14 @@ func buildTopQueriesSQL(
 	return countSQL, pageSQL, filterArgs, pageArgs
 }
 
-// topQueriesTimeout bounds a top-queries request, both as the Go context
-// deadline and as the transaction-local statement_timeout on the
-// datastore, so that the two always agree.
-const topQueriesTimeout = 30 * time.Second
+// topQueriesTimeout is a top-queries request's budget on plain
+// PostgreSQL. Raised by Datastore.QueryTimeout where the datastore calls
+// for it, the result bounds the request both as the Go context deadline
+// and as the transaction-local statement_timeout on the datastore, so
+// that the two always agree.
+const topQueriesTimeout = database.LongQueryTimeout
 
-// setTopQueriesStatementTimeout applies topQueriesTimeout to tx as a
+// setTopQueriesStatementTimeout applies timeout to tx as a
 // transaction-local statement_timeout. A query_text filter makes the
 // aggregation run metrics.RedactedText, a regexp_replace chain over up to
 // 64 KiB of text, for every statement in the window, once for the count
@@ -2113,11 +2115,11 @@ const topQueriesTimeout = 30 * time.Second
 // server-side bound on that work, so this has PostgreSQL itself stop a
 // pathological statement rather than leave it pinning a datastore backend.
 // set_config with is_local true is equivalent to SET LOCAL, and its value
-// is derived from the constant, never from the request.
-func setTopQueriesStatementTimeout(ctx context.Context, tx pgx.Tx) error {
+// is derived from the server's configuration, never from the request.
+func setTopQueriesStatementTimeout(ctx context.Context, tx pgx.Tx, timeout time.Duration) error {
 	_, err := tx.Exec(ctx,
 		`SELECT set_config('statement_timeout', $1, true)`,
-		strconv.FormatInt(topQueriesTimeout.Milliseconds(), 10))
+		strconv.FormatInt(timeout.Milliseconds(), 10))
 	return err
 }
 
@@ -2255,7 +2257,8 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), topQueriesTimeout)
+	timeout := h.datastore.QueryTimeout(topQueriesTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
 	pool := h.datastore.GetPool()
@@ -2274,7 +2277,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	if setTimeout == nil {
 		setTimeout = setTopQueriesStatementTimeout
 	}
-	if err := setTimeout(ctx, tx); err != nil {
+	if err := setTimeout(ctx, tx, timeout); err != nil {
 		log.Printf("[ERROR] Failed to set top queries statement timeout: %v", err)
 		RespondError(w, http.StatusInternalServerError,
 			"Failed to query top queries")
@@ -2665,7 +2668,7 @@ func (h *PerfSummaryHandler) handleQueryStats(
 	// is the name the top-queries list reports for the statement.
 	databaseName := ParseQueryString(r, "database_name")
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.LongQueryTimeout)
 	defer cancel()
 
 	sql, args := buildQueryStatsSQL(connID, *queryID, window, databaseName)

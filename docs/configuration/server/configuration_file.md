@@ -42,6 +42,7 @@ configuration file:
 - [Connection Security Properties](#connection-security-properties)
 - [Database Properties](#database-properties)
     - [Using the statement_timeout Property](#using-the-statement_timeout-property)
+    - [Using the query_timeout Property](#using-the-query_timeout-property)
     - [Using the pool_max_conns Property](#using-the-pool_max_conns-property)
 - [Embedding Properties](#embedding-properties)
 - [LLM Proxy Properties](#llm-proxy-properties)
@@ -376,7 +377,8 @@ for the server's datastore.
 | `pool_max_conns` | int | `20` | Max pool connections |
 | `pool_min_conns` | int | `0` | Min pool connections |
 | `pool_max_conn_idle_time` | string | `30m` | Max idle time |
-| `statement_timeout` | string | `30s` | Server-side statement timeout |
+| `statement_timeout` | string | `30s`; see below | Server-side statement timeout |
+| `query_timeout` | string | | Least time per request for queries |
 
 The server applies the defaults above to any option that neither the
 `database` section nor a `-db-*` command-line flag sets; a flag overrides the
@@ -394,9 +396,15 @@ server-side timeout is what actually frees the connection.
 
 The default of `30s` matches the longest deadline the server grants an
 ordinary datastore query, so the timeout rejects nothing that would otherwise
-have completed. Deleting a connection is the exception: the deletion also
-removes the connection's alerts, history and other dependent rows, so the
-server runs it with a transaction-local timeout of four minutes that overrides
+have completed. When `query_timeout` is set, or the datastore stores metrics
+in pgEdge ColdFront, the server compares the statement timeout with the least
+request deadline: `query_timeout` when set, otherwise two minutes on
+ColdFront. An unset value defaults to the larger of `30s` and that deadline,
+and an explicit non-zero value shorter than that deadline is raised to it, with
+a warning in the server log at startup; a longer value, or `0`, is used as
+given. Deleting a connection is the exception: the deletion also removes the
+connection's alerts, history and other dependent rows, so the server runs it
+with a transaction-local timeout of four minutes that overrides
 `statement_timeout`.
 
 The value accepts any Go duration string, such as `45s` or `1m30s`. The server
@@ -404,6 +412,39 @@ sends the value to PostgreSQL in whole milliseconds and drops any fraction, so
 the smallest effective timeout is `1ms`; a shorter value such as `500us`
 becomes `0`. A value of `0` disables the timeout; disabling the timeout is not
 recommended, because a single runaway query can then starve the pool.
+
+### Using the query_timeout Property
+
+The `query_timeout` option sets the least time the server allows any API
+request for its datastore queries. On a standard datastore, a request that
+reads connections, clusters or alerts has 10 seconds, and a request that
+aggregates metrics or builds an estate snapshot or timeline has 30 seconds;
+when the request fails to finish in time, the server logs a
+`context deadline exceeded` error. A request whose own deadline is longer
+than `query_timeout` keeps its own deadline, so the option can only raise a
+deadline.
+
+When `query_timeout` is not set, the server uses each request's own deadline
+on a standard datastore, and at least two minutes on a datastore that stores
+metrics in pgEdge ColdFront, whose metrics views have no indexes and can take
+tens of seconds to answer the first query on a new connection. For more
+information, see
+[Storing Metrics in pgEdge ColdFront](../collector/coldfront-metrics.md).
+
+The value accepts a positive Go duration string of up to `4m`, such as `90s`
+or `3m`, which leaves time for the server to write the response within the
+HTTP server's five-minute write timeout. When `statement_timeout` is not set,
+the statement timeout becomes the larger of `30s` and `query_timeout`; an
+explicit non-zero `statement_timeout` shorter than `query_timeout` is raised
+to `query_timeout`.
+
+In the following example, the `query_timeout` option gives every datastore
+request at least 90 seconds:
+
+```yaml
+database:
+  query_timeout: "90s"
+```
 
 ### Using the pool_max_conns Property
 

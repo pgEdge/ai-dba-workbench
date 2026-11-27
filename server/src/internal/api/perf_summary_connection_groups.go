@@ -20,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
@@ -292,7 +293,7 @@ func (h *PerfSummaryHandler) handleConnectionGroups(
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.LongQueryTimeout)
 	defer cancel()
 
 	pool := h.datastore.GetPool()

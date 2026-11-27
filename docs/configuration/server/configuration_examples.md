@@ -72,7 +72,7 @@ database:
   pool_max_conns: 20
   pool_min_conns: 0
   pool_max_conn_idle_time: "30m"
-  statement_timeout: "30s"
+  # statement_timeout: "30s"
 
 #=====================================================
 # EMBEDDING GENERATION

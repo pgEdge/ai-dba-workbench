@@ -225,7 +225,7 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 		limit = 100
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.LongQueryTimeout)
 	defer cancel()
 
 	pool := h.datastore.GetPool()

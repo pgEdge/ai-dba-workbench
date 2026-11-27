@@ -237,7 +237,7 @@ func (h *ServerInfoHandler) handleServerInfo(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.LongQueryTimeout)
 	defer cancel()
 
 	pool := h.datastore.GetPool()
@@ -313,7 +313,7 @@ func (h *ServerInfoHandler) handleServerInfoAI(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
 	pool := h.datastore.GetPool()

@@ -138,7 +138,7 @@ type DiskContext struct {
 // blackouts, and recent events. A sub-query that fails is logged and
 // its section left empty, so it always returns a snapshot.
 func (d *Datastore) GetEstateSnapshot(ctx context.Context) *EstateSnapshot {
-	snapshotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	snapshotCtx, cancel := d.WithQueryTimeout(ctx, LongQueryTimeout)
 	defer cancel()
 
 	snapshot := &EstateSnapshot{
@@ -471,7 +471,7 @@ func (d *Datastore) GetConnectionsSnapshot(ctx context.Context, connectionIDs []
 // for the specified connection IDs. It reuses the same gathering
 // helpers as the estate-wide snapshot but filters by connection.
 func (d *Datastore) buildScopedSnapshot(ctx context.Context, connectionIDs []int) *EstateSnapshot {
-	snapshotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	snapshotCtx, cancel := d.WithQueryTimeout(ctx, LongQueryTimeout)
 	defer cancel()
 
 	snapshot := &EstateSnapshot{

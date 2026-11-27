@@ -12,6 +12,7 @@ package database
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -49,4 +50,9 @@ type Datastore struct {
 	// dialPolicy decides which resolved addresses a monitored
 	// connection may dial. It is guarded by mu; see SetDialPolicy.
 	dialPolicy hostvalidation.AddrPolicy
+
+	// queryTimeoutFloor is the least deadline QueryTimeout grants a
+	// request; zero leaves each handler's own budget unchanged. It is
+	// set once by NewDatastore and never changes afterwards.
+	queryTimeoutFloor time.Duration
 }

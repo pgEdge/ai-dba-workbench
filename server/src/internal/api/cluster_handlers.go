@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -118,7 +117,7 @@ func (h *ClusterHandler) handleClusters(w http.ResponseWriter, r *http.Request) 
 
 // getClusterTopology returns the full cluster hierarchy for the ClusterNavigator
 func (h *ClusterHandler) getClusterTopology(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// RBAC first: resolve the caller's visible connection set before any
@@ -539,7 +538,7 @@ func (h *ClusterHandler) handleClusterGroupSubpath(w http.ResponseWriter, r *htt
 // Cluster Group CRUD operations
 
 func (h *ClusterHandler) listClusterGroups(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	groups, err := h.datastore.GetClusterGroups(ctx)
@@ -568,7 +567,7 @@ func (h *ClusterHandler) listClusterGroups(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// Visibility first, so a missing id and a hidden group cost the
@@ -641,7 +640,7 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 	// explicit true opts the group into visibility for all users.
 	isShared := req.IsShared != nil && *req.IsShared
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	group, err := h.datastore.CreateClusterGroupWithOwner(ctx, req.Name, req.Description, &username, isShared)
@@ -673,7 +672,7 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// The visibility queries run before the lookup, so a missing id
@@ -764,7 +763,7 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// The visibility queries run before the lookup, so a missing id
@@ -841,7 +840,7 @@ func (h *ClusterHandler) handleGroupClusters(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Request, groupID int) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// Gate on parent-group visibility before reading the clusters, so
@@ -929,7 +928,7 @@ func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	if !h.requireVisibleTargetGroup(ctx, w, r, groupID, "Failed to create cluster") {
@@ -947,7 +946,7 @@ func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Req
 }
 
 func (h *ClusterHandler) getCluster(w http.ResponseWriter, r *http.Request, id int) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	cluster, err := h.datastore.GetCluster(ctx, id)
@@ -1020,7 +1019,7 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	visible, allConnections, err := h.resolveVisibleConnections(ctx)
@@ -1079,7 +1078,7 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	visible, allConnections, err := h.resolveVisibleConnections(ctx)
@@ -1178,7 +1177,7 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// A caller who cannot see the cluster, or whose auto_cluster_key
@@ -1223,7 +1222,7 @@ func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *htt
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// A caller who cannot see the cluster gets the answer for a missing
@@ -1322,7 +1321,7 @@ func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// Upsert group record with custom name
@@ -1351,7 +1350,7 @@ func (h *ClusterHandler) handleClusterServers(w http.ResponseWriter, r *http.Req
 }
 
 func (h *ClusterHandler) listServersInCluster(w http.ResponseWriter, r *http.Request, clusterID int) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	servers, err := h.datastore.GetServersInCluster(ctx, clusterID)
@@ -1419,7 +1418,7 @@ func (h *ClusterHandler) addServerToCluster(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	visible, allConnections, err := h.resolveVisibleConnections(ctx)
@@ -1487,7 +1486,7 @@ func (h *ClusterHandler) handleRemoveServerFromCluster(w http.ResponseWriter, r 
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	visible, allConnections, err := h.resolveVisibleConnections(ctx)
@@ -1548,7 +1547,7 @@ func (h *ClusterHandler) handleListClusters(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	clusters, err := h.datastore.ListClustersForAutocomplete(ctx)
@@ -1604,7 +1603,7 @@ func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// With no group_id the cluster goes into the default group, which
@@ -1651,7 +1650,7 @@ func (h *ClusterHandler) handleClusterRelationships(w http.ResponseWriter, r *ht
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// Issue #678: a restricted caller sees only clusters with a visible
@@ -1838,7 +1837,7 @@ func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *ht
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// Issue #678: the admin permission is not enough on its own; a
@@ -1998,7 +1997,7 @@ func (h *ClusterHandler) handleDeleteRelationship(w http.ResponseWriter, r *http
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// Issue #678: a restricted caller may delete only a relationship in
@@ -2054,7 +2053,7 @@ func (h *ClusterHandler) clearConnectionRelationships(w http.ResponseWriter, r *
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 	defer cancel()
 
 	// Issue #678: a restricted caller must see the source and, checked

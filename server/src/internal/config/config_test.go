@@ -866,7 +866,6 @@ func TestApplyCLIFlagsEveryFlag(t *testing.T) {
 		Password:            "clipass",
 		SSLMode:             "require",
 		PoolMaxConnIdleTime: "30m",
-		StatementTimeout:    "30s",
 	}
 	if cfg.Database == nil || !reflect.DeepEqual(*cfg.Database, want) {
 		t.Fatalf("database = %+v, want %+v", cfg.Database, want)

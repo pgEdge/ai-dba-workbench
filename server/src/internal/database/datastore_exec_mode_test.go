@@ -70,6 +70,22 @@ func TestNewDatastoreDetectsColdFront(t *testing.T) {
 	if got := cf.GetPool().Config().ConnConfig.DefaultQueryExecMode; got != pgx.QueryExecModeDescribeExec {
 		t.Errorf("mode with a metrics view = %v, want describe-exec", got)
 	}
+
+	// ColdFront's slower metrics views also raise every request deadline
+	// and, with it, the default statement timeout (issue #891).
+	if got := cf.QueryTimeout(ShortQueryTimeout); got != ColdFrontQueryTimeout {
+		t.Errorf("QueryTimeout(%v) with a metrics view = %v, want %v",
+			ShortQueryTimeout, got, ColdFrontQueryTimeout)
+	}
+	if got := showStatementTimeout(t, cf); got != "2min" {
+		t.Errorf("statement_timeout with a metrics view = %q, want \"2min\"", got)
+	}
+	if !already {
+		if got := plain.QueryTimeout(ShortQueryTimeout); got != ShortQueryTimeout {
+			t.Errorf("QueryTimeout(%v) on plain PostgreSQL = %v, want it unchanged",
+				ShortQueryTimeout, got)
+		}
+	}
 }
 
 // TestDetectColdFrontDatastoreQueryFailure covers the catalog-query

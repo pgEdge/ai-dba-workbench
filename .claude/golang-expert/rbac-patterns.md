@@ -191,7 +191,7 @@ if !requireAllConnectionsInTokenScope(w, r, h.rbacChecker,
     return
 }
 
-ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+ctx, cancel := h.datastore.WithQueryTimeout(r.Context(), database.ShortQueryTimeout)
 defer cancel()
 
 // Runs the same queries whether or not the row exists.

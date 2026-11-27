@@ -32,12 +32,14 @@ import Tooltip from '@mui/material/Tooltip';
 import TextField from '@mui/material/TextField';
 import InputAdornment from '@mui/material/InputAdornment';
 import Skeleton from '@mui/material/Skeleton';
+import Button from '@mui/material/Button';
 import { alpha, useTheme } from '@mui/material/styles';
 import SearchIcon from '@mui/icons-material/Search';
 import ServerIcon from '@mui/icons-material/Storage';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import AddIcon from '@mui/icons-material/Add';
 import AutorenewIcon from '@mui/icons-material/Autorenew';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import ServerDialog from '../ServerDialog';
 import GroupDialog from '../GroupDialog';
 import ClusterConfigDialog from '../ClusterConfigDialog';
@@ -104,6 +106,21 @@ const emptyStateSx = {
 const emptyIconSx = { fontSize: 48, color: 'text.disabled', mb: 1.5 };
 const emptyTitleSx = { color: 'text.secondary', mb: 0.5 };
 const emptySubtitleSx = { color: 'text.disabled' };
+const errorIconSx = { fontSize: 48, color: 'error.main', mb: 1.5 };
+const errorSubtitleSx = { color: 'text.secondary', wordBreak: 'break-word' };
+// Neutral outlined form: a primary.main label fails 4.5:1 in light mode;
+// see .claude/react-expert/color-contrast-guidelines.md
+const getRetryButtonSx = (theme: Theme) => ({
+    mt: 1.5,
+    color: theme.palette.text.primary,
+    borderColor: theme.palette.mode === 'dark'
+        ? theme.palette.grey[600]
+        : theme.palette.grey[500],
+    '&:hover': {
+        borderColor: theme.palette.primary.dark,
+        backgroundColor: alpha(theme.palette.primary.main, 0.08),
+    },
+});
 
 const footerCountSx = { color: 'text.disabled', fontSize: '0.875rem' };
 
@@ -462,6 +479,8 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         autoRefreshEnabled,
         setAutoRefreshEnabled,
         lastRefresh,
+        error: loadError,
+        refreshing,
     } = useCluster();
 
     // Handler for adding a server
@@ -862,6 +881,9 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     );
     const warningServers = totalServers - onlineServers - offlineServers;
     const estateStatus = offlineServers > 0 ? 'offline' : (warningServers > 0 ? 'warning' : 'online');
+    // The first load failed, so there is no tree to show; distinguish this
+    // from a fresh install with no servers configured
+    const showLoadError = Boolean(loadError) && data.length === 0;
 
     const isEstateSelected = selectionType === 'estate';
 
@@ -925,7 +947,12 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                         onClick={() => onSelectEstate?.()}
                         sx={getEstateSx(theme, isEstateSelected)}
                     >
-                        <StatusIndicator status={estateStatus} alertCount={getTotalAlertCount()} blackoutActive={isEstateBlackedOut} />
+                        <StatusIndicator
+                            status={showLoadError ? 'offline' : estateStatus}
+                            connectionError={showLoadError ? 'Could not load servers' : undefined}
+                            alertCount={getTotalAlertCount()}
+                            blackoutActive={isEstateBlackedOut}
+                        />
                         <Typography
                             variant="caption"
                             sx={{
@@ -935,7 +962,9 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                                 flex: 1,
                             }}
                         >
-                            {onlineServers} online of {totalServers} servers
+                            {showLoadError
+                                ? 'Server list unavailable'
+                                : `${onlineServers} online of ${totalServers} servers`}
                         </Typography>
                     </Box>
                 </Tooltip>
@@ -964,8 +993,40 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                 onScroll={handleScroll}
                 sx={scrollContainerSx}
             >
-                {loading ? (
-                    // Loading skeletons
+                {showLoadError ? (
+                    // Error state: stays mounted whilst a retry is in
+                    // flight, so the status is not re-announced; Retry
+                    // uses aria-disabled rather than disabled so that it
+                    // keeps focus
+                    <Box sx={emptyStateSx} role="status">
+                        <ErrorOutlineIcon sx={errorIconSx} />
+                        <Typography
+                            variant="body2"
+                            sx={emptyTitleSx}
+                        >
+                            Could not load servers
+                        </Typography>
+                        <Typography
+                            variant="caption"
+                            sx={errorSubtitleSx}
+                        >
+                            {loadError}
+                        </Typography>
+                        {onRefresh && (
+                            <Button
+                                size="small"
+                                variant="outlined"
+                                startIcon={<RefreshIcon />}
+                                onClick={refreshing ? undefined : onRefresh}
+                                aria-disabled={refreshing}
+                                sx={getRetryButtonSx(theme)}
+                            >
+                                {refreshing ? 'Retrying…' : 'Retry'}
+                            </Button>
+                        )}
+                    </Box>
+                ) : loading && data.length === 0 ? (
+                    // Loading skeletons, only until there is a tree to show
                     <Box sx={loadingContainerSx}>
                         {[1, 2, 3].map((i) => (
                             <Box key={i} sx={loadingGroupSx}>

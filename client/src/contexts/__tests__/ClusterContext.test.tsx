@@ -193,6 +193,7 @@ describe('ClusterContext', () => {
             // Data properties
             expect(result.current).toHaveProperty('clusterData');
             expect(result.current).toHaveProperty('loading');
+            expect(result.current).toHaveProperty('refreshing');
             expect(result.current).toHaveProperty('error');
             expect(result.current).toHaveProperty('lastRefresh');
             expect(result.current).toHaveProperty('autoRefreshEnabled');
@@ -220,6 +221,38 @@ describe('ClusterContext', () => {
             expect(result.current).toHaveProperty('createGroup');
             expect(result.current).toHaveProperty('deleteGroup');
             expect(result.current).toHaveProperty('moveClusterToGroup');
+        });
+
+        it('reflects the data context refreshing state', async () => {
+            const { result } = renderHook(() => useCluster(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.clusterData.length).toBeGreaterThan(0);
+            });
+            await waitFor(() => {
+                expect(result.current.refreshing).toBe(false);
+            });
+
+            let resolveFetch: (value: unknown) => void = () => {};
+            mockFetch.mockImplementationOnce(
+                () => new Promise((resolve) => {
+                    resolveFetch = resolve;
+                }),
+            );
+            let pending: Promise<void> = Promise.resolve();
+            act(() => {
+                pending = result.current.fetchClusterData();
+            });
+            expect(result.current.refreshing).toBe(true);
+
+            await act(async () => {
+                resolveFetch({
+                    ok: true,
+                    json: () => Promise.resolve(mockClusterData),
+                });
+                await pending;
+            });
+            expect(result.current.refreshing).toBe(false);
         });
     });
 

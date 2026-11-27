@@ -73,6 +73,8 @@ export interface ClusterGroup {
 export interface ClusterDataContextValue {
     clusterData: ClusterGroup[];
     loading: boolean;
+    /** True whilst a requested (not background) fetch is in flight */
+    refreshing: boolean;
     error: string | null;
     lastRefresh: Date | null;
     autoRefreshEnabled: boolean;
@@ -84,12 +86,29 @@ interface ClusterDataProviderProps {
     children: React.ReactNode;
 }
 
+/**
+ * Turn a failed fetch into a message for the cluster navigator. A non-JSON
+ * error response (a proxy's HTML error page, say) arrives as the raw body,
+ * which may carry markup or a server version, so show a fixed sentence
+ * naming the status instead.
+ */
+const describeLoadError = (err: unknown): string => {
+    if (err instanceof ApiError) {
+        if (err.errorBody !== '' && err.message === err.errorBody) {
+            return `The server returned an unexpected response (HTTP ${err.statusCode}).`;
+        }
+        return err.message;
+    }
+    return err instanceof Error && err.message ? err.message : 'Failed to load servers';
+};
+
 const ClusterDataContext = createContext<ClusterDataContextValue | null>(null);
 
 export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): React.ReactElement => {
     const { user } = useAuth();
     const [clusterData, setClusterData] = useState<ClusterGroup[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
+    const [refreshing, setRefreshing] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [autoRefreshEnabled, setAutoRefreshEnabled] = useState<boolean>(true);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
@@ -97,24 +116,49 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
 
     // Track data fingerprint to detect actual changes
     const dataFingerprintRef = useRef<string>('');
-    // Track if this is the initial load (to show loading state)
+    // True until the first successful fetch; while set, every requested
+    // fetch (including a Retry after a failed first load) shows the loading
+    // state, but background polls do not
     const isInitialLoadRef = useRef<boolean>(true);
-    // Stable ref for fetchClusterData to avoid resetting the interval
-    const fetchRef = useRef<() => Promise<void>>(() => Promise.resolve());
+    // Number of requested fetches in flight, behind `refreshing`
+    const requestedCountRef = useRef<number>(0);
+    // Sequence number of the last fetch started, and of the last fetch whose
+    // successful result was applied. A success is applied unless a newer
+    // success already has been; a failure only if no fetch started at or
+    // after it has succeeded. A failure therefore never hides the data of an
+    // older fetch that succeeds later (a Retry overtaken by a failed poll)
+    const requestSeqRef = useRef<number>(0);
+    const appliedSuccessSeqRef = useRef<number>(0);
+    // Fetches numbered below this started for a previous user and are ignored
+    const minSeqRef = useRef<number>(1);
+    // Stable ref for the background poll to avoid resetting the interval
+    const pollRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
     /**
      * Fetch cluster hierarchy from the API.
      * Uses fingerprinting to detect actual changes and avoid unnecessary re-renders.
-     * Only shows loading state on initial load, not during auto-refresh.
+     * A requested fetch shows the loading state until data has loaded
+     * successfully once; a background poll never does, so the auto-refresh
+     * does not swap an error panel for the skeleton every 30 seconds.
+     * The error is cleared only on success, so it persists across failed
+     * retries. A fetch that finishes after a newer fetch has succeeded is
+     * ignored, as is any fetch started for a previous user.
      */
-    const fetchClusterData = useCallback(async (): Promise<void> => {
+    const loadClusterData = useCallback(async (background: boolean): Promise<void> => {
         if (!user) {return;}
 
-        // Only show loading spinner on initial load
-        if (isInitialLoadRef.current) {
+        requestSeqRef.current += 1;
+        const seq = requestSeqRef.current;
+        const isCurrentUser = (): boolean => seq >= minSeqRef.current;
+
+        const showLoading = isInitialLoadRef.current && !background;
+        if (showLoading) {
             setLoading(true);
         }
-        setError(null);
+        if (!background) {
+            requestedCountRef.current += 1;
+            setRefreshing(true);
+        }
 
         try {
             // First, try to get the hierarchical cluster data
@@ -133,6 +177,9 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
                 }
             }
 
+            if (!isCurrentUser() || seq < appliedSuccessSeqRef.current) {return;}
+            appliedSuccessSeqRef.current = seq;
+
             // Generate fingerprint for the new data
             const newFingerprint = generateDataFingerprint(newData ?? []);
 
@@ -144,38 +191,68 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
 
             // Always update last refresh time
             setLastRefresh(new Date());
+            setError(null);
+            isInitialLoadRef.current = false;
+            // A poll can succeed whilst the first load or a Retry is still
+            // pending; stop showing the loading state now rather than when
+            // that request settles
+            setLoading(false);
         } catch (err) {
             logger.error('Error fetching cluster data:', err);
-            setError((err as Error).message);
-        } finally {
-            if (isInitialLoadRef.current) {
-                isInitialLoadRef.current = false;
+            if (isCurrentUser() && seq > appliedSuccessSeqRef.current) {
+                setError(describeLoadError(err));
             }
-            setLoading(false);
+        } finally {
+            // A previous user's fetch was already dropped from the loading
+            // and refreshing state when the user changed
+            if (isCurrentUser()) {
+                if (showLoading) {
+                    setLoading(false);
+                }
+                if (!background) {
+                    requestedCountRef.current -= 1;
+                    if (requestedCountRef.current === 0) {
+                        setRefreshing(false);
+                    }
+                }
+            }
         }
     }, [user]);
 
-    // Keep the ref updated with the latest fetchClusterData
-    useEffect(() => {
-        fetchRef.current = fetchClusterData;
-    }, [fetchClusterData]);
+    const fetchClusterData = useCallback(
+        (): Promise<void> => loadClusterData(false),
+        [loadClusterData],
+    );
 
-    // Fetch cluster data when user changes
+    // Keep the ref updated with the latest loadClusterData
     useEffect(() => {
+        pollRef.current = () => loadClusterData(true);
+    }, [loadClusterData]);
+
+    // Fetch cluster data when user changes, ignoring any fetch still in
+    // flight for the previous user and dropping it from the loading and
+    // refreshing state, which the new user's fetch sets again as needed
+    useEffect(() => {
+        minSeqRef.current = requestSeqRef.current + 1;
+        requestedCountRef.current = 0;
+        setLoading(false);
+        setRefreshing(false);
         if (user) {
             fetchClusterData();
         } else {
+            dataFingerprintRef.current = '';
             setClusterData([]);
+            setError(null);
         }
     }, [user, fetchClusterData]);
 
-    // Auto-refresh effect - uses fetchRef to avoid resetting the
-    // interval when fetchClusterData's reference changes
+    // Auto-refresh effect - uses pollRef to avoid resetting the
+    // interval when loadClusterData's reference changes
     useEffect(() => {
         if (!autoRefreshEnabled || !user) {return;}
 
         const intervalId = setInterval(() => {
-            fetchRef.current();
+            pollRef.current();
         }, autoRefreshInterval);
 
         return () => { clearInterval(intervalId); };
@@ -184,12 +261,13 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
     const value: ClusterDataContextValue = useMemo(() => ({
         clusterData,
         loading,
+        refreshing,
         error,
         lastRefresh,
         autoRefreshEnabled,
         setAutoRefreshEnabled,
         fetchClusterData,
-    }), [clusterData, loading, error, lastRefresh, autoRefreshEnabled, setAutoRefreshEnabled, fetchClusterData]);
+    }), [clusterData, loading, refreshing, error, lastRefresh, autoRefreshEnabled, setAutoRefreshEnabled, fetchClusterData]);
 
     return (
         <ClusterDataContext.Provider value={value}>

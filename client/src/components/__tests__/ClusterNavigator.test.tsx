@@ -68,7 +68,11 @@ vi.mock('../../contexts/useAuth', () => ({
     useAuth: () => mockUseAuth(),
 }));
 
-// Mock the ClusterContext
+// Mock the ClusterContext. Tests may set mockClusterState.error to
+// simulate a failed fetch; beforeEach resets it to null.
+const { mockClusterState } = vi.hoisted(() => ({
+    mockClusterState: { error: null as string | null, refreshing: false },
+}));
 vi.mock('../../contexts/useCluster', () => ({
     useCluster: () => ({
         updateGroupName: mockUpdateGroupName,
@@ -83,6 +87,8 @@ vi.mock('../../contexts/useCluster', () => ({
         autoRefreshEnabled: false,
         setAutoRefreshEnabled: vi.fn(),
         lastRefresh: null,
+        error: mockClusterState.error,
+        refreshing: mockClusterState.refreshing,
         getServer: vi.fn(),
         createServer: vi.fn(),
         updateServer: vi.fn(),
@@ -200,6 +206,8 @@ describe('ClusterNavigator', () => {
         onSelectServer = vi.fn();
         onRefresh = vi.fn();
         mockBlackouts.list = [];
+        mockClusterState.error = null;
+        mockClusterState.refreshing = false;
         mockUpdateGroupName.mockReset().mockResolvedValue(undefined);
         mockUpdateGroup.mockReset().mockResolvedValue(undefined);
         mockUpdateClusterName.mockReset().mockResolvedValue(undefined);
@@ -414,6 +422,172 @@ describe('ClusterNavigator', () => {
         );
 
         expect(screen.getByText('No servers configured')).toBeInTheDocument();
+        expect(screen.queryByText('Could not load servers')).not.toBeInTheDocument();
+    });
+
+    describe('load error state (issue #890)', () => {
+        // dnd-kit renders its own role="status" live region, so find the
+        // error panel by its heading
+        const getErrorPanel = () =>
+            screen.getByText('Could not load servers').closest('[role="status"]');
+
+        it('shows the error and retries when the first load failed', () => {
+            mockClusterState.error = 'Request failed: 503';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            const status = getErrorPanel();
+            expect(status).not.toBeNull();
+            expect(status).toHaveTextContent('Request failed: 503');
+            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+            expect(
+                screen.queryByText('No servers configured'),
+            ).not.toBeInTheDocument();
+
+            fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        it('shows the summary as unavailable rather than 0 of 0 online', () => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            expect(screen.getByText('Server list unavailable')).toBeInTheDocument();
+            expect(
+                screen.queryByText('0 online of 0 servers'),
+            ).not.toBeInTheDocument();
+        });
+
+        it.each([
+            ['light', lightTheme, lightTheme.palette.grey[500]],
+            ['dark', darkTheme, darkTheme.palette.grey[600]],
+        ])('gives Retry the neutral outlined form in %s mode', (_mode, theme, border) => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />,
+                theme,
+            );
+
+            expect(screen.getByRole('button', { name: 'Retry' })).toHaveStyle({
+                color: theme.palette.text.primary,
+                borderColor: border,
+            });
+        });
+
+        it('omits the Retry button when no onRefresh is given', () => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    onSelectServer={onSelectServer}
+                />
+            );
+
+            expect(getErrorPanel()).toHaveTextContent('boom');
+            expect(
+                screen.queryByRole('button', { name: 'Retry' }),
+            ).not.toBeInTheDocument();
+        });
+
+        it('keeps the error mounted and Retry inert whilst a retry is in flight', () => {
+            mockClusterState.error = 'boom';
+            mockClusterState.refreshing = true;
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    loading
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            expect(getErrorPanel()).not.toBeNull();
+            const retry = screen.getByRole('button', { name: 'Retrying…' });
+            expect(retry).toHaveAttribute('aria-disabled', 'true');
+            expect(retry).not.toBeDisabled();
+            fireEvent.click(retry);
+            // The header refresh button is disabled whilst loading, so the
+            // only click that could reach onRefresh is Retry's
+            expect(onRefresh).not.toHaveBeenCalled();
+        });
+
+        it('drives Retry from refreshing, not from loading', () => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={[]}
+                    loading
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            const retry = screen.getByRole('button', { name: 'Retry' });
+            expect(retry).toHaveAttribute('aria-disabled', 'false');
+            fireEvent.click(retry);
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        it('shows a loaded tree rather than the skeleton whilst still loading', () => {
+            renderWithTheme(
+                <ClusterNavigator
+                    data={mockClusterData}
+                    loading
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            expect(screen.getByText('Production')).toBeInTheDocument();
+        });
+
+        it('keeps rendering the tree when a refresh fails with data present', () => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={mockClusterData}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            expect(screen.getByText('Production')).toBeInTheDocument();
+            expect(screen.queryByText('Could not load servers')).not.toBeInTheDocument();
+        });
+
+        it('still shows "No servers found" for a search with no matches', () => {
+            mockClusterState.error = 'boom';
+            renderWithTheme(
+                <ClusterNavigator
+                    data={mockClusterData}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            fireEvent.change(
+                screen.getByPlaceholderText('Search servers...'),
+                { target: { value: 'nonexistent' } },
+            );
+
+            expect(screen.getByText('No servers found')).toBeInTheDocument();
+            expect(screen.queryByText('Could not load servers')).not.toBeInTheDocument();
+        });
     });
 
     it('calls onRefresh when refresh button is clicked', () => {

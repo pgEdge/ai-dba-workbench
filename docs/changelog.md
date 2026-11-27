@@ -79,6 +79,12 @@ project adheres to
   JSON-RPC batch with an `Invalid Request` error, and a request whose
   `Origin` header does not match `cors_origin` with `403 Forbidden`.
 
+- Show an error with a Retry button in the web client's cluster
+  navigator when the server list fails to load. The navigator
+  previously showed "No servers configured", as though no connections
+  were registered; the error now stays in place, without being
+  re-announced, whilst a retry or the automatic refresh runs. (#890)
+
 - Stop one failing dashboard request from showing the "Disconnected"
   dialog in the web client and logging the user out. Three consecutive
   server or network errors from any requests previously declared the

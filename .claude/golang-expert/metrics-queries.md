@@ -2942,7 +2942,11 @@ database it is read from, so since #762 the probe implements
 `probes.ServerWideViewProbe` and `executeProbeForAllDatabases` stops at
 the first database (default first, then the sorted list) whose
 `Execute` reports the extension present; absent or failing databases do
-not stop the walk. The rows keep that database as `database_name`.
+not stop the walk. The one exception, shared with every database-scoped
+probe, is a failed `SELECT current_database()` on the default
+connection: `executeProbeOnDefaultDatabase` returns `ok=false` and no
+other database is tried in that collection, so the statements are read
+again on the next one. The rows keep that database as `database_name`.
 `TestExecuteProbeForAllDatabases_ServerWideViewReadOnce` pins this.
 Readers must still not treat `database_name` as part of a statement's
 identity or use it to attribute a statement to a database: rows from

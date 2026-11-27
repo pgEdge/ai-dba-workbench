@@ -424,7 +424,8 @@ the property explicitly:
 - The new `database.statement_timeout` property limits each server
   query on the datastore to 30 seconds by default; when
   `database.query_timeout` is set, or the datastore stores metrics in
-  pgEdge ColdFront, the default rises to that longer query timeout.
+  pgEdge ColdFront, the default is the larger of 30 seconds and that
+  query timeout.
 - The alerter's `baselines.lookback_days` property rises from 7 to 15
   days; if you set the property explicitly, raise the value to at least
   15.

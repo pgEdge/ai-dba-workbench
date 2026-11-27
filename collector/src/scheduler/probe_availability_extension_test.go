@@ -16,9 +16,11 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/collector/src/probes"
@@ -327,5 +329,203 @@ func TestGetDatabaseList_SkipsDatabasesWithoutConnectPrivilege(t *testing.T) {
 	if !sawAllowed {
 		t.Errorf("database list omitted %s, which the role can connect to",
 			allowedDB)
+	}
+}
+
+// databaseRecordingProbe is a database-scoped ExtensionProbe that
+// records each database it is executed in and returns what result gives
+// for that database. serverWideView sets what ReadsServerWideView
+// reports.
+type databaseRecordingProbe struct {
+	extensionProbeStub
+	serverWideView bool
+	result         func(dbName string) ([]map[string]any, error)
+	visited        []string
+}
+
+func (p *databaseRecordingProbe) ReadsServerWideView() bool { return p.serverWideView }
+
+func (p *databaseRecordingProbe) Execute(ctx context.Context, _ string, conn *pgxpool.Conn, _ int) ([]map[string]any, error) {
+	var dbName string
+	if err := conn.QueryRow(ctx, "SELECT current_database()").Scan(&dbName); err != nil {
+		return nil, err
+	}
+	p.visited = append(p.visited, dbName)
+	return p.result(dbName)
+}
+
+// TestExecuteProbeForAllDatabases_ServerWideViewReadOnce covers #762: a
+// probe that reads a server-wide view, such as pg_stat_statements, is
+// executed only until one database reports its extension present, so
+// the server's rows are stored once per collection rather than once for
+// each database that has the extension. A database where the extension
+// is absent, or where the probe fails, does not end the visit.
+func TestExecuteProbeForAllDatabases_ServerWideViewReadOnce(t *testing.T) {
+	f := setupIntegration(t)
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
+	defer ps.Stop()
+
+	// Three databases next to one another in name order: the probe fails
+	// in the first, works in the second, and the third must not be
+	// visited. Other databases on the server may sort before them.
+	suffix := time.Now().UnixNano()
+	failingDB := fmt.Sprintf("t762_%d_a", suffix)
+	workingDB := fmt.Sprintf("t762_%d_b", suffix)
+	laterDB := fmt.Sprintf("t762_%d_c", suffix)
+	createDatabases(t, f, failingDB, workingDB, laterDB)
+
+	row := func() []map[string]any {
+		return []map[string]any{{"queryid": int64(1), "dbid": int64(1)}}
+	}
+	present := func(string) ([]map[string]any, error) { return row(), nil }
+	// The fixture's own database is the default one, visited first.
+	absentInDefault := func(dbName string) ([]map[string]any, error) {
+		if dbName == f.dbName {
+			return nil, probes.ErrExtensionNotInstalled
+		}
+		return row(), nil
+	}
+	failInDefault := func(dbName string) ([]map[string]any, error) {
+		if dbName == f.dbName {
+			return nil, fmt.Errorf("synthetic failure")
+		}
+		return row(), nil
+	}
+	absentEverywhere := func(string) ([]map[string]any, error) {
+		return nil, probes.ErrExtensionNotInstalled
+	}
+	// A failure is not an absent extension, so it must not end the walk,
+	// and the first database that works must.
+	failsBeforeWorking := func(dbName string) ([]map[string]any, error) {
+		switch dbName {
+		case workingDB:
+			return row(), nil
+		case failingDB:
+			return nil, fmt.Errorf("synthetic failure")
+		}
+		return nil, probes.ErrExtensionNotInstalled
+	}
+
+	cases := []struct {
+		name           string
+		serverWideView bool
+		result         func(string) ([]map[string]any, error)
+		// wantVisits is the number of databases executed in; 0 means
+		// every database in the list, and -1 that the walk ends at
+		// workingDB.
+		wantVisits int
+		wantStatus extensionStatus
+	}{
+		{"server-wide view present in the default database", true, present, 1, extensionPresent},
+		{"server-wide view absent from the default database", true, absentInDefault, 2, extensionPresent},
+		{"server-wide view failing in the default database", true, failInDefault, 2, extensionPresent},
+		{"server-wide view absent everywhere", true, absentEverywhere, 0, extensionAbsent},
+		{"server-wide view failing before a working database", true, failsBeforeWorking, -1, extensionPresent},
+		{"per-database probe present everywhere", false, present, 0, extensionPresent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			probe := &databaseRecordingProbe{
+				extensionProbeStub: extensionProbeStub{
+					probeName: "server-wide-view-stub",
+					extension: "pg_stat_statements",
+					dbScoped:  true,
+				},
+				serverWideView: tc.serverWideView,
+				result:         tc.result,
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			metrics, dbs, connErr, _, status := ps.executeProbeForAllDatabases(ctx, probe, makeMonitoredConn(f))
+			if connErr {
+				t.Fatal("unexpected connection error")
+			}
+			// The fixture's database and postgres are always listed.
+			if len(dbs) < 2 {
+				t.Fatalf("need at least two databases, have %v", dbs)
+			}
+			if len(probe.visited) == 0 || probe.visited[0] != f.dbName {
+				t.Fatalf("visited %v, want the default database %q first",
+					probe.visited, f.dbName)
+			}
+
+			// Other test packages create and drop databases
+			// concurrently, so a listed database can be gone by the time
+			// the walk reaches it; a full walk is therefore checked as
+			// one that went past the first database where the probe
+			// succeeded, rather than against the exact list.
+			switch {
+			case tc.wantVisits < 0:
+				n := len(probe.visited)
+				if n < 3 || probe.visited[n-2] != failingDB || probe.visited[n-1] != workingDB {
+					t.Errorf("visited %v, want the walk to pass %q and end at %q",
+						probe.visited, failingDB, workingDB)
+				}
+			case tc.wantVisits == 0:
+				if len(probe.visited) < 2 {
+					t.Errorf("visited %v, want the walk to continue past %q",
+						probe.visited, f.dbName)
+				}
+			case len(probe.visited) != tc.wantVisits:
+				t.Errorf("visited %v, want %d database(s) of %v",
+					probe.visited, tc.wantVisits, dbs)
+			}
+			if tc.wantVisits != 0 && slices.Contains(probe.visited, laterDB) {
+				t.Errorf("visited %v, want the walk to stop before %q", probe.visited, laterDB)
+			}
+			if status != tc.wantStatus {
+				t.Errorf("extension status = %v, want %v", status, tc.wantStatus)
+			}
+
+			// Only the visits that succeeded contribute rows, and each
+			// row carries the database it was read in.
+			wantRows := 0
+			for _, db := range probe.visited {
+				if rows, err := tc.result(db); err == nil {
+					wantRows += len(rows)
+				}
+			}
+			if len(metrics) != wantRows {
+				t.Errorf("collected %d rows, want %d", len(metrics), wantRows)
+			}
+			for _, m := range metrics {
+				if m["_database_name"] == nil {
+					t.Errorf("row %v has no _database_name", m)
+				}
+			}
+		})
+	}
+}
+
+// createDatabases creates the named databases on the fixture's server
+// for the test and drops them when it ends, skipping the test when they
+// cannot be created.
+func createDatabases(t *testing.T, f *integrationFixture, names ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	adminPool, err := pgxpool.New(ctx, fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres pool_max_conns=1",
+		f.host, f.port, f.username, f.rawPassword))
+	if err != nil {
+		t.Skipf("connect to admin database: %v", err)
+	}
+	// Registered first, so it runs after the drops below.
+	t.Cleanup(adminPool.Close)
+	for _, name := range names {
+		quoted := pgx.Identifier{name}.Sanitize()
+		//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL, which cannot bind a name; test-generated name sanitized by pgx.Identifier
+		if _, err := adminPool.Exec(ctx, "CREATE DATABASE "+quoted); err != nil {
+			t.Skipf("create database %s: %v", name, err)
+		}
+		t.Cleanup(func() {
+			dropCtx, dropCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer dropCancel()
+			//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; same sanitized identifier as the CREATE above
+			if _, err := adminPool.Exec(dropCtx, "DROP DATABASE IF EXISTS "+quoted+" WITH (FORCE)"); err != nil {
+				t.Logf("drop database %s: %v", name, err)
+			}
+		})
 	}
 }

@@ -293,15 +293,22 @@ func TestMetricsQuery_StatementDatabaseMatchesTopQueries(t *testing.T) {
 		t.Fatalf("top-queries rows = %#v", rows)
 	}
 
-	base := "connection_id=4242&probe_name=pg_stat_statements&time_range=1h" +
-		"&queryid=7101&database_name=alpha&metrics=calls&aggregation=sum"
-	if got := sumSeries(t, serveMetricsQuery(mh, base), "calls"); got != 47 {
-		t.Errorf("unfiltered chart = %v calls, want every database's 47", got)
-	}
-	for name, calls := range want {
-		got := sumSeries(t, serveMetricsQuery(mh, base+"&statement_database_name="+name), "calls")
-		if got != calls {
-			t.Errorf("%s chart = %v calls, want the row's %v", name, got, calls)
+	// The fixture stores every counter through both alpha and postgres,
+	// as collectors before issue #762 did. The charts no longer send
+	// database_name, and each reading is still counted once without it.
+	for _, probing := range []string{"&database_name=alpha", ""} {
+		base := "connection_id=4242&probe_name=pg_stat_statements&time_range=1h" +
+			"&queryid=7101&metrics=calls&aggregation=sum" + probing
+		if got := sumSeries(t, serveMetricsQuery(mh, base), "calls"); got != 47 {
+			t.Errorf("unfiltered chart (%q) = %v calls, want every database's 47",
+				probing, got)
+		}
+		for name, calls := range want {
+			got := sumSeries(t, serveMetricsQuery(mh, base+"&statement_database_name="+name), "calls")
+			if got != calls {
+				t.Errorf("%s chart (%q) = %v calls, want the row's %v",
+					name, probing, got, calls)
+			}
 		}
 	}
 
@@ -312,6 +319,34 @@ func TestMetricsQuery_StatementDatabaseMatchesTopQueries(t *testing.T) {
 		"&aggregation=sum&statement_database_name=gamma")
 	if got := sumSeries(t, rec, "calls_per_sec"); got < 5.0/300-1e-9 || got > 5.0/300+1e-9 {
 		t.Errorf("gamma calls_per_sec = %v, want %v", got, 5.0/300)
+	}
+}
+
+// TestMetricsQuery_StatementDatabaseAcrossProbingDatabases is the chart
+// side of issue #762: a current collector reads pg_stat_statements in one
+// database per collection, and that database can change between
+// collections. A chart filtered on the statement's database alone keeps
+// the whole series, and the rate between two readings taken through
+// different databases is still computed.
+func TestMetricsQuery_StatementDatabaseAcrossProbingDatabases(t *testing.T) {
+	_, pool, cleanup := newTopQueriesTestHandler(t)
+	t.Cleanup(cleanup)
+	latest := seedProbedCounterThrough(t, pool, 7201, 100,
+		[]string{"alpha"}, []string{"postgres"})
+	seedStatDatabase(t, pool, latest, 100, "alpha")
+	seedStatementsProbeInterval(t, pool)
+	mh := NewMetricsHandler(database.NewTestDatastore(pool), newTestAuthStore(t))
+	mh.sharingLookupFn = liveConnectionLookup
+
+	base := "connection_id=4242&probe_name=pg_stat_statements&time_range=1h" +
+		"&queryid=7201&statement_database_name=alpha&aggregation=sum"
+	if got := sumSeries(t, serveMetricsQuery(mh, base+"&metrics=calls"), "calls"); got != 120 {
+		t.Errorf("calls = %v, want both readings' 0 + 120", got)
+	}
+	// 120 calls over the five minutes between the readings.
+	got := sumSeries(t, serveMetricsQuery(mh, base+"&metrics=calls_per_sec"), "calls_per_sec")
+	if got < 120.0/300-1e-9 || got > 120.0/300+1e-9 {
+		t.Errorf("calls_per_sec = %v, want %v", got, 120.0/300)
 	}
 }
 

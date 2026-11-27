@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"slices"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -26,21 +25,14 @@ import (
 // statementDatabaseParam names the GET /api/v1/metrics/query parameter
 // that restricts pg_stat_statements rows to the statements of one
 // database. database_name cannot do this: on that probe it is the
-// database the statistics were collected through, and the collector
-// records the server-wide statement list once per probing database, so
-// one probing database carries every database's counters for a queryid.
+// database the statistics were collected through, and the statement list
+// is server-wide, so one probing database carries every database's
+// counters for a queryid (collectors before GitHub issue #762 stored that
+// list once per probing database).
 const statementDatabaseParam = "statement_database_name"
 
 // statementDatabaseProbe is the only probe whose rows carry a dbid.
 const statementDatabaseProbe = "pg_stat_statements"
-
-// statementDatabaseIDsSQL lists every dbid the Top Queries name lookup
-// resolves, with its name. It reuses statementDatabaseLookupSQL so the
-// charts resolve a dbid exactly as buildTopQueriesSQL and
-// queryStatsSQLTemplate do. datid is oid on plain PostgreSQL and bigint
-// on a ColdFront datastore, so it is cast to bigint for both.
-const statementDatabaseIDsSQL = `WITH ` + statementDatabaseLookupSQL + `
-        SELECT datid::bigint, datname FROM db_names`
 
 // statementDatabaseLookupFunc returns every dbid the name lookup
 // resolves for a connection, keyed by dbid, with its name.
@@ -50,29 +42,9 @@ type statementDatabaseLookupFunc func(
 	connectionID int,
 ) (map[int64]string, error)
 
-// lookupStatementDatabases runs statementDatabaseIDsSQL for one
-// connection. The connection ID is the only value bound, as $1.
-func lookupStatementDatabases(
-	ctx context.Context,
-	pool *pgxpool.Pool,
-	connectionID int,
-) (map[int64]string, error) {
-	rows, err := pool.Query(ctx, statementDatabaseIDsSQL, connectionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	names := make(map[int64]string)
-	for rows.Next() {
-		var datid int64
-		var datname string
-		if err := rows.Scan(&datid, &datname); err != nil {
-			return nil, err
-		}
-		names[datid] = datname
-	}
-	return names, rows.Err()
-}
+// lookupStatementDatabases is the production lookup, shared with the
+// query_metrics MCP tool.
+var lookupStatementDatabases statementDatabaseLookupFunc = metrics.LookupStatementDatabases
 
 // applyStatementDatabaseFilter validates the optional
 // statement_database_name parameter and, when it is present, resolves it
@@ -123,19 +95,6 @@ func (h *MetricsHandler) applyStatementDatabaseFilter(
 		return false
 	}
 
-	f := &metrics.StatementDatabaseFilter{
-		Name:          name,
-		DBIDs:         []int64{},
-		ResolvedDBIDs: make([]int64, 0, len(names)),
-	}
-	for datid, datname := range names {
-		f.ResolvedDBIDs = append(f.ResolvedDBIDs, datid)
-		if datname == name {
-			f.DBIDs = append(f.DBIDs, datid)
-		}
-	}
-	slices.Sort(f.DBIDs)
-	slices.Sort(f.ResolvedDBIDs)
-	filters.StatementDatabase = f
+	filters.StatementDatabase = metrics.NewStatementDatabaseFilter(name, names)
 	return true
 }

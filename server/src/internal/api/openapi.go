@@ -1661,7 +1661,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Properties: map[string]*OpenAPISchema{
 				"queryid":              {Type: "string", Description: "Query ID as a decimal string, since the 64-bit value cannot be represented exactly in JavaScript"},
 				"database_name":        {Type: "string", Description: "Database name where the query was executed, resolved from pg_stat_statements.dbid; when the dbid cannot be resolved, one of the databases the statistics were collected through"},
-				"sample_database_name": {Type: "string", Description: "Database the statistics were collected through, which is the database_name of the query's pg_stat_statements metric rows; pass this, not database_name, to /api/v1/metrics/query for the query's time series"},
+				"sample_database_name": {Type: "string", Description: "Database the statistics were collected through, which is the database_name of the query's pg_stat_statements metric rows. The collector reads the view in one database per collection and that database can change, so for the query's time series pass the statement's database as statement_database_name to /api/v1/metrics/query, without database_name"},
 				"username":             {Type: "string", Description: "Database role that ran the query; empty when the role could not be resolved"},
 				"query":                {Type: "string", Description: "Query text, cut to 65,536 characters, with passwords in known forms masked as ******** on a best-effort basis; a password in another form is returned as stored"},
 				"calls":                {Type: "integer", Format: "int64", Description: "Total call count"},
@@ -3902,7 +3902,12 @@ func buildPaths() map[string]OpenAPIPathItem {
 							"that matches a Top Queries row. A statement "+
 							"whose database ID no longer resolves to a name "+
 							"is attributed to the database it was collected "+
-							"through, as Top Queries does"),
+							"through, as Top Queries does. Omit "+
+							"database_name with it: the database the "+
+							"statistics are collected through can change "+
+							"between collections, and each reading is "+
+							"counted once whichever database it was "+
+							"collected through"),
 					queryParamBool("exclude_system_schemas",
 						"Exclude pg_catalog, information_schema and "+
 							"pg_toast* schemas, as pg_stat_user_tables "+

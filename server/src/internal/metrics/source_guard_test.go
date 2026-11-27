@@ -53,7 +53,7 @@ var reviewedCredentialTableReaders = map[string]string{
 	"internal/api/perf_summary_connection_groups.go:connectionGroupsQueryHead": "reads only usename, " +
 		"datname, client address and hostname, state and collected_at from pg_stat_activity, and " +
 		"returns counts per group",
-	"internal/api/perf_summary_handlers.go:statementDatabaseLookupSQL": "reads only collected_at from " +
+	"internal/metrics/statement_database.go:StatementDatabaseLookupSQL": "reads only collected_at from " +
 		"pg_stat_statements and datid and datname from pg_stat_activity",
 	"internal/api/perf_summary_handlers.go:buildTopQueriesSQL": "selects pg_stat_statements.query as " +
 		"stored, which handleTopQueries masks with RedactStatementText before returning it, since the " +
@@ -85,11 +85,14 @@ var reviewedProbeTableReaders = map[string]string{
 	"internal/database/connection_purge.go:Datastore.purgeMetricsViews": "deletes a purged " +
 		"connection's rows from a metrics view and returns no columns",
 	"internal/metrics/probe_interval.go:ObserveSampleSpacing": "reads only connection_id and collected_at",
-	"internal/metrics/query.go:BuildMetricsQuery": "aggregates only the numeric columns " +
-		"GetProbeMetricColumns returns (IsMetricColumn)",
 	"internal/metrics/query.go:BuildDerivedMetricsQuery": "returns only numbers derived from numeric " +
 		"columns; entity-key columns are used to partition and group, never returned",
 	"internal/metrics/query.go:metricQueryParts.lookbackWhere": "reads only MAX(collected_at)",
+	"internal/metrics/query.go:latestStatementSource": "returns a FROM item, not a result; " +
+		"buildLatestRowsQuery selects from it only the columns MaskedProbeColumn masks, under their own names",
+	"internal/metrics/query.go:sampleSource": "returns a FROM item, not a result; BuildMetricsQuery " +
+		"aggregates only the numeric columns GetProbeMetricColumns returns (IsMetricColumn) from it, " +
+		"and BuildDerivedMetricsQuery only numeric and entity-key columns",
 	"internal/tools/datastore_query_builder.go:fromClause": "names the table only; query_datastore " +
 		"returns only the columns its source lists, from which redactMetricColumns drops secret columns and " +
 		"masks the rest as ProbeColumnMask says",

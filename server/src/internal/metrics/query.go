@@ -182,6 +182,118 @@ func statementDatabaseClause(f *StatementDatabaseFilter, argNum int) (string, []
 	return clause, []any{Int64ListArg(f.DBIDs), Int64ListArg(f.ResolvedDBIDs), f.Name}
 }
 
+// statementDatabasePrefilter returns the part of statementDatabaseClause,
+// with the same placeholders, that holds for every copy of a reading:
+// the reading's dbid is one of f's, or no name resolves it. dbid is the
+// same in every copy, so this narrows the rows before the copies are
+// reduced without dropping a copy the full clause would choose. The
+// full clause also tests the probing database_name, which differs
+// between copies and between consecutive readings, so the
+// pg_stat_statements builders apply it only after reducing the copies
+// and, for a rate or delta, after the LAG (see metricQueryParts).
+func statementDatabasePrefilter(argNum int) string {
+	return fmt.Sprintf("(dbid::bigint = ANY(%s) OR NOT dbid::bigint = ANY(%s))",
+		BigIntArrayExpr(fmt.Sprintf("$%d", argNum)),
+		BigIntArrayExpr(fmt.Sprintf("$%d", argNum+1)))
+}
+
+// statementCopiesProbe is the probe whose rows can hold several copies
+// of one reading. pg_stat_statements is server-wide, and collectors
+// before GitHub issue #762 read it in every database that has the
+// extension, storing each counter once per such database at the same
+// collected_at, differing only in the probing database_name. A current
+// collector reads it in one database per collection, but which one can
+// change between collections (a database dropped, the extension removed,
+// a connection refused), so neither the old rows nor the new ones may be
+// filtered or partitioned on database_name to obtain one series.
+const statementCopiesProbe = "pg_stat_statements"
+
+// sampleSource returns the FROM item, with its WHERE clause, that the
+// time-series builders read probeName's samples from. For every probe but
+// statementCopiesProbe it is the probe's table filtered by where. For
+// that probe it keeps one copy per statement identity (queryid, userid,
+// dbid, toplevel) and collected_at, choosing the lowest database_name so
+// the choice is stable, exactly as the Top Queries readings CTE does;
+// idx_pg_stat_statements_identity_time serves that order. where is
+// applied before the copies are reduced, so its filters, which never test
+// the probing database_name unless the caller asked for it, see every
+// copy. after, when not empty, is applied to the copy kept: it is how the
+// statement-database filter's database_name fallback chooses among
+// readings without choosing among their copies. The SELECT * is narrowed
+// to the columns the caller's outer query reads, none of which is the
+// statement text.
+func sampleSource(probeName, where, after string) string {
+	table := "metrics." + QuoteIdentifier(probeName)
+	if probeName != statementCopiesProbe {
+		return table + "\n            WHERE " + where
+	}
+	identity := strings.Join(statementIdentityColumns, ", ")
+	readings := fmt.Sprintf(`(
+                SELECT DISTINCT ON (%s, collected_at) *
+                FROM %s
+                WHERE %s
+                ORDER BY %s, collected_at, database_name
+            )`, identity, table, where, identity)
+	if after == "" {
+		return readings + " statement_readings"
+	}
+	return fmt.Sprintf(`(
+                SELECT * FROM %s statement_copies
+                WHERE %s
+            ) statement_readings`, readings, after)
+}
+
+// statementIdentityColumns is the identity a pg_stat_statements counter
+// is cumulative within, which keys one statement's readings for the
+// copy reduction in sampleSource and latestStatementSource.
+var statementIdentityColumns = []string{"queryid", "userid", "dbid", "toplevel"}
+
+// latestStatementSource returns the FROM item buildLatestRowsQuery reads
+// statementCopiesProbe from: each statement identity's newest reading,
+// once per connection. Its probing database_name can change between
+// collections and older rows hold one copy per probing database (see
+// statementCopiesProbe), so keying the newest row on database_name, as
+// the text entity key would, returns a stale reading for every database
+// the statement was ever read through. where is applied to every row
+// before the reduction; it never tests database_name. Of the copies of
+// the newest reading the one with the lowest database_name is kept, as
+// sampleSource and the Top Queries readings CTE do, and after, when not
+// empty, is applied to that copy, so a database_name or
+// statement-database fallback filter keeps a statement only when its
+// newest reading matches rather than returning an older one that does.
+// idx_pg_stat_statements_identity_time serves the order.
+func latestStatementSource(where, after string) string {
+	identity := "connection_id, " + strings.Join(statementIdentityColumns, ", ")
+	readings := fmt.Sprintf(`(
+                SELECT DISTINCT ON (%s) *
+                FROM metrics.%s
+                WHERE %s
+                ORDER BY %s, collected_at DESC, database_name
+            )`, identity, statementCopiesProbe, where, identity)
+	if after == "" {
+		return readings + " statement_readings"
+	}
+	return fmt.Sprintf(`(
+                SELECT * FROM %s statement_copies
+                WHERE %s
+            ) statement_readings`, readings, after)
+}
+
+// sampleEntityColumns returns the entity-key columns a derived query
+// partitions probeName's counters by. For statementCopiesProbe it drops
+// database_name, which names the database the reading was taken through
+// rather than a counter of its own (see sampleSource): partitioning on it
+// would difference the readings taken through each database separately
+// and lose the interval wherever the probing database changed.
+func sampleEntityColumns(probeName string, entityCols []string) []string {
+	if probeName != statementCopiesProbe {
+		return entityCols
+	}
+	return slices.DeleteFunc(slices.Clone(entityCols), func(c string) bool {
+		return c == "database_name"
+	})
+}
+
 // maxLatestRowLimit bounds the number of rows a latest-row query may
 // return, mirroring the bound-checking style applied to bucket counts.
 const maxLatestRowLimit = 100
@@ -843,7 +955,9 @@ func GetQualifiedSelectCols(metricCols []string, tableAlias string) []string {
 // the given probe, columns, connection, time range, and filters. The
 // colTypes map provides each column's PostgreSQL data type so that the
 // aggregation default can match (e.g. interval vs numeric). NULL values
-// from LEFT JOIN gaps are preserved so the caller can apply LOCF.
+// from LEFT JOIN gaps are preserved so the caller can apply LOCF. The
+// samples are read through sampleSource, which keeps one copy of each
+// pg_stat_statements reading.
 func BuildMetricsQuery(
 	probeName string,
 	metricCols []string,
@@ -860,7 +974,7 @@ func BuildMetricsQuery(
 
 	bucketWidth := BucketWidth(timeStart, timeEnd, buckets)
 
-	whereSQL, queryArgs := metricQueryBase(
+	parts := metricQueryClauses(
 		probeName, connectionID, timeStart, timeEnd, bucketWidth, filters)
 
 	query := fmt.Sprintf(`
@@ -868,8 +982,7 @@ func BuildMetricsQuery(
             SELECT
                 date_bin($1::interval, collected_at, $3) AS bucket_time,
                 %s
-            FROM metrics.%s
-            WHERE %s
+            FROM %s
             GROUP BY date_bin($1::interval, collected_at, $3)
         ),
         all_buckets AS (
@@ -884,12 +997,11 @@ func BuildMetricsQuery(
         ORDER BY all_buckets.bucket_time
     `,
 		strings.Join(GetAggSelectCols(metricCols, aggregation, colTypes), ", "),
-		QuoteIdentifier(probeName),
-		whereSQL,
+		sampleSource(probeName, parts.where(), parts.statementFilter),
 		strings.Join(GetQualifiedSelectCols(metricCols, "data_buckets"), ", "),
 	)
 
-	return query, queryArgs, nil
+	return query, parts.args, nil
 }
 
 // lookbackBound returns how far before the window start the rate/delta
@@ -939,6 +1051,15 @@ type metricQueryParts struct {
 	// args is the full ordered argument list: bucket interval, connection
 	// ID, start time, end time, then one value per filter clause.
 	args []any
+	// statementFilter is the statement-database clause for
+	// pg_stat_statements, which filterClauses holds only as its
+	// statementDatabasePrefilter. It binds the last filter value, so
+	// every query built from these parts must apply it: to the copy of a
+	// reading sampleSource keeps and, for a rate or delta, to each
+	// interval's ending reading after the LAG, so that an unresolved
+	// statement keeps its predecessor whichever database it was read
+	// through.
+	statementFilter string
 }
 
 // where returns the standard WHERE clause: the connection, both time
@@ -1005,25 +1126,11 @@ func (p metricQueryParts) lookbackWhere(probeName, lowerParam string) string {
 	return strings.Join(clauses, " AND ")
 }
 
-// metricQueryBase builds the shared WHERE clause and the leading query
-// arguments used by both the raw-column and derived-metric query builders.
-// The returned args are, in order: the bucket interval string, the
-// connection ID, the start time, the end time, and then any filter values.
-// The WHERE clause references $2, $3, $4 and any filter placeholders from $5.
-func metricQueryBase(
-	probeName string,
-	connectionID int,
-	timeStart, timeEnd time.Time,
-	bucketWidth time.Duration,
-	filters MetricFilters,
-) (string, []any) {
-	parts := metricQueryClauses(
-		probeName, connectionID, timeStart, timeEnd, bucketWidth, filters)
-	return parts.where(), parts.args
-}
-
 // metricQueryClauses builds the decomposed WHERE clause pieces and the
-// leading query arguments shared by every metrics query builder. The probe
+// leading query arguments shared by every metrics query builder. The
+// args are, in order: the bucket interval string, the connection ID, the
+// start time, the end time, and then any filter values; the clauses
+// reference $2, $3, $4 and any filter placeholders from $5. The probe
 // name selects the registry's entity exclusion for the probe, if any, which
 // joins the filter clauses so that the raw, derived and lookback queries all
 // leave the excluded entities out.
@@ -1105,7 +1212,13 @@ func metricQueryClauses(
 	// the filter values, from position len(parts.args)+1.
 	if filters.StatementDatabase != nil {
 		clause, args := statementDatabaseClause(filters.StatementDatabase, argNum)
-		parts.filterClauses = append(parts.filterClauses, clause)
+		if probeName == statementCopiesProbe {
+			parts.filterClauses = append(parts.filterClauses,
+				statementDatabasePrefilter(argNum))
+			parts.statementFilter = clause
+		} else {
+			parts.filterClauses = append(parts.filterClauses, clause)
+		}
 		parts.args = append(parts.args, args...)
 	}
 
@@ -1210,7 +1323,10 @@ func ratioTupleExpr(aggregation, column string) string {
 // lifetime total into a single interval. With the partition a vanished
 // entity simply stops contributing and a new one contributes nothing until
 // its second sample. A single-row probe has no entity columns and reduces
-// to the unpartitioned form.
+// to the unpartitioned form. pg_stat_statements is read through
+// sampleSource and partitioned without database_name
+// (sampleEntityColumns), so a statement's counter is one series however
+// many databases its readings were taken through.
 //
 // The sample query feeding that LAG reaches one sample back beyond the
 // window start (see metricQueryParts.lookbackWhere), so the counter
@@ -1315,7 +1431,7 @@ func BuildDerivedMetricsQuery(
 		// by GetProbeEntityKeyColumns and quoted here; nothing caller
 		// supplied reaches this list.
 		var entityKeys []string
-		for _, col := range entityCols {
+		for _, col := range sampleEntityColumns(probeName, entityCols) {
 			entityKeys = append(entityKeys, QuoteIdentifier(col))
 		}
 		// With entity keys the LAG runs per entity and the inner GROUP BY
@@ -1332,6 +1448,16 @@ func BuildDerivedMetricsQuery(
 		var sampleCols []string
 		var entitySumCols []string
 		var bucketCols []string
+		// The statement-database filter runs after the LAG, on each
+		// interval's ending reading (see metricQueryParts), and tests its
+		// dbid, an entity key, and its probing database_name, which is
+		// not one, so the latter is carried up; each group holds one
+		// copy of one reading, so MAX is that copy's name.
+		sampleWhere := "collected_at >= $3"
+		if parts.statementFilter != "" {
+			innerCols = append(innerCols, "MAX(database_name) AS database_name")
+			sampleWhere += " AND " + parts.statementFilter
+		}
 		// A delta zero-fills a sample-less bucket only when an accepted
 		// interval spans it, which needs each sample's predecessor time
 		// carried up to rate_samples; nothing else reads it.
@@ -1442,11 +1568,10 @@ func BuildDerivedMetricsQuery(
                         EXTRACT(EPOCH FROM collected_at
                             - LAG(collected_at) OVER (%sORDER BY collected_at)
                         )::float8 AS elapsed_sec
-                    FROM metrics.%s
-                    WHERE %s
+                    FROM %s
                     GROUP BY %s
                 ) samples
-                WHERE collected_at >= $3
+                WHERE %s
             ) entity_samples
             GROUP BY collected_at
         )`,
@@ -1455,9 +1580,9 @@ func BuildDerivedMetricsQuery(
 			groupBy,
 			strings.Join(innerCols, ",\n                        "),
 			partition,
-			QuoteIdentifier(probeName),
-			parts.lookbackWhere(probeName, lookbackArg),
+			sampleSource(probeName, parts.lookbackWhere(probeName, lookbackArg), ""),
 			groupBy,
+			sampleWhere,
 		))
 
 		ctes = append(ctes, fmt.Sprintf(`
@@ -2371,9 +2496,18 @@ func buildLatestRowsQuery(
 	args = append(args, IntListArg(connectionIDs))
 	argNum++
 
+	// For statementCopiesProbe, a filter on the probing database_name is
+	// applied to the reading latestStatementSource keeps, not to the rows
+	// it chooses from (see latestStatementSource).
+	var afterClauses []string
+	statementCopies := probeName == statementCopiesProbe
 	if filters.DatabaseName != "" && filters.DatabaseColumn != "" {
-		whereClauses = append(whereClauses,
-			fmt.Sprintf("%s = $%d", QuoteIdentifier(filters.DatabaseColumn), argNum))
+		clause := fmt.Sprintf("%s = $%d", QuoteIdentifier(filters.DatabaseColumn), argNum)
+		if statementCopies && filters.DatabaseColumn == "database_name" {
+			afterClauses = append(afterClauses, clause)
+		} else {
+			whereClauses = append(whereClauses, clause)
+		}
 		args = append(args, filters.DatabaseName)
 		argNum++
 	}
@@ -2410,7 +2544,12 @@ func buildLatestRowsQuery(
 
 	if filters.StatementDatabase != nil {
 		clause, sdArgs := statementDatabaseClause(filters.StatementDatabase, argNum)
-		whereClauses = append(whereClauses, clause)
+		if statementCopies {
+			whereClauses = append(whereClauses, statementDatabasePrefilter(argNum))
+			afterClauses = append(afterClauses, clause)
+		} else {
+			whereClauses = append(whereClauses, clause)
+		}
 		args = append(args, sdArgs...)
 		argNum += len(sdArgs)
 	}
@@ -2423,10 +2562,20 @@ func buildLatestRowsQuery(
 
 	// connection_id is always part of the entity key so that two monitored
 	// servers sharing a schema+table name never collapse into one DISTINCT ON
-	// group. Any text/name dimension columns the probe exposes extend the key.
+	// group. Any text/name dimension columns the probe exposes extend the key,
+	// except for statementCopiesProbe, whose rows latestStatementSource has
+	// already reduced to one per statement identity: its text columns include
+	// the probing database_name, which would keep a stale reading for every
+	// database the statement was ever read through.
 	distinctParts := []string{"connection_id"}
-	for _, col := range EntityKeyColumns(outputCols, colTypes) {
-		distinctParts = append(distinctParts, QuoteIdentifier(col))
+	source := "metrics." + QuoteIdentifier(probeName) + "\n            WHERE " + whereClause
+	if statementCopies {
+		distinctParts = append(distinctParts, statementIdentityColumns...)
+		source = latestStatementSource(whereClause, strings.Join(afterClauses, " AND "))
+	} else {
+		for _, col := range EntityKeyColumns(outputCols, colTypes) {
+			distinctParts = append(distinctParts, QuoteIdentifier(col))
+		}
 	}
 	distinctClause := strings.Join(distinctParts, ", ")
 
@@ -2440,8 +2589,7 @@ func buildLatestRowsQuery(
         SELECT %s
         FROM (
             SELECT DISTINCT ON (%s) %s, connection_id, collected_at
-            FROM metrics.%s
-            WHERE %s
+            FROM %s
             ORDER BY %s, collected_at DESC
         ) latest
         ORDER BY %s %s, collected_at DESC
@@ -2450,8 +2598,7 @@ func buildLatestRowsQuery(
 		selectClause,
 		distinctClause,
 		strings.Join(innerParts, ", "),
-		QuoteIdentifier(probeName),
-		whereClause,
+		source,
 		distinctClause,
 		QuoteIdentifier(orderCol),
 		order,

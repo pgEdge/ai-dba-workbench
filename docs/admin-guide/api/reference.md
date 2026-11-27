@@ -478,12 +478,16 @@ sample. The behaviour that follows from that is:
   longest preset; the endpoint rejects a longer span with
   `span must not exceed 30 days`, as described under
   Metric Time Windows below.
-- On a server with `pg_stat_statements` installed in more
-  than one database, the collector stores each counter
-  once per such database. The endpoint counts each
-  counter once, and a `database_name` filter sums only
-  the counters of the statements that ran in that
-  database.
+- The collector reads `pg_stat_statements` in one
+  database per collection: it tries the connection's
+  own database first and then the other databases in
+  name order, and a database without the extension, or
+  where the read fails, moves it on to the next.
+  Collectors from earlier releases stored each counter
+  once per such database. The
+  endpoint counts each counter once, and a
+  `database_name` filter sums only the counters of the
+  statements that ran in that database.
 - The optional `query_text` parameter keeps only the
   statements whose text contains the term, ignoring case;
   the term is a plain substring, so `%` and `_` match
@@ -503,6 +507,15 @@ the server found. The bucketed mode described above returns
 this envelope; the latest-rows mode, which a request selects
 by passing `limit` or `order_by`, is unchanged and still
 returns the matching rows.
+
+For `pg_stat_statements`, the latest-rows mode returns the
+newest reading of each statement once, whichever database the
+collector read it through. When an earlier collector stored
+that reading once for each database with the extension, the
+copy from the database whose name sorts first is kept. A
+`database_name` filter tests the copy kept, so it returns a
+statement only when that copy was collected through the named
+database, rather than returning an older reading that was.
 
 In the following example, the server answers a six-hour
 preset with a five-minute bucket width:

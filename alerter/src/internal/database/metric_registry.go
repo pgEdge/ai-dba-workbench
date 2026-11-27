@@ -1131,10 +1131,11 @@ var metricRegistry = withBaselineQueries(map[string]metricQueryConfig{
 	// and the alert cleared only on a manual stats reset or eviction.
 	//
 	// The metric is server-wide because pg_stat_statements is. The view
-	// reads one shared hash table for the whole cluster, so the collector
-	// stores the same counters once for every database it probes that has
-	// the extension installed, differing only in the database_name it
-	// connected through; the statement's own database is its dbid. The
+	// reads one shared hash table for the whole cluster, so collectors
+	// before GitHub issue #762 stored the same counters once for every
+	// database they probed that has the extension installed, differing
+	// only in the database_name they connected through, and such rows
+	// stay in retention; the statement's own database is its dbid. The
 	// count used to be grouped by that probing name, so every such
 	// database reported the cluster's figure and an alert on it fired
 	// once per database. The probe cannot simply filter on its own dbid

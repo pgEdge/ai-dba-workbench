@@ -6857,7 +6857,7 @@
           {
             "name": "statement_database_name",
             "in": "query",
-            "description": "pg_stat_statements only, with exactly one connection: keep the rows of statements that ran in this database. database_name on that probe names the database the statistics were collected through, which carries every database's statements, so this is the filter that matches a Top Queries row. A statement whose database ID no longer resolves to a name is attributed to the database it was collected through, as Top Queries does",
+            "description": "pg_stat_statements only, with exactly one connection: keep the rows of statements that ran in this database. database_name on that probe names the database the statistics were collected through, which carries every database's statements, so this is the filter that matches a Top Queries row. A statement whose database ID no longer resolves to a name is attributed to the database it was collected through, as Top Queries does. Omit database_name with it: the database the statistics are collected through can change between collections, and each reading is counted once whichever database it was collected through",
             "schema": {
               "type": "string"
             }
@@ -15290,7 +15290,7 @@
           },
           "sample_database_name": {
             "type": "string",
-            "description": "Database the statistics were collected through, which is the database_name of the query's pg_stat_statements metric rows; pass this, not database_name, to /api/v1/metrics/query for the query's time series"
+            "description": "Database the statistics were collected through, which is the database_name of the query's pg_stat_statements metric rows. The collector reads the view in one database per collection and that database can change, so for the query's time series pass the statement's database as statement_database_name to /api/v1/metrics/query, without database_name"
           },
           "shared_blks_hit": {
             "type": "integer",

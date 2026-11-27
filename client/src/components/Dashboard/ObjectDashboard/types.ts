@@ -94,10 +94,10 @@ export interface QueryDetailData {
     client_observed_at: string | null;
     /**
      * Database the statement's statistics were collected through,
-     * which is the database_name its pg_stat_statements metric rows
-     * carry. It can differ from the statement's own database, the
-     * one the drill-down was opened for, so the charts filter on
-     * this instead. Absent from servers that predate it.
+     * which is the database_name its latest pg_stat_statements metric
+     * row carries. It can differ from the statement's own database,
+     * and can change between collections, so nothing filters on it.
+     * Absent from servers that predate it.
      */
     sample_database_name?: string;
 }

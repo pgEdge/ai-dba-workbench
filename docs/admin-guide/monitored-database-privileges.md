@@ -251,9 +251,11 @@ Two optional extensions add metrics that PostgreSQL does not provide on its
 own. An extension is a per-database object, so create each extension in the
 databases where its probes run:
 
-- create `pg_stat_statements`, which adds query statistics, in every database
-  that you want the collector to probe, because the `pg_stat_statements` probe
-  runs in each database.
+- create `pg_stat_statements`, which adds query statistics, in at least one
+  database the collector can connect to; the view covers every database on
+  the server, so the collector reads it once per collection, trying the
+  maintenance database named in the server definition first and then the
+  other databases in name order.
 - create `system_stats`, which adds operating system metrics such as CPU,
   memory, and disk usage, in the maintenance database named in the server
   definition, because the `pg_sys_*` probes run once for each server in that

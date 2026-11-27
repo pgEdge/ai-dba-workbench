@@ -1806,14 +1806,18 @@ func buildTopQueriesSQL(
 	// the summed delta stays positive, the guard in totals never fires, and
 	// the pre-reset total is silently subtracted from the post-reset one.
 	//
-	// database_name is deliberately not part of that identity. The probe
-	// runs in every database that has the extension installed, and each run
-	// reads the same cluster-wide view, so one counter lands in the table
-	// once per such database at the same collected_at, differing only in
-	// the database_name the probe connected through. Those copies are the
-	// same counter, not sibling identities: partitioning on database_name
-	// as well would difference each copy separately and the sums would then
-	// count every call once per database with the extension. readings
+	// database_name is deliberately not part of that identity. It names
+	// the database the probe read the cluster-wide view through, not the
+	// statement's database. Collectors before GitHub issue #762 read the
+	// view in every database that has the extension installed, so one
+	// counter can be stored once per such database at the same
+	// collected_at, differing only in that name, and a current collector
+	// reads it in the first such database, which can change between
+	// collections. Those copies are the same counter, not sibling
+	// identities: partitioning on database_name as well would difference
+	// each copy separately, count every call once per database with the
+	// extension, and break the series wherever the probing database
+	// changed. readings
 	// keeps one copy per (queryid, userid, dbid, toplevel, collected_at),
 	// choosing the lowest database_name so that the choice is stable, and
 	// the LAG runs over that, in deltas. readings deliberately does not
@@ -2367,78 +2371,13 @@ func validateTopQueryText(w http.ResponseWriter, queryText string) bool {
 // count for paged collection endpoints.
 const headerTotalCount = "X-Total-Count"
 
-// nameLookupWindowSQL is the interval literal, spliced into
-// buildTopQueriesSQL and statementDatabaseLookupSQL as a constant rather
-// than bound as a parameter, that bounds how far before the latest
-// pg_stat_statements snapshot the db_names, user_names and last_client
-// CTEs look for samples. It is a Go constant with no caller-supplied
-// content, so interpolating it into the statement text is safe.
-const nameLookupWindowSQL = "1 hour"
-
-// statementDatabaseLookupSQL is the pair of CTEs, latest and db_names,
-// that both buildTopQueriesSQL and queryStatsSQLTemplate use to resolve a
-// pg_stat_statements dbid to the name of the database the statement ran
-// in. It is written without the leading WITH so that each statement can
-// place it first in its own CTE list, and it expects the connection ID as
-// $1. It contains no caller-supplied content.
-//
-// The database_name column recorded on a pg_stat_statements row is the
-// database the probe connected through, not the statement's database: the
-// probe runs in every database with the extension and reads the same
-// cluster-wide view each time, so a counter lands once per probing
-// database. The statement's own database is its dbid, which db_names maps
-// to a name from two sources. metrics.pg_stat_database is the primary one:
-// the collector records it in every database it monitors at every
-// collection, so it knows the OID of every monitored database whether or
-// not a backend happened to be caught in it. metrics.pg_stat_activity is
-// read as well because it is sampled server-wide, so it can also name a
-// database the collector never connects to, such as one the monitoring
-// role holds no CONNECT privilege on, provided a backend was seen there.
-// Issue #508 is the case this closes: before it, only pg_stat_activity was
-// consulted, and a statement whose database had no backend sampled in the
-// hour fell back to the probing database_name.
-//
-// Both reads are bounded to the nameLookupWindowSQL leading up to the
-// latest pg_stat_statements snapshot, because neither table has an index on
-// the OID and DISTINCT ON would otherwise sort every row in retention. The
-// upper bound also keeps a name observed after statement collection stopped
-// from renaming the statements already recorded. The
-// most recent observation of an OID wins whichever table it came from, so
-// a database renamed within the window resolves to its current name; the
-// trailing datname only makes a tie at one instant stable.
-//
-// An OID neither source knows still resolves to nothing, and the callers
-// fall back to the probing database_name. They apply that fallback after
-// keeping one copy of each counter per collection, so the counter is
-// reported under a single name rather than under every probing database.
-const statementDatabaseLookupSQL = `latest AS (
-            SELECT MAX(collected_at) AS collected_at
-            FROM metrics.pg_stat_statements
-            WHERE connection_id = $1
-        ),
-        db_names AS (
-            SELECT DISTINCT ON (datid) datid, datname
-            FROM (
-                SELECT datid, datname, collected_at
-                FROM metrics.pg_stat_database
-                WHERE connection_id = $1
-                  AND collected_at >= (SELECT collected_at FROM latest)
-                      - INTERVAL '` + nameLookupWindowSQL + `'
-                  AND collected_at <= (SELECT collected_at FROM latest)
-                  AND datid IS NOT NULL
-                  AND datname IS NOT NULL
-                UNION ALL
-                SELECT datid, datname, collected_at
-                FROM metrics.pg_stat_activity
-                WHERE connection_id = $1
-                  AND collected_at >= (SELECT collected_at FROM latest)
-                      - INTERVAL '` + nameLookupWindowSQL + `'
-                  AND collected_at <= (SELECT collected_at FROM latest)
-                  AND datid IS NOT NULL
-                  AND datname IS NOT NULL
-            ) observed
-            ORDER BY datid, collected_at DESC, datname
-        )`
+// nameLookupWindowSQL and statementDatabaseLookupSQL are defined in the
+// metrics package, which the query_metrics MCP tool shares with the
+// metrics endpoint; see metrics.StatementDatabaseLookupSQL.
+const (
+	nameLookupWindowSQL        = metrics.NameLookupWindowSQL
+	statementDatabaseLookupSQL = metrics.StatementDatabaseLookupSQL
+)
 
 // respondEmptyTopQueries returns the empty top-queries result used when the
 // underlying metrics tables are missing. The endpoint treats an absent
@@ -2496,7 +2435,7 @@ func respondTopQueriesError(w http.ResponseWriter, connID int, err error) {
 // in this period".
 //
 // The probing database_name is not part of the identity, for the reason
-// given at statementDatabaseLookupSQL: one counter is stored once per
+// given at statementDatabaseLookupSQL: one counter can be stored once per
 // database the probe ran in, and differencing each copy separately would
 // count every call once per such database. readings therefore keeps one
 // copy per identity and collection, as buildTopQueriesSQL does, and without

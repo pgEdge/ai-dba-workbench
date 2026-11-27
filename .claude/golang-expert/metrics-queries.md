@@ -653,7 +653,16 @@ decomposed into small, separately testable helpers:
   `inserted_at`), resolves `order_by` against the discovered columns with
   `ResolveOrderByColumn`, and resolves the database filter column with
   `ResolveDatabaseColumn` when a `DatabaseName` filter is set.
-- `buildLatestRowsQuery` assembles the SQL; `scanLatestRows` reads rows
+- `buildLatestRowsQuery` assembles the SQL. For `pg_stat_statements`
+  it reads from `latestStatementSource`, which keeps each
+  `(connection_id, queryid, userid, dbid, toplevel)` identity's newest
+  reading (lowest `database_name` among its copies), and keys the
+  DISTINCT ON on that identity rather than the text columns, since
+  `database_name` is the probing database and would return a stale row
+  per database the statement was read through (#762). The
+  `database_name` filter and the statement-database clause apply to
+  the kept reading; only `statementDatabasePrefilter` runs before the
+  reduction. `scanLatestRows` reads rows
   into flat maps, normalising each value through `normalizeLatestValue`
   (RFC3339 for `time.Time`, `sanitizeFloat` dropping NaN/Inf to JSON
   null, `pgtype.Numeric`/`pgtype.Interval` collapsed to seconds/float).
@@ -993,7 +1002,9 @@ only that entity's share.
 The entity keys come from `GetProbeEntityKeyColumns`: the columns of the
 probe table's primary key other than `connection_id` and `collected_at`,
 in key order (`interface_name`; `database_name` for `pg_stat_database`;
-`database_name, queryid, userid, dbid, toplevel`; nothing for a
+`database_name, queryid, userid, dbid, toplevel` for pg_stat_statements,
+less `database_name`, which `sampleEntityColumns` drops (see below);
+nothing for a
 single-row probe such as `pg_stat_wal`, which then reduces to the
 unpartitioned form). On plain PostgreSQL the keyed probes declare such a
 key (`primaryKeyEntityColumns` reads it and also reports whether any key
@@ -1697,8 +1708,9 @@ that follow from that, most learned the hard way in #406 and #407:
   0 rather than vanishing. Since #640 it is server-wide (`scanBasic`,
   historical rows with a NULL database): a `samples` CTE first keeps one
   copy of each counter per `collected_at` with `DISTINCT ON` (lowest
-  probing `database_name` wins, as in `buildTopQueriesSQL`), because the
-  probe stores the cluster-wide view once per database it probes, and
+  probing `database_name` wins, as in `buildTopQueriesSQL`), because
+  collectors before #762 stored the cluster-wide view once per database
+  they probed (those rows stay in retention), and
   grouping by that probing name reported the whole server's count in
   every database. A `dbid` filter in the probe was rejected: the probe
   only runs where the extension is installed and the role may connect,
@@ -2408,14 +2420,20 @@ string, because JavaScript cannot represent it exactly.
 `/metrics/query` also takes `statement_database_name` (PR #825, the
 follow-up to #802), so the query detail charts count only the statement's
 runs in the row's own database, as the summary tiles do. `database_name`
-cannot do this on pg_stat_statements, since every probing database carries
-every database's counters. `applyStatementDatabaseFilter` in
+cannot do this on pg_stat_statements, since its value is only the probing
+database: every probing database carried every database's counters before
+#762, and since #762 the one probing database can change between
+collections, so the charts send `statement_database_name` alone, never
+`database_name`. `applyStatementDatabaseFilter` in
 `metrics_statement_database.go` validates the name with
 `database.ValidateDatabaseName`, refuses any other probe and more than one
 connection with `400`, and resolves the name through
-`statementDatabaseLookupSQL` (the Top Queries lookup) into
+`metrics.LookupStatementDatabases` (the Top Queries lookup,
+`internal/metrics/statement_database.go`) and
+`metrics.NewStatementDatabaseFilter` into
 `MetricFilters.StatementDatabase`: the dbids with that name, plus every
-resolved dbid. `statementDatabaseClause` then matches
+resolved dbid. The `query_metrics` MCP tool applies its `database_name`
+argument the same way for pg_stat_statements. `statementDatabaseClause` then matches
 `dbid::bigint = ANY(<named>) OR (NOT dbid::bigint = ANY(<resolved>) AND
 database_name = $n)`, which is the Top Queries row key
 `COALESCE(db_names.datname, database_name)` without a join. The lists are
@@ -2426,13 +2444,35 @@ unknown name still matches rows collected through a database of that
 name. The handler test seeds a probe_configs row because the time-series
 path resolves the probe interval, and drops the table it created.
 
+Every pg_stat_statements read in `BuildMetricsQuery` and the rate path of
+`BuildDerivedMetricsQuery` goes through `sampleSource`, which wraps the
+filtered rows in `SELECT DISTINCT ON (queryid, userid, dbid, toplevel,
+collected_at) * ... ORDER BY ..., database_name`, keeping one copy of
+each reading (lowest probing name wins, as in the Top Queries `readings`
+CTE, and served by `idx_pg_stat_statements_identity_time`), and the rate
+partition omits `database_name` so a series survives a change of probing
+database. `TestMetricsQuery_StatementDatabaseAcrossProbingDatabases`
+pins both. The derived ratio path still reads the table directly.
+For pg_stat_statements, `metricQueryClauses` puts only
+`statementDatabasePrefilter` (the dbid half) in `filterClauses` and keeps
+the full statement-database clause in `parts.statementFilter`: the raw
+path applies it to the kept copy (`sampleSource`'s `after`), and the rate
+path applies it after the `LAG`, carrying `MAX(database_name)` up, so an
+unresolved dbid's database_name fallback never picks a discarded copy or
+drops a predecessor read through another database
+(`TestStatementDatabaseFallbackAfterCopies_Integration`). Every query
+built from those parts must apply `statementFilter`, since it binds the
+last filter value.
+
 Whether the `(connection_id, database_name, queryid, collected_at)`
 object index actually serves a queryid lookup depends on the predicate
 also naming `database_name`, the index's second column. Before
 PostgreSQL 18, which added B-tree skip scans, a predicate on
 `connection_id` and `queryid` alone falls back to a bitmap scan of
 `idx_pg_stat_statements_conn_time` over every row of the connection in
-the window. `/metrics/query` always carries the database name;
+the window. The query detail charts send `statement_database_name`
+instead of `database_name` (#762), so like `/metrics/query-stats` their
+scan binds `connection_id` and `queryid` and reads the identity index;
 `/metrics/query-stats` takes an optional `database_name`
 parameter, which the drill-down always sends, and `buildQueryStatsSQL`
 applies it to the statement's resolved database (see below), so the
@@ -2477,7 +2517,8 @@ is added to the INCLUDE list, which is why it is not there.
 ## Cumulative Counter Deltas per Identity (server)
 
 `pg_stat_statements` keeps one row per `(userid, dbid, toplevel)` for a
-queryid, which the collector stores once per probing `database_name`,
+queryid, which collectors before #762 stored once per probing
+`database_name` (see "One pg_stat_statements read per server" below),
 and each row is an independent cumulative counter that
 `pg_stat_reset()` or a restart can zero on its own. Any
 query that turns those counters into per-period deltas must difference
@@ -2494,10 +2535,12 @@ same shape.
 
 Since issue #387 `buildTopQueriesSQL` applies the same pattern to every
 `queryid` at once, with one refinement that the review of PR #481
-forced. `database_name` is **not** part of the identity there: the probe
-runs in every database with the extension and each run reads the same
-cluster-wide view, so one counter lands once per such database at the
-same `collected_at`, differing only in the probing `database_name`. Its
+forced. `database_name` is **not** part of the identity there: the view
+is cluster-wide, collectors before #762 read it in every database with
+the extension, so one counter can land once per such database at the
+same `collected_at`, differing only in the probing `database_name`, and
+the current collector's probing database can change between
+collections. Its
 `readings` CTE therefore keeps one copy per
 `(queryid, userid, dbid, toplevel, collected_at)` with `DISTINCT ON`
 (lowest `database_name` wins, for a stable choice) and carries that
@@ -2583,9 +2626,11 @@ pulled down into the scan), and keep the
 `ORDER BY d.queryid` in `samples`, which lets `latest_sample` use an
 incremental sort. `/metrics/query-stats` resolves and filters the same
 way as the list, so it finds a statement by the name the list reported.
-`/metrics/query` filters on the probing `database_name`, which is why
-the list also returns `sample_database_name` and the drill-down charts
-bind that. Tests: `perf_summary_dbid_resolution_test.go`.
+The drill-down charts send the statement's database to `/metrics/query`
+as `statement_database_name`, without `database_name`: the probing
+database can change between collections (#762), so filtering on the
+list's `sample_database_name` would drop the readings taken through
+another database. Tests: `perf_summary_dbid_resolution_test.go`.
 
 `totals` and `latest_sample` must stay `MATERIALIZED`. The planner
 cannot see through the `samples` CTE, estimates both at one row, and
@@ -2910,6 +2955,29 @@ those tests skipped entirely; do not treat it as a regression in
 whichever change happens to be in flight, and prefer verifying a
 specific change with a targeted `-run` before interpreting a full-package
 run.
+
+## One pg_stat_statements Read per Server (collector)
+
+`pg_stat_statements` returns every database's statements whichever
+database it is read from, so since #762 the probe implements
+`probes.ServerWideViewProbe` and `executeProbeForAllDatabases` stops at
+the first database (default first, then the sorted list) whose
+`Execute` reports the extension present; absent or failing databases do
+not stop the walk. The one exception, shared with every database-scoped
+probe, is a failed `SELECT current_database()` on the default
+connection: `executeProbeOnDefaultDatabase` returns `ok=false` and no
+other database is tried in that collection, so the statements are read
+again on the next one. The rows keep that database as `database_name`.
+`TestExecuteProbeForAllDatabases_ServerWideViewReadOnce` pins this.
+Readers must still not treat `database_name` as part of a statement's
+identity or use it to attribute a statement to a database: rows from
+older collectors hold one copy per probing database, and the first
+database with the extension can change between collections. Resolve
+the statement's database from `dbid`, and keep the `DISTINCT ON` that
+picks one copy per collection. A `database_name` filter that a caller
+asks for explicitly is a probing-database filter, not attribution, so
+keep it, applied to the copy kept (see `sampleSource` and
+`latestStatementSource`).
 
 ## Related Issues
 

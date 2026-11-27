@@ -514,9 +514,13 @@ should be written; it is deliberately separate from
   is the worked example.
   `HealthOverviewSection` follows it for the Alert Distribution
   chart, which has no time window but refetches on every
-  `lastRefresh`; it counts each severity from the `total` of a
-  `status=active`, `limit=1` request per `connection_ids` batch,
-  never from the length of one page.
+  `lastRefresh`. Its attempts can span many batches and outlast the
+  refresh interval, so a `lastRefresh` tick for the same server set
+  joins the attempt in flight instead of superseding it: the fetch
+  returns that attempt's promise to `run()`, so a failure is still
+  retried, and joins only while the attempt's `beginRequest`
+  predicate is true. A change of server set calls `beginRequest()`
+  and supersedes it as usual.
 
 - Where the view is paged, treat the window as a filter that changes
   the size of the result set and reset the offset when it moves, or
@@ -606,15 +610,18 @@ partial result. The merge drops the response's top-level `aggregate`,
 whose weighted cache hit average cannot be recomputed from the response
 fields, so a consumer needing it must read an unbatched response.
 `/api/v1/alerts` and `/api/v1/overview` also take `connection_ids` but
-are not capped. The estate dashboard still batches its alert counts:
-`KpiTilesSection` reuses its performance batches, and
-`HealthOverviewSection` sends each severity's count per
-`chunkConnectionIds` batch; both sum each response's `total`. Count
-alerts from `total` with `status=active` and the scope's
-`connection_ids` (which also excludes system alerts), never from the
-length of one page, so the figure uses the cluster cards' definition
-of `active_alert_count`; the tile still counts offline servers' alerts,
-which the cards omit.
+are not capped, and neither is `/api/v1/alerts/counts`. The estate
+dashboard still batches its alert counts to keep URLs short:
+`KpiTilesSection` reuses its performance batches and sums each
+`/api/v1/alerts` response's `total`, and `HealthOverviewSection` sends
+one `/api/v1/alerts/counts?connection_ids=` request per
+`chunkConnectionIds` batch, one at a time, and sums `by_severity`
+(always all three keys, counted in one query, so the severities cannot
+disagree). Count alerts from `total` with `status=active`, or from
+`/alerts/counts`, with the scope's `connection_ids` (which also
+excludes system alerts), never from the length of one page, so the
+figure uses the cluster cards' definition of `active_alert_count`; the
+tile still counts offline servers' alerts, which the cards omit.
 
 ## Sortable and Searchable Dashboard Tables
 

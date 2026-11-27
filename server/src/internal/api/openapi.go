@@ -506,7 +506,8 @@ func buildSchemas() map[string]*OpenAPISchema {
 			},
 		},
 		"AlertCountsResult": {
-			Type: "object",
+			Type:     "object",
+			Required: []string{"total", "by_server", "by_severity", "system"},
 			Properties: map[string]*OpenAPISchema{
 				"total": {Type: "integer", Format: "int64", Description: "Active alerts the caller may see, system alerts included"},
 				"by_server": {
@@ -514,7 +515,20 @@ func buildSchemas() map[string]*OpenAPISchema {
 					AdditionalProperties: &OpenAPISchema{Type: "integer", Format: "int64"},
 					Description:          "Active alert count keyed by connection ID; system alerts are never included",
 				},
+				"by_severity": {
+					Ref: "#/components/schemas/AlertSeverityCounts",
+				},
 				"system": {Type: "integer", Format: "int64", Description: "Active system alerts, which belong to no connection"},
+			},
+		},
+		"AlertSeverityCounts": {
+			Type:        "object",
+			Description: "Active alert counts by severity, from the same snapshot as the other counts; every alert counted in total is counted here, system alerts included, so the three fields sum to total",
+			Required:    []string{"critical", "warning", "info"},
+			Properties: map[string]*OpenAPISchema{
+				"critical": {Type: "integer", Format: "int64", Description: "Active critical alerts"},
+				"warning":  {Type: "integer", Format: "int64", Description: "Active warning alerts"},
+				"info":     {Type: "integer", Format: "int64", Description: "Active info alerts"},
 			},
 		},
 		"AcknowledgeRequest": {
@@ -2576,11 +2590,14 @@ func buildPaths() map[string]OpenAPIPathItem {
 
 		"/alerts/counts": {
 			Get: &OpenAPIOperation{
-				Summary:     "Get alert counts by server",
-				Description: "Returns counts of active alerts grouped by server, with system alerts counted separately",
+				Summary:     "Get alert counts by server and severity",
+				Description: "Returns counts of active alerts grouped by server and by severity from one snapshot, with system alerts counted separately. With connection_ids, the counts cover only those of the listed connections the caller may see, and system alerts are left out",
 				OperationID: "getAlertCounts",
 				Tags:        []string{"Alerts"},
 				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamString("connection_ids", "Count only these connection IDs (comma-separated), intersected with the connections the caller may see; invalid entries are ignored, and system alerts are excluded"),
+				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("AlertCountsResult", "Alert counts"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),

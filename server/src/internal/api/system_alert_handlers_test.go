@@ -283,6 +283,142 @@ func TestAlertHandler_HandleAlertCounts_SystemAlerts(t *testing.T) {
 	}
 }
 
+// TestAlertHandler_HandleAlertCounts_ConnectionFilter proves the
+// connection_ids filter on the counts (GitHub issue #901): it narrows
+// the caller's visible set and never widens it, it leaves system alerts
+// out, invalid entries are skipped as /api/v1/alerts skips them, and
+// each severity's count equals the total /api/v1/alerts reports for the
+// same filter, which is what the estate Alert Distribution chart used.
+func TestAlertHandler_HandleAlertCounts_ConnectionFilter(t *testing.T) {
+	f := newSystemAlertHandlerFixture(t)
+	ctx := context.Background()
+	var other int
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO connections (name, owner_username) VALUES ('alice-other', 'alice')
+		RETURNING id`).Scan(&other); err != nil {
+		t.Fatalf("insert connection: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `
+		INSERT INTO alerts (alert_type, connection_id, severity, title, description, status)
+		VALUES ('threshold', $1, 'critical', 'c', 'test', 'active'),
+		       ('threshold', $1, 'info', 'i', 'test', 'active'),
+		       ('threshold', $1, 'critical', 'ack', 'test', 'acknowledged'),
+		       ('threshold', $1, 'warning', 'old', 'test', 'cleared')`, other); err != nil {
+		t.Fatalf("insert alerts: %v", err)
+	}
+	carolID := newGroupGrantedUser(t, f.store, "carol", f.privConn, auth.AccessLevelRead)
+	carol := func(req *http.Request) *http.Request {
+		return withUsername(withUser(req, carolID), "carol")
+	}
+	priv, oth := strconv.Itoa(f.privConn), strconv.Itoa(other)
+
+	// API tokens scoped to one connection, each naming one ID inside
+	// and one outside the scope. dana's account may see both
+	// connections, so only her token's scope keeps the second out; a
+	// superuser owner's account sees everything, so the same holds.
+	scopedToken := func(owner string, connID int) int64 {
+		t.Helper()
+		_, tok, err := f.store.AsActor(auth.SystemActor()).CreateToken(owner, "issue 901", nil, true)
+		if err != nil {
+			t.Fatalf("CreateToken %s: %v", owner, err)
+		}
+		if err := f.store.AsActor(auth.SystemActor()).SetTokenConnectionScope(tok.ID,
+			[]auth.ScopedConnection{{ConnectionID: connID, AccessLevel: auth.AccessLevelRead}}, true); err != nil {
+			t.Fatalf("SetTokenConnectionScope %s: %v", owner, err)
+		}
+		return tok.ID
+	}
+	danaID := newGroupGrantedUser(t, f.store, "dana", f.privConn, auth.AccessLevelRead)
+	danaGroups, err := f.store.GetUserGroups(danaID)
+	if err != nil || len(danaGroups) == 0 {
+		t.Fatalf("GetUserGroups: %v %v", danaGroups, err)
+	}
+	if err := f.store.GrantConnectionPrivilege(danaGroups[0], other, auth.AccessLevelRead); err != nil {
+		t.Fatalf("GrantConnectionPrivilege: %v", err)
+	}
+	danaTokenID := scopedToken("dana", f.privConn)
+	danaToken := func(r *http.Request) *http.Request {
+		return withUsername(withToken(r, danaID, danaTokenID), "dana")
+	}
+	rootID := newTestUser(t, f.store, "root_owner")
+	if err := f.store.SetUserSuperuser("root_owner", true); err != nil {
+		t.Fatalf("SetUserSuperuser: %v", err)
+	}
+	rootTokenID := scopedToken("root_owner", other)
+	rootToken := func(r *http.Request) *http.Request {
+		r = withUsername(withSuperuserToken(r, rootTokenID), "root_owner")
+		return r.WithContext(context.WithValue(r.Context(), auth.UserIDContextKey, rootID))
+	}
+
+	type want struct {
+		total, system int64
+		sev           database.AlertSeverityCounts
+		servers       map[int]int64
+	}
+	tests := []struct {
+		name   string
+		caller func(*http.Request) *http.Request
+		query  string
+		want   want
+	}{
+		{"granted user unfiltered counts system alerts in by_severity", carol, "",
+			want{2, 1, database.AlertSeverityCounts{Warning: 2}, map[int]int64{f.privConn: 1}}},
+		{"granted user cannot count a connection outside the grant", carol, "?connection_ids=" + priv + "," + oth,
+			want{1, 0, database.AlertSeverityCounts{Warning: 1}, map[int]int64{f.privConn: 1}}},
+		{"granted user naming only a hidden connection", carol, "?connection_ids=" + oth,
+			want{servers: map[int]int64{}}},
+		{"zero-grant user naming a connection", f.bob, "?connection_ids=" + priv,
+			want{servers: map[int]int64{}}},
+		{"incomplete token naming a connection", withIncompleteToken, "?connection_ids=" + priv,
+			want{servers: map[int]int64{}}},
+		{"superuser filter excludes system alerts", withSuperuser, "?connection_ids=" + priv + "," + oth,
+			want{3, 0, database.AlertSeverityCounts{Critical: 1, Warning: 1, Info: 1},
+				map[int]int64{f.privConn: 1, other: 2}}},
+		{"scoped token of a non-superuser counts only its scope", danaToken, "?connection_ids=" + priv + "," + oth,
+			want{1, 0, database.AlertSeverityCounts{Warning: 1}, map[int]int64{f.privConn: 1}}},
+		{"scoped token of a superuser counts only its scope", rootToken, "?connection_ids=" + priv + "," + oth,
+			want{2, 0, database.AlertSeverityCounts{Critical: 1, Info: 1}, map[int]int64{other: 2}}},
+		{"invalid entries are skipped", withSuperuser, "?connection_ids=x," + oth + ",%20",
+			want{2, 0, database.AlertSeverityCounts{Critical: 1, Info: 1}, map[int]int64{other: 2}}},
+		{"no valid entry counts as unfiltered", withSuperuser, "?connection_ids=x,y",
+			want{4, 1, database.AlertSeverityCounts{Critical: 1, Warning: 2, Info: 1},
+				map[int]int64{f.privConn: 1, other: 2}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := f.counts(t, tt.caller(httptest.NewRequest(http.MethodGet, "/api/v1/alerts/counts"+tt.query, nil)))
+			if got.Total != tt.want.total || got.System != tt.want.system || got.BySeverity != tt.want.sev {
+				t.Errorf("counts = %+v, want %+v", got, tt.want)
+			}
+			if len(got.ByServer) != len(tt.want.servers) {
+				t.Errorf("by_server = %v, want %v", got.ByServer, tt.want.servers)
+			}
+			for id, n := range tt.want.servers {
+				if got.ByServer[id] != n {
+					t.Errorf("by_server[%d] = %d, want %d", id, got.ByServer[id], n)
+				}
+			}
+		})
+	}
+
+	// The chart's old requests and the new counts agree per severity.
+	ids := priv + "," + oth
+	for _, caller := range []func(*http.Request) *http.Request{carol, withSuperuser} {
+		counts := f.counts(t, caller(httptest.NewRequest(http.MethodGet, "/api/v1/alerts/counts?connection_ids="+ids, nil)))
+		for severity, n := range map[string]int64{
+			"critical": counts.BySeverity.Critical,
+			"warning":  counts.BySeverity.Warning,
+			"info":     counts.BySeverity.Info,
+		} {
+			list := f.listAlerts(t, caller(httptest.NewRequest(http.MethodGet,
+				"/api/v1/alerts?status=active&limit=1&severity="+severity+"&connection_ids="+ids, nil)))
+			if list.Total != n {
+				t.Errorf("%s: /alerts total %d, counts %d", severity, list.Total, n)
+			}
+		}
+	}
+}
+
 // TestAlertHandler_Mutation_SystemAlert proves who may act on a system
 // alert: acknowledging and restoring one needs a superuser or a
 // manage_alert_rules holder, bounded by a token's admin scope, whilst

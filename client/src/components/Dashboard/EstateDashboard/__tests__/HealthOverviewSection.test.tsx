@@ -116,18 +116,35 @@ const alertUrls = (): string[] =>
 const paramsOf = (url: string): URLSearchParams =>
     new URLSearchParams(url.split('?')[1]);
 
+type SeverityCounts = Partial<Record<'critical' | 'warning' | 'info', number>>;
+
 /**
- * Answer each alerts request with a single row and the given total for
- * its severity, as the server does for limit=1.
+ * An /alerts/counts body with the given per-severity counts; the server
+ * always sends all three keys.
  */
-const totalsBySeverity = (totals: Record<string, number>) =>
-    (url: string): Promise<Response> => {
-        const severity = paramsOf(url).get('severity') ?? '';
-        return Promise.resolve(okResponse({
-            alerts: [{ id: 1, severity }],
-            total: totals[severity] ?? 0,
-        }));
+const countsBody = (counts: SeverityCounts) => {
+    const bySeverity = { critical: 0, warning: 0, info: 0, ...counts };
+    return {
+        total: bySeverity.critical + bySeverity.warning + bySeverity.info,
+        by_server: {},
+        by_severity: bySeverity,
+        system: 0,
     };
+};
+
+/** Answer every counts request with the given per-severity counts. */
+const totalsBySeverity = (counts: SeverityCounts) =>
+    (): Promise<Response> => Promise.resolve(okResponse(countsBody(counts)));
+
+const idsOf = (url: string): number[] =>
+    (paramsOf(url).get('connection_ids') ?? '').split(',').map(Number);
+
+/** A promise the test settles by hand. */
+const deferred = <T,>() => {
+    let resolve: (value: T) => void = () => {};
+    const promise = new Promise<T>(r => { resolve = r; });
+    return { promise, resolve };
+};
 
 /** A request that answers only by rejecting when it is aborted. */
 const hangingRequest = (init?: RequestInit): Promise<Response> =>
@@ -171,7 +188,7 @@ describe('HealthOverviewSection alert distribution', () => {
         vi.useRealTimers();
     });
 
-    it('counts each severity from the response total, not one page (issue #864)', async () => {
+    it('counts each severity from the response by_severity (issues #864, #901)', async () => {
         mockApiFetch.mockImplementation(
             totalsBySeverity({ critical: 450, warning: 12, info: 3 }),
         );
@@ -183,7 +200,7 @@ describe('HealthOverviewSection alert distribution', () => {
         });
     });
 
-    it('asks for active alerts on the estate servers only (issue #864)', async () => {
+    it('asks for the counts on the estate servers in one request (issues #864, #901)', async () => {
         mockApiFetch.mockImplementation(
             totalsBySeverity({ critical: 1 }),
         );
@@ -193,19 +210,14 @@ describe('HealthOverviewSection alert distribution', () => {
         await screen.findByTestId('chart-Alerts');
 
         const urls = alertUrls();
-        expect(urls).toHaveLength(3);
-        expect(urls.map(u => paramsOf(u).get('severity')).sort())
-            .toEqual(['critical', 'info', 'warning']);
-        urls.forEach(url => {
-            const params = paramsOf(url);
-            // Scoped to the selection's servers, which also leaves
-            // system alerts out, as the Active Alerts tile does.
-            expect(params.get('connection_ids')).toBe('4,9');
-            // status=active excludes acknowledged and cleared alerts.
-            expect(params.get('status')).toBe('active');
-            expect(params.get('limit')).toBe('1');
-            expect(params.has('exclude_cleared')).toBe(false);
-        });
+        expect(urls).toHaveLength(1);
+        const [path, query] = urls[0].split('?');
+        expect(path).toBe('/api/v1/alerts/counts');
+        // Scoped to the selection's servers, which also leaves system
+        // alerts out, as the Active Alerts tile does; the endpoint
+        // counts only active alerts, so nothing else is sent.
+        expect([...new URLSearchParams(query).keys()]).toEqual(['connection_ids']);
+        expect(paramsOf(urls[0]).get('connection_ids')).toBe('4,9');
     });
 
     it('makes no request and shows no alerts for an empty estate', async () => {
@@ -227,7 +239,7 @@ describe('HealthOverviewSection alert distribution', () => {
         await waitFor(() => {
             expect(alertChartText()).toBe('Critical=1 Warning=2 Info=3');
         });
-        expect(alertUrls()).toHaveLength(3);
+        expect(alertUrls()).toHaveLength(1);
 
         mockApiFetch.mockImplementation(
             totalsBySeverity({ critical: 5, warning: 0, info: 0 }),
@@ -238,7 +250,7 @@ describe('HealthOverviewSection alert distribution', () => {
         await waitFor(() => {
             expect(alertChartText()).toBe('Critical=5 Warning=0 Info=0');
         });
-        expect(alertUrls()).toHaveLength(6);
+        expect(alertUrls()).toHaveLength(2);
     });
 
     it('refetches for the new servers when the selection changes', async () => {
@@ -252,36 +264,33 @@ describe('HealthOverviewSection alert distribution', () => {
         rerender(section([1, 7]));
 
         await waitFor(() => {
-            expect(alertUrls()).toHaveLength(6);
+            expect(alertUrls()).toHaveLength(2);
         });
-        alertUrls().slice(3).forEach(url => {
-            expect(paramsOf(url).get('connection_ids')).toBe('1,7');
-        });
+        expect(paramsOf(alertUrls()[1]).get('connection_ids')).toBe('1,7');
     });
 
-    it('sums the totals across connection_ids batches', async () => {
-        mockApiFetch.mockImplementation(
-            totalsBySeverity({ critical: 2, warning: 1, info: 0 }),
+    it('sums the counts across connection_ids batches, one request each', async () => {
+        // Each batch reports one critical alert per server it names, so
+        // the sum shows that every batch was added in exactly once.
+        mockApiFetch.mockImplementation((url: string) =>
+            Promise.resolve(okResponse(countsBody({
+                critical: idsOf(url).length, warning: 1,
+            }))),
         );
 
         const serverIds = Array.from(
-            { length: MAX_CONNECTION_IDS_PER_REQUEST + 50 },
+            { length: MAX_CONNECTION_IDS_PER_REQUEST * 2 + 50 },
             (_, i) => i + 1,
         );
         renderSection(serverIds);
 
-        // Two batches, three severities each, and every batch total is
-        // added in.
         await waitFor(() => {
-            expect(alertChartText()).toBe('Critical=4 Warning=2 Info=0');
+            expect(alertChartText()).toBe('Critical=250 Warning=3 Info=0');
         });
         const urls = alertUrls();
-        expect(urls).toHaveLength(6);
-        const named = urls
-            .filter(u => paramsOf(u).get('severity') === 'critical')
-            .flatMap(u => (paramsOf(u).get('connection_ids') ?? '').split(','))
-            .map(Number);
-        expect(named).toEqual(serverIds);
+        expect(urls).toHaveLength(3);
+        expect(urls.map(u => idsOf(u).length)).toEqual([100, 100, 50]);
+        expect(urls.flatMap(idsOf)).toEqual(serverIds);
     });
 
     it('keeps the previous counts and retries when a request fails', async () => {
@@ -290,35 +299,37 @@ describe('HealthOverviewSection alert distribution', () => {
             totalsBySeverity({ critical: 1, warning: 1, info: 1 }),
         );
 
-        const { rerender } = renderSection([1]);
+        const serverIds = Array.from(
+            { length: MAX_CONNECTION_IDS_PER_REQUEST + 1 },
+            (_, i) => i + 1,
+        );
+        const { rerender } = renderSection(serverIds);
         await act(async () => {
             await vi.runOnlyPendingTimersAsync();
         });
-        expect(alertChartText()).toBe('Critical=1 Warning=1 Info=1');
+        expect(alertChartText()).toBe('Critical=2 Warning=2 Info=2');
 
-        // One failed severity fails the refresh rather than showing a
-        // partial distribution.
+        // One failed batch fails the refresh rather than showing a
+        // partial distribution from the batches that answered.
         mockApiFetch.mockImplementation((url: string) =>
-            paramsOf(url).get('severity') === 'warning'
+            idsOf(url).length === 1
                 ? Promise.resolve(errorResponse())
-                : totalsBySeverity({ critical: 9, info: 9 })(url),
+                : totalsBySeverity({ critical: 9, info: 9 })(),
         );
         mockLastRefresh = 1;
-        rerender(section([1]));
-        await act(async () => {
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-        expect(alertChartText()).toBe('Critical=1 Warning=1 Info=1');
+        rerender(section(serverIds));
+        await flush();
+        expect(alertUrls()).toHaveLength(4);
+        expect(alertChartText()).toBe('Critical=2 Warning=2 Info=2');
 
         // The retry picks up the recovered endpoint.
         mockApiFetch.mockImplementation(
-            totalsBySeverity({ critical: 2, warning: 2, info: 2 }),
+            totalsBySeverity({ critical: 3, warning: 3, info: 3 }),
         );
         await act(async () => {
             await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
         });
-        expect(alertChartText()).toBe('Critical=2 Warning=2 Info=2');
+        expect(alertChartText()).toBe('Critical=6 Warning=6 Info=6');
     });
 
     it('shows the counts as unavailable, not as zero, while a failed first load retries', async () => {
@@ -361,14 +372,18 @@ describe('HealthOverviewSection alert distribution', () => {
 
     it('fails the attempt at the first failed request without waiting for the others', async () => {
         vi.useFakeTimers();
-        // The first request fails; any other would never answer.
+        // The first batch fails; any other would never answer.
         mockApiFetch.mockImplementation((url: string, init?: RequestInit) =>
-            paramsOf(url).get('severity') === 'critical'
+            idsOf(url)[0] === 1
                 ? Promise.resolve(errorResponse())
                 : hangingRequest(init),
         );
 
-        renderSection([1]);
+        const serverIds = Array.from(
+            { length: MAX_CONNECTION_IDS_PER_REQUEST + 1 },
+            (_, i) => i + 1,
+        );
+        renderSection(serverIds);
         await flush();
         expect(alertUrls()).toHaveLength(1);
 
@@ -379,7 +394,7 @@ describe('HealthOverviewSection alert distribution', () => {
         await act(async () => {
             await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
         });
-        expect(alertChartText()).toBe('Critical=1 Warning=2 Info=3');
+        expect(alertChartText()).toBe('Critical=2 Warning=4 Info=6');
     });
 
     it('aborts a request that never answers and retries', async () => {
@@ -463,13 +478,13 @@ describe('HealthOverviewSection alert distribution', () => {
 
     it('times out each request, not the whole attempt, so slow batches still load', async () => {
         vi.useFakeTimers();
-        // Each request answers just inside its own limit, so the six
-        // requests for two batches take far longer than one limit.
+        // Each request answers just inside its own limit, so the three
+        // requests for three batches take far longer than one limit.
         const delay = ALERT_COUNT_REQUEST_TIMEOUT_MS - 1000;
         const answer = totalsBySeverity({ critical: 1, warning: 2, info: 3 });
-        mockApiFetch.mockImplementation((url: string, init?: RequestInit) =>
+        mockApiFetch.mockImplementation((_url: string, init?: RequestInit) =>
             new Promise<Response>((resolve, reject) => {
-                const timer = setTimeout(() => { void answer(url).then(resolve); }, delay);
+                const timer = setTimeout(() => { void answer().then(resolve); }, delay);
                 init?.signal?.addEventListener('abort', () => {
                     clearTimeout(timer);
                     reject(new DOMException('Aborted', 'AbortError'));
@@ -478,16 +493,16 @@ describe('HealthOverviewSection alert distribution', () => {
         );
 
         const serverIds = Array.from(
-            { length: MAX_CONNECTION_IDS_PER_REQUEST + 1 },
+            { length: MAX_CONNECTION_IDS_PER_REQUEST * 2 + 1 },
             (_, i) => i + 1,
         );
         renderSection(serverIds);
 
         await act(async () => {
-            await vi.advanceTimersByTimeAsync(delay * 6);
+            await vi.advanceTimersByTimeAsync(delay * 3);
         });
-        expect(alertUrls()).toHaveLength(6);
-        expect(alertChartText()).toBe('Critical=2 Warning=4 Info=6');
+        expect(alertUrls()).toHaveLength(3);
+        expect(alertChartText()).toBe('Critical=3 Warning=6 Info=9');
     });
 
     it('keeps Server Status visible while the alert counts load', async () => {
@@ -526,10 +541,13 @@ describe('HealthOverviewSection alert distribution', () => {
         mockApiFetch.mockImplementation(realApiFetch);
 
         try {
-            renderSection([1]);
+            renderSection(Array.from(
+                { length: MAX_CONNECTION_IDS_PER_REQUEST * 2 + 1 },
+                (_, i) => i + 1,
+            ));
             await flush();
 
-            // Every request would fail with a 5xx, but the attempt stops
+            // Every batch would fail with a 5xx, but the attempt stops
             // at the first, so it makes one request and counts one
             // failure; three would have reached the threshold.
             expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -548,51 +566,134 @@ describe('HealthOverviewSection alert distribution', () => {
         }
     });
 
-    it('ignores a response that a newer refresh has superseded', async () => {
-        let resolveSlow: (r: Response) => void = () => {};
-        mockApiFetch.mockImplementation(
-            totalsBySeverity({ critical: 1 }),
-        );
+    it('lets an attempt in flight finish when the estate refreshes (issue #901)', async () => {
+        const slow = deferred<Response>();
+        mockApiFetch.mockImplementation(() => slow.promise);
+
+        // The same array on both renders, so only lastRefresh changes.
+        const serverIds = [1, 2];
+        const { rerender } = renderSection(serverIds);
+        await waitFor(() => { expect(alertUrls()).toHaveLength(1); });
+
+        // A refresh tick while the first load is still in flight starts
+        // no new request and does not discard the one in flight.
+        mockLastRefresh = 1;
+        rerender(section(serverIds));
+        mockLastRefresh = 2;
+        rerender(section(serverIds));
+        expect(screen.getByLabelText('Loading alert distribution')).toBeInTheDocument();
+        expect(alertUrls()).toHaveLength(1);
+
+        await act(async () => {
+            slow.resolve(okResponse(countsBody({ critical: 4, info: 1 })));
+        });
+        expect(await screen.findByTestId('chart-Alerts'))
+            .toHaveTextContent('Critical=4 Warning=0 Info=1');
+        expect(alertUrls()).toHaveLength(1);
+
+        // Once it has published, the next tick fetches again.
+        mockApiFetch.mockImplementation(totalsBySeverity({ warning: 7 }));
+        mockLastRefresh = 3;
+        rerender(section(serverIds));
+        await waitFor(() => {
+            expect(alertChartText()).toBe('Critical=0 Warning=7 Info=0');
+        });
+        expect(alertUrls()).toHaveLength(2);
+    });
+
+    it('retries a failure of an attempt a refresh tick joined', async () => {
+        vi.useFakeTimers();
+        const slow = deferred<Response>();
+        mockApiFetch.mockImplementation(() => slow.promise);
+
+        const serverIds = [1];
+        const { rerender } = renderSection(serverIds);
+        await flush();
+        mockLastRefresh = 1;
+        rerender(section(serverIds));
+        await flush();
+        expect(alertUrls()).toHaveLength(1);
+
+        // The tick reset the backoff, but the failure still reaches it
+        // through the joined attempt, so a retry is scheduled.
+        await act(async () => {
+            slow.resolve(errorResponse());
+        });
+        expect(screen.getByText('Alert counts unavailable')).toBeInTheDocument();
+
+        mockApiFetch.mockImplementation(totalsBySeverity({ info: 2 }));
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
+        });
+        expect(alertUrls()).toHaveLength(2);
+        expect(alertChartText()).toBe('Critical=0 Warning=0 Info=2');
+    });
+
+    it('supersedes an attempt in flight when the servers change', async () => {
+        const slow = deferred<Response>();
+        let slowSignal: AbortSignal | undefined;
+        mockApiFetch.mockImplementation((_url: string, init?: RequestInit) => {
+            slowSignal = init?.signal ?? undefined;
+            return slow.promise;
+        });
 
         const { rerender } = renderSection([1]);
-        await waitFor(() => {
-            expect(alertChartText()).toBe('Critical=1 Warning=0 Info=0');
-        });
+        await waitFor(() => { expect(alertUrls()).toHaveLength(1); });
 
-        // The first refresh hangs on its critical count; a second
-        // refresh then completes first.
-        let slowSignal: AbortSignal | undefined;
-        mockApiFetch.mockImplementation((url: string, init?: RequestInit) => {
-            if (paramsOf(url).get('severity') === 'critical') {
-                slowSignal = init?.signal ?? undefined;
-                return new Promise<Response>(r => { resolveSlow = r; });
-            }
-            return totalsBySeverity({})(url);
-        });
-        mockLastRefresh = 1;
-        rerender(section([1]));
-
-        mockApiFetch.mockImplementation(
-            totalsBySeverity({ critical: 3 }),
-        );
-        mockLastRefresh = 2;
-        rerender(section([1]));
+        mockApiFetch.mockImplementation(totalsBySeverity({ critical: 3 }));
+        rerender(section([1, 7]));
         await waitFor(() => {
             expect(alertChartText()).toBe('Critical=3 Warning=0 Info=0');
         });
+        expect(paramsOf(alertUrls()[1]).get('connection_ids')).toBe('1,7');
 
         // A superseded request is not aborted while it is in flight; only
         // its response is discarded once it arrives.
         expect(slowSignal?.aborted).toBe(false);
 
         await act(async () => {
-            resolveSlow(okResponse({ alerts: [], total: 99 }));
-            await Promise.resolve();
+            slow.resolve(okResponse(countsBody({ critical: 99 })));
         });
         expect(alertChartText()).toBe('Critical=3 Warning=0 Info=0');
         // The discarded response is aborted so its body is not left
         // downloading without a deadline.
         expect(slowSignal?.aborted).toBe(true);
+    });
+
+    it('starts afresh for servers whose attempt in flight was superseded', async () => {
+        const slow = deferred<Response>();
+        mockApiFetch.mockImplementation(() => slow.promise);
+
+        const { rerender } = renderSection([1]);
+        await waitFor(() => { expect(alertUrls()).toHaveLength(1); });
+
+        // Emptying the estate abandons the attempt for [1], so returning
+        // to [1] must not wait on an attempt that will never publish.
+        rerender(section([]));
+        expect(await screen.findByText('No active alerts')).toBeInTheDocument();
+        mockApiFetch.mockImplementation(totalsBySeverity({ warning: 2 }));
+        rerender(section([1]));
+        await waitFor(() => {
+            expect(alertChartText()).toBe('Critical=0 Warning=2 Info=0');
+        });
+        expect(alertUrls()).toHaveLength(2);
+
+        await act(async () => {
+            slow.resolve(okResponse(countsBody({ warning: 50 })));
+        });
+        expect(alertChartText()).toBe('Critical=0 Warning=2 Info=0');
+    });
+
+    it('ignores a malformed by_severity value', async () => {
+        mockApiFetch.mockImplementation(() => Promise.resolve(okResponse({
+            total: 1, by_severity: { critical: '1', warning: 2 },
+        })));
+
+        renderSection([1]);
+
+        await waitFor(() => {
+            expect(alertChartText()).toBe('Critical=0 Warning=2 Info=0');
+        });
     });
 
     it('still renders the server status chart from the selection', async () => {

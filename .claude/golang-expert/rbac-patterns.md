@@ -371,9 +371,17 @@ connection-restricted result, and `SystemOnly` returns system alerts
 alone, which `handleAlerts` uses for a zero-grant caller instead of
 the old early empty response (so such a caller now reaches the
 datastore). `GetAlertCounts` takes an `includeSystem` bool and reports
-system alerts under `system`, never in `by_server`. An explicit
-`connection_id` or `connection_ids` query parameter always excludes
-system alerts. Seeing a system alert and acting on one are separate
+system alerts under `system`, never in `by_server`, but does count them
+in `by_severity` (one `GROUP BY connection_id, severity` query, so
+`by_severity` always sums to `total`). An explicit `connection_id` or
+`connection_ids` query parameter always excludes system alerts; on
+`/api/v1/alerts/counts` (issue #901) `connection_ids` is parsed with
+`ParseQueryIntListSilent` like `/api/v1/alerts`, intersected with
+`VisibleConnectionIDs` through `intersectConnectionIDs` (shared by both
+handlers), and an empty intersection answers zeros without a query.
+`TestAlertHandler_HandleAlertCounts_ConnectionFilter` also pins that
+each severity's count equals the `/api/v1/alerts?status=active&severity=`
+total for the same IDs. Seeing a system alert and acting on one are separate
 decisions. Acknowledge and unacknowledge go through
 `AlertHandler.canActOnAlert`, which sends a nil connection to
 `RBACChecker.CanManageSystemAlerts` (the same file; it is

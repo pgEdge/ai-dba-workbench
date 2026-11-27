@@ -9,7 +9,7 @@
  */
 
 import type React from 'react';
-import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -38,6 +38,11 @@ interface AlertCounts {
 
 const SEVERITIES = ['critical', 'warning', 'info'] as const;
 
+/** The part of a `/api/v1/alerts/counts` response the chart reads. */
+interface SeverityCountsResponse {
+    by_severity?: Partial<Record<(typeof SEVERITIES)[number], unknown>>;
+}
+
 const NO_ALERTS: AlertCounts = { critical: 0, warning: 0, info: 0 };
 
 /**
@@ -45,7 +50,7 @@ const NO_ALERTS: AlertCounts = { critical: 0, warning: 0, info: 0 };
  * included, before it is aborted and the attempt fails, so a request
  * that never answers cannot hold off the retry. The bound is per
  * request rather than per attempt because the requests run one after
- * another, three per batch of servers, so an attempt over many batches
+ * another, one per batch of servers, so an attempt over many batches
  * may legitimately take longer than this.
  */
 export const ALERT_COUNT_REQUEST_TIMEOUT_MS = 15000;
@@ -54,6 +59,14 @@ export const ALERT_COUNT_REQUEST_TIMEOUT_MS = 15000;
 interface AlertCountsResult {
     serverIdsKey: string;
     counts: AlertCounts;
+}
+
+/** The attempt in flight, which a refresh for the same servers joins. */
+interface InFlightAttempt {
+    serverIdsKey: string;
+    user: ReturnType<typeof useAuth>['user'];
+    isCurrent: () => boolean;
+    promise: Promise<boolean>;
 }
 
 const RINGS_CONTAINER_SX = {
@@ -105,33 +118,25 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
     const serverCounts = useMemo(() => computeEstateServerCounts(selection), [selection]);
     const serverIdsKey = serverIds.join(',');
 
-    const fetchAlertCounts = useCallback(async (): Promise<boolean> => {
-        if (!user || serverIds.length === 0) { return true; }
+    const inFlightRef = useRef<InFlightAttempt | null>(null);
 
-        // The counts match the Active Alerts tile: status=active leaves
-        // out acknowledged and cleared alerts, and naming the estate's
-        // servers leaves out system alerts and other servers. Only each
-        // response's total is read, so one row per page is enough and
-        // the count is not capped by the page size. The batches are
-        // disjoint, so their totals sum.
-        const requests = chunkConnectionIds(serverIds).flatMap(batch =>
-            SEVERITIES.map(severity => {
-                const params = new URLSearchParams({
-                    connection_ids: batch.join(','),
-                    status: 'active',
-                    severity,
-                    limit: '1',
-                });
-                return {
-                    severity,
-                    url: `/api/v1/alerts?${params.toString()}`,
-                };
-            }),
-        );
+    const startAttempt = useCallback(async (
+        key: string,
+        isCurrent: () => boolean,
+    ): Promise<boolean> => {
+        // The counts match the Active Alerts tile: /alerts/counts counts
+        // only active alerts, and naming the estate's servers leaves out
+        // system alerts and other servers. Each response counts every
+        // severity from one query, so the three figures cannot disagree.
+        // The batches are disjoint, so their counts sum.
+        const urls = chunkConnectionIds(serverIds).map(batch => {
+            const params = new URLSearchParams({
+                connection_ids: batch.join(','),
+            });
+            return `/api/v1/alerts/counts?${params.toString()}`;
+        });
 
-        const key = serverIds.join(',');
         setAlertsLoading(true);
-        const isCurrent = beginRequest();
 
         try {
             // The requests run one at a time and the attempt stops at
@@ -152,15 +157,15 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
             // discards is aborted to cancel its body, which the timeout
             // would otherwise have bounded.
             const counts: AlertCounts = { ...NO_ALERTS };
-            for (const req of requests) {
+            for (const url of urls) {
                 const controller = new AbortController();
                 const timer = setTimeout(
                     () => controller.abort(),
                     ALERT_COUNT_REQUEST_TIMEOUT_MS,
                 );
-                let body: { total?: unknown };
+                let body: SeverityCountsResponse;
                 try {
-                    const response = await apiFetch(req.url, { signal: controller.signal });
+                    const response = await apiFetch(url, { signal: controller.signal });
 
                     // A superseded or unmounted attempt is not a failure.
                     if (!isCurrent()) {
@@ -176,13 +181,16 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
                         return false;
                     }
 
-                    body = await response.json() as { total?: unknown };
+                    body = await response.json() as SeverityCountsResponse;
                 } finally {
                     clearTimeout(timer);
                 }
                 if (!isCurrent()) { return true; }
-                if (typeof body.total === 'number') {
-                    counts[req.severity] += body.total;
+                for (const severity of SEVERITIES) {
+                    const count = body.by_severity?.[severity];
+                    if (typeof count === 'number') {
+                        counts[severity] += count;
+                    }
                 }
             }
 
@@ -196,7 +204,39 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
                 setAlertsLoading(false);
             }
         }
-    }, [user, serverIds, beginRequest]);
+    }, [serverIds]);
+
+    const fetchAlertCounts = useCallback(async (): Promise<boolean> => {
+        if (!user || serverIds.length === 0) { return true; }
+
+        const key = serverIds.join(',');
+
+        // An attempt over many batches can outlast the refresh interval,
+        // so a refresh that superseded it would never let it publish. A
+        // refresh for the same servers therefore joins the attempt in
+        // flight, and returns its outcome so that run() retries a
+        // failure as usual. Different servers, or an attempt already
+        // superseded, start afresh.
+        const inFlight = inFlightRef.current;
+        if (
+            inFlight?.serverIdsKey === key
+            && inFlight.user === user
+            && inFlight.isCurrent()
+        ) {
+            return inFlight.promise;
+        }
+
+        const isCurrent = beginRequest();
+        const promise = startAttempt(key, isCurrent);
+        inFlightRef.current = { serverIdsKey: key, user, isCurrent, promise };
+        try {
+            return await promise;
+        } finally {
+            if (inFlightRef.current?.promise === promise) {
+                inFlightRef.current = null;
+            }
+        }
+    }, [user, serverIds, beginRequest, startAttempt]);
 
     // An estate with no servers has no alerts to fetch; drop any
     // request still in flight for the old servers.
@@ -216,7 +256,8 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
         : alertResult?.serverIdsKey === serverIdsKey ? alertResult.counts : null;
 
     // Refetch on mount, when the servers change, and on every estate
-    // data refresh (lastRefresh), as the KPI tiles do.
+    // data refresh (lastRefresh), as the KPI tiles do; a refresh while
+    // an attempt for the same servers is in flight joins that attempt.
     useEffect(() => {
         if (user && serverIds.length > 0) {
             void run(fetchAlertCounts);

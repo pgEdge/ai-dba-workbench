@@ -186,6 +186,12 @@ func TestGetAlertCounts_SystemAlerts(t *testing.T) {
 				t.Errorf("counts = %+v, want total %d, system %d, %d servers",
 					counts, tt.wantTotal, tt.wantSystem, tt.wantServers)
 			}
+			// System alerts count towards by_severity too, so it
+			// always sums to the total.
+			sev := counts.BySeverity
+			if sev.Critical+sev.Warning+sev.Info != counts.Total {
+				t.Errorf("by_severity %+v does not sum to total %d", sev, counts.Total)
+			}
 		})
 	}
 }

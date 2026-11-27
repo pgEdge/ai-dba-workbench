@@ -225,16 +225,7 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(filter.ConnectionIDs) > 0 {
 			// Intersect user-specified IDs with visible IDs.
-			accessibleSet := make(map[int]bool, len(accessibleIDs))
-			for _, id := range accessibleIDs {
-				accessibleSet[id] = true
-			}
-			var intersected []int
-			for _, id := range filter.ConnectionIDs {
-				if accessibleSet[id] {
-					intersected = append(intersected, id)
-				}
-			}
+			intersected := intersectConnectionIDs(filter.ConnectionIDs, accessibleIDs)
 			if len(intersected) == 0 {
 				RespondJSON(w, http.StatusOK, &database.AlertListResult{Alerts: []database.Alert{}, Total: 0})
 				return
@@ -265,12 +256,40 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, http.StatusOK, result)
 }
 
+// intersectConnectionIDs returns the IDs in requested that also appear
+// in accessible, in the order requested gives them. It never adds an ID
+// that accessible lacks, so a caller's filter can only narrow their
+// visible set.
+func intersectConnectionIDs(requested, accessible []int) []int {
+	accessibleSet := make(map[int]bool, len(accessible))
+	for _, id := range accessible {
+		accessibleSet[id] = true
+	}
+	var intersected []int
+	for _, id := range requested {
+		if accessibleSet[id] {
+			intersected = append(intersected, id)
+		}
+	}
+	return intersected
+}
+
 // handleAlertCounts handles GET /api/v1/alerts/counts
-// Returns counts of active alerts grouped by server
+// Returns counts of active alerts grouped by server and by severity.
+//
+// The optional connection_ids parameter (comma-separated, parsed as
+// handleAlerts parses it, so invalid entries are skipped and a list with
+// no valid entry counts as absent) restricts the counts to those of the
+// listed connections the caller may see. System alerts belong to no
+// connection, so a filtered request never counts them, as
+// /api/v1/alerts?connection_ids=... never lists them (GitHub issue #901).
 func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request) {
 	if !RequireGET(w, r) {
 		return
 	}
+
+	requestedIDs := ParseQueryIntListSilent(r, "connection_ids")
+	userFiltered := len(requestedIDs) > 0
 
 	// RBAC first: resolve the caller's visible connection set before any
 	// datastore work so a zero-grant caller never hits the alerts table.
@@ -286,8 +305,28 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 
 	// System alerts belong to no connection, so they are counted for
 	// anyone CanSeeSystemAlerts allows, whatever their connection grants
-	// (GitHub issue #582).
-	includeSystem := h.rbacChecker.CanSeeSystemAlerts(r.Context())
+	// (GitHub issue #582), unless the caller asked for particular
+	// connections.
+	includeSystem := !userFiltered && h.rbacChecker.CanSeeSystemAlerts(r.Context())
+
+	// A connection filter is intersected with the caller's visible set,
+	// so it can narrow the counts but never widen them. A caller who may
+	// see every connection gets the IDs they asked for.
+	if userFiltered {
+		filterIDs := requestedIDs
+		if !allConnections {
+			filterIDs = intersectConnectionIDs(requestedIDs, accessibleIDs)
+		}
+		if len(filterIDs) == 0 {
+			RespondJSON(w, http.StatusOK, &database.AlertCountsResult{
+				Total:    0,
+				ByServer: map[int]int64{},
+			})
+			return
+		}
+		h.respondAlertCounts(w, r, filterIDs, false)
+		return
+	}
 
 	// Zero-grant caller with no view of system alerts: return an empty
 	// counts response without invoking GetAlertCounts. A nil datastore
@@ -311,7 +350,14 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 			filterIDs = []int{}
 		}
 	}
-	counts, err := h.datastore.GetAlertCounts(r.Context(), filterIDs, includeSystem)
+	h.respondAlertCounts(w, r, filterIDs, includeSystem)
+}
+
+// respondAlertCounts writes the active alert counts for the given
+// connection allow-list (nil for every connection) and system alert
+// choice, as GetAlertCounts defines them.
+func (h *AlertHandler) respondAlertCounts(w http.ResponseWriter, r *http.Request, connectionIDs []int, includeSystem bool) {
+	counts, err := h.datastore.GetAlertCounts(r.Context(), connectionIDs, includeSystem)
 	if err != nil {
 		log.Printf("[ERROR] Failed to fetch alert counts: %v", err)
 		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert counts")

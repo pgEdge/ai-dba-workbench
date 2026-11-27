@@ -111,13 +111,41 @@ type AlertListResult struct {
 	Total  int64   `json:"total"`
 }
 
-// AlertCountsResult contains alert counts grouped by server. System
-// alerts have no server, so they are counted in System and in Total but
-// never in ByServer.
+// AlertCountsResult contains alert counts grouped by server and by
+// severity. System alerts have no server, so they are counted in System
+// and in Total but never in ByServer. BySeverity covers every alert
+// counted in Total, system alerts included, so its three fields always
+// sum to Total.
 type AlertCountsResult struct {
-	Total    int64         `json:"total"`
-	ByServer map[int]int64 `json:"by_server"`
-	System   int64         `json:"system"`
+	Total      int64               `json:"total"`
+	ByServer   map[int]int64       `json:"by_server"`
+	BySeverity AlertSeverityCounts `json:"by_severity"`
+	System     int64               `json:"system"`
+}
+
+// AlertSeverityCounts holds alert counts for each severity the alerts
+// table's CHECK constraint allows. A severity with no alerts is zero.
+type AlertSeverityCounts struct {
+	Critical int64 `json:"critical"`
+	Warning  int64 `json:"warning"`
+	Info     int64 `json:"info"`
+}
+
+// add counts n alerts of the given severity. It reports false for a
+// severity outside the three the alerts table allows, which is then left
+// out of the counts.
+func (s *AlertSeverityCounts) add(severity string, n int64) bool {
+	switch severity {
+	case "critical":
+		s.Critical += n
+	case "warning":
+		s.Warning += n
+	case "info":
+		s.Info += n
+	default:
+		return false
+	}
+	return true
 }
 
 // AcknowledgeAlertRequest contains the data for acknowledging an alert
@@ -339,12 +367,15 @@ const liveAlertConnectionCondition = `NOT EXISTS (
 			SELECT 1 FROM connections dc
 			WHERE dc.id = a.connection_id AND dc.deleted_at IS NOT NULL)`
 
-// alertCountsSQL counts the active alerts per connection. $1 is the
-// caller's connection allow-list, or NULL for every connection; $2 adds
-// the system alerts, which have a NULL connection_id and so come back as
-// one row with a NULL connection.
+// alertCountsSQL counts the active alerts per connection and severity,
+// so the per-server, per-severity and total counts all come from one
+// snapshot. $1 is the caller's connection allow-list, or NULL for every
+// connection; $2 adds the system alerts, which have a NULL connection_id
+// and so come back as rows with a NULL connection. The filters match
+// those GetAlerts applies for status=active, so a severity's count here
+// equals the total GetAlerts returns for the same connections.
 const alertCountsSQL = `
-		SELECT connection_id, COUNT(*) AS count
+		SELECT connection_id, severity, COUNT(*) AS count
 		FROM alerts
 		WHERE status = 'active'
 		  AND ((connection_id IS NOT NULL
@@ -353,11 +384,11 @@ const alertCountsSQL = `
 		  AND NOT EXISTS (
 		        SELECT 1 FROM connections dc
 		        WHERE dc.id = alerts.connection_id AND dc.deleted_at IS NOT NULL)
-		GROUP BY connection_id
+		GROUP BY connection_id, severity
 	`
 
-// GetAlertCounts returns counts of active alerts grouped by connection_id.
-// When connectionIDs is non-nil, the query is restricted to alerts whose
+// GetAlertCounts returns counts of active alerts grouped by connection_id
+// and by severity. When connectionIDs is non-nil, the query is restricted to alerts whose
 // connection_id appears in the slice. A nil slice means "no filter"
 // (superuser or wildcard-scoped caller). includeSystem adds the active
 // system alerts to System and Total; the caller sets it only once
@@ -394,14 +425,22 @@ func (d *Datastore) GetAlertCounts(ctx context.Context, connectionIDs []int, inc
 	result := &AlertCountsResult{ByServer: make(map[int]int64)}
 	for rows.Next() {
 		var connID *int
+		var severity string
 		var count int64
-		if err := rows.Scan(&connID, &count); err != nil {
+		if err := rows.Scan(&connID, &severity, &count); err != nil {
 			return nil, fmt.Errorf("failed to scan alert count: %w", err)
+		}
+		// The CHECK constraint on alerts.severity rules out any other
+		// value; should one appear, it is left out of every count so
+		// that BySeverity still sums to Total.
+		if !result.BySeverity.add(severity, count) {
+			logger.Errorf("GetAlertCounts: ignoring %d active alerts with unknown severity %q", count, severity)
+			continue
 		}
 		if connID == nil {
 			result.System += count
 		} else {
-			result.ByServer[*connID] = count
+			result.ByServer[*connID] += count
 		}
 		result.Total += count
 	}

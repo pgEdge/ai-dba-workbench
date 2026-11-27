@@ -102,15 +102,24 @@ row.
   anything else wraps `errClaimUnsettled`. `Start` then returns the
   error, starts no run, and hands its WaitGroup slot and its
   `Executor.pending` entry to `settleClaim`, which retries
-  `Store.releaseClaim` (one UPDATE guarded on `executing` and the
-  token, back to `not_started` with `executed_at` and `claim_token`
-  cleared, approval kept). The guarantee is the row lock: a claim is
-  unsettled only after its UPDATE took the row, so its open transaction
-  makes the release wait, then re-evaluate its WHERE under READ
-  COMMITTED, so a zero-row release ran after the claim aborted.
+  `Store.releaseClaim` (one transaction under local `lock_timeout`
+  and `idle_in_transaction_session_timeout`: `SELECT ... FOR UPDATE` on
+  the row, then an UPDATE guarded on `executing` and the token, back to
+  `not_started` with `executed_at` and `claim_token` cleared, approval
+  kept). The guarantee is the row lock: a claim is unsettled only after
+  its UPDATE took the row, so the `FOR UPDATE` waits for the claim's
+  transaction to end and the UPDATE's fresh snapshot sees the outcome,
+  so a zero-row release ran after the claim aborted. Never drop the
+  `FOR UPDATE`: a bare guarded UPDATE (or one CTE) checks its WHERE
+  against the old `not_started` version whilst the claim is open and
+  skips the row without waiting. No timeout bounds the claim's COMMIT
+  (PostgreSQL disables `statement_timeout` before committing, and a
+  synchronous-replication wait or deferred trigger can hold it), so
   `claimSettledAfter` (`claimTimeout` + `claimIdleTimeout` +
   `claimStatementTimeout` + 10s, measured from before the pool acquire)
-  is only an extra margin before a zero-row release counts as final;
+  is only an extra margin before a zero-row release counts as final,
+  and stopping on it is logged; a lock wait past `claimLockTimeout`
+  fails the attempt and is retried;
   failures stop after `settleAttempts`, logging that the action needs
   manual review; at most `maxConcurrentSettles` (2) release attempts run
   at once, since each can hold a datastore connection (pool default 20)

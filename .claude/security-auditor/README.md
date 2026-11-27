@@ -853,11 +853,18 @@ moved.
   `releaseClaim`, an UPDATE guarded on `executing` and the token, so it
   can never touch a claim held under another token or a row that has
   moved on. What makes a release matching nothing final is the row
-  lock: the claim's UPDATE took the row, so the release waits for its
-  transaction to end and re-evaluates its WHERE under READ COMMITTED;
-  `claimSettledAfter` (about 55s from before the pool acquire, covering
-  the client-side window) is only an extra margin, since a stalled
-  commit-record flush cannot be interrupted. Settling is per action
+  lock: the claim's UPDATE took the row, and the release first runs
+  `SELECT ... FOR UPDATE`, which waits for the claim's transaction to
+  end, so its UPDATE's fresh READ COMMITTED snapshot sees the outcome.
+  A bare guarded UPDATE does not wait (it checks its WHERE against the
+  uncommitted claim's old version and skips the row), which left a
+  late-committing claim `executing` with no run. The release's lock
+  wait is bounded on the server by a local `lock_timeout`, so a lost
+  cancel request cannot leave it queued. `claimSettledAfter` (about 55s
+  from before the pool acquire) is only an extra margin, since nothing
+  bounds the claim's COMMIT: PostgreSQL disables `statement_timeout`
+  before committing, and a synchronous-replication wait or a deferred
+  trigger can hold it. Settling is per action
   (Start refuses an action being claimed or settled with
   `ErrAlreadyStarted`), capped at `maxPendingClaims` (then
   `ErrTooManyPending`, answered 503 with `Retry-After`), limited to

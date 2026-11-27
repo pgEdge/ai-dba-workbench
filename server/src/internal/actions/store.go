@@ -312,18 +312,23 @@ const (
 )
 
 // claimSettledAfter is an extra margin, not the guarantee, for treating
-// a release that matches nothing as final (settleClaim). The guarantee
-// is the row lock: a claim is unsettled only after its UPDATE took the
-// row (RowsAffected 1), so its transaction holds the row lock until it
-// commits or aborts, and releaseClaim's UPDATE waits for that lock and
-// then re-evaluates its WHERE clause under READ COMMITTED. A release
-// that matches nothing therefore ran after the claim aborted. The
-// margin covers the client-side window, which counts from before the
-// pool acquire: the client may send COMMIT until the claim's context
-// ends (claimTimeout), the server then waits up to claimIdleTimeout for
-// it, and a synchronous-replication wait adds up to
-// claimStatementTimeout; plus 10 seconds. A stall flushing the commit
-// record cannot be interrupted at all, which only the row lock covers.
+// a release that matches nothing as final (settleClaim); it is not a
+// bound on when a claim can commit. The guarantee is the row lock: a
+// claim is unsettled only after its UPDATE took the row (RowsAffected
+// 1), so its transaction holds the row lock until it commits or aborts.
+// releaseClaim takes that lock with SELECT ... FOR UPDATE, waiting for
+// the claim's transaction to end, and only then runs its guarded UPDATE,
+// whose fresh READ COMMITTED snapshot sees the claim's final state. A
+// plain UPDATE would not wait: it evaluates its WHERE clause against the
+// version its snapshot sees, the not_started one whilst the claim is
+// uncommitted, and skips the row. A release that matches nothing
+// therefore ran after the claim aborted. No timeout bounds the claim's
+// COMMIT itself: PostgreSQL disables statement_timeout before
+// committing, so a synchronous-replication wait or a deferred trigger
+// can hold the COMMIT, and the row lock, for as long as it takes. The
+// margin is claimTimeout + claimIdleTimeout + claimStatementTimeout +
+// 10 seconds from before the pool acquire, which covers the client
+// sending COMMIT late in its window.
 const claimSettledAfter = claimTimeout + claimIdleTimeout + claimStatementTimeout + 10*time.Second
 
 // errClaimUnsettled marks a claim whose UPDATE took the row but whose
@@ -409,20 +414,43 @@ func pgMillis(d time.Duration) string {
 // not_started, clearing the start time and the token as though it had
 // never been claimed, and reports whether it did. It is only for a
 // claim that no run was started under (one that reported
-// errClaimUnsettled), so nothing has reached the target. Whilst the
-// claim's transaction is open its UPDATE waits on the row lock, so a
-// false result means that transaction ended without the claim
-// committing (see claimSettledAfter). The approval stands, so the
-// action can be started again. A row that is in any other state, or
-// held under another token, is left alone.
+// errClaimUnsettled), so nothing has reached the target. It first locks
+// the row with SELECT ... FOR UPDATE, which waits whilst the claim's
+// transaction is open, and then runs the guarded UPDATE, so a false
+// result means that transaction ended without the claim committing
+// (see claimSettledAfter). The wait is bounded on the server by
+// claimLockTimeout, so it ends even when the client's cancel request
+// is lost, and the caller retries. The approval stands, so the action
+// can be started again. A row that is in any other state, or held under
+// another token, is left alone.
 func (s *Store) releaseClaim(ctx context.Context, id int64, token string) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("release claim: %w", err)
+	}
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+	if _, err := tx.Exec(ctx, `
+        SELECT set_config('lock_timeout', $1, true),
+               set_config('idle_in_transaction_session_timeout', $2, true)`,
+		pgMillis(claimLockTimeout), pgMillis(claimIdleTimeout)); err != nil {
+		return false, fmt.Errorf("release claim: %w", err)
+	}
+	// Wait on the claim's row lock; the UPDATE below then takes a new
+	// snapshot that sees how the claim ended.
+	if _, err := tx.Exec(ctx, `
+        SELECT 1 FROM proposed_actions WHERE id = $1 FOR UPDATE`, id); err != nil {
+		return false, fmt.Errorf("release claim: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
         UPDATE proposed_actions
            SET exec_status = 'not_started', executed_at = NULL,
                claim_token = NULL, updated_at = now()
          WHERE id = $1 AND exec_status = 'executing' AND claim_token = $2`,
 		id, token)
 	if err != nil {
+		return false, fmt.Errorf("release claim: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("release claim: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil

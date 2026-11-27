@@ -163,8 +163,9 @@ type Executor struct {
 	// settleBackoff is the first delay between attempts to settle a
 	// claim.
 	settleBackoff time.Duration
-	// claimSettledAfter is how long after it began a claim can no
-	// longer commit; it is the store's claimSettledAfter outside tests.
+	// claimSettledAfter is how long after a claim began settleClaim
+	// keeps retrying a release that finds nothing; it is the store's
+	// claimSettledAfter outside tests.
 	claimSettledAfter time.Duration
 	// finishBackoff is the first delay between attempts to record an
 	// outcome.
@@ -357,11 +358,14 @@ func (e *Executor) unpend(id int64) {
 // is not executing under token was never claimed by this call, or has
 // moved on, and is left alone.
 //
-// Each attempt is one guarded UPDATE, so a claim taken meanwhile under
-// another token can never be touched. The claim's UPDATE took the row,
-// so whilst its transaction is open the release waits on the row lock
-// and then re-evaluates its WHERE clause: an attempt that finds nothing
-// to release ran after the claim aborted. It is nevertheless treated as
+// Each attempt locks the row and then runs one guarded UPDATE, so a
+// claim taken meanwhile under another token can never be touched. The
+// claim's UPDATE took the row, so whilst its transaction is open the
+// release's SELECT ... FOR UPDATE waits on the row lock, and the UPDATE
+// after it sees how the claim ended: an attempt that finds nothing to
+// release ran after the claim aborted. A wait longer than
+// claimLockTimeout fails the attempt, which is retried like any other
+// failure. An attempt that finds nothing is nevertheless treated as
 // final only once claimSettledAfter has passed since began, as an extra
 // margin, and retried before that. A failed attempt is retried up to
 // settleAttempts times. At most maxConcurrentSettles attempts run at
@@ -384,6 +388,7 @@ func (e *Executor) settleClaim(id int64, token string, began time.Time) {
 			log.Printf("[WARN] Action %d: a claim whose outcome was lost was returned to not_started", id)
 			return
 		case err == nil && time.Since(began) >= e.claimSettledAfter:
+			log.Printf("[INFO] Action %d: stopped settling a claim whose outcome was lost, since nothing is executing under it", id)
 			return
 		case err != nil:
 			failures++

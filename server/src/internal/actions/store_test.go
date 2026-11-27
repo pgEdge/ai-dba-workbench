@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -779,5 +780,152 @@ func TestReleaseClaim(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT claim_token::text FROM proposed_actions WHERE id = $1`,
 		held).Scan(&token); err != nil || token != nil || got.ExecutedAt != nil {
 		t.Errorf("released action: claim_token = %v (%v), executed_at = %v; want neither", token, err, got.ExecutedAt)
+	}
+}
+
+// TestReleaseClaimWaitsForOpenClaim proves releaseClaim waits for a
+// claim whose UPDATE is done but whose transaction is still open, and
+// then sees how it ended: a claim that commits is released, and one
+// that aborts leaves nothing to release. A release that did not take
+// the row lock would skip the row whilst the claim is open, and leave a
+// claim that commits afterwards executing with no run.
+func TestReleaseClaimWaitsForOpenClaim(t *testing.T) {
+	s, pool, connID := newTestStore(t, "_act_relwait")
+	ctx := context.Background()
+	tests := []struct {
+		name         string
+		commits      bool
+		wantReleased bool
+	}{
+		{"claim commits", true, true},
+		{"claim aborts", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, err := s.Create(ctx, sampleAction(connID, "alice"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SetReview(ctx, a.ID, "passed", Verdict{Decision: "pass"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Approve(ctx, a.ID, "approved", "bob", "session"); err != nil {
+				t.Fatal(err)
+			}
+			token := uuid.NewString()
+			type result struct {
+				released bool
+				err      error
+			}
+			done := make(chan result, 1)
+			s.commitClaim = func(ctx context.Context, tx pgx.Tx) error {
+				go func() {
+					released, err := s.releaseClaim(ctx, a.ID, token)
+					done <- result{released, err}
+				}()
+				waitForLockWait(t, pool)
+				var end error
+				if tt.commits {
+					end = tx.Commit(ctx)
+				} else {
+					end = tx.Rollback(ctx)
+				}
+				if end != nil {
+					return end
+				}
+				// Report the COMMIT as lost once the release has run, so
+				// the claim's read-back sees the release's outcome.
+				r := <-done
+				done <- r
+				return errors.New("connection reset")
+			}
+			defer func() { s.commitClaim = nil }()
+			if _, err := s.claim(ctx, a.ID, token); !errors.Is(err, errClaimUnsettled) {
+				t.Fatalf("claim = %v, want errClaimUnsettled", err)
+			}
+			r := <-done
+			if r.err != nil || r.released != tt.wantReleased {
+				t.Errorf("releaseClaim = %v, %v; want %v", r.released, r.err, tt.wantReleased)
+			}
+			got, err := s.Get(ctx, a.ID)
+			if err != nil || got.ExecStatus != "not_started" {
+				t.Errorf("action = %+v (%v), want not_started", got, err)
+			}
+		})
+	}
+}
+
+// waitForLockWait waits until a backend on the test database is waiting
+// on a lock, failing the test after a deadline.
+func waitForLockWait(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting int
+		if err := pool.QueryRow(context.Background(), `
+            SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting); err != nil {
+			t.Errorf("read pg_stat_activity: %v", err)
+			return
+		}
+		if waiting > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Error("no backend waited on a lock before the deadline")
+}
+
+// TestClaimLimitsStayLocal proves the limits claim and releaseClaim set
+// last only for their own transaction: once both have run, every pooled
+// connection reads the session's own settings.
+func TestClaimLimitsStayLocal(t *testing.T) {
+	s, pool, connID := newTestStore(t, "_act_limits")
+	ctx := context.Background()
+	const settings = `SELECT current_setting('lock_timeout') || ' ' ||
+        current_setting('statement_timeout') || ' ' ||
+        current_setting('idle_in_transaction_session_timeout')`
+	var want string
+	if err := pool.QueryRow(ctx, settings).Scan(&want); err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.Create(ctx, sampleAction(connID, "alice"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetReview(ctx, a.ID, "passed", Verdict{Decision: "pass"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Approve(ctx, a.ID, "approved", "bob", "session"); err != nil {
+		t.Fatal(err)
+	}
+	token := uuid.NewString()
+	if ok, err := s.claim(ctx, a.ID, token); err != nil || !ok {
+		t.Fatalf("claim = %v, %v", ok, err)
+	}
+	if ok, err := s.releaseClaim(ctx, a.ID, token); err != nil || !ok {
+		t.Fatalf("releaseClaim = %v, %v", ok, err)
+	}
+	// Holding every connection the pool allows at once reaches the ones
+	// the claim and the release ran on.
+	conns := make([]*pgxpool.Conn, 0, pool.Config().MaxConns)
+	defer func() {
+		for _, c := range conns {
+			c.Release()
+		}
+	}()
+	for range pool.Config().MaxConns {
+		c, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conns = append(conns, c)
+		var got string
+		if err := c.QueryRow(ctx, settings).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("pooled connection settings = %q, want %q", got, want)
+		}
 	}
 }

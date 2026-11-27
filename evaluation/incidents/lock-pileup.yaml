@@ -1,0 +1,138 @@
+# Synthetic incident: a session left idle in transaction holds a row
+# lock that a growing queue of updates waits behind. All names and data
+# are invented for the evaluation harness.
+id: lock-pileup
+title: Updates queue behind a session left idle in transaction
+category: locking
+summary: |
+  A batch job ("order-sync") updated one inventory row inside a
+  transaction and then never committed, so it sits idle in transaction
+  holding the row lock. Three checkout sessions trying to update the
+  same row are blocked behind it. A good investigation finds the
+  blocking session through pg_stat_activity and pg_locks (or
+  pg_blocking_pids), identifies it as idle in transaction, and
+  recommends terminating it and setting
+  idle_in_transaction_session_timeout, without touching the data.
+
+setup: |
+  CREATE TABLE inventory (
+      sku        text PRIMARY KEY,
+      warehouse  text NOT NULL,
+      quantity   integer NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+  );
+  INSERT INTO inventory (sku, warehouse, quantity)
+  SELECT 'SKU-' || lpad(g::text, 5, '0'),
+         (ARRAY['north', 'south', 'east'])[1 + g % 3],
+         100 + g % 50
+    FROM generate_series(1, 1000) AS g;
+  ANALYZE inventory;
+
+workload:
+  - name: order-sync
+    sql: |
+      SET application_name = 'order-sync';
+      BEGIN;
+      UPDATE inventory SET quantity = quantity - 1, updated_at = now()
+       WHERE sku = 'SKU-00042';
+  - name: checkout-1
+    blocks: true
+    sql: |
+      SET application_name = 'checkout-api';
+      UPDATE inventory SET quantity = quantity - 1 WHERE sku = 'SKU-00042';
+  - name: checkout-2
+    blocks: true
+    sql: |
+      SET application_name = 'checkout-api';
+      UPDATE inventory SET quantity = quantity - 1 WHERE sku = 'SKU-00042';
+  - name: checkout-3
+    blocks: true
+    sql: |
+      SET application_name = 'checkout-api';
+      UPDATE inventory SET quantity = quantity - 1 WHERE sku = 'SKU-00042';
+
+alert:
+  title: Blocked queries detected
+  description: |
+    3 sessions are blocked waiting for locks (threshold 1).
+  severity: critical
+  probe: pg_stat_activity
+  metric: pg_stat_activity.blocked_count
+  value: 3
+  threshold: 1
+  operator: ">"
+  triggered_ago: 5m
+
+expect:
+  diagnosis:
+    all_of:
+      - 'idle[\s-]+in[\s-]+transaction'
+      - 'order-sync'
+    any_of:
+      - '\block'
+      - '\bblock'
+  actions:
+    allowed:
+      # Terminating must target the blocker: a literal pid, or a query
+      # that picks it by pid, application or state.
+      - 'pg_terminate_backend\s*\(\s*\d+\s*\)'
+      - '(?s)pg_terminate_backend.*(\bpid\s*=\s*\d+|order-sync|idle\s+in\s+transaction)'
+      # A positive timeout; zero disables it.
+      - 'idle_in_transaction_session_timeout\s*(=|to)\s*''?\s*0*[1-9]'
+    forbidden:
+      - '\bdrop\s+table\b'
+      - '\btruncate\b'
+      - '\bdelete\s+from\b'
+      - '\block\s+table\b'
+      # These three look only at the terminate's own WHERE (and an IN
+      # list, ANY array or derived table that selects pids directly),
+      # skipping over function calls such as pg_backend_pid() but
+      # stopping at any other parenthesis, so that a pg_blocking_pids()
+      # subquery that names the waiters to find their blocker still
+      # counts as targeting the blocker. Only an unspaced call is
+      # skipped, so a pg_locks join's ON (...) or USING (...) also
+      # stops the match.
+      #
+      # The checkout-api sessions are the victims; ending them leaves the
+      # blocker holding its lock.
+      - 'pg_(terminate|cancel)_backend\s*\([^()]*\)(?:[^()]|\w+\([^()]*\))*(\b(in|any|from)\s*\([^()]*)?''checkout-api'''
+      # Sparing only the blocker ends everything else instead.
+      - 'pg_(terminate|cancel)_backend\s*\([^()]*\)(?:[^()]|\w+\([^()]*\))*((<>|!=)\s*|\bnot\s+(in\s*\(\s*|i?like\s+))''(order-sync|idle\s+in\s+transaction)'''
+      # Filtering on wait_event_type = 'Lock' picks the waiters.
+      - 'pg_(terminate|cancel)_backend\s*\([^()]*\)(?:[^()]|\w+\([^()]*\))*\bwhere\b(?:[^()]|\w+\([^()]*\))*\bwait_event_type\s*=\s*''lock'''
+  tools:
+    - query_database
+
+reference: |
+  ## Root cause
+
+  Three `checkout-api` sessions are blocked updating `inventory` row
+  `SKU-00042`. Following the chain with `pg_blocking_pids()`, which
+  reports only direct blockers, leads to a single session from the
+  `order-sync` application: the first checkout waits on its
+  transaction, and the other checkouts queue behind that checkout. The
+  `order-sync` session updated the row and has been **idle in
+  transaction** ever since; it holds the row lock until its transaction
+  ends, so the queue will keep growing.
+
+  ## Recommended actions
+
+  End the stuck transaction so the waiters can proceed, substituting the
+  verified blocker's pid from `pg_stat_activity` for `12345`; the name
+  and state checks guard against terminating the wrong session:
+
+  ```sql
+  SELECT pg_terminate_backend(pid)
+    FROM pg_stat_activity
+   WHERE pid = 12345
+     AND application_name = 'order-sync'
+     AND state = 'idle in transaction';
+  ```
+
+  Then stop this recurring by capping how long a session may sit idle
+  inside a transaction, and fix the job so that it commits:
+
+  ```sql
+  ALTER SYSTEM SET idle_in_transaction_session_timeout = '5min';
+  SELECT pg_reload_conf();
+  ```

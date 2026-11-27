@@ -121,6 +121,8 @@
     - [Client Architecture](docs/developer-guide/client/architecture.md)
   - End-to-End Testing:
     - [End-to-End Smoke Tests](docs/developer-guide/e2e/index.md)
+  - Ellie Evaluation:
+    - [Ellie Evaluation Harness](docs/developer-guide/evaluation/index.md)
   - Design:
     - [Node Role Probe Design](docs/developer-guide/design/node-role-probe.md)
 - [Changelog](docs/changelog.md)

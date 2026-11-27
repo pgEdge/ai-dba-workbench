@@ -1,0 +1,102 @@
+name: Ellie evaluation
+
+# Replays the synthetic incidents in evaluation/incidents against Ellie
+# with real models. It costs money and its results vary between runs,
+# so it never runs on pushes or pull requests: only weekly, once the
+# EVALUATE_TARGETS repository variable is set, and on demand. See
+# docs/developer-guide/evaluation/index.md.
+#
+# Repository secrets used (add those for the providers you evaluate):
+# ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY and OLLAMA_URL.
+
+on:
+    schedule:
+        # Mondays at 03:17 UTC.
+        - cron: '17 3 * * 1'
+    workflow_dispatch:
+        inputs:
+            targets:
+                description: 'Space-separated provider:model targets (default: the EVALUATE_TARGETS variable)'
+                required: false
+                type: string
+            runs:
+                description: 'Repetitions of each incident per target'
+                required: false
+                default: '3'
+                type: string
+            only:
+                description: 'Comma-separated incident IDs (default: all)'
+                required: false
+                type: string
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}
+    cancel-in-progress: false
+
+jobs:
+    evaluate:
+        name: Replay incidents
+        if: github.repository == 'pgEdge/ai-dba-workbench' && (github.event_name == 'workflow_dispatch' || vars.EVALUATE_TARGETS != '')
+        runs-on: ubuntu-24.04
+        timeout-minutes: 240
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Set up Go
+              uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+              with:
+                  go-version: '1.26.11'
+
+            - name: Install Postgres client tools
+              run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+            - name: Replay incidents
+              env:
+                  # Inputs reach the script through the environment, never
+                  # by interpolation into the shell, and are validated there.
+                  EVALUATE_TARGETS: ${{ inputs.targets || vars.EVALUATE_TARGETS }}
+                  RUNS: ${{ inputs.runs || '3' }}
+                  ONLY: ${{ inputs.only }}
+                  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+                  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+                  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+                  OLLAMA_URL: ${{ secrets.OLLAMA_URL }}
+              run: |
+                  if [ -z "${EVALUATE_TARGETS}" ]; then
+                      echo "::error::No targets: give the targets input or set the EVALUATE_TARGETS variable"
+                      exit 1
+                  fi
+                  if ! [[ "${RUNS}" =~ ^[1-9][0-9]?$ ]]; then
+                      echo "::error::runs must be a number from 1 to 99"
+                      exit 1
+                  fi
+                  args=(-runs "${RUNS}")
+                  if [ -n "${ONLY}" ]; then
+                      args+=(-only "${ONLY}")
+                  fi
+                  ./evaluation/scripts/run-evaluation.sh "${args[@]}"
+
+            - name: Publish the report to the job summary
+              if: always()
+              run: |
+                  if [ -f evaluation/results/report.md ]; then
+                      cat evaluation/results/report.md >> "${GITHUB_STEP_SUMMARY}"
+                  fi
+
+            - name: Upload results
+              if: always()
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: evaluation-results
+                  # Only the results: the server log can name provider
+                  # hosts, and artifacts of a public repository are
+                  # readable by any signed-in GitHub user.
+                  path: evaluation/results
+                  if-no-files-found: ignore
+                  retention-days: 90

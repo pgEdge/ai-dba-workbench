@@ -84,6 +84,8 @@ var reviewedProbeTableReaders = map[string]string{
 		"connection's rows and returns only the affected-row count",
 	"internal/database/connection_purge.go:Datastore.purgeMetricsViews": "deletes a purged " +
 		"connection's rows from a metrics view and returns no columns",
+	"internal/evalharness/stage/stage.go:Staged.seedDatastore": "the evaluation harness inserts " +
+		"synthetic fixture rows into a disposable datastore and reads no columns back",
 	"internal/metrics/probe_interval.go:ObserveSampleSpacing": "reads only connection_id and collected_at",
 	"internal/metrics/query.go:BuildMetricsQuery": "aggregates only the numeric columns " +
 		"GetProbeMetricColumns returns (IsMetricColumn)",

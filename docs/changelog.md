@@ -18,6 +18,14 @@ project adheres to
   configuration; set `BASE` to choose the comparison reference and
   `DRY_RUN=1` to preview the selection.
   (#846)
+- Add an evaluation harness that replays synthetic incidents against
+  Ellie through the server's LLM proxy and tools, scores each report
+  with deterministic checks and writes a Markdown report of pass rates
+  and their variance across runs and models; run it on demand with
+  `make evaluate`, or from the weekly and manually triggered Ellie
+  evaluation workflow. It is not part of `make test-all`, and it
+  stages incidents only on a loopback instance marked as disposable.
+  (#772)
 
 ### Changed
 
